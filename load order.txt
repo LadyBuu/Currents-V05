@@ -2,37 +2,41 @@
 STILL WATERS — MASTER LOAD ORDER (ALL SUBSYSTEMS)
 ================================================================================
 
-Updated: reflects the current state of the codebase after the relationship
-subsystem refactor (v1.2), the household subsystem v6.1 consolidation,
-the industry subsystem D1 + secondary item #1, and the disaster subsystem
-v3.0.
+Updated: reconciled with structure.txt. Reflects:
+  - relationship subsystem refactor (v1.2)
+  - household subsystem v6.1 consolidation
+  - industry subsystem D1 + secondary item #1
+  - disaster subsystem v3.0
+  - Culture-before-Relationship reordering (resolves Invariant 107)
+  - eventLogger.js -> js/events/timeline-core.js
+  - on-disk paths corrected to match structure.txt (ranks/, roles/, names/,
+    education/, government/, industry/, disaster/, tabs/)
 
 Subsystems covered:
-  - js/core/*                 (constants, utilities, state, UI primitives)
-  - js/rank/*            (rank subsystem)
-  - js/core/industry/*        (industry subsystem)
-  - js/core/disaster/*        (disaster subsystem)
-  - js/modules/names/*        (name subsystem)
-  - js/character/*            (character, family, children, mortality)
-  - js/location/*             (location)
-  - js/selectors/*            (selectors)
-  - js/settlement/*           (settlement)
-  - js/systems/roles/*        (role subsystem)
-  - js/systems/education/*    (education subsystem)
-  - js/systems/government/*   (government)
-  - js/religion/*             (religion)
-  - js/culture/*              (culture)
-  - js/skill/*                (skill taxonomy)
-  - js/apprenticeship/*       (apprenticeship)
-  - js/crime/*                (crime)
-  - js/households/*           (household + residence)
-  - js/social/*               (relationship domain: romance, friendship,
-                               rivalry, jealousy, affair, matchmaking,
-                               professional, finder, integrations,
-                               ui-metadata, modals)
-  - js/events/*               (eventLogger, timeline)
-  - js/relationships/*        (aliases/shim: any remaining files)
-  - js/relationships/professional-*.js  (professional primitives aliases)
+  - js/core/*                       (constants, utilities, state, UI primitives)
+  - js/ranks/*                      (rank subsystem)
+  - js/roles/*                      (role subsystem + skill-utils)
+  - js/industry/*                   (industry subsystem)
+  - js/disaster/*                   (disaster subsystem)
+  - js/names/*                      (name subsystem)
+  - js/character/*                  (character, family, children, mortality)
+  - js/location/*                   (location)
+  - js/selectors/*                  (selectors)
+  - js/settlement/*                 (settlement)
+  - js/education/*                  (education subsystem)
+  - js/government/*                 (government)
+  - js/religion/*                   (religion)
+  - js/culture/*                    (culture)
+  - js/apprenticeship/*             (apprenticeship)
+  - js/crime/*                      (crime)
+  - js/households/*                 (household + residence)
+  - js/relationships/*              (relationship domain: romance, friendship,
+                                     rivalry, jealousy, affair, matchmaking,
+                                     professional, finder, integrations,
+                                     ui-metadata, modals)
+  - js/events/*                     (timeline-core [logEvent], census-core,
+                                     annualProcessing, social-events-system)
+  - js/tabs/*                       (tab renderers)
 
 Notation:
 
@@ -52,9 +56,6 @@ Notation:
       may be skipped if the corresponding features are not used.
   [UNVERIFIED]
       referenced but not in the supplied batch; confirm exports.
-  [NOT PROVIDED]
-      referenced by a header or REQUIRED list but not in the supplied
-      files.
   [LOAD-ORDER-CRITICAL]
       a specific ordering constraint whose violation produces
       non-obvious failure (e.g. stack overflow, silent clobbering,
@@ -87,9 +88,9 @@ BLOCK 1 — CORE CONSTANTS (leaf, no dependencies)
     - constants.js owns LOCAL_STORAGE_KEYS.
     - relationship-constants.js provides RELATIONSHIP_STATUS. Do NOT
       rely on this being the source of truth for the relationship
-      domain — js/social/relationship-types.js also exports
+      domain — js/relationships/relationship-types.js also exports
       RELATIONSHIP_STATUS and is the canonical vocabulary.
-      relationship-types.js loads later and wins the alias.
+      relationship-types.js loads later (BLOCK 23) and wins the alias.
       Apprenticeship, romance, etc. read window.RELATIONSHIP_STATUS,
       which is whichever file loaded last. Under the documented order,
       relationship-types.js loads after this block and overwrites the
@@ -114,7 +115,7 @@ BLOCK 2 — CORE UTILITIES (leaf, no dependencies)
         ui.js, modals-core.js, selector-base.js,
         modals-household-selector.js, rank-ui-list.js,
         modals-rank.js, religion-render.js, modals-religion.js,
-        culture-ui-list.js, culture-modals.js, role-ui-list.js,
+        culture-ui-list.js, modals-culture.js, role-ui-list.js,
         modals-roles.js, modals-role-select.js, modals-name.js,
         modals-crime.js, modals-disaster.js, disaster-ui-stats.js,
         modals-relationship.js, modals-friendship.js,
@@ -124,7 +125,7 @@ BLOCK 2 — CORE UTILITIES (leaf, no dependencies)
       (HARD), and window.getIcon. HARD load-time guard of:
         ui.js, modals-core.js, location-ui-list.js,
         rank-ui-list.js, modals-rank.js, culture-ui-list.js,
-        culture-modals.js, role-ui-list.js, modals-roles.js,
+        modals-culture.js, role-ui-list.js, modals-roles.js,
         modals-role-select.js, modals-name.js, modals-crime.js,
         modals-disaster.js, disaster-ui-stats.js,
         modals-relationship.js, modals-friendship.js.
@@ -368,7 +369,7 @@ BLOCK 5 — CORE ACCESSORS, VALIDATION, WORLD, NAMES
       getLocationPopulationCount (HARD guard of disaster-commands.js;
       REQUIRED by education-queries.js).
     - js/core/names.js is the CORE names module. It is DIFFERENT
-      from the js/modules/names/ subsystem.
+      from the js/names/ subsystem.
 
 
 ==============================================================================
@@ -403,7 +404,7 @@ BLOCK 6 — CORE UI PRIMITIVES
   Notes:
     - ui.js provides showToast / _showToast. HARD load-time guard
       of role-ui-list.js, modals-roles.js, modals-role-select.js,
-      modals-rank.js, culture-modals.js, modals-crime.js,
+      modals-rank.js, modals-culture.js, modals-crime.js,
       modals-disaster.js, modals-relationship.js,
       modals-friendship.js, modals-household*.js,
       modals-residence*.js, modals-helper.js,
@@ -447,7 +448,7 @@ BLOCK 8 — CORE SIMULATION GENERATORS
 BLOCK 9 — SKILL TAXONOMY
 ==============================================================================
 
-  js/skill/skill-utils.js
+  js/roles/skill-utils.js
 
   Notes:
     - Pure constants + pure functions. No dependencies.
@@ -458,26 +459,32 @@ BLOCK 9 — SKILL TAXONOMY
       constants.js, apprenticeship-rules.js, professional-rules.js
       (SkillUtils.getThresholds method check).
     - Optional to role-queries.js (call-time soft).
+    - NOTE: lives under js/roles/, NOT js/skill/.
 
 
 ==============================================================================
-BLOCK 10 — EVENT LOGGER + TIMELINE
+BLOCK 10 — EVENTS
 ==============================================================================
 
-  js/events/eventLogger.js
+  js/events/timeline-core.js
     Provides window.logEvent. HARD load-time guard of
     crime-commands.js, crime-bootstrap.js, disaster-commands.js,
-    disaster-bootstrap.js.
+    disaster-bootstrap.js, relationship-bootstrap.js.
+    (Replaces the master-doc's js/events/eventLogger.js, which does
+    not exist in structure.txt.)
 
-  js/events/timeline-core.js                [UNVERIFIED]
-    Referenced by BLOCK 35 of the previous manifest. Confirm exports
-    and whether any current consumer requires it at load time.
+  js/events/census-core.js
+  js/events/annualProcessing.js
+  js/events/social-events-system.js
 
   Notes:
-    - Optional (typeof-guarded, non-fatal) in name-commands.js,
-      apprenticeship-commands.js, family-commands.js,
-      romance-commands.js, friendship-commands.js,
-      rivalry-commands.js, jealousy-commands.js, affair-commands.js,
+    - All four files live under js/events/. Only timeline-core.js
+      exports logEvent.
+    - Optional (typeof-guarded, non-fatal) logEvent consumers:
+      name-commands.js, apprenticeship-commands.js,
+      family-commands.js, romance-commands.js,
+      friendship-commands.js, rivalry-commands.js,
+      jealousy-commands.js, affair-commands.js,
       household-assignment.js, household-servant.js,
       residence-system.js, industry-commands.js,
       industry-bootstrap.js.
@@ -619,7 +626,7 @@ BLOCK 16 — CHARACTER SUBSYSTEM: CREATION AND DELETION
     <- after: js/character/character-generator.js      (call-time)
     <- after: js/character/family-commands.js          (call-time)
     <- after: js/religion/religion-commands.js         (call-time)
-    <- after: js/modules/names/name-commands.js        (call-time —
+    <- after: js/names/name-commands.js                (call-time —
                                                          persist ONCE
                                                          at end of
                                                          batch)
@@ -628,14 +635,14 @@ BLOCK 16 — CHARACTER SUBSYSTEM: CREATION AND DELETION
     <- AFTER: js/character/character-state.js          (HARD)
     <- after: js/character/family-commands.js          (call-time)
     <- after: js/character/children-commands.js        (call-time)
-    <- after: js/social/relationship-integrations.js   (call-time —
-                                                         RelationshipIntegrations
-                                                         direct call AND
-                                                         registration hook)
+    <- after: js/relationships/relationship-integrations.js
+        (call-time — RelationshipIntegrations direct call AND
+         registration hook)
     <- after: js/households/household-commands.js      (call-time)
     <- after: js/apprenticeship/apprenticeship-commands.js
         (call-time)
-    <- after: rank-issues.js::removeAllReferencesTo    (call-time)
+    <- after: js/ranks/rank-issues.js::removeAllReferencesTo
+        (call-time)
 
 
 ==============================================================================
@@ -677,7 +684,7 @@ BLOCK 18 — NAME SUBSYSTEM
 ==============================================================================
 
   — Name queries —
-  js/modules/names/name-queries.js
+  js/names/name-queries.js
     <- AFTER: js/core/accessors.js         (HARD — getNameLists,
                                             getCharacterById)
     <- AFTER: js/core/randomness.js        (HARD — pickRandom)
@@ -687,54 +694,52 @@ BLOCK 18 — NAME SUBSYSTEM
                                             deepClone)
     <- after: js/character/family-queries.js
         (call-time, OPTIONAL — getParentsByRole)
-    <- after: js/modules/names/name-state.js
+    <- after: js/names/name-state.js
         (call-time, soft — cache hint)
 
   — Name rules —
-  js/modules/names/name-rules.js
-    <- AFTER: js/modules/names/name-queries.js  (HARD)
+  js/names/name-rules.js
+    <- AFTER: js/names/name-queries.js  (HARD)
     <- method checks (HARD): NameQueries.getAncestorNames,
                               NameQueries.getRandomSurname,
                               NameQueries.getCountrySurnameRules,
                               NameQueries.getCharacterCountryId
 
   — Name state —
-  js/modules/names/name-state.js
+  js/names/name-state.js
     <- AFTER: js/core/accessors.js          (HARD)
-    <- AFTER: js/modules/names/name-rules.js (HARD)
+    <- AFTER: js/names/name-rules.js        (HARD)
 
   — Name commands —
-  js/modules/names/name-commands.js
+  js/names/name-commands.js
     <- AFTER: js/core/accessors.js          (HARD — getCharacterById)
     <- AFTER: js/core/storage.js            (HARD — saveMasterData)
     <- AFTER: js/core/time.js               (HARD — getCurrentYear)
-    <- AFTER: js/modules/names/name-state.js (HARD)
-    <- AFTER: js/modules/names/name-rules.js (HARD)
+    <- AFTER: js/names/name-state.js        (HARD)
+    <- AFTER: js/names/name-rules.js        (HARD)
     <- AFTER: js/character/character-commands.js
         (HARD — CharacterCommands; updateCharacter method check)
     <- after: js/core/storage.js            (call-time —
                                              getLastSaveError,
                                              markDataDirty)
-    <- after: js/events/eventLogger.js      (call-time, optional —
+    <- after: js/events/timeline-core.js    (call-time, optional —
                                              logEvent)
 
   — Name system shim (deprecated) —
-  js/modules/names/name-system.js
-    <- AFTER: js/modules/names/name-queries.js  (HARD)
-    <- AFTER: js/modules/names/name-commands.js (HARD; persist
-                                                 method check)
-    <- AFTER: js/modules/names/name-rules.js    (HARD)
+  js/names/name-system.js
+    <- AFTER: js/names/name-queries.js  (HARD)
+    <- AFTER: js/names/name-commands.js (HARD; persist
+                                         method check)
+    <- AFTER: js/names/name-rules.js    (HARD)
 
   — Name modals —
-  js/modules/names/modals-name.js
+  js/names/modals-name.js
     <- AFTER: js/core/formatting.js         (HARD)
     <- AFTER: js/core/icons.js              (HARD)
     <- AFTER: js/core/modals-core.js        (HARD)
     <- AFTER: js/core/world.js              (HARD — getCountryPlaces)
-    <- AFTER: js/modules/names/name-queries.js
-        (HARD)
-    <- AFTER: js/modules/names/name-commands.js
-        (HARD; persist method check)
+    <- AFTER: js/names/name-queries.js      (HARD)
+    <- AFTER: js/names/name-commands.js     (HARD; persist method check)
 
   NAME SUBSYSTEM INVARIANTS (N1–N12): same as the previous manifest.
 
@@ -744,11 +749,11 @@ BLOCK 19 — RANK SUBSYSTEM
 ==============================================================================
 
   — Rank constants —
-  js/core/rank/rank-constants.js
+  js/ranks/rank-constants.js
 
   — Rank rules —
-  js/core/rank/rank-rules.js
-    <- after: js/core/rank/rank-constants.js     (call-time)
+  js/ranks/rank-rules.js
+    <- after: js/ranks/rank-constants.js         (call-time)
     <- after: js/core/formatting.js              (call-time, soft)
     <- after: js/core/names.js                   (call-time, soft)
     Provides: RankRules.allowsMultipleSpouses(rank).
@@ -756,44 +761,44 @@ BLOCK 19 — RANK SUBSYSTEM
     (OPTIONAL; falls back to rank.allowsMultipleSpouses direct read).
 
   — Rank state —
-  js/core/rank/rank-state.js
+  js/ranks/rank-state.js
     <- after: js/core/storage.js                 (call-time)
     <- after: initializeStorage()                 (call-time)
     <- after: js/core/accessors.js               (call-time,
                                                    typeof-guarded)
-    <- after: js/core/rank/rank-rules.js         (call-time)
+    <- after: js/ranks/rank-rules.js             (call-time)
 
   — Rank queries —
-  js/core/rank/rank-queries.js
-    <- AFTER: js/core/rank/rank-state.js          (HARD)
-    <- AFTER: js/core/rank/rank-rules.js          (HARD)
-    <- AFTER: js/core/rank/rank-constants.js      (HARD)
+  js/ranks/rank-queries.js
+    <- AFTER: js/ranks/rank-state.js              (HARD)
+    <- AFTER: js/ranks/rank-rules.js              (HARD)
+    <- AFTER: js/ranks/rank-constants.js          (HARD)
     <- AFTER: js/character/character-state.js     (HARD)
     <- AFTER: js/core/time.js                     (HARD)
-    <- after: js/social/romance-queries.js        (call-time, soft)
+    <- after: js/relationships/romance-queries.js (call-time, soft)
     <- after: js/character/family-queries.js      (call-time, soft)
     <- after: js/core/icons.js                    (call-time, soft)
 
   — Rank assignment —
-  js/core/rank/rank-assignment.js
-    <- AFTER: js/core/rank/rank-state.js          (HARD)
-    <- AFTER: js/core/rank/rank-rules.js          (HARD)
-    <- AFTER: js/core/rank/rank-queries.js        (HARD)
+  js/ranks/rank-assignment.js
+    <- AFTER: js/ranks/rank-state.js              (HARD)
+    <- AFTER: js/ranks/rank-rules.js              (HARD)
+    <- AFTER: js/ranks/rank-queries.js            (HARD)
     <- AFTER: js/character/character-commands.js  (HARD;
                                                    updateRankAssignment
                                                    method check)
     <- AFTER: js/character/character-state.js     (HARD)
     <- AFTER: js/core/time.js                     (HARD)
-    <- after: js/social/romance-queries.js        (call-time, soft)
+    <- after: js/relationships/romance-queries.js (call-time, soft)
     <- method check: RankQueries.getInheritanceSource    (HARD)
     <- method check: RankQueries.getParentIds            (HARD)
 
   — Rank commands —
-  js/core/rank/rank-commands.js
-    <- AFTER: js/core/rank/rank-state.js          (HARD)
-    <- AFTER: js/core/rank/rank-rules.js          (HARD)
-    <- AFTER: js/core/rank/rank-queries.js        (HARD)
-    <- AFTER: js/core/rank/rank-assignment.js     (HARD)
+  js/ranks/rank-commands.js
+    <- AFTER: js/ranks/rank-state.js              (HARD)
+    <- AFTER: js/ranks/rank-rules.js              (HARD)
+    <- AFTER: js/ranks/rank-queries.js            (HARD)
+    <- AFTER: js/ranks/rank-assignment.js         (HARD)
     <- AFTER: js/character/character-commands.js  (HARD)
     <- AFTER: js/core/ids.js                      (HARD)
     <- AFTER: js/core/time.js                     (HARD)
@@ -803,46 +808,46 @@ BLOCK 19 — RANK SUBSYSTEM
     <- method check: RankAssignment.renumberRankHolders    (HARD)
 
   — Rank issues —
-  js/core/rank/rank-issues.js
-    <- AFTER: js/core/rank/rank-state.js          (HARD)
-    <- AFTER: js/core/rank/rank-rules.js          (HARD)
-    <- AFTER: js/core/rank/rank-queries.js        (HARD)
-    <- AFTER: js/core/rank/rank-commands.js       (HARD)
-    <- AFTER: js/core/rank/rank-assignment.js     (HARD)
+  js/ranks/rank-issues.js
+    <- AFTER: js/ranks/rank-state.js              (HARD)
+    <- AFTER: js/ranks/rank-rules.js              (HARD)
+    <- AFTER: js/ranks/rank-queries.js            (HARD)
+    <- AFTER: js/ranks/rank-commands.js           (HARD)
+    <- AFTER: js/ranks/rank-assignment.js         (HARD)
     <- AFTER: js/character/character-state.js     (HARD)
     <- AFTER: js/character/character-commands.js  (HARD)
     <- AFTER: js/core/time.js                     (HARD)
     <- method check: RankQueries.getParentIds         (HARD)
     <- method check: RankQueries.getChildIds          (HARD)
     <- method check: RankAssignment.getHolderGroupKey (HARD)
-    <- after: js/social/romance-queries.js        (call-time, soft)
+    <- after: js/relationships/romance-queries.js (call-time, soft)
     <- after: js/character/family-queries.js      (call-time, soft)
 
   — Rank UI list —
-  js/core/rank/rank-ui-list.js
-    <- AFTER: js/core/rank/rank-queries.js        (HARD)
-    <- AFTER: js/core/rank/rank-state.js          (HARD — surface)
+  js/ranks/rank-ui-list.js
+    <- AFTER: js/ranks/rank-queries.js            (HARD)
+    <- AFTER: js/ranks/rank-state.js              (HARD — surface)
     <- AFTER: js/core/formatting.js               (HARD)
     <- AFTER: js/core/icons.js                    (HARD)
-    <- after: js/core/rank/modals-rank.js         (call-time, soft)
+    <- after: js/ranks/modals-rank.js             (call-time, soft)
 
   — Rank modals —
-  js/core/rank/modals-rank.js
+  js/ranks/modals-rank.js
     <- AFTER: js/core/modals-core.js              (HARD)
     <- AFTER: js/core/icons.js                    (HARD)
     <- AFTER: js/core/formatting.js               (HARD)
     <- AFTER: js/core/ui.js                       (HARD)
-    <- AFTER: js/core/rank/rank-state.js          (HARD)
-    <- AFTER: js/core/rank/rank-rules.js          (HARD)
-    <- AFTER: js/core/rank/rank-queries.js        (HARD)
-    <- AFTER: js/core/rank/rank-commands.js       (HARD)
+    <- AFTER: js/ranks/rank-state.js              (HARD)
+    <- AFTER: js/ranks/rank-rules.js              (HARD)
+    <- AFTER: js/ranks/rank-queries.js            (HARD)
+    <- AFTER: js/ranks/rank-commands.js           (HARD)
     <- AFTER: js/character/character-state.js     (HARD)
     <- AFTER: js/core/time.js                     (HARD)
-    <- AFTER: js/core/rank/rank-constants.js      (HARD)
+    <- AFTER: js/ranks/rank-constants.js          (HARD)
 
   — Rank bootstrap —
-  js/core/rank/rank-bootstrap.js
-    <- AFTER: every other js/core/rank/*.js file (HARD)
+  js/ranks/rank-bootstrap.js
+    <- AFTER: every other js/ranks/*.js file (HARD)
     <- AFTER: js/core/storage.js                  (HARD)
     <- AFTER: initializeStorage()                  (HARD runtime)
     <- AFTER: js/core/accessors.js                (HARD)
@@ -855,7 +860,7 @@ BLOCK 19 — RANK SUBSYSTEM
     <- AFTER: js/core/icons.js                    (HARD)
     <- AFTER: js/core/modals-core.js              (HARD)
     <- AFTER: js/core/ui.js                       (HARD)
-    <- after: js/social/romance-queries.js        (call-time, soft)
+    <- after: js/relationships/romance-queries.js (call-time, soft)
     <- after: js/character/character-lifecycle.js (call-time, soft)
 
   Auto-init: RankBootstrap.init() runs at load. Idempotent.
@@ -888,32 +893,32 @@ BLOCK 20 — ROLE SUBSYSTEM
     - crime does NOT read role at all.
 
   — Role constants —
-  js/systems/roles/role-constants.js
-    <- AFTER: js/skill/skill-utils.js    (HARD — getThresholds)
+  js/roles/role-constants.js
+    <- AFTER: js/roles/skill-utils.js    (HARD — getThresholds)
 
   — Role state —
-  js/systems/roles/role-state.js
-    <- AFTER: js/systems/roles/role-constants.js  (HARD)
+  js/roles/role-state.js
+    <- AFTER: js/roles/role-constants.js  (HARD)
     <- after: js/core/storage.js                  (call-time)
     <- after: initializeStorage()                  (call-time)
     <- after: js/core/accessors.js                (call-time,
                                                     typeof-guarded)
 
   — Role queries —
-  js/systems/roles/role-queries.js
+  js/roles/role-queries.js
     <- AFTER: js/core/accessors.js                (HARD)
     <- AFTER: js/character/character-state.js     (HARD)
     <- AFTER: js/character/character-commands.js  (HARD)
     <- AFTER: js/character/character-queries.js   (HARD)
-    <- AFTER: js/systems/roles/role-state.js      (HARD)
-    <- after: js/skill/skill-utils.js             (call-time, soft)
+    <- AFTER: js/roles/role-state.js              (HARD)
+    <- after: js/roles/skill-utils.js             (call-time, soft)
     <- after: js/core/accessors.js                (call-time, soft)
 
   — Role commands —
-  js/systems/roles/role-commands.js
-    <- AFTER: js/systems/roles/role-constants.js  (HARD)
-    <- AFTER: js/systems/roles/role-state.js      (HARD)
-    <- AFTER: js/systems/roles/role-queries.js    (HARD)
+  js/roles/role-commands.js
+    <- AFTER: js/roles/role-constants.js  (HARD)
+    <- AFTER: js/roles/role-state.js      (HARD)
+    <- AFTER: js/roles/role-queries.js    (HARD)
     <- AFTER: js/character/character-commands.js  (HARD; five
                                                     profession
                                                     method checks)
@@ -923,52 +928,52 @@ BLOCK 20 — ROLE SUBSYSTEM
     <- after: js/core/storage.js                  (call-time)
 
   — Role system shim (deprecated) —
-  js/systems/roles/role-system.js                 [LOAD-ORDER-CRITICAL]
-    <- AFTER: js/systems/roles/role-constants.js  (HARD)
-    <- AFTER: js/systems/roles/role-state.js      (HARD)
-    <- AFTER: js/systems/roles/role-queries.js    (HARD)
-    <- AFTER: js/systems/roles/role-commands.js   (HARD)
-    <- AFTER: js/skill/skill-utils.js             (HARD; getTier
-                                                    method check)
+  js/roles/role-system.js                 [LOAD-ORDER-CRITICAL]
+    <- AFTER: js/roles/role-constants.js  (HARD)
+    <- AFTER: js/roles/role-state.js      (HARD)
+    <- AFTER: js/roles/role-queries.js    (HARD)
+    <- AFTER: js/roles/role-commands.js   (HARD)
+    <- AFTER: js/roles/skill-utils.js     (HARD; getTier
+                                            method check)
 
   — Role UI list —
-  js/systems/roles/role-ui-list.js
+  js/roles/role-ui-list.js
     <- AFTER: js/core/formatting.js               (HARD)
     <- AFTER: js/core/ui.js                       (HARD)
     <- AFTER: js/core/icons.js                    (HARD)
-    <- AFTER: js/skill/skill-utils.js             (HARD)
-    <- AFTER: js/systems/roles/role-constants.js  (HARD)
-    <- AFTER: js/systems/roles/role-state.js      (HARD)
-    <- AFTER: js/systems/roles/role-queries.js    (HARD)
-    <- AFTER: js/systems/roles/role-commands.js   (HARD)
+    <- AFTER: js/roles/skill-utils.js             (HARD)
+    <- AFTER: js/roles/role-constants.js  (HARD)
+    <- AFTER: js/roles/role-state.js      (HARD)
+    <- AFTER: js/roles/role-queries.js    (HARD)
+    <- AFTER: js/roles/role-commands.js   (HARD)
     <- after: window.openDeleteRoleModal          (call-time, soft)
 
   — Role modals —
-  js/systems/roles/modals-roles.js
+  js/roles/modals-roles.js
     <- AFTER: js/core/modals-core.js              (HARD)
     <- AFTER: js/core/formatting.js               (HARD)
     <- AFTER: js/core/ui.js                       (HARD)
     <- AFTER: js/core/icons.js                    (HARD)
-    <- AFTER: js/skill/skill-utils.js             (HARD)
-    <- AFTER: js/systems/roles/role-constants.js  (HARD)
-    <- AFTER: js/systems/roles/role-state.js      (HARD)
-    <- AFTER: js/systems/roles/role-queries.js    (HARD)
-    <- AFTER: js/systems/roles/role-commands.js   (HARD)
+    <- AFTER: js/roles/skill-utils.js             (HARD)
+    <- AFTER: js/roles/role-constants.js  (HARD)
+    <- AFTER: js/roles/role-state.js      (HARD)
+    <- AFTER: js/roles/role-queries.js    (HARD)
+    <- AFTER: js/roles/role-commands.js   (HARD)
     <- AFTER: js/character/character-queries.js   (HARD)
     <- AFTER: js/core/accessors.js                (HARD)
     <- AFTER: js/core/time.js                     (HARD)
     <- AFTER: js/core/world.js                    (call-time, soft)
 
   — Role select modals —
-  js/core/modals/modals-role-select.js
+  js/roles/modals-role-select.js
     <- AFTER: js/core/modals-core.js              (HARD)
     <- AFTER: js/core/formatting.js               (HARD)
     <- AFTER: js/core/ui.js                       (HARD)
     <- AFTER: js/core/icons.js                    (HARD; Icons.CIRCLE
                                                     required)
-    <- AFTER: js/systems/roles/role-constants.js  (HARD)
-    <- AFTER: js/systems/roles/role-state.js      (HARD)
-    <- AFTER: js/systems/roles/role-queries.js    (HARD)
+    <- AFTER: js/roles/role-constants.js  (HARD)
+    <- AFTER: js/roles/role-state.js      (HARD)
+    <- AFTER: js/roles/role-queries.js    (HARD)
 
   ROLE SUBSYSTEM INVARIANTS (RO1–RO12): same as the previous
   manifest. RO5 — role-queries.js before role-system.js — remains
@@ -976,704 +981,7 @@ BLOCK 20 — ROLE SUBSYSTEM
 
 
 ==============================================================================
-BLOCK 21 — RELATIONSHIP DOMAIN: VOCABULARY, UTILITIES, STATE, CORE PIPELINE
-==============================================================================
-
-This block is the base of the relationship subsystem. Its files are
-loaded once, early enough that every domain module (romance,
-friendship, rivalry, jealousy, affair, matchmaking, professional),
-finder, integrations, ui-metadata, and modals can load AFTER it.
-
-  — Vocabulary —
-  js/social/relationship-types.js
-    Notes:
-      - Leaf. No dependencies.
-      - Load-time assertion: every archetype, attribute, status has
-        complete category/direction/roles/scope/owner metadata.
-      - Exports window.RELATIONSHIP_ARCHETYPES,
-        window.RELATIONSHIP_ATTRIBUTES, window.RELATIONSHIP_STATUS,
-        and the namespace window.RELATIONSHIP_TYPES.
-      - window.RELATIONSHIP_STATUS is OVERWRITTEN here (it was set
-        by BLOCK 1's relationship-constants.js). Everything below
-        reads the relationship-types.js values.
-
-  — Utilities —
-  js/social/relationship-utils.js
-    <- AFTER: (nothing)  (leaf)
-    Notes:
-      - Exports window.RelationshipUtils.
-      - Pure helpers; no archetype knowledge.
-
-  — State —
-  js/social/relationship-state.js
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- AFTER: js/social/relationship-utils.js     (HARD)
-    <- AFTER: js/core/storage.js                  (call-time —
-                                                   masterData,
-                                                   markDataDirty)
-    <- AFTER: initializeStorage()                  (call-time)
-    Notes:
-      - Canonical array on masterData.data.relationships.
-      - Lazy hydrate via _ensureInitializedFromMasterData on first
-        access. Reloads on masterDataUpdated with structural
-        validation preserved on corrupt record(s).
-      - Subscriber exceptions isolated.
-
-  — Queries —
-  js/social/relationship-queries.js
-    <- AFTER: js/social/relationship-state.js     (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    Notes:
-      - Read-only projections over RelationshipState.
-      - No archetype interpretation. No attribute interpretation.
-
-  — Commands —
-  js/social/relationship-commands.js
-    <- AFTER: js/social/relationship-state.js     (HARD)
-    <- AFTER: js/social/relationship-utils.js     (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- AFTER: js/social/relationship-queries.js   (HARD)
-    <- AFTER: js/core/ids.js                      (call-time —
-                                                   generateId)
-    Notes:
-      - Single write boundary. Structural validation only.
-      - createBatch is the atomic multi-insert primitive used by
-        friendship-commands.js::createMutualFriendships.
-      - endAllActiveForCharacter applies the same endYear >= startYear
-        check as the single-record paths, rejecting inconsistent
-        records in the `rejected` array.
-      - removeAllReferencesTo is the hard-delete primitive used by
-        relationship-integrations.js.
-
-
-==============================================================================
-BLOCK 22 — RELATIONSHIP DOMAIN: PER-ARCHETYPE RULES
-==============================================================================
-
-Each rules module is a leaf policy module over the base vocabulary and
-utilities. They are loaded together — order among them is unimportant
-— so that any domain query or command module can load after BLOCK 22.
-
-  js/social/romance-rules.js
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- AFTER: js/social/relationship-utils.js     (HARD)
-    <- after: js/culture/culture-rules.js         (call-time —
-                                                   supportsRelationshipAttribute,
-                                                   required when
-                                                   validateAttributesForCulture
-                                                   is invoked with a
-                                                   cultural attribute)
-    Notes:
-      - Multi-partner policy: rank-only. `allowsMultipleByTrait` is
-        DEPRECATED (always false, one-revision grace). See the module
-        header for the removal plan.
-      - CultureRules must be available at call time; the module does
-        NOT throw at load if it is absent. Callers who cannot
-        guarantee the cultural layer must pass only universal
-        attributes.
-
-  js/social/friendship-rules.js
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- AFTER: js/social/relationship-utils.js     (HARD)
-
-  js/social/rivalry-rules.js
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- AFTER: js/social/relationship-utils.js     (HARD)
-
-  js/social/professional-rules.js
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- AFTER: js/social/relationship-utils.js     (HARD)
-    <- AFTER: js/skill/skill-utils.js             (HARD —
-                                                   getThresholds
-                                                   method check)
-    Notes:
-      - Thresholds come from SkillUtils. TEACHING_MIN_SKILL and
-        MASTER_MIN_SKILL are the canonical values (mirrored for
-        convenience; not a second source of truth).
-
-  js/social/jealousy-rules.js
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    Notes:
-      - Reads trait ids from character.traits via the caller-supplied
-        facts (never from state). Trait vocabulary is
-        CHARACTER_TRAIT_VALUES from BLOCK 1; the relationship
-        bootstrap REQUIRES CHARACTER_TRAITS and
-        CHARACTER_TRAIT_VALUES as globals.
-      - No state access. All facts explicit. Rolls caller-supplied.
-
-  js/social/affair-rules.js
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    Notes:
-      - discovery, reconciliation, scandal, legitimization,
-        affair-type vocabulary.
-      - isAffair predicate remains in RomanceRules.
-      - No randomness.
-
-  js/social/matchmaking-rules.js
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    Notes:
-      - eligibility, gender preference, age gap, acceptance chance.
-      - Rolls supplied by the caller as an array. Deterministic
-        otherwise.
-
-
-==============================================================================
-BLOCK 23 — RELATIONSHIP DOMAIN: PER-ARCHETYPE QUERIES
-==============================================================================
-
-  js/social/romance-queries.js
-    <- AFTER: js/social/relationship-queries.js   (HARD)
-    <- AFTER: js/social/romance-rules.js          (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    Notes:
-      - Attribute interpretation for committed edges is owned here.
-      - getMultiPartnerFacts forwards external facts (rank-only
-        decision; allowsMultipleByTrait is interim dead).
-
-  js/social/friendship-queries.js
-    <- AFTER: js/social/relationship-queries.js   (HARD)
-    <- AFTER: js/social/friendship-rules.js       (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-
-  js/social/rivalry-queries.js
-    <- AFTER: js/social/relationship-queries.js   (HARD)
-    <- AFTER: js/social/rivalry-rules.js          (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-
-  js/social/professional-queries.js
-    <- AFTER: js/social/relationship-queries.js   (HARD)
-    <- AFTER: js/social/professional-rules.js     (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- AFTER: js/character/character-commands.js  (HARD —
-                                                   CharacterCommands.getProfession
-                                                   method check)
-    <- after: js/systems/roles/role-state.js      (call-time —
-                                                   preferred role
-                                                   reader; falls back
-                                                   to accessors.getRoleById
-                                                   if absent)
-    Notes:
-      - Skill is read via CharacterCommands.getProfession (the
-        canonical accessor for character.professions[i].skillLevel).
-      - Role name resolution prefers RoleState.getRole (clones),
-        falls back to window.getRoleById (live cached record), and
-        finally to returning roleId.
-
-  js/social/jealousy-queries.js
-    <- AFTER: js/social/relationship-queries.js   (HARD)
-    <- AFTER: js/social/romance-queries.js        (HARD)
-    <- AFTER: js/social/rivalry-queries.js        (HARD)
-    <- AFTER: js/social/jealousy-rules.js         (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- after: js/core/accessors.js                (call-time —
-                                                   getCharacterById,
-                                                   getCharacters,
-                                                   getRankById)
-
-  js/social/affair-queries.js
-    <- AFTER: js/social/relationship-queries.js   (HARD)
-    <- AFTER: js/social/romance-queries.js        (HARD)
-    <- AFTER: js/social/romance-rules.js          (HARD)
-    <- AFTER: js/social/affair-rules.js           (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- after: js/core/accessors.js                (call-time —
-                                                   getCharacterById,
-                                                   getCurrentLocation)
-    Notes:
-      - affairType is NOT defaulted. If a record's metadata lacks
-        it, the projection returns null — signals a record written
-        outside sanctioned paths. Correct paths (startCommittedRelationship
-        and AffairCommands.createAffair) always write it.
-
-  js/social/matchmaking-queries.js
-    <- AFTER: js/social/matchmaking-rules.js      (HARD)
-    <- AFTER: js/social/romance-queries.js        (HARD)
-    <- AFTER: js/social/relationship-queries.js   (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- after: js/core/accessors.js                (call-time —
-                                                   getCharacterById,
-                                                   getCharacters,
-                                                   getCurrentLocation)
-    <- after: js/core/time.js                     (call-time —
-                                                   getCurrentYearSafe,
-                                                   calculateAge)
-
-
-==============================================================================
-BLOCK 24 — RELATIONSHIP DOMAIN: PER-ARCHETYPE COMMANDS
-==============================================================================
-
-  js/social/romance-commands.js
-    <- AFTER: js/social/relationship-commands.js  (HARD)
-    <- AFTER: js/social/romance-rules.js          (HARD)
-    <- AFTER: js/social/romance-queries.js        (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- after: js/core/accessors.js                (call-time —
-                                                   getCharacterById,
-                                                   getCurrentYearSafe,
-                                                   calculateAge)
-    <- after: js/core/rank/rank-rules.js          (OPTIONAL —
-                                                   allowsMultipleSpouses;
-                                                   falls back to
-                                                   direct field read)
-    <- after: js/core/accessors.js                (OPTIONAL —
-                                                   getRankById for
-                                                   rank facts)
-    <- after: js/culture/culture-rules.js         (call-time —
-                                                   via
-                                                   RomanceRules.validateAttributesForCulture
-                                                   when a cultural
-                                                   attribute is
-                                                   requested)
-    Notes:
-      - COMMIT SEMANTICS: startCommittedRelationship ONE commit;
-        startCasualDating ONE; startOneNightStand TWO (create + end
-        immediately); attribute add/remove ONE; breakUp ONE;
-        deathEndsRelationship ONE; endAllRomanticForCharacter N
-        (one per ended relationship, not atomic).
-      - DEFAULT_AFFAIR_TYPE ('secret') is written for affairs created
-        via startCommittedRelationship.
-      - Multi-partner facts: allowsMultipleByRank sourced from
-        rank.allowsMultipleSpouses (via RankRules if loaded, else
-        direct read); allowsMultipleByTrait hardcoded false.
-
-  js/social/friendship-commands.js
-    <- AFTER: js/social/relationship-commands.js  (HARD — createBatch
-                                                   METHOD CHECK)
-    <- AFTER: js/social/friendship-rules.js       (HARD)
-    <- AFTER: js/social/friendship-queries.js     (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- after: js/core/accessors.js                (call-time —
-                                                   getCharacterById)
-    <- after: js/core/time.js                     (call-time —
-                                                   getCurrentYearSafe)
-    <- after: js/core/ids.js                      (call-time —
-                                                   generateId)
-    Notes:
-      - createMutualFriendships is ALL-OR-NOTHING (RC.createBatch).
-      - Two-commit paths for strength-to-zero / event-to-zero
-        documented in the module header.
-
-  js/social/rivalry-commands.js
-    <- AFTER: js/social/relationship-commands.js  (HARD)
-    <- AFTER: js/social/rivalry-rules.js          (HARD)
-    <- AFTER: js/social/rivalry-queries.js        (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- after: js/core/accessors.js                (call-time —
-                                                   getCharacterById)
-    <- after: js/core/time.js                     (call-time —
-                                                   getCurrentYearSafe,
-                                                   calculateAge)
-
-  js/social/jealousy-commands.js
-    <- AFTER: js/social/rivalry-commands.js       (HARD)
-    <- AFTER: js/social/jealousy-rules.js         (HARD)
-    <- AFTER: js/social/jealousy-queries.js       (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- after: js/core/accessors.js                (call-time —
-                                                   getCharacterById,
-                                                   getCharacters)
-    <- after: js/core/time.js                     (call-time —
-                                                   getCurrentYearSafe)
-    <- after: js/core/randomness.js               (call-time —
-                                                   Random.next or
-                                                   randomNext)
-    Notes:
-      - Rolls sourced via _roll helper: Random.next first,
-        randomNext fallback. Never Math.random.
-      - triggerConfrontation creates a rivalry via
-        RivalryCommands.createRivalry when consequence warrants it.
-
-  js/social/affair-commands.js
-    <- AFTER: js/social/relationship-commands.js  (HARD)
-    <- AFTER: js/social/relationship-queries.js   (HARD — required for
-                                                   record reads; the
-                                                   module header
-                                                   explicitly calls this
-                                                   out)
-    <- AFTER: js/social/romance-commands.js       (HARD)
-    <- AFTER: js/social/romance-rules.js          (HARD)
-    <- AFTER: js/social/romance-queries.js        (HARD)
-    <- AFTER: js/social/affair-rules.js           (HARD)
-    <- AFTER: js/social/affair-queries.js         (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- after: js/core/accessors.js                (call-time —
-                                                   getCharacterById,
-                                                   getCurrentYearSafe,
-                                                   getRankById)
-    <- after: js/core/randomness.js               (call-time —
-                                                   Random.next or
-                                                   randomNext)
-    <- after: js/core/storage.js                  (call-time, via
-                                                   RC which owns
-                                                   markDataDirty)
-    <- after: window.MurderCommands.commitMurder  (call-time, OPTIONAL)
-    <- after: window.ExecutionCommands.execute    (call-time, OPTIONAL)
-    Notes:
-      - COMMIT SEMANTICS: createAffair TWO commits
-        (RomanceCommands.startCommittedRelationship, then
-        RelationshipCommands.update for the affair-specific
-        metadata). Rationale documented in the module header (same
-        pattern as children-commands.js::recordPregnancyAttempts).
-        All other commands are single-commit.
-      - Cross-domain consequence application (murder, execution)
-        degrades gracefully when the corresponding command modules
-        are absent.
-
-  js/social/professional-commands.js
-    <- AFTER: js/social/relationship-commands.js  (HARD)
-    <- AFTER: js/social/relationship-queries.js   (HARD)
-    <- AFTER: js/social/professional-rules.js     (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- after: js/core/accessors.js                (call-time —
-                                                   getCharacterById)
-    <- after: js/core/time.js                     (call-time —
-                                                   getCurrentYearSafe)
-    Notes:
-      - Edge primitive: createEdge, updateEdgeMetadata,
-        updateEdgeFields, endEdge, removeEdge.
-      - Directionality ENFORCED: _getActiveDirectionalEdge checks A→B,
-        not B→A. Reversed edges are distinct relationships.
-      - ProfessionalCommands does NOT own the apprenticeship
-        LIFECYCLE. That lives in ApprenticeshipCommands. The
-        bootstrap REQUIRED_METHODS list confirms this.
-
-
-==============================================================================
-BLOCK 25 — RELATIONSHIP DOMAIN: FINDER, UI METADATA, INTEGRATIONS
-==============================================================================
-
-  js/social/relationship-finder-queries.js
-    <- AFTER: js/social/relationship-queries.js   (HARD)
-    <- AFTER: js/character/family-queries.js      (HARD)
-    <- AFTER: js/character/family-rules.js        (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- after: js/core/accessors.js                (call-time —
-                                                   getCharacterById,
-                                                   getCurrentLocation)
-    <- after: js/core/time.js                     (call-time —
-                                                   getCurrentYear,
-                                                   calculateAge)
-    <- after: window.getActiveRankDisplay          (call-time, soft)
-    Notes:
-      - Uses 'parent_child' LITERAL for parentage viaType.
-      - Parent edge wrappers carry .id (not .relationshipId).
-      - Fetches parent edges with { includeEnded: true }.
-
-  js/social/relationship-ui-metadata.js
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    Notes:
-      - Load-time assertion: every archetype / attribute / status has
-        a UI entry, or the file throws. Adding an archetype or
-        attribute requires a corresponding UI entry before this file
-        will load.
-
-  js/social/relationship-integrations.js
-    <- AFTER: js/social/relationship-commands.js  (HARD)
-    <- AFTER: js/social/romance-commands.js       (HARD)
-    <- AFTER: js/social/romance-queries.js        (HARD)
-    <- AFTER: js/social/friendship-commands.js    (HARD)
-    <- AFTER: js/social/friendship-queries.js     (HARD)
-    <- AFTER: js/social/rivalry-commands.js       (HARD)
-    <- AFTER: js/social/rivalry-queries.js        (HARD)
-    <- AFTER: js/social/professional-commands.js  (HARD)
-    <- AFTER: js/social/professional-queries.js   (HARD)
-    <- AFTER: js/social/affair-queries.js         (HARD)
-    <- AFTER: js/social/affair-commands.js        (HARD)
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- AFTER: js/core/accessors.js                (HARD — getCharacterById,
-                                                   getCharacters)
-    <- AFTER: js/core/time.js                     (HARD — getCurrentYear)
-    <- after: js/core/randomness.js               (call-time —
-                                                   Random.next or
-                                                   randomNext)
-    <- after: js/apprenticeship/apprenticeship-commands.js
-        (call-time — ApprenticeshipCommands.terminateApprenticeship
-        only; absence does NOT fail the death cascade, it surfaces
-        APPRENTICESHIP_COMMANDS_UNAVAILABLE in the result)
-    <- after: js/social/jealousy-commands.js      (call-time, OPTIONAL
-                                                   in processAnnualLifecycle)
-    <- after: js/core/storage.js                  (call-time — markDirty
-                                                   via commands,
-                                                   invalidateAccessorCaches
-                                                   via commands)
-    Notes:
-      - Registers window.registerDeathHandler and
-        window.registerDeleteHandler at load time. Both are
-        no-ops with a warning when the register function is absent
-        (a pre-Phase-3.13 build).
-      - APPRENTICESHIP CLEANUP: calls
-        ApprenticeshipCommands.terminateApprenticeship, NOT
-        ProfessionalCommands.endApprenticeship (never existed).
-        roleId resolved from relationship record metadata
-        (metadata.roleId); malformed records surface as
-        APPRENTICESHIP_MISSING_ROLE.
-      - Partnership projections (getPartnershipProjection,
-        getAllPartnershipProjections) are AVAILABLE FOR CONSUMPTION
-        but not currently consumed by any module in the tree —
-        documented in the module header.
-
-
-==============================================================================
-BLOCK 26 — RELATIONSHIP DOMAIN: MODALS
-==============================================================================
-
-  js/social/modals-relationship.js
-    <- AFTER: js/social/relationship-types.js     (HARD)
-    <- AFTER: js/social/relationship-ui-metadata.js (HARD)
-    <- AFTER: js/core/modals-core.js              (HARD — openModal,
-                                                   closeTopModal)
-    <- AFTER: js/core/formatting.js               (HARD — _escapeHtml)
-    <- AFTER: js/core/ui.js                       (HARD — _showToast)
-    <- AFTER: js/core/icons.js                    (HARD — Icons)
-    <- AFTER: js/core/accessors.js                (HARD — getCharacterById,
-                                                   getCurrentLocation)
-    <- AFTER: js/core/time.js                     (HARD — getCurrentYear,
-                                                   calculateAge)
-    <- AFTER: js/social/romance-commands.js       (HARD)
-    <- AFTER: js/social/friendship-commands.js    (HARD)
-    <- AFTER: js/social/rivalry-commands.js       (HARD)
-    <- AFTER: js/social/professional-commands.js  (HARD)
-    <- AFTER: js/apprenticeship/apprenticeship-commands.js (HARD)
-    Notes:
-      - The apprenticeship dispatch calls
-        ApprenticeshipCommands.createApprenticeship, NOT
-        ProfessionalCommands.createEdge. The ownership boundary is
-        enforced here.
-
-  js/social/modals-friendship.js
-    <- AFTER: js/social/friendship-rules.js       (HARD)
-    <- AFTER: js/social/friendship-queries.js     (HARD)
-    <- after: js/core/accessors.js                (call-time —
-                                                   getCharacterById)
-    <- after: js/core/time.js                     (call-time —
-                                                   getCurrentYear,
-                                                   calculateAge)
-    <- after: js/core/ui.js                       (call-time —
-                                                   _showToast)
-    <- after: js/core/icons.js                    (call-time — Icons)
-    <- after: js/core/modals-core.js              (call-time —
-                                                   openModal,
-                                                   closeTopModal)
-    <- after: js/core/formatting.js               (call-time —
-                                                   escapeHtml)
-    <- after: js/social/relationship-commands.js  (call-time —
-                                                   RelationshipCommands.update
-                                                   used in the edit
-                                                   modal)
-
-
-==============================================================================
-BLOCK 27 — RELATIONSHIP DOMAIN: BOOTSTRAP
-==============================================================================
-
-  js/social/relationship-bootstrap.js
-    <- AFTER: every js/social/*.js file in BLOCK 21–26 (HARD — the
-               REQUIRED_MODULES list is verified at load time)
-    <- AFTER: js/core/accessors.js                (HARD —
-                                                   REQUIRED_GLOBALS
-                                                   getCharacterById,
-                                                   getCharacters)
-    <- AFTER: js/core/time.js                     (HARD —
-                                                   REQUIRED_GLOBALS
-                                                   getCurrentYear,
-                                                   calculateAge)
-    <- AFTER: js/core/ids.js                      (HARD —
-                                                   REQUIRED_GLOBALS
-                                                   generateId)
-    <- AFTER: js/core/storage.js                  (HARD —
-                                                   REQUIRED_GLOBALS
-                                                   markDataDirty)
-    <- AFTER: js/events/eventLogger.js            (HARD —
-                                                   REQUIRED_GLOBALS
-                                                   logEvent)
-    <- AFTER: js/core/randomness.js               (HARD —
-                                                   REQUIRED_GLOBALS
-                                                   Random; see
-                                                   RANDOMNESS
-                                                   DEPENDENCY in
-                                                   the bootstrap
-                                                   header)
-    <- AFTER: js/culture/culture-rules.js         (HARD —
-                                                   REQUIRED_GLOBALS
-                                                   CultureRules;
-                                                   REQUIRED_CULTURE_RULES_METHODS
-                                                   supportsRelationshipAttribute)
-    <- AFTER: js/core/constants/character-traits.js (HARD —
-                                                   REQUIRED_GLOBALS
-                                                   CHARACTER_TRAITS,
-                                                   CHARACTER_TRAIT_VALUES)
-    <- AFTER: js/character/family-queries.js      (HARD —
-                                                   REQUIRED_METHODS
-                                                   FamilyQueries.method check)
-    <- AFTER: js/character/family-rules.js        (HARD —
-                                                   REQUIRED_METHODS
-                                                   FamilyRules.method check)
-    <- after: js/skill/skill-utils.js             (CONDITIONAL —
-                                                   SkillQueries /
-                                                   SkillCommands)
-    <- after: window.MurderCommands                (CONDITIONAL)
-    <- after: window.ExecutionCommands             (CONDITIONAL)
-    <- after: js/apprenticeship/apprenticeship-commands.js
-        (CONDITIONAL — absence does NOT fail the bootstrap; the
-        death cascade surfaces APPRENTICESHIP_COMMANDS_UNAVAILABLE
-        per affected edge)
-    <- after: window.getCurrentLocation             (OPTIONAL)
-    <- after: window.getActiveRankDisplay           (OPTIONAL)
-    <- after: window.getRankById                    (OPTIONAL)
-    <- after: window.registerLifecycleHook          (OPTIONAL)
-    <- after: window.Icons, window.escapeHtml,
-              window.showToast, window.openModal,
-              window.closeTopModal                  (OPTIONAL)
-    Notes:
-      - Fail loud. Missing modules, missing globals, missing methods
-        on REQUIRED_METHODS throw at load.
-      - Conditional dependencies (SkillQueries, SkillCommands,
-        MurderCommands, ExecutionCommands, ApprenticeshipCommands)
-        are warn-only at load.
-      - Optional dependencies (Icons, escapeHtml, showToast,
-        openModal, closeTopModal, etc.) are warn-only at load.
-      - Exposes window.Relationships with full namespace.
-      - Load LAST within the relationship subsystem. Its presence
-        confirms every module and every method the domain dispatches
-        to actually exists — it is the single source of truth for
-        "the relationship subsystem is fully operational".
-
-
-==============================================================================
-BLOCK 28 — APPRENTICESHIP SUBSYSTEM
-==============================================================================
-
-  — Apprenticeship constants —
-  js/apprenticeship/apprenticeship-constants.js
-    <- AFTER: js/skill/skill-utils.js    (HARD — getThresholds
-                                          method check)
-
-  — Apprenticeship rules —
-  js/apprenticeship/apprenticeship-rules.js
-    <- AFTER: js/apprenticeship/apprenticeship-constants.js
-        (HARD)
-    <- AFTER: js/skill/skill-utils.js
-        (HARD)
-
-  — Apprenticeship queries —
-  js/apprenticeship/apprenticeship-queries.js
-    <- AFTER: js/social/relationship-types.js     (HARD —
-                                                   RELATIONSHIP_ARCHETYPES,
-                                                   RELATIONSHIP_STATUS)
-    <- AFTER: js/social/relationship-queries.js   (HARD —
-                                                   RelationshipQueries)
-    <- AFTER: js/character/character-commands.js  (HARD —
-                                                   getProfession
-                                                   method check)
-    <- AFTER: js/systems/roles/role-state.js      (HARD —
-                                                   getRole method check)
-    <- AFTER: js/apprenticeship/apprenticeship-rules.js
-        (HARD)
-    <- AFTER: js/core/accessors.js                (HARD —
-                                                   getCharacterById)
-    <- AFTER: js/core/time.js                     (HARD —
-                                                   getCurrentYear)
-    <- after: js/apprenticeship/apprenticeship-constants.js
-        (call-time)
-    <- after: js/settlement/settlement-queries.js
-        (call-time —
-         SettlementQueries.getSettlementMastersByRole)
-
-  — Apprenticeship commands —
-  js/apprenticeship/apprenticeship-commands.js
-    <- AFTER: js/apprenticeship/apprenticeship-rules.js
-        (HARD)
-    <- AFTER: js/apprenticeship/apprenticeship-queries.js
-        (HARD)
-    <- AFTER: js/social/professional-commands.js
-        (HARD — createEdge, updateEdgeMetadata,
-         updateEdgeFields, endEdge, removeEdge
-         method checks)
-    <- AFTER: js/character/character-commands.js
-        (HARD — getProfession, updateProfession,
-         addProfession, addProfessionSpecialization,
-         removeProfession method checks)
-    <- AFTER: js/systems/roles/role-commands.js
-        (HARD — recordCharacterSkillProgress
-         method check)
-    <- AFTER: js/social/relationship-types.js
-        (HARD)
-    <- after: js/core/accessors.js
-        (call-time — getCharacterById)
-    <- after: js/systems/roles/role-state.js
-        (call-time — RoleState.getRole, LENIENT)
-    <- after: js/core/time.js
-        (call-time — getCurrentYear)
-    <- after: js/core/randomness.js
-        (call-time — window.Random.next / randomNext)
-    <- after: js/professional/skill-transfer-constants.js
-        [UNVERIFIED] (call-time — window.SKILL_TRANSFER_METHODS)
-    <- after: js/core/storage.js
-        (call-time — saveMasterData via persist())
-
-  — Professional knowledge commands —
-  js/apprenticeship/professional-knowledge-commands.js
-    <- after: js/core/accessors.js
-        (call-time — getCharacterById)
-    <- after: js/systems/roles/role-state.js
-        OR js/core/accessors.js::getRoleById
-        (call-time — _getRoleById; throws if BOTH missing)
-    <- after: js/core/time.js
-        (call-time — getCurrentYear, calculateAge)
-    <- after: js/character/character-commands.js
-        (call-time — addProfession, updateProfession,
-         getProfession, getProfessions)
-    <- after: js/systems/roles/role-commands.js
-        (call-time — recordCharacterSkillProgress)
-    <- after: js/core/storage.js
-        (NOT called — the caller's death cascade is the
-         persistence boundary)
-
-  — Apprenticeship modals —
-  js/apprenticeship/modals-apprenticeship.js
-    <- AFTER: js/core/modals-core.js
-        (HARD — openModal, closeTopModal, confirmDialog)
-    <- AFTER: js/core/formatting.js
-        (HARD — _escapeHtml)
-    <- AFTER: js/core/ui.js
-        (HARD — _showToast)
-    <- AFTER: js/core/icons.js
-        (HARD — Icons)
-    <- AFTER: js/core/accessors.js
-        (HARD — getCharacterById, getPlaceById)
-    <- AFTER: js/core/time.js
-        (HARD — getCurrentYear, calculateAge)
-    <- AFTER: js/apprenticeship/apprenticeship-queries.js
-        (HARD)
-    <- AFTER: js/apprenticeship/apprenticeship-commands.js
-        (HARD)
-    <- AFTER: js/apprenticeship/apprenticeship-rules.js
-        (HARD)
-    <- AFTER: js/apprenticeship/apprenticeship-constants.js
-        (HARD)
-    <- after: js/core/world.js
-        (call-time, soft — getCurrentPlace,
-         getCurrentLocationId)
-    <- after: js/core/ui.js
-        (call-time, soft — showToast fallback)
-
-  APPRENTICESHIP SUBSYSTEM INVARIANTS (A1–A20): same as the
-  previous manifest. Notable:
-    A5 — relationship-queries.js before apprenticeship-queries.js.
-    A10 — professional-commands.js, character-commands.js,
-          role-commands.js, relationship-types.js before
-          apprenticeship-commands.js.
-    A18 — window.SKILL_TRANSFER_METHODS [UNVERIFIED] before the
-          first teachSkill call.
-    A19 — window.Random.next OR window.randomNext before the first
-          teachSkill / any command that needs a roll.
-    A20 — core/storage.js before apprenticeship-commands.js::persist
-          is first called.
-
-
-==============================================================================
-BLOCK 29 — RELIGION SUBSYSTEM
+BLOCK 21 — RELIGION SUBSYSTEM
 ==============================================================================
 
   — Religion constants —
@@ -1761,30 +1069,32 @@ BLOCK 29 — RELIGION SUBSYSTEM
 
   Notes:
     - religion-queries.js installs window.ReligionQueries.
-      Culture reads this namespace at load time (BLOCK 30).
+      Culture reads this namespace at load time (BLOCK 22).
       Education reads ReligionState at CALL TIME.
 
 
 ==============================================================================
-BLOCK 30 — CULTURE SUBSYSTEM
+BLOCK 22 — CULTURE SUBSYSTEM
 ==============================================================================
 
-  This block assumes window.PlaceQueries is available BEFORE
-  culture-queries.js loads. Culture's LOAD-TIME guards on
-  PlaceQueries, ReligionQueries, and CharacterQueries are all HARD.
+  Culture is loaded BEFORE the relationship domain (BLOCK 23) so that
+  culture-rules.js is available when relationship-bootstrap.js loads
+  (Invariant 107). This resolves the master doc's original inversion
+  where relationship-bootstrap.js sat above culture-rules.js.
 
   Notes:
     - culture-rules.js is a HARD dependency of
       romance-rules.js — validateAttributesForCulture consults
-      CultureRules.supportsRelationshipAttribute at CALL TIME. Under
-      the documented load order, culture-rules.js loads before the
-      relationship domain (BLOCK 21–27). Relationship-bootstrap
-      REQUIRES CultureRules as a global.
-    - romance-rules.js is loaded BEFORE culture-rules.js in the
-      HTML, so romance-rules.js does NOT throw at load if
-      CultureRules is absent — that is intentional. It throws only
-      when validateAttributesForCulture is invoked with a
-      cultural attribute.
+      CultureRules.supportsRelationshipAttribute at CALL TIME.
+      Relationship-bootstrap REQUIRES CultureRules as a global, and
+      relationship-bootstrap loads after this block.
+    - Culture's LOAD-TIME guards on PlaceQueries, ReligionQueries,
+      and CharacterQueries are all HARD. Under the documented order,
+      those namespaces are provided by BLOCK 5 (accessors), BLOCK 13
+      (character-queries), and BLOCK 21 (religion-queries).
+    - window.PlaceQueries is [UNVERIFIED] — see Hazard 2. Until the
+      loader provides it, install a shim before culture-queries.js
+      (see structure.txt).
 
   — Culture constants —
   js/culture/culture-constants.js
@@ -1823,7 +1133,7 @@ BLOCK 30 — CULTURE SUBSYSTEM
     <- AFTER: js/culture/culture-state.js         (HARD)
     <- AFTER: js/core/storage.js                  (HARD)
     <- AFTER: window.PlaceQueries                 (HARD)
-        [UNVERIFIED provider]
+        [UNVERIFIED provider — install shim if absent]
     <- AFTER: js/religion/religion-queries.js     (HARD)
     <- AFTER: js/character/character-queries.js   (HARD)
     <- after: js/location/location-queries.js     (call-time, soft)
@@ -1848,7 +1158,7 @@ BLOCK 30 — CULTURE SUBSYSTEM
     <- AFTER: js/core/formatting.js               (HARD)
 
   — Culture modals —
-  js/culture/culture-modals.js
+  js/culture/modals-culture.js
     <- AFTER: js/core/modals-core.js              (HARD)
     <- AFTER: js/core/ui.js                       (HARD)
     <- AFTER: js/core/formatting.js               (HARD)
@@ -1879,13 +1189,717 @@ BLOCK 30 — CULTURE SUBSYSTEM
 
 
 ==============================================================================
+BLOCK 23 — RELATIONSHIP DOMAIN: VOCABULARY, UTILITIES, STATE, CORE PIPELINE
+==============================================================================
+
+This block is the base of the relationship subsystem. Its files are
+loaded once, early enough that every domain module (romance,
+friendship, rivalry, jealousy, affair, matchmaking, professional),
+finder, integrations, ui-metadata, and modals can load AFTER it.
+
+  — Vocabulary —
+  js/relationships/relationship-types.js
+    Notes:
+      - Leaf. No dependencies.
+      - Load-time assertion: every archetype, attribute, status has
+        complete category/direction/roles/scope/owner metadata.
+      - Exports window.RELATIONSHIP_ARCHETYPES,
+        window.RELATIONSHIP_ATTRIBUTES, window.RELATIONSHIP_STATUS,
+        and the namespace window.RELATIONSHIP_TYPES.
+      - window.RELATIONSHIP_STATUS is OVERWRITTEN here (it was set
+        by BLOCK 1's relationship-constants.js). Everything below
+        reads the relationship-types.js values.
+
+  — Utilities —
+  js/relationships/relationship-utils.js
+    <- AFTER: (nothing)  (leaf)
+    Notes:
+      - Exports window.RelationshipUtils.
+      - Pure helpers; no archetype knowledge.
+
+  — State —
+  js/relationships/relationship-state.js
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- AFTER: js/relationships/relationship-utils.js     (HARD)
+    <- AFTER: js/core/storage.js                  (call-time —
+                                                   masterData,
+                                                   markDataDirty)
+    <- AFTER: initializeStorage()                  (call-time)
+    Notes:
+      - Canonical array on masterData.data.relationships.
+      - Lazy hydrate via _ensureInitializedFromMasterData on first
+        access. Reloads on masterDataUpdated with structural
+        validation preserved on corrupt record(s).
+      - Subscriber exceptions isolated.
+
+  — Queries —
+  js/relationships/relationship-queries.js
+    <- AFTER: js/relationships/relationship-state.js     (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    Notes:
+      - Read-only projections over RelationshipState.
+      - No archetype interpretation. No attribute interpretation.
+
+  — Commands —
+  js/relationships/relationship-commands.js
+    <- AFTER: js/relationships/relationship-state.js     (HARD)
+    <- AFTER: js/relationships/relationship-utils.js     (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- AFTER: js/relationships/relationship-queries.js   (HARD)
+    <- AFTER: js/core/ids.js                      (call-time —
+                                                   generateId)
+    Notes:
+      - Single write boundary. Structural validation only.
+      - createBatch is the atomic multi-insert primitive used by
+        friendship-commands.js::createMutualFriendships.
+      - endAllActiveForCharacter applies the same endYear >= startYear
+        check as the single-record paths, rejecting inconsistent
+        records in the `rejected` array.
+      - removeAllReferencesTo is the hard-delete primitive used by
+        relationship-integrations.js.
+
+
+==============================================================================
+BLOCK 24 — RELATIONSHIP DOMAIN: PER-ARCHETYPE RULES
+==============================================================================
+
+Each rules module is a leaf policy module over the base vocabulary and
+utilities. They are loaded together — order among them is unimportant
+— so that any domain query or command module can load after BLOCK 24.
+
+  js/relationships/romance-rules.js
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- AFTER: js/relationships/relationship-utils.js     (HARD)
+    <- after: js/culture/culture-rules.js         (call-time —
+                                                   supportsRelationshipAttribute,
+                                                   required when
+                                                   validateAttributesForCulture
+                                                   is invoked with a
+                                                   cultural attribute)
+    Notes:
+      - Multi-partner policy: rank-only. `allowsMultipleByTrait` is
+        DEPRECATED (always false, one-revision grace). See the module
+        header for the removal plan.
+      - CultureRules must be available at call time; the module does
+        NOT throw at load if it is absent. Callers who cannot
+        guarantee the cultural layer must pass only universal
+        attributes.
+
+  js/relationships/friendship-rules.js
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- AFTER: js/relationships/relationship-utils.js     (HARD)
+
+  js/relationships/rivalry-rules.js
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- AFTER: js/relationships/relationship-utils.js     (HARD)
+
+  js/relationships/professional-rules.js
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- AFTER: js/relationships/relationship-utils.js     (HARD)
+    <- AFTER: js/roles/skill-utils.js             (HARD —
+                                                   getThresholds
+                                                   method check)
+    Notes:
+      - Thresholds come from SkillUtils. TEACHING_MIN_SKILL and
+        MASTER_MIN_SKILL are the canonical values (mirrored for
+        convenience; not a second source of truth).
+
+  js/relationships/jealousy-rules.js
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    Notes:
+      - Reads trait ids from character.traits via the caller-supplied
+        facts (never from state). Trait vocabulary is
+        CHARACTER_TRAIT_VALUES from BLOCK 1; the relationship
+        bootstrap REQUIRES CHARACTER_TRAITS and
+        CHARACTER_TRAIT_VALUES as globals.
+      - No state access. All facts explicit. Rolls caller-supplied.
+
+  js/relationships/affair-rules.js
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    Notes:
+      - discovery, reconciliation, scandal, legitimization,
+        affair-type vocabulary.
+      - isAffair predicate remains in RomanceRules.
+      - No randomness.
+
+  js/relationships/matchmaking-rules.js
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    Notes:
+      - eligibility, gender preference, age gap, acceptance chance.
+      - Rolls supplied by the caller as an array. Deterministic
+        otherwise.
+
+
+==============================================================================
+BLOCK 25 — RELATIONSHIP DOMAIN: PER-ARCHETYPE QUERIES
+==============================================================================
+
+  js/relationships/romance-queries.js
+    <- AFTER: js/relationships/relationship-queries.js   (HARD)
+    <- AFTER: js/relationships/romance-rules.js          (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    Notes:
+      - Attribute interpretation for committed edges is owned here.
+      - getMultiPartnerFacts forwards external facts (rank-only
+        decision; allowsMultipleByTrait is interim dead).
+
+  js/relationships/friendship-queries.js
+    <- AFTER: js/relationships/relationship-queries.js   (HARD)
+    <- AFTER: js/relationships/friendship-rules.js       (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+
+  js/relationships/rivalry-queries.js
+    <- AFTER: js/relationships/relationship-queries.js   (HARD)
+    <- AFTER: js/relationships/rivalry-rules.js          (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+
+  js/relationships/professional-queries.js
+    <- AFTER: js/relationships/relationship-queries.js   (HARD)
+    <- AFTER: js/relationships/professional-rules.js     (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- AFTER: js/character/character-commands.js  (HARD —
+                                                   CharacterCommands.getProfession
+                                                   method check)
+    <- after: js/roles/role-state.js      (call-time —
+                                                   preferred role
+                                                   reader; falls back
+                                                   to accessors.getRoleById
+                                                   if absent)
+    Notes:
+      - Skill is read via CharacterCommands.getProfession (the
+        canonical accessor for character.professions[i].skillLevel).
+      - Role name resolution prefers RoleState.getRole (clones),
+        falls back to window.getRoleById (live cached record), and
+        finally to returning roleId.
+
+  js/relationships/jealousy-queries.js
+    <- AFTER: js/relationships/relationship-queries.js   (HARD)
+    <- AFTER: js/relationships/romance-queries.js        (HARD)
+    <- AFTER: js/relationships/rivalry-queries.js        (HARD)
+    <- AFTER: js/relationships/jealousy-rules.js         (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- after: js/core/accessors.js                (call-time —
+                                                   getCharacterById,
+                                                   getCharacters,
+                                                   getRankById)
+
+  js/relationships/affair-queries.js
+    <- AFTER: js/relationships/relationship-queries.js   (HARD)
+    <- AFTER: js/relationships/romance-queries.js        (HARD)
+    <- AFTER: js/relationships/romance-rules.js          (HARD)
+    <- AFTER: js/relationships/affair-rules.js           (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- after: js/core/accessors.js                (call-time —
+                                                   getCharacterById,
+                                                   getCurrentLocation)
+    Notes:
+      - affairType is NOT defaulted. If a record's metadata lacks
+        it, the projection returns null — signals a record written
+        outside sanctioned paths. Correct paths (startCommittedRelationship
+        and AffairCommands.createAffair) always write it.
+
+  js/relationships/matchmaking-queries.js
+    <- AFTER: js/relationships/matchmaking-rules.js      (HARD)
+    <- AFTER: js/relationships/romance-queries.js        (HARD)
+    <- AFTER: js/relationships/relationship-queries.js   (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- after: js/core/accessors.js                (call-time —
+                                                   getCharacterById,
+                                                   getCharacters,
+                                                   getCurrentLocation)
+    <- after: js/core/time.js                     (call-time —
+                                                   getCurrentYearSafe,
+                                                   calculateAge)
+
+
+==============================================================================
+BLOCK 26 — RELATIONSHIP DOMAIN: PER-ARCHETYPE COMMANDS
+==============================================================================
+
+  js/relationships/romance-commands.js
+    <- AFTER: js/relationships/relationship-commands.js  (HARD)
+    <- AFTER: js/relationships/romance-rules.js          (HARD)
+    <- AFTER: js/relationships/romance-queries.js        (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- after: js/core/accessors.js                (call-time —
+                                                   getCharacterById,
+                                                   getCurrentYearSafe,
+                                                   calculateAge)
+    <- after: js/ranks/rank-rules.js              (OPTIONAL —
+                                                   allowsMultipleSpouses;
+                                                   falls back to
+                                                   direct field read)
+    <- after: js/core/accessors.js                (OPTIONAL —
+                                                   getRankById for
+                                                   rank facts)
+    <- after: js/culture/culture-rules.js         (call-time —
+                                                   via
+                                                   RomanceRules.validateAttributesForCulture
+                                                   when a cultural
+                                                   attribute is
+                                                   requested)
+    Notes:
+      - COMMIT SEMANTICS: startCommittedRelationship ONE commit;
+        startCasualDating ONE; startOneNightStand TWO (create + end
+        immediately); attribute add/remove ONE; breakUp ONE;
+        deathEndsRelationship ONE; endAllRomanticForCharacter N
+        (one per ended relationship, not atomic).
+      - DEFAULT_AFFAIR_TYPE ('secret') is written for affairs created
+        via startCommittedRelationship.
+      - Multi-partner facts: allowsMultipleByRank sourced from
+        rank.allowsMultipleSpouses (via RankRules if loaded, else
+        direct read); allowsMultipleByTrait hardcoded false.
+
+  js/relationships/friendship-commands.js
+    <- AFTER: js/relationships/relationship-commands.js  (HARD — createBatch
+                                                   METHOD CHECK)
+    <- AFTER: js/relationships/friendship-rules.js       (HARD)
+    <- AFTER: js/relationships/friendship-queries.js     (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- after: js/core/accessors.js                (call-time —
+                                                   getCharacterById)
+    <- after: js/core/time.js                     (call-time —
+                                                   getCurrentYearSafe)
+    <- after: js/core/ids.js                      (call-time —
+                                                   generateId)
+    Notes:
+      - createMutualFriendships is ALL-OR-NOTHING (RC.createBatch).
+      - Two-commit paths for strength-to-zero / event-to-zero
+        documented in the module header.
+
+  js/relationships/rivalry-commands.js
+    <- AFTER: js/relationships/relationship-commands.js  (HARD)
+    <- AFTER: js/relationships/rivalry-rules.js          (HARD)
+    <- AFTER: js/relationships/rivalry-queries.js        (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- after: js/core/accessors.js                (call-time —
+                                                   getCharacterById)
+    <- after: js/core/time.js                     (call-time —
+                                                   getCurrentYearSafe,
+                                                   calculateAge)
+
+  js/relationships/jealousy-commands.js
+    <- AFTER: js/relationships/rivalry-commands.js       (HARD)
+    <- AFTER: js/relationships/jealousy-rules.js         (HARD)
+    <- AFTER: js/relationships/jealousy-queries.js       (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- after: js/core/accessors.js                (call-time —
+                                                   getCharacterById,
+                                                   getCharacters)
+    <- after: js/core/time.js                     (call-time —
+                                                   getCurrentYearSafe)
+    <- after: js/core/randomness.js               (call-time —
+                                                   Random.next or
+                                                   randomNext)
+    Notes:
+      - Rolls sourced via _roll helper: Random.next first,
+        randomNext fallback. Never Math.random.
+      - triggerConfrontation creates a rivalry via
+        RivalryCommands.createRivalry when consequence warrants it.
+
+  js/relationships/affair-commands.js
+    <- AFTER: js/relationships/relationship-commands.js  (HARD)
+    <- AFTER: js/relationships/relationship-queries.js   (HARD — required for
+                                                   record reads; the
+                                                   module header
+                                                   explicitly calls this
+                                                   out)
+    <- AFTER: js/relationships/romance-commands.js       (HARD)
+    <- AFTER: js/relationships/romance-rules.js          (HARD)
+    <- AFTER: js/relationships/romance-queries.js        (HARD)
+    <- AFTER: js/relationships/affair-rules.js           (HARD)
+    <- AFTER: js/relationships/affair-queries.js         (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- after: js/core/accessors.js                (call-time —
+                                                   getCharacterById,
+                                                   getCurrentYearSafe,
+                                                   getRankById)
+    <- after: js/core/randomness.js               (call-time —
+                                                   Random.next or
+                                                   randomNext)
+    <- after: js/core/storage.js                  (call-time, via
+                                                   RC which owns
+                                                   markDataDirty)
+    <- after: window.MurderCommands.commitMurder  (call-time, OPTIONAL)
+    <- after: window.ExecutionCommands.execute    (call-time, OPTIONAL)
+    Notes:
+      - COMMIT SEMANTICS: createAffair TWO commits
+        (RomanceCommands.startCommittedRelationship, then
+        RelationshipCommands.update for the affair-specific
+        metadata). Rationale documented in the module header (same
+        pattern as children-commands.js::recordPregnancyAttempts).
+        All other commands are single-commit.
+      - Cross-domain consequence application (murder, execution)
+        degrades gracefully when the corresponding command modules
+        are absent.
+
+  js/relationships/professional-commands.js
+    <- AFTER: js/relationships/relationship-commands.js  (HARD)
+    <- AFTER: js/relationships/relationship-queries.js   (HARD)
+    <- AFTER: js/relationships/professional-rules.js     (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- after: js/core/accessors.js                (call-time —
+                                                   getCharacterById)
+    <- after: js/core/time.js                     (call-time —
+                                                   getCurrentYearSafe)
+    Notes:
+      - Edge primitive: createEdge, updateEdgeMetadata,
+        updateEdgeFields, endEdge, removeEdge.
+      - Directionality ENFORCED: _getActiveDirectionalEdge checks A→B,
+        not B→A. Reversed edges are distinct relationships.
+      - ProfessionalCommands does NOT own the apprenticeship
+        LIFECYCLE. That lives in ApprenticeshipCommands. The
+        bootstrap REQUIRED_METHODS list confirms this.
+
+
+==============================================================================
+BLOCK 27 — RELATIONSHIP DOMAIN: FINDER, UI METADATA, INTEGRATIONS
+==============================================================================
+
+  js/relationships/relationship-finder-queries.js
+    <- AFTER: js/relationships/relationship-queries.js   (HARD)
+    <- AFTER: js/character/family-queries.js      (HARD)
+    <- AFTER: js/character/family-rules.js        (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- after: js/core/accessors.js                (call-time —
+                                                   getCharacterById,
+                                                   getCurrentLocation)
+    <- after: js/core/time.js                     (call-time —
+                                                   getCurrentYear,
+                                                   calculateAge)
+    <- after: window.getActiveRankDisplay          (call-time, soft)
+    Notes:
+      - Uses 'parent_child' LITERAL for parentage viaType.
+      - Parent edge wrappers carry .id (not .relationshipId).
+      - Fetches parent edges with { includeEnded: true }.
+
+  js/relationships/relationship-ui-metadata.js
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    Notes:
+      - Load-time assertion: every archetype / attribute / status has
+        a UI entry, or the file throws. Adding an archetype or
+        attribute requires a corresponding UI entry before this file
+        will load.
+
+  js/relationships/relationship-integrations.js
+    <- AFTER: js/relationships/relationship-commands.js  (HARD)
+    <- AFTER: js/relationships/romance-commands.js       (HARD)
+    <- AFTER: js/relationships/romance-queries.js        (HARD)
+    <- AFTER: js/relationships/friendship-commands.js    (HARD)
+    <- AFTER: js/relationships/friendship-queries.js     (HARD)
+    <- AFTER: js/relationships/rivalry-commands.js       (HARD)
+    <- AFTER: js/relationships/rivalry-queries.js        (HARD)
+    <- AFTER: js/relationships/professional-commands.js  (HARD)
+    <- AFTER: js/relationships/professional-queries.js   (HARD)
+    <- AFTER: js/relationships/affair-queries.js         (HARD)
+    <- AFTER: js/relationships/affair-commands.js        (HARD)
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- AFTER: js/core/accessors.js                (HARD — getCharacterById,
+                                                   getCharacters)
+    <- AFTER: js/core/time.js                     (HARD — getCurrentYear)
+    <- after: js/core/randomness.js               (call-time —
+                                                   Random.next or
+                                                   randomNext)
+    <- after: js/apprenticeship/apprenticeship-commands.js
+        (call-time — ApprenticeshipCommands.terminateApprenticeship
+        only; absence does NOT fail the death cascade, it surfaces
+        APPRENTICESHIP_COMMANDS_UNAVAILABLE in the result)
+    <- after: js/relationships/jealousy-commands.js
+        (call-time, OPTIONAL in processAnnualLifecycle)
+    <- after: js/core/storage.js                  (call-time — markDirty
+                                                   via commands,
+                                                   invalidateAccessorCaches
+                                                   via commands)
+    Notes:
+      - Registers window.registerDeathHandler and
+        window.registerDeleteHandler at load time. Both are
+        no-ops with a warning when the register function is absent
+        (a pre-Phase-3.13 build).
+      - APPRENTICESHIP CLEANUP: calls
+        ApprenticeshipCommands.terminateApprenticeship, NOT
+        ProfessionalCommands.endApprenticeship (never existed).
+        roleId resolved from relationship record metadata
+        (metadata.roleId); malformed records surface as
+        APPRENTICESHIP_MISSING_ROLE.
+      - Partnership projections (getPartnershipProjection,
+        getAllPartnershipProjections) are AVAILABLE FOR CONSUMPTION
+        but not currently consumed by any module in the tree —
+        documented in the module header.
+
+
+==============================================================================
+BLOCK 28 — RELATIONSHIP DOMAIN: MODALS
+==============================================================================
+
+  js/relationships/modals-relationship.js
+    <- AFTER: js/relationships/relationship-types.js     (HARD)
+    <- AFTER: js/relationships/relationship-ui-metadata.js (HARD)
+    <- AFTER: js/core/modals-core.js              (HARD — openModal,
+                                                   closeTopModal)
+    <- AFTER: js/core/formatting.js               (HARD — _escapeHtml)
+    <- AFTER: js/core/ui.js                       (HARD — _showToast)
+    <- AFTER: js/core/icons.js                    (HARD — Icons)
+    <- AFTER: js/core/accessors.js                (HARD — getCharacterById,
+                                                   getCurrentLocation)
+    <- AFTER: js/core/time.js                     (HARD — getCurrentYear,
+                                                   calculateAge)
+    <- AFTER: js/relationships/romance-commands.js       (HARD)
+    <- AFTER: js/relationships/friendship-commands.js    (HARD)
+    <- AFTER: js/relationships/rivalry-commands.js       (HARD)
+    <- AFTER: js/relationships/professional-commands.js  (HARD)
+    <- AFTER: js/apprenticeship/apprenticeship-commands.js (HARD)
+    Notes:
+      - The apprenticeship dispatch calls
+        ApprenticeshipCommands.createApprenticeship, NOT
+        ProfessionalCommands.createEdge. The ownership boundary is
+        enforced here.
+
+  js/relationships/modals-friendship.js
+    <- AFTER: js/relationships/friendship-rules.js       (HARD)
+    <- AFTER: js/relationships/friendship-queries.js     (HARD)
+    <- after: js/core/accessors.js                (call-time —
+                                                   getCharacterById)
+    <- after: js/core/time.js                     (call-time —
+                                                   getCurrentYear,
+                                                   calculateAge)
+    <- after: js/core/ui.js                       (call-time —
+                                                   _showToast)
+    <- after: js/core/icons.js                    (call-time — Icons)
+    <- after: js/core/modals-core.js              (call-time —
+                                                   openModal,
+                                                   closeTopModal)
+    <- after: js/core/formatting.js               (call-time —
+                                                   escapeHtml)
+    <- after: js/relationships/relationship-commands.js  (call-time —
+                                                   RelationshipCommands.update
+                                                   used in the edit
+                                                   modal)
+
+
+==============================================================================
+BLOCK 29 — RELATIONSHIP DOMAIN: BOOTSTRAP
+==============================================================================
+
+  js/relationships/relationship-bootstrap.js
+    <- AFTER: every js/relationships/*.js file in BLOCK 23–28 (HARD —
+               the REQUIRED_MODULES list is verified at load time)
+    <- AFTER: js/core/accessors.js                (HARD —
+                                                   REQUIRED_GLOBALS
+                                                   getCharacterById,
+                                                   getCharacters)
+    <- AFTER: js/core/time.js                     (HARD —
+                                                   REQUIRED_GLOBALS
+                                                   getCurrentYear,
+                                                   calculateAge)
+    <- AFTER: js/core/ids.js                      (HARD —
+                                                   REQUIRED_GLOBALS
+                                                   generateId)
+    <- AFTER: js/core/storage.js                  (HARD —
+                                                   REQUIRED_GLOBALS
+                                                   markDataDirty)
+    <- AFTER: js/events/timeline-core.js          (HARD —
+                                                   REQUIRED_GLOBALS
+                                                   logEvent)
+    <- AFTER: js/core/randomness.js               (HARD —
+                                                   REQUIRED_GLOBALS
+                                                   Random; see
+                                                   RANDOMNESS
+                                                   DEPENDENCY in
+                                                   the bootstrap
+                                                   header)
+    <- AFTER: js/culture/culture-rules.js         (HARD —
+                                                   REQUIRED_GLOBALS
+                                                   CultureRules;
+                                                   REQUIRED_CULTURE_RULES_METHODS
+                                                   supportsRelationshipAttribute)
+                                                   — loaded at BLOCK 22
+    <- AFTER: js/core/constants/character-traits.js (HARD —
+                                                   REQUIRED_GLOBALS
+                                                   CHARACTER_TRAITS,
+                                                   CHARACTER_TRAIT_VALUES)
+    <- AFTER: js/character/family-queries.js      (HARD —
+                                                   REQUIRED_METHODS
+                                                   FamilyQueries.method check)
+    <- AFTER: js/character/family-rules.js        (HARD —
+                                                   REQUIRED_METHODS
+                                                   FamilyRules.method check)
+    <- after: js/roles/skill-utils.js             (CONDITIONAL —
+                                                   SkillQueries /
+                                                   SkillCommands)
+    <- after: window.MurderCommands                (CONDITIONAL)
+    <- after: window.ExecutionCommands             (CONDITIONAL)
+    <- after: js/apprenticeship/apprenticeship-commands.js
+        (CONDITIONAL — absence does NOT fail the bootstrap; the
+        death cascade surfaces APPRENTICESHIP_COMMANDS_UNAVAILABLE
+        per affected edge)
+    <- after: window.getCurrentLocation             (OPTIONAL)
+    <- after: window.getActiveRankDisplay           (OPTIONAL)
+    <- after: window.getRankById                    (OPTIONAL)
+    <- after: window.registerLifecycleHook          (OPTIONAL)
+    <- after: window.Icons, window.escapeHtml,
+              window.showToast, window.openModal,
+              window.closeTopModal                  (OPTIONAL)
+    Notes:
+      - Fail loud. Missing modules, missing globals, missing methods
+        on REQUIRED_METHODS throw at load.
+      - Conditional dependencies (SkillQueries, SkillCommands,
+        MurderCommands, ExecutionCommands, ApprenticeshipCommands)
+        are warn-only at load.
+      - Optional dependencies (Icons, escapeHtml, showToast,
+        openModal, closeTopModal, etc.) are warn-only at load.
+      - Exposes window.Relationships with full namespace.
+      - Load LAST within the relationship subsystem. Its presence
+        confirms every module and every method the domain dispatches
+        to actually exists — it is the single source of truth for
+        "the relationship subsystem is fully operational".
+      - NOTE (reordering): The relationship subsystem now loads
+        AFTER Culture (BLOCK 22), so the REQUIRED_GLOBALS.CultureRules
+        guard is satisfied under the documented order. The master
+        doc's Hazard 6 is resolved structurally. If your loader
+        cannot guarantee that ordering, apply the "log-and-continue"
+        fallback on the CultureRules check.
+
+
+==============================================================================
+BLOCK 30 — APPRENTICESHIP SUBSYSTEM
+==============================================================================
+
+  — Apprenticeship constants —
+  js/apprenticeship/apprenticeship-constants.js
+    <- AFTER: js/roles/skill-utils.js    (HARD — getThresholds
+                                          method check)
+
+  — Apprenticeship rules —
+  js/apprenticeship/apprenticeship-rules.js
+    <- AFTER: js/apprenticeship/apprenticeship-constants.js
+        (HARD)
+    <- AFTER: js/roles/skill-utils.js
+        (HARD)
+
+  — Apprenticeship queries —
+  js/apprenticeship/apprenticeship-queries.js
+    <- AFTER: js/relationships/relationship-types.js     (HARD —
+                                                   RELATIONSHIP_ARCHETYPES,
+                                                   RELATIONSHIP_STATUS)
+    <- AFTER: js/relationships/relationship-queries.js   (HARD —
+                                                   RelationshipQueries)
+    <- AFTER: js/character/character-commands.js  (HARD —
+                                                   getProfession
+                                                   method check)
+    <- AFTER: js/roles/role-state.js      (HARD —
+                                                   getRole method check)
+    <- AFTER: js/apprenticeship/apprenticeship-rules.js
+        (HARD)
+    <- AFTER: js/core/accessors.js                (HARD —
+                                                   getCharacterById)
+    <- AFTER: js/core/time.js                     (HARD —
+                                                   getCurrentYear)
+    <- after: js/apprenticeship/apprenticeship-constants.js
+        (call-time)
+    <- after: js/settlement/settlement-queries.js
+        (call-time —
+         SettlementQueries.getSettlementMastersByRole)
+
+  — Apprenticeship commands —
+  js/apprenticeship/apprenticeship-commands.js
+    <- AFTER: js/apprenticeship/apprenticeship-rules.js
+        (HARD)
+    <- AFTER: js/apprenticeship/apprenticeship-queries.js
+        (HARD)
+    <- AFTER: js/relationships/professional-commands.js
+        (HARD — createEdge, updateEdgeMetadata,
+         updateEdgeFields, endEdge, removeEdge
+         method checks)
+    <- AFTER: js/character/character-commands.js
+        (HARD — getProfession, updateProfession,
+         addProfession, addProfessionSpecialization,
+         removeProfession method checks)
+    <- AFTER: js/roles/role-commands.js
+        (HARD — recordCharacterSkillProgress
+         method check)
+    <- AFTER: js/relationships/relationship-types.js
+        (HARD)
+    <- after: js/core/accessors.js
+        (call-time — getCharacterById)
+    <- after: js/roles/role-state.js
+        (call-time — RoleState.getRole, LENIENT)
+    <- after: js/core/time.js
+        (call-time — getCurrentYear)
+    <- after: js/core/randomness.js
+        (call-time — window.Random.next / randomNext)
+    <- after: js/professional/skill-transfer-constants.js
+        [UNVERIFIED] (call-time — window.SKILL_TRANSFER_METHODS)
+    <- after: js/core/storage.js
+        (call-time — saveMasterData via persist())
+
+  — Professional knowledge commands —
+  js/apprenticeship/professional-knowledge-commands.js
+    <- after: js/core/accessors.js
+        (call-time — getCharacterById)
+    <- after: js/roles/role-state.js
+        OR js/core/accessors.js::getRoleById
+        (call-time — _getRoleById; throws if BOTH missing)
+    <- after: js/core/time.js
+        (call-time — getCurrentYear, calculateAge)
+    <- after: js/character/character-commands.js
+        (call-time — addProfession, updateProfession,
+         getProfession, getProfessions)
+    <- after: js/roles/role-commands.js
+        (call-time — recordCharacterSkillProgress)
+    <- after: js/core/storage.js
+        (NOT called — the caller's death cascade is the
+         persistence boundary)
+
+  — Apprenticeship modals —
+  js/apprenticeship/modals-apprenticeship.js
+    <- AFTER: js/core/modals-core.js
+        (HARD — openModal, closeTopModal, confirmDialog)
+    <- AFTER: js/core/formatting.js
+        (HARD — _escapeHtml)
+    <- AFTER: js/core/ui.js
+        (HARD — _showToast)
+    <- AFTER: js/core/icons.js
+        (HARD — Icons)
+    <- AFTER: js/core/accessors.js
+        (HARD — getCharacterById, getPlaceById)
+    <- AFTER: js/core/time.js
+        (HARD — getCurrentYear, calculateAge)
+    <- AFTER: js/apprenticeship/apprenticeship-queries.js
+        (HARD)
+    <- AFTER: js/apprenticeship/apprenticeship-commands.js
+        (HARD)
+    <- AFTER: js/apprenticeship/apprenticeship-rules.js
+        (HARD)
+    <- AFTER: js/apprenticeship/apprenticeship-constants.js
+        (HARD)
+    <- after: js/core/world.js
+        (call-time, soft — getCurrentPlace,
+         getCurrentLocationId)
+    <- after: js/core/ui.js
+        (call-time, soft — showToast fallback)
+
+  APPRENTICESHIP SUBSYSTEM INVARIANTS (A1–A20): same as the
+  previous manifest. Notable:
+    A5 — relationship-queries.js before apprenticeship-queries.js.
+    A10 — professional-commands.js, character-commands.js,
+          role-commands.js, relationship-types.js before
+          apprenticeship-commands.js.
+    A18 — window.SKILL_TRANSFER_METHODS [UNVERIFIED] before the
+          first teachSkill call.
+    A19 — window.Random.next OR window.randomNext before the first
+          teachSkill / any command that needs a roll.
+    A20 — core/storage.js before apprenticeship-commands.js::persist
+          is first called.
+
+
+==============================================================================
 BLOCK 31 — INDUSTRY SUBSYSTEM
 ==============================================================================
 
   — Industry constants, defaults, economics —
-  js/core/industry/industry-constants.js
-  js/core/industry/industry-economics.js
-  js/core/industry/industry-type-defaults.js
+  js/industry/industry-constants.js
+  js/industry/industry-economics.js
+  js/industry/industry-type-defaults.js
 
   Notes:
     - Order within this block is unimportant.
@@ -1894,40 +1908,40 @@ BLOCK 31 — INDUSTRY SUBSYSTEM
       industry-migration.js, industry-commands.js.
 
   — Industry rules —
-  js/core/industry/industry-rules.js
-    <- AFTER: js/core/industry/industry-constants.js (call-time)
-    <- AFTER: js/core/industry/industry-economics.js (call-time)
+  js/industry/industry-rules.js
+    <- AFTER: js/industry/industry-constants.js (call-time)
+    <- AFTER: js/industry/industry-economics.js (call-time)
 
   — Industry state and pre-hydration —
-  js/core/industry/industry-state.js
-    <- AFTER: js/core/industry/industry-constants.js (HARD)
+  js/industry/industry-state.js
+    <- AFTER: js/industry/industry-constants.js (HARD)
     <- AFTER: js/core/storage.js                  (HARD)
     <- AFTER: initializeStorage()                  (HARD runtime)
 
-  js/core/industry/industry-type-init.js
-    <- AFTER: js/core/industry/industry-type-defaults.js (HARD)
-    <- AFTER: js/core/industry/industry-constants.js (HARD)
+  js/industry/industry-type-init.js
+    <- AFTER: js/industry/industry-type-defaults.js (HARD)
+    <- AFTER: js/industry/industry-constants.js (HARD)
 
-  js/core/industry/industry-types.js
-    <- AFTER: js/core/industry/industry-state.js  (HARD)
+  js/industry/industry-types.js
+    <- AFTER: js/industry/industry-state.js  (HARD)
 
-  js/core/industry/industry-migration.js
-    <- AFTER: js/core/industry/industry-constants.js (HARD)
-    <- AFTER: js/core/industry/industry-rules.js  (HARD)
+  js/industry/industry-migration.js
+    <- AFTER: js/industry/industry-constants.js (HARD)
+    <- AFTER: js/industry/industry-rules.js  (HARD)
     <- AFTER: js/core/storage.js                  (HARD)
 
   — Industry type commands —
-  js/core/industry/industry-type-commands.js
-    <- AFTER: js/core/industry/industry-state.js  (HARD)
-    <- AFTER: js/core/industry/industry-rules.js  (HARD)
+  js/industry/industry-type-commands.js
+    <- AFTER: js/industry/industry-state.js  (HARD)
+    <- AFTER: js/industry/industry-rules.js  (HARD)
     <- AFTER: js/core/ids.js                      (HARD)
     <- AFTER: js/core/storage.js                  (HARD)
 
   — Industry commands, queries, processor —
-  js/core/industry/industry-commands.js
-    <- AFTER: js/core/industry/industry-state.js  (HARD)
-    <- AFTER: js/core/industry/industry-rules.js  (HARD)
-    <- AFTER: js/core/industry/industry-constants.js (HARD)
+  js/industry/industry-commands.js
+    <- AFTER: js/industry/industry-state.js  (HARD)
+    <- AFTER: js/industry/industry-rules.js  (HARD)
+    <- AFTER: js/industry/industry-constants.js (HARD)
     <- AFTER: js/core/ids.js                      (HARD)
     <- AFTER: js/core/storage.js                  (HARD)
     <- AFTER: js/core/time.js                     (HARD)
@@ -1935,33 +1949,33 @@ BLOCK 31 — INDUSTRY SUBSYSTEM
     <- after: js/households/household-commands.js
         (call-time; verified by industry-bootstrap.js at init)
 
-  js/core/industry/industry-queries.js
-    <- AFTER: js/core/industry/industry-state.js  (HARD)
-    <- AFTER: js/core/industry/industry-types.js  (HARD)
+  js/industry/industry-queries.js
+    <- AFTER: js/industry/industry-state.js  (HARD)
+    <- AFTER: js/industry/industry-types.js  (HARD)
     <- AFTER: js/core/accessors.js                (HARD)
 
-  js/core/industry/industry-processor.js
-    <- AFTER: js/core/industry/industry-queries.js (HARD)
-    <- AFTER: js/core/industry/industry-commands.js (HARD)
-    <- AFTER: js/core/industry/industry-economics.js (HARD)
+  js/industry/industry-processor.js
+    <- AFTER: js/industry/industry-queries.js (HARD)
+    <- AFTER: js/industry/industry-commands.js (HARD)
+    <- AFTER: js/industry/industry-economics.js (HARD)
     <- AFTER: js/core/time.js                     (HARD)
 
   — Industry view models, UI, modals —
-  js/core/industry/industry-view-models.js
-    <- AFTER: js/core/industry/industry-queries.js (HARD)
-    <- AFTER: js/core/industry/industry-types.js  (HARD)
+  js/industry/industry-view-models.js
+    <- AFTER: js/industry/industry-queries.js (HARD)
+    <- AFTER: js/industry/industry-types.js  (HARD)
 
-  js/core/industry/industry-ui-list.js
-    <- AFTER: js/core/industry/industry-view-models.js (HARD)
+  js/industry/industry-ui-list.js
+    <- AFTER: js/industry/industry-view-models.js (HARD)
     <- AFTER: js/core/formatting.js               (call-time)
 
-  js/core/industry/modals-industry.js
-    <- AFTER: js/core/industry/industry-commands.js (HARD)
-    <- AFTER: js/core/industry/industry-queries.js (HARD)
-    <- AFTER: js/core/industry/industry-types.js  (HARD)
-    <- AFTER: js/core/industry/industry-type-commands.js (HARD)
-    <- AFTER: js/core/industry/industry-view-models.js (HARD)
-    <- AFTER: js/core/industry/industry-processor.js (HARD)
+  js/industry/modals-industry.js
+    <- AFTER: js/industry/industry-commands.js (HARD)
+    <- AFTER: js/industry/industry-queries.js (HARD)
+    <- AFTER: js/industry/industry-types.js  (HARD)
+    <- AFTER: js/industry/industry-type-commands.js (HARD)
+    <- AFTER: js/industry/industry-view-models.js (HARD)
+    <- AFTER: js/industry/industry-processor.js (HARD)
     <- AFTER: js/core/modals-core.js              (HARD)
     <- AFTER: js/core/formatting.js               (HARD)
     <- AFTER: js/core/ui.js                       (HARD)
@@ -1971,8 +1985,8 @@ BLOCK 31 — INDUSTRY SUBSYSTEM
     <- AFTER: js/core/time.js                     (HARD)
 
   — Industry bootstrap —
-  js/core/industry/industry-bootstrap.js
-    <- AFTER: every other js/core/industry/*.js file (verified at
+  js/industry/industry-bootstrap.js
+    <- AFTER: every other js/industry/*.js file (verified at
                call time)
     <- AFTER: js/core/storage.js
     <- AFTER: initializeStorage()
@@ -1995,8 +2009,10 @@ BLOCK 31 — INDUSTRY SUBSYSTEM
       _industryCommandsAvailable helpers resolve the opposite
       direction at CALL TIME, so load order between household
       and industry is technically safe in either order. The
-      documented order puts household first to keep the
-      bootstrap verification linear.
+      documented order puts industry first here so that
+      HouseholdBootstrap can verify IndustryCommands; the original
+      master placed household above industry — both are safe
+      because both directions are call-time.
 
 
 ==============================================================================
@@ -2042,7 +2058,7 @@ BLOCK 32 — HOUSEHOLD AND RESIDENCE SUBSYSTEM
     <- AFTER: js/core/storage.js                  (HARD)
     <- after: js/households/residence-system.js   (call-time via
                                                    _residenceSystemAvailable)
-    <- after: js/core/industry/industry-commands.js
+    <- after: js/industry/industry-commands.js
         (call-time via _industryCommandsAvailable)
     <- after: js/character/character-commands.js::addProfession
         (call-time, for addRoleIfMissing)
@@ -2068,7 +2084,7 @@ BLOCK 32 — HOUSEHOLD AND RESIDENCE SUBSYSTEM
     <- AFTER: js/households/household-commands.js  (HARD)
     <- AFTER: js/households/household-queries.js   (HARD)
     <- AFTER: js/core/accessors.js                 (HARD)
-    <- after: js/core/industry/industry-commands.js
+    <- after: js/industry/industry-commands.js
         (call-time —
          IndustryCommands.updateEnterprise; required only when
          enterprises exist; absence → industryAvailable: false
@@ -2081,7 +2097,7 @@ BLOCK 32 — HOUSEHOLD AND RESIDENCE SUBSYSTEM
     <- AFTER: js/households/household-commands.js  (HARD)
     <- AFTER: js/households/household-queries.js   (HARD)
     <- AFTER: js/core/accessors.js                 (HARD)
-    <- AFTER: js/social/relationship-commands.js   (HARD —
+    <- AFTER: js/relationships/relationship-commands.js   (HARD —
                                                     createRelationship,
                                                     endRelationship,
                                                     updateRelationship,
@@ -2113,13 +2129,13 @@ BLOCK 32 — HOUSEHOLD AND RESIDENCE SUBSYSTEM
     <- AFTER: js/core/icons.js
     <- AFTER: js/core/ui.js
     <- AFTER: js/core/modals-core.js
-    <- AFTER: js/core/industry/industry-commands.js (OPTIONAL —
+    <- AFTER: js/industry/industry-commands.js (OPTIONAL —
                                                      verified if
                                                      present)
-    <- AFTER: js/core/industry/industry-queries.js  (OPTIONAL)
+    <- AFTER: js/industry/industry-queries.js  (OPTIONAL)
     <- AFTER: js/character/character-commands.js
     <- AFTER: js/character/character-queries.js
-    <- AFTER: js/social/relationship-commands.js
+    <- AFTER: js/relationships/relationship-commands.js
 
   Auto-init if masterData exists at load time. Idempotent.
 
@@ -2141,7 +2157,7 @@ BLOCK 32 — HOUSEHOLD AND RESIDENCE SUBSYSTEM
     <- AFTER: js/core/modals-core.js              (HARD)
     <- AFTER: js/core/formatting.js               (HARD)
     <- AFTER: js/core/icons.js                    (HARD)
-    <- after: js/core/industry/industry-commands.js (call-time —
+    <- after: js/industry/industry-commands.js (call-time —
                                                      create-enterprise
                                                      flow)
     <- after: window.openEnterpriseListModal      (call-time)
@@ -2227,11 +2243,11 @@ BLOCK 33 — DISASTER SUBSYSTEM
 ==============================================================================
 
   — Disaster constants —
-  js/core/disaster/disaster-constants.js
+  js/disaster/disaster-constants.js
 
   — Disaster state —
-  js/core/disaster/disaster-state.js
-    <- AFTER: js/core/disaster/disaster-constants.js (HARD)
+  js/disaster/disaster-state.js
+    <- AFTER: js/disaster/disaster-constants.js (HARD)
     <- AFTER: js/core/ids.js                      (HARD)
     <- AFTER: js/core/storage.js                  (HARD —
                                                    markDataDirty)
@@ -2239,17 +2255,17 @@ BLOCK 33 — DISASTER SUBSYSTEM
                                                    getCurrentYearSafe)
 
   — Disaster queries —
-  js/core/disaster/disaster-queries.js
-    <- AFTER: js/core/disaster/disaster-constants.js (HARD)
-    <- AFTER: js/core/disaster/disaster-state.js  (HARD)
+  js/disaster/disaster-queries.js
+    <- AFTER: js/disaster/disaster-constants.js (HARD)
+    <- AFTER: js/disaster/disaster-state.js  (HARD)
     <- after: js/core/accessors.js                (call-time, soft —
                                                    getPlaceById /
                                                    getPlaceName)
 
   — Disaster damage —
-  js/core/disaster/disaster-damage.js
-    <- AFTER: js/core/disaster/disaster-constants.js (HARD)
-    <- AFTER: js/core/disaster/disaster-state.js  (HARD)
+  js/disaster/disaster-damage.js
+    <- AFTER: js/disaster/disaster-constants.js (HARD)
+    <- AFTER: js/disaster/disaster-state.js  (HARD)
     <- after: js/settlement/settlement-queries.js (call-time via
                                                    _isLoadedSettlement;
                                                    getSettlementData)
@@ -2258,16 +2274,16 @@ BLOCK 33 — DISASTER SUBSYSTEM
          demolishFeature)
     <- after: js/settlement/settlement-feature-queries.js
         (call-time — getFeatureById)
-    <- after: js/systems/education/education-state.js
+    <- after: js/education/education-state.js
         (call-time via _isLoadedEducation;
          getInstitutionsByLocation)
-    <- after: js/systems/education/education-commands.js
+    <- after: js/education/education-commands.js
         (call-time via _isLoadedEducation;
          demolishInstitution)
-    <- after: js/core/industry/industry-state.js
+    <- after: js/industry/industry-state.js
         (call-time via _isLoadedIndustry;
          getEnterprisesByLocation)
-    <- after: js/core/industry/industry-commands.js
+    <- after: js/industry/industry-commands.js
         (call-time via _isLoadedIndustry;
          demolishEnterprise)
     <- after: js/households/household-state.js
@@ -2281,10 +2297,10 @@ BLOCK 33 — DISASTER SUBSYSTEM
          getResidencesByLocation, demolishResidence)
 
   — Disaster commands —
-  js/core/disaster/disaster-commands.js
-    <- AFTER: js/core/disaster/disaster-constants.js (HARD)
-    <- AFTER: js/core/disaster/disaster-state.js  (HARD)
-    <- AFTER: js/core/disaster/disaster-damage.js (HARD)
+  js/disaster/disaster-commands.js
+    <- AFTER: js/disaster/disaster-constants.js (HARD)
+    <- AFTER: js/disaster/disaster-state.js  (HARD)
+    <- AFTER: js/disaster/disaster-damage.js (HARD)
     <- AFTER: js/core/ids.js                      (HARD)
     <- AFTER: js/core/storage.js                  (HARD —
                                                    markDataDirty)
@@ -2303,7 +2319,7 @@ BLOCK 33 — DISASTER SUBSYSTEM
                                                    chance, randomInt,
                                                    pickRandom,
                                                    pickWeighted)
-    <- AFTER: js/events/eventLogger.js            (HARD — logEvent)
+    <- AFTER: js/events/timeline-core.js          (HARD — logEvent)
     <- AFTER: js/character/character-lifecycle.js (HARD —
                                                    killCharacter)
     <- AFTER: js/settlement/settlement-queries.js (HARD —
@@ -2314,15 +2330,15 @@ BLOCK 33 — DISASTER SUBSYSTEM
     <- AFTER: modifySettlementCrimeRate provider
 
   — Disaster view models —
-  js/core/disaster/disaster-view-models.js
-    <- AFTER: js/core/disaster/disaster-constants.js (HARD)
+  js/disaster/disaster-view-models.js
+    <- AFTER: js/disaster/disaster-constants.js (HARD)
 
   — Disaster modals —
-  js/core/disaster/modals-disaster.js
-    <- AFTER: js/core/disaster/disaster-constants.js (HARD)
-    <- AFTER: js/core/disaster/disaster-commands.js (HARD)
-    <- AFTER: js/core/disaster/disaster-queries.js (HARD)
-    <- AFTER: js/core/disaster/disaster-view-models.js (HARD)
+  js/disaster/modals-disaster.js
+    <- AFTER: js/disaster/disaster-constants.js (HARD)
+    <- AFTER: js/disaster/disaster-commands.js (HARD)
+    <- AFTER: js/disaster/disaster-queries.js (HARD)
+    <- AFTER: js/disaster/disaster-view-models.js (HARD)
     <- AFTER: js/core/modals-core.js              (HARD)
     <- AFTER: js/core/formatting.js               (HARD)
     <- AFTER: js/core/icons.js                    (HARD)
@@ -2333,16 +2349,16 @@ BLOCK 33 — DISASTER SUBSYSTEM
                                                    getPlaceById)
 
   — Disaster UI stats —
-  js/core/disaster/disaster-ui-stats.js
-    <- AFTER: js/core/disaster/disaster-view-models.js (HARD)
-    <- AFTER: js/core/disaster/disaster-queries.js (HARD)
-    <- AFTER: js/core/disaster/modals-disaster.js (HARD)
+  js/disaster/disaster-ui-stats.js
+    <- AFTER: js/disaster/disaster-view-models.js (HARD)
+    <- AFTER: js/disaster/disaster-queries.js (HARD)
+    <- AFTER: js/disaster/modals-disaster.js (HARD)
     <- AFTER: js/core/formatting.js               (HARD)
     <- AFTER: js/core/icons.js                    (HARD)
 
   — Disaster bootstrap —
-  js/core/disaster/disaster-bootstrap.js
-    <- AFTER: every other js/core/disaster/*.js file (verified at
+  js/disaster/disaster-bootstrap.js
+    <- AFTER: every other js/disaster/*.js file (verified at
                init time)
     <- AFTER: js/core/ids.js
     <- AFTER: js/core/storage.js
@@ -2350,19 +2366,19 @@ BLOCK 33 — DISASTER SUBSYSTEM
     <- AFTER: js/core/accessors.js
     <- AFTER: js/core/world.js
     <- AFTER: js/core/randomness.js
-    <- AFTER: js/events/eventLogger.js
+    <- AFTER: js/events/timeline-core.js
     <- AFTER: js/character/character-lifecycle.js
     <- AFTER: js/settlement/settlement-queries.js
     <- AFTER: js/settlement/settlement-feature-commands.js
     <- AFTER: modifySettlementProsperity provider
     <- AFTER: modifySettlementCrimeRate provider
-    <- after: js/systems/education/education-commands.js
+    <- after: js/education/education-commands.js
         (OPTIONAL — verified if present)
-    <- after: js/systems/education/education-state.js
+    <- after: js/education/education-state.js
         (OPTIONAL — verified if present)
-    <- after: js/core/industry/industry-commands.js
+    <- after: js/industry/industry-commands.js
         (OPTIONAL — verified if present)
-    <- after: js/core/industry/industry-state.js
+    <- after: js/industry/industry-state.js
         (OPTIONAL — verified if present)
     <- after: js/households/household-commands.js
         (OPTIONAL — verified if present)
@@ -2459,23 +2475,23 @@ BLOCK 35 — EDUCATION SUBSYSTEM
 ==============================================================================
 
   — Education constants (no deps) —
-  js/systems/education/education-constants.js
+  js/education/education-constants.js
 
   — Education rules —
-  js/systems/education/education-rules.js
-    <- AFTER: js/systems/education/education-constants.js
+  js/education/education-rules.js
+    <- AFTER: js/education/education-constants.js
         (LOAD-TIME GUARD — EDUCATION_LEVELS)
 
   — Education state —
-  js/systems/education/education-state.js
+  js/education/education-state.js
     <- after: js/core/storage.js            (call-time)
     <- after: initializeStorage()            (call-time)
     <- after: js/core/accessors.js          (call-time,
                                              typeof-guarded)
 
   — Education learning —
-  js/systems/education/education-learning.js
-    <- AFTER: js/systems/education/education-rules.js
+  js/education/education-learning.js
+    <- AFTER: js/education/education-rules.js
         (LOAD-TIME GUARD)
     <- after: js/core/accessors.js
         (call-time — getCharacterById)
@@ -2483,8 +2499,8 @@ BLOCK 35 — EDUCATION SUBSYSTEM
         (call-time — CharacterCommands; specific method checks)
 
   — Education history —
-  js/systems/education/education-history.js
-    <- AFTER: js/systems/education/education-constants.js
+  js/education/education-history.js
+    <- AFTER: js/education/education-constants.js
         (LOAD-TIME GUARD)
     <- method check (LOAD-TIME GUARD):
         EducationState._getInstitutionCanonical
@@ -2495,10 +2511,10 @@ BLOCK 35 — EDUCATION SUBSYSTEM
         window.generateId
 
   — Education queries —
-  js/systems/education/education-queries.js
-    <- AFTER: js/systems/education/education-rules.js
+  js/education/education-queries.js
+    <- AFTER: js/education/education-rules.js
         (LOAD-TIME GUARD)
-    <- after: js/systems/education/education-state.js
+    <- after: js/education/education-state.js
         (call-time)
     <- after: js/core/accessors.js
         (call-time)
@@ -2507,20 +2523,20 @@ BLOCK 35 — EDUCATION SUBSYSTEM
     <- after: window.getLocationPopulationCount [UNVERIFIED]
     <- after: js/core/time.js
         (call-time)
-    <- after: js/systems/roles/role-state.js
+    <- after: js/roles/role-state.js
         (call-time)
     <- after: js/settlement/settlement-state.js
         (call-time, soft)
 
   — Education commands —
-  js/systems/education/education-commands.js
-    <- AFTER: js/systems/education/education-state.js
+  js/education/education-commands.js
+    <- AFTER: js/education/education-state.js
         (LOAD-TIME GUARD)
-    <- AFTER: js/systems/education/education-rules.js
+    <- AFTER: js/education/education-rules.js
         (LOAD-TIME GUARD)
-    <- AFTER: js/systems/education/education-history.js
+    <- AFTER: js/education/education-history.js
         (LOAD-TIME GUARD)
-    <- AFTER: js/systems/education/education-learning.js
+    <- AFTER: js/education/education-learning.js
         (LOAD-TIME GUARD)
     <- AFTER: js/core/accessors.js
         (LOAD-TIME GUARD)
@@ -2532,11 +2548,11 @@ BLOCK 35 — EDUCATION SUBSYSTEM
         (LOAD-TIME GUARD — saveMasterData)
     <- after: js/character/character-commands.js
         (call-time)
-    <- after: js/systems/roles/role-commands.js
+    <- after: js/roles/role-commands.js
         (call-time)
-    <- after: js/systems/roles/role-queries.js
+    <- after: js/roles/role-queries.js
         (call-time)
-    <- after: js/systems/roles/role-state.js
+    <- after: js/roles/role-state.js
         (call-time)
     <- after: js/religion/religion-state.js
         (call-time)
@@ -2548,18 +2564,18 @@ BLOCK 35 — EDUCATION SUBSYSTEM
         (call-time, soft)
 
   — Education annual —
-  js/systems/education/education-annual.js
-    <- AFTER: js/systems/education/education-commands.js
+  js/education/education-annual.js
+    <- AFTER: js/education/education-commands.js
         (LOAD-TIME GUARD)
-    <- AFTER: js/systems/education/education-queries.js
+    <- AFTER: js/education/education-queries.js
         (LOAD-TIME GUARD)
-    <- AFTER: js/systems/education/education-state.js
+    <- AFTER: js/education/education-state.js
         (LOAD-TIME GUARD)
-    <- AFTER: js/systems/education/education-rules.js
+    <- AFTER: js/education/education-rules.js
         (LOAD-TIME GUARD)
-    <- AFTER: js/systems/education/education-learning.js
+    <- AFTER: js/education/education-learning.js
         (LOAD-TIME GUARD)
-    <- AFTER: js/skill/skill-utils.js
+    <- AFTER: js/roles/skill-utils.js
         (LOAD-TIME GUARD — getTier)
     <- AFTER: js/core/accessors.js
         (LOAD-TIME GUARD)
@@ -2571,16 +2587,16 @@ BLOCK 35 — EDUCATION SUBSYSTEM
         (LOAD-TIME GUARD)
 
   — Education UI list + modals —
-  js/systems/education/education-ui-list.js
-    <- AFTER: js/systems/education/education-queries.js
+  js/education/education-ui-list.js
+    <- AFTER: js/education/education-queries.js
         (LOAD-TIME GUARD)
-    <- AFTER: js/systems/education/education-history.js
+    <- AFTER: js/education/education-history.js
         (LOAD-TIME GUARD)
 
-  js/systems/education/modals-education.js
-    <- AFTER: js/systems/education/education-queries.js
+  js/education/modals-education.js
+    <- AFTER: js/education/education-queries.js
         (LOAD-TIME GUARD)
-    <- AFTER: js/systems/education/education-commands.js
+    <- AFTER: js/education/education-commands.js
         (LOAD-TIME GUARD)
     <- AFTER: js/core/modals-core.js
         (LOAD-TIME METHOD CHECK — openModal)
@@ -2636,12 +2652,12 @@ BLOCK 36 — CRIME SUBSYSTEM
     <- AFTER: js/core/ids.js                 (LOAD-TIME GUARD)
     <- AFTER: js/character/character-lifecycle.js
         (LOAD-TIME GUARD — killCharacter)
-    <- AFTER: js/events/eventLogger.js       (LOAD-TIME GUARD)
+    <- AFTER: js/events/timeline-core.js     (LOAD-TIME GUARD)
     <- AFTER: js/core/accessors.js
         (LOAD-TIME GUARD — getCharacterById,
                           getHouseholdById,
                           getCurrentLocationId)
-    <- AFTER: js/social/relationship-queries.js
+    <- AFTER: js/relationships/relationship-queries.js
         (LOAD-TIME GUARD — getRelationshipsForCharacter,
                           endRelationship —
                           alias of relationship-queries'
@@ -2714,7 +2730,7 @@ BLOCK 36 — CRIME SUBSYSTEM
     <- AFTER: js/core/time.js
     <- AFTER: js/core/storage.js
     <- AFTER: js/character/character-lifecycle.js
-    <- AFTER: js/events/eventLogger.js
+    <- AFTER: js/events/timeline-core.js
     <- AFTER: js/core/randomness.js
     <- AFTER: js/character/character-queries.js
     <- AFTER: js/character/character-commands.js
@@ -2750,31 +2766,31 @@ BLOCK 37 — GOVERNMENT SUBSYSTEM
 ==============================================================================
 
   — Government constants, state, rules —
-  js/systems/government/government-constants.js
-  js/systems/government/government-state.js
-    <- AFTER: js/systems/government/government-constants.js
+  js/government/government-constants.js
+  js/government/government-state.js
+    <- AFTER: js/government/government-constants.js
     <- AFTER: js/core/ids.js
     <- AFTER: js/core/time.js                (getCurrentYearSafe —
                                               deprecated alias;
                                               Government-only)
     <- AFTER: js/core/storage.js             (markDataDirty)
     <- AFTER: initializeStorage()
-  js/systems/government/government-rules.js
+  js/government/government-rules.js
 
   — Government queries and commands —
-  js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-state.js
-    <- AFTER: js/systems/government/government-rules.js
+  js/government/government-queries.js
+    <- AFTER: js/government/government-state.js
+    <- AFTER: js/government/government-rules.js
     <- AFTER: js/character/character-queries.js
     <- AFTER: js/location/location-queries.js
-    <- AFTER: js/systems/roles/role-queries.js         (BLOCK 20)
+    <- AFTER: js/roles/role-queries.js         (BLOCK 20)
     <- AFTER: js/settlement/settlement-queries.js
     <- AFTER: js/settlement/settlement-prosperity-queries.js
-    <- AFTER: js/core/industry/industry-queries.js     [UNVERIFIED]
+    <- AFTER: js/industry/industry-queries.js     [UNVERIFIED]
 
-  js/systems/government/government-commands.js
-    <- AFTER: js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-rules.js
+  js/government/government-commands.js
+    <- AFTER: js/government/government-queries.js
+    <- AFTER: js/government/government-rules.js
     <- AFTER: js/character/character-commands.js
     <- AFTER: js/character/character-queries.js
     <- AFTER: js/location/location-queries.js
@@ -2787,22 +2803,22 @@ BLOCK 37 — GOVERNMENT SUBSYSTEM
     <- AFTER: js/core/storage.js
 
   — Government economy —
-  js/systems/government/government-economy.js
-    <- AFTER: js/systems/government/government-constants.js
-    <- AFTER: js/systems/government/government-rules.js
-    <- AFTER: js/systems/government/government-queries.js
+  js/government/government-economy.js
+    <- AFTER: js/government/government-constants.js
+    <- AFTER: js/government/government-rules.js
+    <- AFTER: js/government/government-queries.js
     <- AFTER: js/location/location-queries.js
     <- AFTER: js/settlement/settlement-prosperity-queries.js
     <- AFTER: js/core/time.js
 
   — Government bootstrap —
-  js/systems/government/government-bootstrap.js
-    <- AFTER: js/systems/government/government-constants.js
-    <- AFTER: js/systems/government/government-state.js
-    <- AFTER: js/systems/government/government-rules.js
-    <- AFTER: js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-commands.js
-    <- AFTER: js/systems/government/government-economy.js
+  js/government/government-bootstrap.js
+    <- AFTER: js/government/government-constants.js
+    <- AFTER: js/government/government-state.js
+    <- AFTER: js/government/government-rules.js
+    <- AFTER: js/government/government-queries.js
+    <- AFTER: js/government/government-commands.js
+    <- AFTER: js/government/government-economy.js
     <- AFTER: js/core/ids.js
     <- AFTER: js/core/storage.js
     <- AFTER: js/core/time.js
@@ -2810,75 +2826,75 @@ BLOCK 37 — GOVERNMENT SUBSYSTEM
     <- AFTER: js/character/character-commands.js
     <- AFTER: js/location/location-queries.js
     <- AFTER: js/location/location-commands.js
-    <- AFTER: js/systems/roles/role-queries.js         (BLOCK 20)
+    <- AFTER: js/roles/role-queries.js         (BLOCK 20)
     <- AFTER: js/settlement/settlement-queries.js
     <- AFTER: js/settlement/settlement-prosperity-queries.js
     <- AFTER: js/settlement/settlement-government-commands.js
-    <- AFTER: js/core/industry/industry-queries.js     [UNVERIFIED]
+    <- AFTER: js/industry/industry-queries.js     [UNVERIFIED]
     <- AFTER: js/households/household-queries.js
     <- AFTER: js/households/household-commands.js
     <- AFTER: initializeStorage()
 
   — Government view models, UI, modals —
-  js/systems/government/government-view-models.js
-    <- AFTER: js/systems/government/government-constants.js
+  js/government/government-view-models.js
+    <- AFTER: js/government/government-constants.js
 
-  js/systems/government/government-ui-list.js
-    <- AFTER: js/systems/government/government-view-models.js
+  js/government/government-ui-list.js
+    <- AFTER: js/government/government-view-models.js
     <- after: js/core/formatting.js     (soft)
     <- after: js/core/icons.js          (soft)
 
-  js/systems/government/modals-government-positions.js
-    <- AFTER: js/systems/government/government-constants.js
-    <- AFTER: js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-commands.js
-    <- AFTER: js/systems/government/government-view-models.js
-    <- AFTER: js/systems/roles/role-queries.js         (BLOCK 20)
+  js/government/modals-government-positions.js
+    <- AFTER: js/government/government-constants.js
+    <- AFTER: js/government/government-queries.js
+    <- AFTER: js/government/government-commands.js
+    <- AFTER: js/government/government-view-models.js
+    <- AFTER: js/roles/role-queries.js         (BLOCK 20)
     <- AFTER: js/core/modals-core.js
     <- AFTER: js/core/ui.js
     <- after: js/selectors/modals-char-selector.js     (call-time)
 
-  js/systems/government/modals-government.js
-    <- AFTER: js/systems/government/government-constants.js
-    <- AFTER: js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-commands.js
-    <- AFTER: js/systems/government/government-view-models.js
-    <- AFTER: js/systems/government/government-ui-list.js
+  js/government/modals-government.js
+    <- AFTER: js/government/government-constants.js
+    <- AFTER: js/government/government-queries.js
+    <- AFTER: js/government/government-commands.js
+    <- AFTER: js/government/government-view-models.js
+    <- AFTER: js/government/government-ui-list.js
     <- AFTER: js/location/location-queries.js
-    <- AFTER: js/systems/roles/role-queries.js         (BLOCK 20)
+    <- AFTER: js/roles/role-queries.js         (BLOCK 20)
     <- AFTER: js/core/modals-core.js
     <- AFTER: js/core/ui.js
 
-  js/systems/government/modals-government-departments.js
-    <- AFTER: js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-commands.js
-    <- AFTER: js/systems/government/government-view-models.js
+  js/government/modals-government-departments.js
+    <- AFTER: js/government/government-queries.js
+    <- AFTER: js/government/government-commands.js
+    <- AFTER: js/government/government-view-models.js
     <- AFTER: js/location/location-queries.js
     <- AFTER: js/core/modals-core.js
     <- AFTER: js/core/ui.js
-    <- after: js/systems/government/modals-government-positions.js
+    <- after: js/government/modals-government-positions.js
         (call-time)
 
-  js/systems/government/modals-government-assign.js
-    <- AFTER: js/systems/government/government-constants.js
-    <- AFTER: js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-commands.js
-    <- AFTER: js/systems/government/government-view-models.js
-    <- AFTER: js/systems/government/government-ui-list.js
+  js/government/modals-government-assign.js
+    <- AFTER: js/government/government-constants.js
+    <- AFTER: js/government/government-queries.js
+    <- AFTER: js/government/government-commands.js
+    <- AFTER: js/government/government-view-models.js
+    <- AFTER: js/government/government-ui-list.js
     <- AFTER: js/core/modals-core.js
     <- AFTER: js/core/ui.js
 
-  js/systems/government/modals-government-economy.js
-    <- AFTER: js/systems/government/government-constants.js
-    <- AFTER: js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-commands.js
-    <- AFTER: js/systems/government/government-economy.js
-    <- AFTER: js/systems/government/government-view-models.js
+  js/government/modals-government-economy.js
+    <- AFTER: js/government/government-constants.js
+    <- AFTER: js/government/government-queries.js
+    <- AFTER: js/government/government-commands.js
+    <- AFTER: js/government/government-economy.js
+    <- AFTER: js/government/government-view-models.js
     <- AFTER: js/location/location-queries.js
     <- AFTER: js/core/modals-core.js
     <- AFTER: js/core/ui.js
 
-  js/systems/government/settlement-law-formatters.js
+  js/government/settlement-law-formatters.js
     <- after: js/core/icons.js          (soft)
 
 
@@ -2978,16 +2994,16 @@ BLOCK 39 — CHARACTER LIFECYCLE
     <- AFTER: js/core/time.js                          (HARD)
     <- AFTER: js/core/randomness.js                    (HARD)
     <- after: js/character/family-commands.js          (call-time)
-    <- after: js/core/rank/rank-issues.js              (call-time)
-    <- after: js/social/relationship-integrations.js
+    <- after: js/ranks/rank-issues.js              (call-time)
+    <- after: js/relationships/relationship-integrations.js
         (call-time — DIRECT dispatch through
          window.RelationshipIntegrations.handleCharacterDeath;
          the registration hook is the load-order-independent
-         path — see BLOCK 25)
+         path — see BLOCK 27)
     <- after: js/location/location-commands.js         (call-time)
     <- after: js/settlement/settlement-annual-processor.js
         (call-time)
-    <- after: js/modules/names/name-commands.js        (call-time)
+    <- after: js/names/name-commands.js        (call-time)
 
   MUST load AFTER settlement-annual-processor.js, rank-issues.js,
   and name-commands.js.
@@ -3001,16 +3017,20 @@ BLOCK 39 — CHARACTER LIFECYCLE
 
   CHARACTER LIFECYCLE DEATH HANDLER LOADING ORDER CONTRACT:
     - CharacterLifecycle loads BEFORE relationship-integrations.js
-      in the documented order. Its DIRECT dispatch to
-      RelationshipIntegrations.handleCharacterDeath is therefore a
-      no-op at load time.
-    - The death cascade reaches the relationship domain ONLY via
-      the registration hook installed by
-      relationship-integrations.js at its own load time (BLOCK 25).
-    - A build that has not applied Phase 3.13 to
-      character-lifecycle.js will still fire the direct dispatch
-      IF a caller manually invokes it, but the load-order-safe path
-      is the registration hook. Do not remove the hook without
+      in the documented order? NO — under the corrected order,
+      relationship-integrations.js loads in BLOCK 27 and
+      character-lifecycle.js loads in BLOCK 39. The registration
+      hook (BLOCK 27) is therefore installed BEFORE
+      character-lifecycle.js loads. killCharacter at BLOCK 39
+      dispatches through the hook to RelationshipIntegrations.
+    - The DIRECT dispatch path in character-lifecycle.js to
+      RelationshipIntegrations.handleCharacterDeath is a no-op if
+      the module isn't loaded yet, but by BLOCK 39 it IS loaded.
+      Both paths now resolve.
+    - A pre-Phase-3.13 character-lifecycle.js will fire the
+      direct dispatch when invoked (both modules are present),
+      but without the registration hook, deletion handlers for
+      other domains won't fire. Do not remove the hook without
       auditing every dependent domain.
 
 
@@ -3027,7 +3047,7 @@ BLOCK 40 — SELECTORS
     <- after: js/core/icons.js                    (soft)
     <- after: js/core/time.js                     (soft)
     <- after: js/character/family-queries.js      (call-time, soft)
-    <- after: js/social/relationship-queries.js   (call-time, soft)
+    <- after: js/relationships/relationship-queries.js   (call-time, soft)
 
   js/selectors/locationDropdown.js
     <- AFTER: js/core/accessors.js                (HARD)
@@ -3043,7 +3063,7 @@ BLOCK 40 — SELECTORS
     <- AFTER: js/character/family-queries.js      (HARD)
     <- after: js/core/constants/age-constants.js  (soft)
     <- after: js/core/icons.js                    (soft)
-    <- after: js/social/relationship-queries.js   (call-time, soft)
+    <- after: js/relationships/relationship-queries.js   (call-time, soft)
 
   js/selectors/modals-household-selector.js
     <- AFTER: js/core/formatting.js               (HARD)
@@ -3052,6 +3072,20 @@ BLOCK 40 — SELECTORS
     <- AFTER: js/selectors/selector-base.js       (HARD)
     <- after: js/character/family-queries.js      (call-time, soft)
     <- after: js/core/icons.js                    (soft)
+
+  NOTE (structure.txt shim):
+    No file in the tree defines window.getFilteredLocationOptions.
+    Religion modals, crime modals, disaster modals, and settlement
+    modals require it. Install a shim AFTER locationDropdown.js:
+
+      if (typeof window.getFilteredLocationOptions !== 'function') {
+        window.getFilteredLocationOptions = function (selectedId) {
+          if (typeof window.buildLocationDropdown === 'function') {
+            return window.buildLocationDropdown(selectedId, null, true);
+          }
+          return '<option value="">All locations</option>';
+        };
+      }
 
 
 ==============================================================================
@@ -3085,32 +3119,35 @@ BLOCK 41 — CHARACTER UI MODALS
   js/character/modals-death.js
     (all similar; see character-doc.txt for full manifests)
 
-  js/character/character-system.js                     [NOT PROVIDED]
+  js/character/character-system.js
     <- AFTER: every other js/character/* file (HARD)
+    (Previously listed as [NOT PROVIDED] in the master doc — the
+    file exists in structure.txt.)
 
 
 ==============================================================================
-BLOCK 42 — RELIGION MODALS
+BLOCK 42 — RELIGION MODALS (already loaded at BLOCK 21)
 ==============================================================================
 
-  js/religion/modals-religion.js
-    <- AFTER: js/core/modals-core.js                   (HARD)
-    <- AFTER: js/core/ui.js                            (HARD)
-    <- AFTER: js/core/formatting.js                    (HARD)
-    <- AFTER: js/core/icons.js                         (HARD)
-    <- AFTER: js/core/accessors.js                     (HARD)
-    <- AFTER: js/core/time.js                          (HARD)
-    <- AFTER: js/selectors/modals-char-selector.js     (HARD)
-    <- AFTER: js/selectors/locationDropdown.js         (HARD)
-    <- AFTER: js/religion/religion-state.js            (indirect)
-    <- AFTER: js/religion/religion-commands.js         (HARD)
-    <- AFTER: js/religion/religion-queries.js          (HARD)
-    <- AFTER: js/religion/religion-format.js           (HARD)
-    <- AFTER: js/religion/religion-constants.js        (HARD)
+  js/religion/modals-religion.js   (see BLOCK 21)
+
+  NOTE: Do not load a second copy here. The master doc's Block 42
+  duplicated the religion modals; modals-religion.js is already
+  loaded in BLOCK 21 and depends on selector-base.js (BLOCK 40).
+  If religion modals must load AFTER selectors, move the entire
+  religion modals load to this block — but religion-queries.js
+  and religion-commands.js must already be present (BLOCK 21
+  ensures that).
+
+  Actual canonical load: js/religion/modals-religion.js remains
+  in BLOCK 21 as part of the religion subsystem. The selector
+  call-time dependency is satisfied because modals-religion.js
+  only USES selector-base.js and locationDropdown.js at call time
+  (i.e. when the modal is opened).
 
 
 ==============================================================================
-BLOCK 43 — SETTLEMENT UI
+BLOCK 43 — SETTLEMENT UI + TAB RENDERERS
 ==============================================================================
 
   js/settlement/settlement-tabs.js
@@ -3118,34 +3155,90 @@ BLOCK 43 — SETTLEMENT UI
   js/settlement/modals-settlement-core.js
   js/settlement/modals-settlement-economy.js
   js/settlement/modals-settlement-roles.js
-    (see settlement doc for full manifests; all depend on
-    js/core/modals-core.js and ui.js at load, plus settlement-queries,
-    view-models, and their respective command modules)
+
+  — Tab renderers (js/tabs/) —
+  js/tabs/apprenticeship-tab.js
+  js/tabs/culture-appearance-tab.js
+  js/tabs/culture-characters-tab.js
+  js/tabs/culture-editor-tab.js
+  js/tabs/culture-mythology-tab.js
+  js/tabs/culture-names-tab.js
+  js/tabs/government-civil-laws-tab.js
+  js/tabs/government-departments-tab.js
+  js/tabs/government-details-tab.js
+  js/tabs/government-economy-tab.js
+  js/tabs/government-history-tab.js
+  js/tabs/government-type-manager-tab.js
+  js/tabs/household-activity-tab.js
+  js/tabs/household-departments-tab.js
+  js/tabs/household-economy-tab.js
+  js/tabs/household-holdings-tab.js
+  js/tabs/household-members-tab.js
+  js/tabs/household-overview-tab.js
+  js/tabs/location-tab.js
+  js/tabs/location-type-manager-tab.js
+  js/tabs/rank-manager-tab.js
+  js/tabs/religion-details-tab.js
+  js/tabs/religion-followers-tab.js
+  js/tabs/religion-gods-tab.js
+  js/tabs/religion-laws-tab.js
+  js/tabs/religion-places-tab.js
+  js/tabs/roles-analytics-tab.js
+  js/tabs/roles-tab.js
+  js/tabs/settlement-economy-tab.js
+  js/tabs/settlement-education-tab.js
+  js/tabs/settlement-features-tab.js
+  js/tabs/settlement-history-tab.js
+  js/tabs/settlement-industry-tab.js
+  js/tabs/settlement-overview-tab.js
+  js/tabs/settlement-religion-tab.js
+  js/tabs/settlement-residence-tab.js
+  js/tabs/settlement-roles-tab.js
+
+  Notes:
+    - All settlement modals depend on js/core/modals-core.js and
+      ui.js at load, plus settlement-queries, view-models, and
+      their respective command modules (BLOCK 34).
+    - Tab renderers are presentation-layer only. They read from
+      the domain modules via call-time namespace lookups, so their
+      exact position within BLOCK 43 is unimportant. The order
+      shown is alphabetical for ease of maintenance.
+    - js/tabs/ files were missing from the master doc entirely;
+      they are present in structure.txt and load here.
 
 
 ==============================================================================
-BLOCK 44 — OPTIONAL: STATE FACADE
+BLOCK 44 — OPTIONAL STATE FACADE
 ==============================================================================
 
-  js/core/state/census-state.js
-  js/core/state/matchmaker-state.js
-  js/core/state/misc-state.js
-  js/core/state/location-ui-state.js                    [NOT PROVIDED]
-  js/roles/role-state.js                                [NOT PROVIDED]
-    Note: NOT js/systems/roles/role-state.js.
-  js/ranks/rank-state.js                                [NOT PROVIDED]
-    Note: NOT js/core/rank/rank-state.js.
-  js/names/name-state.js                                [NOT PROVIDED]
-    Note: NOT js/modules/names/name-state.js.
+  js/core/census-state.js
+  js/core/matchmaker-state.js
+  js/core/misc-state.js
   js/core/state.js
     <- AFTER: every state module above (HARD)
+
+  Notes:
+    - These four files live at js/core/ (top level), NOT
+      js/core/state/. The master doc's js/core/state/* paths were
+      wrong.
+    - The master doc's Block 44 duplicates of
+      js/roles/role-state.js, js/ranks/rank-state.js,
+      js/names/name-state.js, js/location/location-ui-state.js
+      are SPURIOUS — those modules are already loaded in their
+      canonical blocks (20, 19, 18, 38 respectively) and must not
+      be loaded twice. The "facade" concept in the master doc was
+      a misreading of the source tree.
+    - js/core/state.js is the aggregate; it is optional. Load
+      only if a page actually consumes it.
 
 
 ==============================================================================
 BLOCK 45 — FLAT LOAD SEQUENCE
 ==============================================================================
 
-A single ordered list, ready to paste into a page.
+A single ordered list, ready to paste into a page. Same content as
+BLOCKS 1–44 but flattened. Tab renderers from BLOCK 43 are appended
+at the end so a page that doesn't use them can truncate cleanly.
 
   — Block 1: core constants —
   js/core/constants/constants.js
@@ -3193,11 +3286,13 @@ A single ordered list, ready to paste into a page.
   js/core/simulation-generators.js
 
   — Block 9: skill taxonomy —
-  js/skill/skill-utils.js
+  js/roles/skill-utils.js
 
-  — Block 10: event logger + timeline —
-  js/events/eventLogger.js
+  — Block 10: events —
   js/events/timeline-core.js
+  js/events/census-core.js
+  js/events/annualProcessing.js
+  js/events/social-events-system.js
 
   — Block 11: character pure policy —
   js/character/family-rules.js
@@ -3236,89 +3331,36 @@ A single ordered list, ready to paste into a page.
   js/character/children-statistics.js
 
   — Block 18: NAME SUBSYSTEM —
-  js/modules/names/name-queries.js
-  js/modules/names/name-rules.js
-  js/modules/names/name-state.js
-  js/modules/names/name-commands.js
-  js/modules/names/name-system.js
-  js/modules/names/modals-name.js
+  js/names/name-queries.js
+  js/names/name-rules.js
+  js/names/name-state.js
+  js/names/name-commands.js
+  js/names/name-system.js
+  js/names/modals-name.js
 
   — Block 19: RANK SUBSYSTEM —
-  js/core/rank/rank-constants.js
-  js/core/rank/rank-rules.js
-  js/core/rank/rank-state.js
-  js/core/rank/rank-queries.js
-  js/core/rank/rank-assignment.js
-  js/core/rank/rank-commands.js
-  js/core/rank/rank-issues.js
-  js/core/rank/rank-ui-list.js
-  js/core/rank/modals-rank.js
-  js/core/rank/rank-bootstrap.js
+  js/ranks/rank-constants.js
+  js/ranks/rank-rules.js
+  js/ranks/rank-state.js
+  js/ranks/rank-queries.js
+  js/ranks/rank-assignment.js
+  js/ranks/rank-commands.js
+  js/ranks/rank-issues.js
+  js/ranks/rank-ui-list.js
+  js/ranks/modals-rank.js
+  js/ranks/rank-bootstrap.js
 
   — Block 20: ROLE SUBSYSTEM —
-  js/systems/roles/role-constants.js
-  js/systems/roles/role-state.js
-  js/systems/roles/role-queries.js
-  js/systems/roles/role-commands.js
-  js/systems/roles/role-system.js
-  js/systems/roles/role-ui-list.js
-  js/systems/roles/modals-roles.js
-  js/core/modals/modals-role-select.js
+  js/roles/role-constants.js
+  js/roles/role-state.js
+  js/roles/role-queries.js
+  js/roles/role-commands.js
+  js/roles/role-system.js
+  js/roles/role-ui-list.js
+  js/roles/modals-roles.js
+  js/roles/modals-role-select.js
 
-  — Block 21: RELATIONSHIP BASE —
-  js/social/relationship-types.js
-  js/social/relationship-utils.js
-  js/social/relationship-state.js
-  js/social/relationship-queries.js
-  js/social/relationship-commands.js
-
-  — Block 22: RELATIONSHIP PER-ARCHETYPE RULES —
-  js/social/romance-rules.js
-  js/social/friendship-rules.js
-  js/social/rivalry-rules.js
-  js/social/professional-rules.js
-  js/social/jealousy-rules.js
-  js/social/affair-rules.js
-  js/social/matchmaking-rules.js
-
-  — Block 23: RELATIONSHIP PER-ARCHETYPE QUERIES —
-  js/social/romance-queries.js
-  js/social/friendship-queries.js
-  js/social/rivalry-queries.js
-  js/social/professional-queries.js
-  js/social/jealousy-queries.js
-  js/social/affair-queries.js
-  js/social/matchmaking-queries.js
-
-  — Block 24: RELATIONSHIP PER-ARCHETYPE COMMANDS —
-  js/social/romance-commands.js
-  js/social/friendship-commands.js
-  js/social/rivalry-commands.js
-  js/social/jealousy-commands.js
-  js/social/affair-commands.js
-  js/social/professional-commands.js
-
-  — Block 25: RELATIONSHIP FINDER, UI METADATA, INTEGRATIONS —
-  js/social/relationship-finder-queries.js
-  js/social/relationship-ui-metadata.js
-  js/social/relationship-integrations.js
-
-  — Block 26: RELATIONSHIP MODALS —
-  js/social/modals-relationship.js
-  js/social/modals-friendship.js
-
-  — Block 27: RELATIONSHIP BOOTSTRAP —
-  js/social/relationship-bootstrap.js
-
-  — Block 28: APPRENTICESHIP SUBSYSTEM —
-  js/apprenticeship/apprenticeship-constants.js
-  js/apprenticeship/apprenticeship-rules.js
-  js/apprenticeship/apprenticeship-queries.js
-  js/apprenticeship/apprenticeship-commands.js
-  js/apprenticeship/professional-knowledge-commands.js
-  js/apprenticeship/modals-apprenticeship.js
-
-  — Block 29: RELIGION SUBSYSTEM —
+  — Block 21: RELIGION SUBSYSTEM —
   js/religion/religion-constants.js
   js/religion/religion-format.js
   js/religion/religion-validation.js
@@ -3331,8 +3373,10 @@ A single ordered list, ready to paste into a page.
   js/religion/religion-view-models.js
   js/religion/religion-render.js
   js/religion/religion-ui-state.js
+  js/religion/modals-religion.js
+  js/religion/religion-bootstrap.js
 
-  — Block 30: CULTURE SUBSYSTEM —
+  — Block 22: CULTURE SUBSYSTEM (moved up — see Invariant 107) —
   js/culture/culture-constants.js
   js/culture/culture-validation.js
   js/culture/culture-state.js
@@ -3342,26 +3386,79 @@ A single ordered list, ready to paste into a page.
   js/culture/culture-generation.js
   js/culture/culture-view-models.js
   js/culture/culture-ui-list.js
-  js/culture/culture-modals.js
+  js/culture/modals-culture.js
   js/culture/culture-bootstrap.js
 
+  — Block 23: RELATIONSHIP BASE —
+  js/relationships/relationship-types.js
+  js/relationships/relationship-utils.js
+  js/relationships/relationship-state.js
+  js/relationships/relationship-queries.js
+  js/relationships/relationship-commands.js
+
+  — Block 24: RELATIONSHIP PER-ARCHETYPE RULES —
+  js/relationships/romance-rules.js
+  js/relationships/friendship-rules.js
+  js/relationships/rivalry-rules.js
+  js/relationships/professional-rules.js
+  js/relationships/jealousy-rules.js
+  js/relationships/affair-rules.js
+  js/relationships/matchmaking-rules.js
+
+  — Block 25: RELATIONSHIP PER-ARCHETYPE QUERIES —
+  js/relationships/romance-queries.js
+  js/relationships/friendship-queries.js
+  js/relationships/rivalry-queries.js
+  js/relationships/professional-queries.js
+  js/relationships/jealousy-queries.js
+  js/relationships/affair-queries.js
+  js/relationships/matchmaking-queries.js
+
+  — Block 26: RELATIONSHIP PER-ARCHETYPE COMMANDS —
+  js/relationships/romance-commands.js
+  js/relationships/friendship-commands.js
+  js/relationships/rivalry-commands.js
+  js/relationships/jealousy-commands.js
+  js/relationships/affair-commands.js
+  js/relationships/professional-commands.js
+
+  — Block 27: RELATIONSHIP FINDER, UI METADATA, INTEGRATIONS —
+  js/relationships/relationship-finder-queries.js
+  js/relationships/relationship-ui-metadata.js
+  js/relationships/relationship-integrations.js
+
+  — Block 28: RELATIONSHIP MODALS —
+  js/relationships/modals-relationship.js
+  js/relationships/modals-friendship.js
+
+  — Block 29: RELATIONSHIP BOOTSTRAP —
+  js/relationships/relationship-bootstrap.js
+
+  — Block 30: APPRENTICESHIP SUBSYSTEM —
+  js/apprenticeship/apprenticeship-constants.js
+  js/apprenticeship/apprenticeship-rules.js
+  js/apprenticeship/apprenticeship-queries.js
+  js/apprenticeship/apprenticeship-commands.js
+  js/apprenticeship/professional-knowledge-commands.js
+  js/apprenticeship/modals-apprenticeship.js
+
   — Block 31: INDUSTRY SUBSYSTEM —
-  js/core/industry/industry-constants.js
-  js/core/industry/industry-economics.js
-  js/core/industry/industry-type-defaults.js
-  js/core/industry/industry-rules.js
-  js/core/industry/industry-state.js
-  js/core/industry/industry-type-init.js
-  js/core/industry/industry-types.js
-  js/core/industry/industry-migration.js
-  js/core/industry/industry-type-commands.js
-  js/core/industry/industry-commands.js
-  js/core/industry/industry-queries.js
-  js/core/industry/industry-processor.js
-  js/core/industry/industry-view-models.js
-  js/core/industry/industry-ui-list.js
-  js/core/industry/modals-industry.js
-  js/core/industry/industry-bootstrap.js
+  js/industry/industry-constants.js
+  js/industry/industry-economics.js
+  js/industry/industry-type-defaults.js
+  js/industry/industry-rules.js
+  js/industry/industry-state.js
+  js/industry/industry-type-init.js
+  js/industry/industry-types.js
+  js/industry/industry-migration.js
+  js/industry/industry-type-commands.js
+  js/industry/industry-commands.js
+  js/industry/industry-queries.js
+  js/industry/industry-processor.js
+  js/industry/industry-view-models.js
+  js/industry/industry-ui-list.js
+  js/industry/modals-industry.js
+  js/industry/industry-bootstrap.js
 
   — Block 32: HOUSEHOLD AND RESIDENCE SUBSYSTEM —
   js/households/household-constants.js
@@ -3392,17 +3489,17 @@ A single ordered list, ready to paste into a page.
   js/households/modals-residence-snapshot.js
 
   — Block 33: DISASTER SUBSYSTEM —
-  js/core/disaster/disaster-constants.js
-  js/core/disaster/disaster-state.js
-  js/core/disaster/disaster-queries.js
-  js/core/disaster/disaster-damage.js
-  js/core/disaster/disaster-commands.js
-  js/core/disaster/disaster-view-models.js
-  js/core/disaster/modals-disaster.js
-  js/core/disaster/disaster-ui-stats.js
-  js/core/disaster/disaster-bootstrap.js
+  js/disaster/disaster-constants.js
+  js/disaster/disaster-state.js
+  js/disaster/disaster-queries.js
+  js/disaster/disaster-damage.js
+  js/disaster/disaster-commands.js
+  js/disaster/disaster-view-models.js
+  js/disaster/modals-disaster.js
+  js/disaster/disaster-ui-stats.js
+  js/disaster/disaster-bootstrap.js
 
-  — Block 34: SETTLEMENT SUBSYSTEM (see §BLOCK 34) —
+  — Block 34: SETTLEMENT SUBSYSTEM —
   js/settlement/settlement-fiscal-definitions.js
   js/settlement/settlement-government-definitions.js
   js/settlement/settlement-rank-definitions.js
@@ -3441,19 +3538,19 @@ A single ordered list, ready to paste into a page.
   js/settlement/settlement-view-models.js
   js/settlement/settlement-ui-state.js
 
-  — Block 35: EDUCATION SUBSYSTEM (see §BLOCK 35) —
-  js/systems/education/education-constants.js
-  js/systems/education/education-rules.js
-  js/systems/education/education-state.js
-  js/systems/education/education-learning.js
-  js/systems/education/education-history.js
-  js/systems/education/education-queries.js
-  js/systems/education/education-commands.js
-  js/systems/education/education-annual.js
-  js/systems/education/education-ui-list.js
-  js/systems/education/modals-education.js
+  — Block 35: EDUCATION SUBSYSTEM —
+  js/education/education-constants.js
+  js/education/education-rules.js
+  js/education/education-state.js
+  js/education/education-learning.js
+  js/education/education-history.js
+  js/education/education-queries.js
+  js/education/education-commands.js
+  js/education/education-annual.js
+  js/education/education-ui-list.js
+  js/education/modals-education.js
 
-  — Block 36: CRIME SUBSYSTEM (see §BLOCK 36) —
+  — Block 36: CRIME SUBSYSTEM —
   js/crime/crime-constants.js
   js/crime/crime-state.js
   js/crime/crime-law-integration.js
@@ -3465,24 +3562,24 @@ A single ordered list, ready to paste into a page.
   js/crime/vendetta-system.js
   js/crime/crime-bootstrap.js
 
-  — Block 37: GOVERNMENT SUBSYSTEM (see §BLOCK 37) —
-  js/systems/government/government-constants.js
-  js/systems/government/government-state.js
-  js/systems/government/government-rules.js
-  js/systems/government/government-queries.js
-  js/systems/government/government-commands.js
-  js/systems/government/government-economy.js
-  js/systems/government/government-bootstrap.js
-  js/systems/government/government-view-models.js
-  js/systems/government/government-ui-list.js
-  js/systems/government/modals-government-positions.js
-  js/systems/government/modals-government.js
-  js/systems/government/modals-government-departments.js
-  js/systems/government/modals-government-assign.js
-  js/systems/government/modals-government-economy.js
-  js/systems/government/settlement-law-formatters.js
+  — Block 37: GOVERNMENT SUBSYSTEM —
+  js/government/government-constants.js
+  js/government/government-state.js
+  js/government/government-rules.js
+  js/government/government-queries.js
+  js/government/government-commands.js
+  js/government/government-economy.js
+  js/government/government-bootstrap.js
+  js/government/government-view-models.js
+  js/government/government-ui-list.js
+  js/government/modals-government-positions.js
+  js/government/modals-government.js
+  js/government/modals-government-departments.js
+  js/government/modals-government-assign.js
+  js/government/modals-government-economy.js
+  js/government/settlement-law-formatters.js
 
-  — Block 38: LOCATION SUBSYSTEM (see §BLOCK 38) —
+  — Block 38: LOCATION SUBSYSTEM —
   js/location/location-state.js
   js/location/location-hierarchy.js
   js/location/location-commands.js
@@ -3503,6 +3600,7 @@ A single ordered list, ready to paste into a page.
   — Block 40: SELECTORS —
   js/selectors/selector-base.js
   js/selectors/locationDropdown.js
+      ← inline: install getFilteredLocationOptions shim (see below)
   js/selectors/modals-char-selector.js
   js/selectors/modals-household-selector.js
 
@@ -3515,24 +3613,56 @@ A single ordered list, ready to paste into a page.
   js/character/modals-death.js
   js/character/character-system.js
 
-  — Block 42: RELIGION MODALS —
-  js/religion/modals-religion.js
+  — Block 42: (religion modals already loaded at Block 21) —
 
-  — Block 43: SETTLEMENT UI —
+  — Block 43: SETTLEMENT UI + TABS —
   js/settlement/settlement-tabs.js
   js/settlement/settlement-ui-list.js
   js/settlement/modals-settlement-core.js
   js/settlement/modals-settlement-economy.js
   js/settlement/modals-settlement-roles.js
+  js/tabs/apprenticeship-tab.js
+  js/tabs/culture-appearance-tab.js
+  js/tabs/culture-characters-tab.js
+  js/tabs/culture-editor-tab.js
+  js/tabs/culture-mythology-tab.js
+  js/tabs/culture-names-tab.js
+  js/tabs/government-civil-laws-tab.js
+  js/tabs/government-departments-tab.js
+  js/tabs/government-details-tab.js
+  js/tabs/government-economy-tab.js
+  js/tabs/government-history-tab.js
+  js/tabs/government-type-manager-tab.js
+  js/tabs/household-activity-tab.js
+  js/tabs/household-departments-tab.js
+  js/tabs/household-economy-tab.js
+  js/tabs/household-holdings-tab.js
+  js/tabs/household-members-tab.js
+  js/tabs/household-overview-tab.js
+  js/tabs/location-tab.js
+  js/tabs/location-type-manager-tab.js
+  js/tabs/rank-manager-tab.js
+  js/tabs/religion-details-tab.js
+  js/tabs/religion-followers-tab.js
+  js/tabs/religion-gods-tab.js
+  js/tabs/religion-laws-tab.js
+  js/tabs/religion-places-tab.js
+  js/tabs/roles-analytics-tab.js
+  js/tabs/roles-tab.js
+  js/tabs/settlement-economy-tab.js
+  js/tabs/settlement-education-tab.js
+  js/tabs/settlement-features-tab.js
+  js/tabs/settlement-history-tab.js
+  js/tabs/settlement-industry-tab.js
+  js/tabs/settlement-overview-tab.js
+  js/tabs/settlement-religion-tab.js
+  js/tabs/settlement-residence-tab.js
+  js/tabs/settlement-roles-tab.js
 
   — Block 44: OPTIONAL STATE FACADE —
-  js/core/state/census-state.js
-  js/core/state/matchmaker-state.js
-  js/core/state/misc-state.js
-  js/core/state/location-ui-state.js
-  js/roles/role-state.js
-  js/ranks/rank-state.js
-  js/names/name-state.js
+  js/core/census-state.js
+  js/core/matchmaker-state.js
+  js/core/misc-state.js
   js/core/state.js
 
   — Application bootstrap (function calls) —
@@ -3548,21 +3678,31 @@ A single ordered list, ready to paste into a page.
   EducationState.hydrateFromMasterData(
       window.masterData.data.educationalInstitutions || []
   )
-  window.CrimeBootstrap.init()                  (if not auto-invoked)
-  window.IndustryBootstrap.init()               (if not auto-invoked)
-  window.HouseholdBootstrap.init()              (if not auto-invoked)
-  window.DisasterBootstrap.init()               (if not auto-invoked)
   window.Relationships.init()                   (idempotent — the
                                                  relationship-bootstrap
                                                  runs its own init() at
                                                  load; this call is a
                                                  no-op unless the loader
                                                  skipped it)
+  window.CrimeBootstrap.init()                  (if not auto-invoked)
+  window.IndustryBootstrap.init()               (if not auto-invoked)
+  window.HouseholdBootstrap.init()              (if not auto-invoked)
+  window.DisasterBootstrap.init()               (if not auto-invoked)
 
   — DO NOT LOAD —
-  js/systems/government/government-system.js
-  js/systems/government/government-assignment.js
-  js/systems/government/government-laws.js
+  js/government/government-system.js
+  js/government/government-assignment.js
+  js/government/government-laws.js
+
+  — INLINE SHIM (insert right after locationDropdown.js) —
+  if (typeof window.getFilteredLocationOptions !== 'function') {
+      window.getFilteredLocationOptions = function (selectedId) {
+          if (typeof window.buildLocationDropdown === 'function') {
+              return window.buildLocationDropdown(selectedId, null, true);
+          }
+          return '<option value="">All locations</option>';
+      };
+  }
 
 
 ==============================================================================
@@ -3590,7 +3730,7 @@ BLOCK 46 — LOAD-ORDER INVARIANTS (CROSS-SUBSYSTEM)
   5.  formatting.js and icons.js before ui.js, modals-core.js,
       selector-base.js, modals-household-selector.js,
       location-ui-list.js, rank-ui-list.js, modals-rank.js,
-      religion-render.js, culture-ui-list.js, culture-modals.js,
+      religion-render.js, culture-ui-list.js, modals-culture.js,
       role-ui-list.js, modals-roles.js, modals-role-select.js,
       modals-name.js, modals-crime.js, modals-disaster.js,
       modals-relationship.js, modals-friendship.js,
@@ -3795,19 +3935,19 @@ BLOCK 46 — LOAD-ORDER INVARIANTS (CROSS-SUBSYSTEM)
 
   46. culture-queries.js before culture-generation.js,
       culture-view-models.js, culture-ui-list.js,
-      culture-modals.js, culture-bootstrap.js.
+      modals-culture.js, culture-bootstrap.js.
 
   47. culture-view-models.js before culture-ui-list.js and
-      culture-modals.js.
+      modals-culture.js.
 
-  48. culture-commands.js before culture-modals.js.
+  48. culture-commands.js before modals-culture.js.
 
   49. formatting.js before culture-ui-list.js and
-      culture-modals.js.
+      modals-culture.js.
 
-  50. modals-core.js before culture-modals.js.
+  50. modals-core.js before modals-culture.js.
 
-  51. ui.js before culture-modals.js.
+  51. ui.js before modals-culture.js.
 
   52. ids.js before culture-commands.js.
 
@@ -3815,10 +3955,10 @@ BLOCK 46 — LOAD-ORDER INVARIANTS (CROSS-SUBSYSTEM)
       culture-state.js's first hydrate.
 
   54. window.PlaceQueries before culture-queries.js,
-      culture-view-models.js, culture-modals.js. [UNVERIFIED]
+      culture-view-models.js, modals-culture.js. [UNVERIFIED]
 
   55. window.ReligionQueries before culture-queries.js,
-      culture-view-models.js, culture-modals.js.
+      culture-view-models.js, modals-culture.js.
 
   56. window.CharacterQueries before culture-queries.js and
       culture-view-models.js.
@@ -3915,7 +4055,7 @@ BLOCK 46 — LOAD-ORDER INVARIANTS (CROSS-SUBSYSTEM)
       religion-laws.js, religion-commands.js,
       religion-view-models.js, modals-religion.js,
       religion-bootstrap.js, culture-queries.js,
-      culture-view-models.js, culture-modals.js.
+      culture-view-models.js, modals-culture.js.
 
   84. religion-rules.js before religion-commands.js,
       religion-inheritance.js, religion-bootstrap.js.
@@ -3961,7 +4101,7 @@ BLOCK 46 — LOAD-ORDER INVARIANTS (CROSS-SUBSYSTEM)
 
   98. EDUCATION SUBSYSTEM invariants E1–E23 from BLOCK 35.
 
-  99. APPRENTICESHIP SUBSYSTEM invariants A1–A20 from BLOCK 28.
+  99. APPRENTICESHIP SUBSYSTEM invariants A1–A20 from BLOCK 30.
 
   100. CRIME SUBSYSTEM invariants CR1–CR26 from BLOCK 36.
 
@@ -4006,7 +4146,7 @@ BLOCK 46 — LOAD-ORDER INVARIANTS (CROSS-SUBSYSTEM)
           modals-relationship.js (HARD guard) and before
           relationship-bootstrap.js (HARD guard).
 
-       i. relationship-bootstrap.js loads LAST among js/social/*
+       i. relationship-bootstrap.js loads LAST among js/relationships/*
           files. Its REQUIRED_MODULES and REQUIRED_METHODS checks
           throw if any module or dispatch target is missing.
 
@@ -4023,69 +4163,53 @@ BLOCK 46 — LOAD-ORDER INVARIANTS (CROSS-SUBSYSTEM)
          ProfessionalCommands without updating the ownership
          boundary in relationship-docs §16.
 
-  107. RELATIONSHIP ↔ CULTURE:
+  107. RELATIONSHIP ↔ CULTURE — RESOLVED:
        - relationship-bootstrap.js REQUIRES CultureRules as a
          global, and supportsRelationshipAttribute as a method.
        - romance-rules.js::validateAttributesForCulture throws at
          call time if CultureRules is missing.
-       - The load order puts culture-rules.js in BLOCK 30 and the
-         relationship subsystem in BLOCK 21–27. Under the documented
-         order, this is inverted: relationship-bootstrap.js loads
-         BEFORE culture-rules.js, so REQUIRED_GLOBALS.CultureRules
-         would fail if culture is not loaded.
-       - ACTUAL RESOLUTION: relationship-bootstrap.js's
-         CultureRules guard is required-at-load by the bootstrap,
-         but the relationship domain itself loads fine without it.
-         The BOOTSTRAP will throw if CultureRules is missing at
-         bootstrap init time. Under the documented order this means
-         the relationship bootstrap must be reordered BELOW
-         culture-rules.js, or the loader must run
-         CultureBootstrap.init() before Relationships.init().
-         The recommended fix is to move the relationship subsystem's
-         relationship-bootstrap.js to a BLOCK after BLOCK 30.
-         Until that fix lands, either:
-           (a) reorder the loader so culture loads first, or
-           (b) apply the "log-and-continue" fallback on the
-               CultureRules check in relationship-bootstrap.js.
+       - THE DOCUMENTED ORDER NOW LOADS CULTURE AT BLOCK 22 AND
+         THE RELATIONSHIP SUBSYSTEM AT BLOCKS 23–29. culture-rules.js
+         is present before relationship-bootstrap.js loads, so the
+         REQUIRED_GLOBALS.CultureRules guard passes. This resolves
+         the master doc's original inversion (relationship-bootstrap
+         at Block 27 above culture-rules at Block 30).
+       - If your loader cannot guarantee the Culture-before-Relation
+         ordering, apply the "log-and-continue" fallback on the
+         CultureRules check in relationship-bootstrap.js.
 
-  108. RELATIONSHIP ↔ CHARACTER_LIFECYCLE / RELATIONSHIP_INTEGRATIONS:
-       - character-lifecycle.js loads BEFORE
-         relationship-integrations.js (BLOCK 39 vs BLOCK 25 — note
-         BLOCK 25's relationship-integrations.js loads FIRST;
-         character-lifecycle.js loads in BLOCK 39).
+  108. RELATIONSHIP ↔ CHARACTER_LIFECYCLE / RELATIONSHIP_INTEGRATIONS
+       — RESOLVED:
+       - Under the corrected order, relationship-integrations.js
+         loads in BLOCK 27 and character-lifecycle.js loads in
+         BLOCK 39. The registration hook (window.registerDeathHandler
+         / window.registerDeleteHandler) installed at BLOCK 27 is
+         already present when character-lifecycle.js dispatches at
+         BLOCK 39. Both the direct dispatch and the hook now
+         resolve.
        - The direct dispatch path
          (CharacterLifecycle -> RelationshipIntegrations
-          .handleCharacterDeath) is a no-op under this order,
-         because character-lifecycle.js loads BEFORE
-         relationship-integrations.js.
-       - The registration hook
-         (window.registerDeathHandler) installed by
-         relationship-integrations.js at load time is the
-         load-order-independent path. Under the documented order
-         it fires correctly: relationship-integrations loads early
-         (BLOCK 25), registers its handler, and character-lifecycle
-         loads much later (BLOCK 39) with the handler already in
-         place.
-       - The same pattern applies to
-         CharacterDeletionCommands + removeAllReferencesTo
-         (registerDeleteHandler).
+          .handleCharacterDeath) is no longer a no-op — both
+         modules are loaded by the time killCharacter is invoked.
+       - The registration hook remains the load-order-independent
+         path for any other domain's deletion handler.
 
   109. RELATIONSHIP ↔ INDUSTRY / HOUSEHOLD:
        - romance-commands._rankAllowsMultipleSpouses reads
          RankRules.allowsMultipleSpouses (OPTIONAL), falling back
          to rank.allowsMultipleSpouses direct read. Rank is
-         BLOCK 19; romance-commands is BLOCK 24. The optional
+         BLOCK 19; romance-commands is BLOCK 26. The optional
          dependency is satisfied under the documented order.
        - household-servant.js requires relationship-commands.js
-         (HARD). BLOCK 32 (household) is AFTER BLOCK 21
+         (HARD). BLOCK 32 (household) is AFTER BLOCK 23
          (relationship base). Satisfied.
        - Crime bootstrap requires relationship-queries.js.
-         BLOCK 36 (crime) is AFTER BLOCK 21. Satisfied.
+         BLOCK 36 (crime) is AFTER BLOCK 23. Satisfied.
 
   110. RELATIONSHIP ↔ DISASTER:
        - disaster-bootstrap.js is loaded in BLOCK 33, which is
-         AFTER BLOCK 25 (relationship-integrations) and BLOCK 24
-         (relationship-commands) and BLOCK 21
+         AFTER BLOCK 27 (relationship-integrations) and BLOCK 26
+         (relationship-commands) and BLOCK 23
          (relationship-base). No relationship module is a HARD
          dependency of any disaster file, but disaster's runtime
          character-kill path ends up calling
@@ -4096,12 +4220,9 @@ BLOCK 46 — LOAD-ORDER INVARIANTS (CROSS-SUBSYSTEM)
          invoked. Satisfied.
        - romance-queries.js is called by rank-queries.js as a
          CALL-TIME soft dependency (via RomanceQueries.getActive
-         CommittedPartners). BLOCK 19 (rank) is AFTER BLOCK 21
-         (relationship base) — so rank-queries.js loads with
-         romance-queries.js already present. NOTE: rank is placed
-         EARLIER in BLOCK 19 than the relationship domain in
-         BLOCK 21. This is technically an inversion for the
-         call-time soft, but because the call is soft (no
+         CommittedPartners). BLOCK 19 (rank) is BEFORE BLOCK 25
+         (romance-queries). This is technically an inversion for
+         the call-time soft, but because the call is soft (no
          throw), it degrades gracefully on first access if rank
          is invoked before romance-queries is loaded. Under the
          actual documented HTML order the loader can put
@@ -4135,7 +4256,7 @@ BLOCK 47 — KNOWN HAZARDS (CROSS-SUBSYSTEM)
       settlement, government's PlaceQueries presence check,
       culture.
 
-  3.  js/core/names.js vs js/modules/names/name-system.js
+  3.  js/core/names.js vs js/names/name-system.js
       potential alias collision. Verify load order and alias
       winner.
 
@@ -4144,12 +4265,12 @@ BLOCK 47 — KNOWN HAZARDS (CROSS-SUBSYSTEM)
   5.  name-queries.js is NOT stack-overflow-sensitive to
       name-system.js load order.
 
-  6.  RELATIONSHIP DOMAIN: relationship-bootstrap.js has a HARD
-      dependency on CultureRules (via REQUIRED_GLOBALS). Under
-      the current BLOCK ordering, relationship-bootstrap.js
-      (BLOCK 27) loads BEFORE culture-rules.js (BLOCK 30). This
-      means the bootstrap will throw on a first-time load if
-      culture is not loaded. See invariant 107.
+  6.  RELATIONSHIP DOMAIN: relationship-bootstrap.js's
+      CultureRules dependency is resolved by loading Culture at
+      BLOCK 22 (above the relationship domain at BLOCKS 23–29).
+      No further action required unless the loader cannot enforce
+      that order — in which case apply the "log-and-continue"
+      fallback.
 
   7.  RELATIONSHIP DOMAIN: the DEPRECATED multi-partner trait
       branch in romance-rules.js::canHaveMultiplePartners is
@@ -4166,8 +4287,9 @@ BLOCK 47 — KNOWN HAZARDS (CROSS-SUBSYSTEM)
       files.
 
   8.  RELATIONSHIP DOMAIN: relationship-integrations.js has two
-      dispatch paths (direct and registration hook). The direct
-      path is a no-op under the documented load order. The
+      dispatch paths (direct and registration hook). Both now
+      resolve under the corrected order (relationship-integrations
+      at BLOCK 27, character-lifecycle at BLOCK 39). The
       registration hook requires character-lifecycle.js and
       character-deletion-commands.js to expose
       registerDeathHandler / registerDeleteHandler (Phase 3.13).
@@ -4495,6 +4617,27 @@ BLOCK 47 — KNOWN HAZARDS (CROSS-SUBSYSTEM)
       repair prompt), they must observe the console.error or
       subscribe to a dedicated event — the current design is
       log-and-continue.
+
+  93. js/events/eventLogger.js does not exist. All references
+      have been re-pointed at js/events/timeline-core.js
+      (BLOCK 10). Confirm any external documentation or
+      downstream loader that still names eventLogger.js.
+
+  94. js/social/* does not exist. All relationship-domain
+      modules live under js/relationships/. The master doc's
+      js/social/* paths were a documentation error; the files
+      themselves were always at js/relationships/.
+
+  95. js/core/state/* (census-state, matchmaker-state,
+      misc-state) does not exist. Those three files live at
+      js/core/ top level. The master doc's
+      js/core/state/location-ui-state.js [NOT PROVIDED] entry
+      is a phantom — the real location-ui-state.js lives at
+      js/location/location-ui-state.js and is already loaded
+      at BLOCK 38.
+
+  96. js/tabs/* tab renderers are not mentioned in the master
+      doc. They exist in structure.txt and are loaded at BLOCK 43.
 
 
 ==============================================================================
