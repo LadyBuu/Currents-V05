@@ -1,3 +1,4 @@
+// js/core/industry/modals-industry.js
 /**
  * =============================================================================
  * STILL WATERS - INDUSTRY MODALS (modals-industry.js)
@@ -43,6 +44,22 @@
  *   that with applied:true. See industry-processor.js notes for the same
  *   pattern.
  *
+ * OWNER TYPE VOCABULARY (revised):
+ *   The create modal's owner-type select exposes every ownerType the
+ *   industry domain can create directly: 'character', 'household',
+ *   'settlement', 'state', and 'none'. Prior revisions only exposed
+ *   'character', 'household', and 'none'. That meant
+ *   HouseholdHoldingsTab._openAddEnterpriseModal's pre-fill of
+ *   { ownerType: 'settlement', ownerId: locationId } (a public
+ *   enterprise) rendered as "Character" — the select had no matching
+ *   option, so the browser defaulted to the first one. Clicking Create
+ *   produced a private, character-owned enterprise at the settlement's
+ *   location. The owner-type coherence check
+ *   (IndustryRules.canApplyOwnershipChange) never fired because
+ *   ownershipType was derived from the wrong ownerType. Adding
+ *   'settlement' and 'state' fixes the create path for public
+ *   enterprises without changing any other modal behavior.
+ *
  * LOAD-TIME DEPENDENCY VERIFICATION:
  *   Every module this file calls is verified at load. A missing dependency
  *   throws immediately rather than failing on first modal open.
@@ -66,24 +83,34 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (C4):
- *     - Every DOM lookup is scoped to the modal's own handle.element via
- *       _root / _byId / _query. Prior revisions used document.getElementById
- *       for every field, which produced cross-modal field collisions when
- *       two modals were open at once (details → edit, edit → workers).
- *       The fix matches modals-helper.js::rootFrom's contract for the
- *       household modals.
- *     - _afterRender now takes the handle and re-resolves the root at
- *       deferred time, so a modal that was closed before the deferred
- *       callback fires is a no-op instead of operating on document.
- *     - _closeThen helper added locally (mirrors
- *       modals-helper.js::closeThen) so every "close current modal, open
- *       next modal" transition routes through the same 0-tick teardown.
- *     - Header DOM SCOPING section added.
- *     - No behavioural change to any modal entry point. No public
- *       signatures changed. No rendered HTML changed.
+ *   Current revision:
+ *     - Create modal's owner-type select now exposes 'settlement' and
+ *       'state', matching IndustryConstants.VALID_OWNER_TYPES and the
+ *       ownerType semantics that IndustryRules.canApplyOwnershipChange
+ *       requires when ownershipType is 'public'. Prior revisions
+ *       exposed only character/household/none, which silently downgraded
+ *       public-enterprise creation (a pre-filled 'settlement' ownerType
+ *       fell through to the browser default 'character').
+ *     - Create modal's owner-type change handler now clears the selected
+ *       owner id and display, matching the residence-rental modal's
+ *       pattern. Prior revisions left a stale ownerId when the user
+ *       switched from 'household' to 'character' or vice versa.
+ *     - Create modal's confirm-time validation now says "or choose None"
+ *       (not "or set owner type to None"), and the 'none' option label
+ *       is "None (no owner)" rather than "None (Settlement Owned)",
+ *       which was factually wrong: a 'none'-owned enterprise is not
+ *       settlement-owned; it is unowned. Public (settlement-owned)
+ *       enterprises are 'settlement'-owned.
+ *     - The owner selector's selector wiring is extracted into
+ *       _selectOwnerForType so the create modal can reuse it; the
+ *       edit modal keeps its own type-change wiring (which does not
+ *       need to run because the edit modal does not expose ownerType).
+ *     - openCreateEnterpriseTypeModal's confirm no longer contains the
+ *       dead `description: _readRequiredInt ? '' : ''` line.
+ *     - No other behavioural change.
  *   Previous revisions:
- *     - Initial implementation.
+ *     - DOM scoping via _root / _byId / _query; _afterRender re-resolves
+ *       root at deferred time; _closeThen helper added locally.
  * =============================================================================
  */
 
@@ -298,6 +325,153 @@
         return false;
     }
 
+    /**
+     * Resolves the display name of a place for a settlement/state owner.
+     * Used by the create modal's owner selector when a place is chosen.
+     */
+    function _resolvePlaceName(placeId) {
+        if (!placeId) return '';
+        if (typeof window.getPlaceById !== 'function') return '';
+        try {
+            var place = window.getPlaceById(placeId);
+            if (!place) return '';
+            return place.displayName || place.name || '';
+        } catch (e) {
+            return '';
+        }
+    }
+
+    /**
+     * Builds the owner-type option list for the create modal.
+     *
+     * The list matches IndustryConstants.VALID_OWNER_TYPES: every
+     * owner type the create command can produce in a single step.
+     * 'character' and 'household' use the character / household
+     * selectors. 'settlement' and 'state' open the location dropdown.
+     * 'none' is the unowned default.
+     *
+     * Labels:
+     *   'none'        "None (unowned)"
+     *   'character'   "Character"
+     *   'household'   "Household"
+     *   'settlement'  "Settlement (public)"
+     *   'state'       "State (public)"
+     */
+    function _buildOwnerTypeOptions(currentOwnerType) {
+        var ownerTypes = [
+            { value: 'character',  label: 'Character' },
+            { value: 'household',  label: 'Household' },
+            { value: 'settlement', label: 'Settlement (public)' },
+            { value: 'state',      label: 'State (public)' },
+            { value: 'none',       label: 'None (unowned)' }
+        ];
+        var selected = currentOwnerType || 'character';
+        var html = '';
+        for (var i = 0; i < ownerTypes.length; i++) {
+            var sel = (ownerTypes[i].value === selected) ? ' selected' : '';
+            html += '<option value="' + _escapeHtml(ownerTypes[i].value) +
+                '"' + sel + '>' + _escapeHtml(ownerTypes[i].label) + '</option>';
+        }
+        return html;
+    }
+
+    /**
+     * Opens the correct selector for a given owner type, then writes the
+     * chosen id and display name into the supplied hidden/display inputs.
+     *
+     * Supported types: 'character', 'household', 'settlement', 'state'.
+     * The 'none' type clears the fields (no selector).
+     */
+    function _selectOwnerForType(ownerType, displayEl, hiddenEl) {
+        if (!displayEl || !hiddenEl) return;
+
+        if (ownerType === 'character') {
+            _openCharSelector('Select Owner Character', function (character) {
+                if (!character) return;
+                var name = (character.name || '') +
+                    (character.surname ? ' ' + character.surname : '');
+                displayEl.value = name;
+                hiddenEl.value = character.id;
+                _showToast('Selected: ' + name, 'success');
+            });
+            return;
+        }
+
+        if (ownerType === 'household') {
+            _openHHSelector('Select Household Owner', function (household) {
+                if (!household) return;
+                displayEl.value = household.name;
+                hiddenEl.value = household.id;
+                _showToast('Selected: ' + household.name, 'success');
+            });
+            return;
+        }
+
+        if (ownerType === 'settlement' || ownerType === 'state') {
+            // A small inline modal is the cleanest way to pick a place
+            // without reinventing buildLocationDropdown's markup in the
+            // open modal's body. The place is chosen by id, then the
+            // display name is resolved via getPlaceById.
+            _openPlacePickerModal(ownerType, function (placeId) {
+                if (!placeId) return;
+                var name = _resolvePlaceName(placeId);
+                displayEl.value = name;
+                hiddenEl.value = placeId;
+                _showToast('Selected: ' + (name || placeId), 'success');
+            });
+            return;
+        }
+
+        // 'none' and anything else: clear.
+        displayEl.value = '';
+        hiddenEl.value = '';
+    }
+
+    function _openPlacePickerModal(ownerType, onSelect) {
+        var title = ownerType === 'state'
+            ? 'Select Owner State'
+            : 'Select Owner Settlement';
+        var content =
+            '<div style="padding:4px;">' +
+                '<div style="font-size:0.65rem;color:var(--dim);margin-bottom:8px;">' +
+                    'Choose the place that will own this enterprise. ' +
+                    'Places of any type are shown; pick the settlement ' +
+                    'or state that matches the enterprise\'s location.' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label style="display:block;font-size:0.65rem;' +
+                    'color:var(--accent);margin-bottom:4px;">Place</label>' +
+                    '<select id="placePickerSelect" ' +
+                    'style="width:100%;padding:8px;background:var(--bg);' +
+                    'border:1px solid var(--border);border-radius:6px;' +
+                    'color:var(--text);font-size:0.7rem;">' +
+                    _buildLocationDropdown('', '— Select a place —', false) +
+                    '</select>' +
+                '</div>' +
+            '</div>';
+
+        var modal = _openModal({
+            titleHtml: title,
+            contentHtml: content,
+            confirmText: 'Select',
+            cancelText: 'Cancel',
+            onConfirm: function () {
+                var sel = _byId(modal, 'placePickerSelect');
+                if (!sel) {
+                    _showToast('Modal root unavailable', 'error');
+                    return false;
+                }
+                var id = sel.value;
+                if (!id) {
+                    _showToast('Please select a place', 'error');
+                    return false;
+                }
+                onSelect(id);
+                return true;
+            }
+        });
+    }
+
     // =========================================================================
     // 3. CREATE ENTERPRISE MODAL
     // =========================================================================
@@ -332,19 +506,9 @@
             defaultData.ownerName
         );
 
-        var ownerTypes = [
-            { value: 'character', label: 'Character' },
-            { value: 'household', label: 'Household' },
-            { value: 'none', label: 'None (Settlement Owned)' }
-        ];
-        var ownerTypeOptions = '';
-        for (var oi = 0; oi < ownerTypes.length; oi++) {
-            var sel = ownerField.type === ownerTypes[oi].value
-                ? 'selected' : '';
-            ownerTypeOptions += '<option value="' +
-                _escapeHtml(ownerTypes[oi].value) + '" ' + sel + '>' +
-                _escapeHtml(ownerTypes[oi].label) + '</option>';
-        }
+        // Full owner-type vocabulary. See OWNER TYPE VOCABULARY in the
+        // header for why 'settlement' and 'state' are required.
+        var ownerTypeOptions = _buildOwnerTypeOptions(ownerField.type);
 
         var content = `
             <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
@@ -373,7 +537,7 @@
                         <div>
                             <label class="form-label-sm">Owner</label>
                             <div class="form-row">
-                                <input type="text" id="entOwnerDisplay" class="form-input" placeholder="Select owner..." value="${_escapeHtml(ownerField.displayName)}" readonly>
+                                <input type="text" id="entOwnerDisplay" class="form-input" placeholder="Select owner..." value="${_escapeHtml(ownerField.displayName === '—' ? '' : ownerField.displayName)}" readonly>
                                 <input type="hidden" id="entOwnerId" value="${_escapeHtml(ownerField.id || '')}">
                                 <button id="selectOwnerBtn" class="btn" type="button">Select</button>
                                 <button id="clearOwnerBtn" class="btn" type="button">Clear</button>
@@ -475,7 +639,7 @@
                     ownerName = null;
                 } else if (!ownerId) {
                     _showToast(
-                        'Please select an owner or set owner type to None',
+                        'Please select an owner or choose "None (unowned)".',
                         'error'
                     );
                     return false;
@@ -531,7 +695,7 @@
             }
         });
 
-        _afterRender(modal, function (handle, root) {
+        _afterRender(modal, function (handle) {
             _wireCreateCategoryFilter(handle);
             _wireCreateOwnerSelector(handle);
         });
@@ -566,30 +730,23 @@
         var ownerId = _byId(handle, 'entOwnerId');
         if (!selectBtn || !ownerTypeSelect || !ownerDisplay || !ownerId) return;
 
-        selectBtn.addEventListener('click', function () {
-            var ownerType = ownerTypeSelect.value;
-
-            if (ownerType === 'character') {
-                _openCharSelector('Select Owner', function (character) {
-                    if (!character) return;
-                    ownerDisplay.value = character.name +
-                        (character.surname ? ' ' + character.surname : '');
-                    ownerId.value = character.id;
-                    _showToast('Selected: ' + character.name, 'success');
-                });
-            } else if (ownerType === 'household') {
-                _openHHSelector('Select Household Owner', function (household) {
-                    if (!household) return;
-                    ownerDisplay.value = household.name;
-                    ownerId.value = household.id;
-                    _showToast('Selected: ' + household.name, 'success');
-                });
-            } else {
-                _showToast(
-                    'Select an owner type first (Character or Household)',
-                    'warning'
-                );
+        // Changing the owner type must clear the previously-selected
+        // owner id. Otherwise the form leaves a stale household id in
+        // the hidden field when the user switches to 'character', and
+        // createEnterprise derives a wrong ownershipType from the
+        // mismatched (ownerType, ownerId) pair. This mirrors the
+        // residence-rental modal's owner/renter-type wiring.
+        ownerTypeSelect.addEventListener('change', function () {
+            ownerDisplay.value = '';
+            ownerId.value = '';
+            if (ownerTypeSelect.value === 'none') {
+                // No selector needed; the form is already valid for
+                // 'none'. Nothing else to clear.
             }
+        });
+
+        selectBtn.addEventListener('click', function () {
+            _selectOwnerForType(ownerTypeSelect.value, ownerDisplay, ownerId);
         });
 
         if (clearBtn) {
@@ -1357,8 +1514,7 @@
                     baseWages: _readRequiredInt(_byId(modal, 'newTypeWages')),
                     baseWorkers: _readRequiredInt(_byId(modal, 'newTypeWorkers')),
                     maxWorkers: _readRequiredInt(_byId(modal, 'newTypeMaxWorkers')),
-                    baseCost: _readRequiredInt(_byId(modal, 'newTypeCost')),
-                    description: _readRequiredInt ? '' : ''
+                    baseCost: _readRequiredInt(_byId(modal, 'newTypeCost'))
                 };
 
                 var descEl = _byId(modal, 'newTypeDescription');
