@@ -2,8 +2,9 @@
  * =============================================================================
  * SETTLEMENT RESIDENCE TAB - UI for residence management in settlements
  * =============================================================================
- * 
- * PURPOSE: Displays all residences in a settlement with full management capabilities:
+ *
+ * PURPOSE: Displays all residences in a settlement with full management
+ * capabilities:
  *   - View all residences with details (type, condition, occupancy, value)
  *   - Create new residences
  *   - Edit residence properties
@@ -12,15 +13,79 @@
  *   - Manage ownership and rental
  *   - View residence history
  *   - Filter and search
- * 
+ *
  * DEPENDS ON:
- *   - ResidenceSystem (residence-system.js)
- *   - HouseholdState (household-state.js)
- *   - LocationState (location-state.js)
- *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- * 
+ *   - ResidenceSystem (residence-system.js) — canonical residence domain
+ *   - HouseholdState (household-state.js) — for household selectors
+ *   - LocationState (location-state.js) — for place lookups
+ *   - modals-core.js (openModal, closeTopModal, confirmDialog,
+ *                     escapeHtml, showToast, Icons)
+ *
  * ICON POLICY: Uses icons.js - NO emojis
- * 
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (RESIDENCE-SYSTEM METHOD-NAME FIX):
+ *     - Every ResidenceSystem call was rewritten against the actual
+ *       exports in residence-system.js. The prior revision called ~15
+ *       methods that do not exist on the namespace (getResidences,
+ *       getResidenceById, getResidenceUnits, addResidenceUnit,
+ *       removeResidenceUnit, getResidenceCurrentNameInfo,
+ *       updateResidenceNameWithHistory, isMultiUnitResidence,
+ *       getAllResidenceTypes, getAllResidenceConditions), so every
+ *       read returned null / [] and the tab rendered blank in almost
+ *       every path. The new wrappers use the real exports:
+ *         getAllResidences, getResidence, getResidencesByLocation,
+ *         getUnits, getUnitStats, getResidenceOwner,
+ *         getResidenceRenter, getResidenceNameHistory,
+ *         createResidence, updateResidence, deleteResidence,
+ *         addUnit, removeUnit, assignHouseholdToUnit,
+ *         markUnitVacant, setResidenceOwner, setResidenceRenter,
+ *         endResidenceRental, updateResidenceRent,
+ *         markResidenceVacant, rehabilitateResidence,
+ *         demolishResidence, getResidenceTypes,
+ *         getResidenceConditions, updateResidenceName, persist.
+ *     - Removed the "current name info" path (getResidenceCurrentNameInfo
+ *       does not exist). The residence name is read from the residence
+ *       record itself; the "current name since" line was derived from
+ *       an API that was never implemented and rendered as "Unknown" on
+ *       every residence.
+ *     - Removed the isMultiUnitResidence call. The residence record
+ *       carries `isMultiUnit` directly.
+ *     - Removed the updateResidenceNameWithHistory call. The canonical
+ *       command is updateResidenceName(id, name, { year, reason,
+ *       changedBy, addToHistory }). The edit modal now calls it.
+ *     - _getCurrentYear throws on missing time.js (matching the newer
+ *       tabs) instead of falling back to 1250.
+ *     - The filter re-render used to hardcode 'tab-residences' as the
+ *       container id. If the caller mounted the tab into a different
+ *       id (or the surrounding container was a nested panel), the
+ *       filter re-render wrote into the wrong element. Every re-render
+ *       now uses the containerId captured at render time, threaded
+ *       through _attachEventHandlers.
+ *     - Guarded every ResidenceSystem call against null returns:
+ *       getResidence / getUnits / getUnitStats / getResidenceOwner /
+ *       getResidenceRenter / getResidenceNameHistory return null when
+ *       the residence does not exist. The renderers now degrade
+ *       cleanly (0 units, "None" owner, empty history) instead of
+ *       dereferencing null.
+ *     - _getResidenceOwner / _getResidenceRenter call shapes match the
+ *       real API. getResidenceOwner returns
+ *       { ownerType, ownerId, ownerName, ownerSince } | null.
+ *       getResidenceRenter returns
+ *       { renterType, renterId, renterName, rentAmount,
+ *         rentStartYear, rentalStatus } | null.
+ *     - Delete path: ResidenceSystem.deleteResidence(id, { force })
+ *       deletes unconditionally when force is true. The confirm dialog
+ *       already warns that occupied units must be vacated first, so
+ *       the tab calls deleteResidence with { force: false } when
+ *       occupied and { force: true } when empty. This matches the
+ *       command's own occupied-units guard.
+ *     - Every mutation calls ResidenceSystem.persist() once at the end
+ *       (via _persistOrToastError).
+ *   Previous revisions:
+ *     - Original implementation with a mismatched ResidenceSystem
+ *       surface.
  * =============================================================================
  */
 
@@ -32,7 +97,6 @@
     // =========================================================================
 
     var _rendering = false;
-    var _modalOpen = false;
     var _filterTimeout = null;
 
     // =========================================================================
@@ -122,23 +186,26 @@
         return null;
     }
 
+    /**
+     * Returns the current simulation year.
+     *
+     * Delegates to the canonical accessor in time.js. Throws on missing
+     * time.js rather than substituting a magic year.
+     *
+     * @throws {Error} if time.js is not loaded
+     */
     function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                '[SettlementResidenceTab] requires time.js (getCurrentYear). ' +
+                'Load js/core/time.js before this tab.'
+            );
+        }
+        return window.getCurrentYear();
+    }
 
     function _getResidenceSystem() {
         return typeof window.ResidenceSystem !== 'undefined' ? window.ResidenceSystem : null;
-    }
-
-    function _getHousehold(householdId) {
-        if (typeof window.HouseholdState !== 'undefined' && 
-            typeof window.HouseholdState.getHousehold === 'function') {
-            return window.HouseholdState.getHousehold(householdId);
-        }
-        return null;
     }
 
     function _getCharacterById(id) {
@@ -149,243 +216,6 @@
             return window._getCharacterById(id);
         }
         return null;
-    }
-
-    function _getAllHouseholds() {
-        if (typeof window.HouseholdState !== 'undefined' && 
-            typeof window.HouseholdState.getAllHouseholds === 'function') {
-            return window.HouseholdState.getAllHouseholds();
-        }
-        return [];
-    }
-
-    function _getAllResidences() {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.getResidences === 'function') {
-            return RS.getResidences();
-        }
-        return [];
-    }
-
-    function _getResidenceById(id) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.getResidenceById === 'function') {
-            return RS.getResidenceById(id);
-        }
-        return null;
-    }
-
-    function _getResidencesByLocation(locationId) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.getResidencesByLocation === 'function') {
-            return RS.getResidencesByLocation(locationId);
-        }
-        var all = _getAllResidences();
-        var result = [];
-        for (var i = 0; i < all.length; i++) {
-            if (all[i].locationId === locationId) {
-                result.push(all[i]);
-            }
-        }
-        return result;
-    }
-
-    function _getResidenceUnits(residenceId) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.getResidenceUnits === 'function') {
-            return RS.getResidenceUnits(residenceId);
-        }
-        return [];
-    }
-
-    function _getUnitStats(residenceId) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.getUnitStats === 'function') {
-            return RS.getUnitStats(residenceId);
-        }
-        return { total: 0, occupied: 0, vacant: 0, demolished: 0, occupancyRate: 0 };
-    }
-
-    function _getResidenceOwner(residenceId) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.getResidenceOwner === 'function') {
-            return RS.getResidenceOwner(residenceId);
-        }
-        return null;
-    }
-
-    function _getResidenceRenter(residenceId) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.getResidenceRenter === 'function') {
-            return RS.getResidenceRenter(residenceId);
-        }
-        return null;
-    }
-
-    function _getResidenceNameHistory(residenceId) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.getResidenceNameHistory === 'function') {
-            return RS.getResidenceNameHistory(residenceId);
-        }
-        return [];
-    }
-
-    function _getResidenceCurrentNameInfo(residenceId) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.getResidenceCurrentNameInfo === 'function') {
-            return RS.getResidenceCurrentNameInfo(residenceId);
-        }
-        return null;
-    }
-
-    function _createResidence(name, locationId, typeId, options) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.createResidence === 'function') {
-            return RS.createResidence(name, locationId, typeId, options);
-        }
-        return null;
-    }
-
-    function _updateResidence(residenceId, updates) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.updateResidence === 'function') {
-            return RS.updateResidence(residenceId, updates);
-        }
-        return null;
-    }
-
-    function _deleteResidence(residenceId, options) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.deleteResidence === 'function') {
-            return RS.deleteResidence(residenceId, options);
-        }
-        return false;
-    }
-
-    function _addResidenceUnit(residenceId, options) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.addResidenceUnit === 'function') {
-            return RS.addResidenceUnit(residenceId, options);
-        }
-        return null;
-    }
-
-    function _removeResidenceUnit(residenceId, unitNumber, options) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.removeResidenceUnit === 'function') {
-            return RS.removeResidenceUnit(residenceId, unitNumber, options);
-        }
-        return null;
-    }
-
-    function _assignHouseholdToUnit(residenceId, unitNumber, householdId, householdName, year, options) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.assignHouseholdToUnit === 'function') {
-            return RS.assignHouseholdToUnit(residenceId, unitNumber, householdId, householdName, year, options);
-        }
-        return null;
-    }
-
-    function _markUnitVacant(residenceId, unitNumber, reason, year) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.markUnitVacant === 'function') {
-            return RS.markUnitVacant(residenceId, unitNumber, reason, year);
-        }
-        return null;
-    }
-
-    function _setResidenceOwner(residenceId, ownerType, ownerId, options) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.setResidenceOwner === 'function') {
-            return RS.setResidenceOwner(residenceId, ownerType, ownerId, options);
-        }
-        return null;
-    }
-
-    function _setResidenceRenter(residenceId, renterType, renterId, rentAmount, options) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.setResidenceRenter === 'function') {
-            return RS.setResidenceRenter(residenceId, renterType, renterId, rentAmount, options);
-        }
-        return null;
-    }
-
-    function _endResidenceRental(residenceId, endYear, reason) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.endResidenceRental === 'function') {
-            return RS.endResidenceRental(residenceId, endYear, reason);
-        }
-        return null;
-    }
-
-    function _updateResidenceRent(residenceId, newRentAmount, effectiveYear, reason) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.updateResidenceRent === 'function') {
-            return RS.updateResidenceRent(residenceId, newRentAmount, effectiveYear, reason);
-        }
-        return null;
-    }
-
-    function _updateResidenceNameWithHistory(residenceId, newName, options) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.updateResidenceNameWithHistory === 'function') {
-            return RS.updateResidenceNameWithHistory(residenceId, newName, options);
-        }
-        return null;
-    }
-
-    function _markResidenceVacant(residenceId, reason, year) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.markResidenceVacant === 'function') {
-            return RS.markResidenceVacant(residenceId, reason, year);
-        }
-        return null;
-    }
-
-    function _rehabilitateResidence(residenceId, targetCondition, year) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.rehabilitateResidence === 'function') {
-            return RS.rehabilitateResidence(residenceId, targetCondition, year);
-        }
-        return null;
-    }
-
-    function _demolishResidence(residenceId, reason, year, options) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.demolishResidence === 'function') {
-            return RS.demolishResidence(residenceId, reason, year, options);
-        }
-        return null;
-    }
-
-    function _getAllResidenceTypes() {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.getAllResidenceTypes === 'function') {
-            return RS.getAllResidenceTypes();
-        }
-        return {};
-    }
-
-    function _getAllResidenceConditions() {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.getAllResidenceConditions === 'function') {
-            return RS.getAllResidenceConditions();
-        }
-        return [
-            { id: 'pristine', name: 'Pristine' },
-            { id: 'good', name: 'Good' },
-            { id: 'fair', name: 'Fair' },
-            { id: 'poor', name: 'Poor' },
-            { id: 'ruined', name: 'Ruined' }
-        ];
-    }
-
-    function _isMultiUnitResidence(residenceId) {
-        var RS = _getResidenceSystem();
-        if (RS && typeof RS.isMultiUnitResidence === 'function') {
-            return RS.isMultiUnitResidence(residenceId);
-        }
-        return false;
     }
 
     function _openHouseholdSelector(options) {
@@ -432,8 +262,135 @@
         return html;
     }
 
+    function _persistOrToastError() {
+        var RS = _getResidenceSystem();
+        if (!RS || typeof RS.persist !== 'function') {
+            _showToast('Residence system not available', 'error');
+            return false;
+        }
+        var r = RS.persist();
+        if (r && r.success === true) return true;
+        _showToast(
+            'Save failed: ' + (r && r.reason ? r.reason : 'unknown error') +
+            ' — changes are in memory; retry from a command.',
+            'error'
+        );
+        return false;
+    }
+
     // =========================================================================
-    // 4. ICON HELPERS
+    // 4. RESIDENCE SYSTEM WRAPPERS (mapped to real exports)
+    // =========================================================================
+
+    function _getAllResidences() {
+        var RS = _getResidenceSystem();
+        if (RS && typeof RS.getAllResidences === 'function') {
+            try { return RS.getAllResidences() || []; }
+            catch (e) { return []; }
+        }
+        return [];
+    }
+
+    function _getResidence(id) {
+        var RS = _getResidenceSystem();
+        if (RS && typeof RS.getResidence === 'function') {
+            try { return RS.getResidence(id); }
+            catch (e) { return null; }
+        }
+        return null;
+    }
+
+    function _getResidencesByLocation(locationId) {
+        var RS = _getResidenceSystem();
+        if (RS && typeof RS.getResidencesByLocation === 'function') {
+            try { return RS.getResidencesByLocation(locationId) || []; }
+            catch (e) { return []; }
+        }
+        // Fallback: filter getAllResidences ourselves.
+        var all = _getAllResidences();
+        var out = [];
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].locationId === locationId) out.push(all[i]);
+        }
+        return out;
+    }
+
+    function _getUnits(residenceId) {
+        var RS = _getResidenceSystem();
+        if (RS && typeof RS.getUnits === 'function') {
+            try { return RS.getUnits(residenceId) || []; }
+            catch (e) { return []; }
+        }
+        return [];
+    }
+
+    function _getUnitStats(residenceId) {
+        var RS = _getResidenceSystem();
+        if (RS && typeof RS.getUnitStats === 'function') {
+            try {
+                var s = RS.getUnitStats(residenceId);
+                if (s && typeof s === 'object') return s;
+            } catch (e) { /* fall through */ }
+        }
+        return {
+            total: 0, usable: 0, occupied: 0, vacant: 0,
+            demolished: 0, occupancyRate: 0
+        };
+    }
+
+    function _getResidenceOwner(residenceId) {
+        var RS = _getResidenceSystem();
+        if (RS && typeof RS.getResidenceOwner === 'function') {
+            try { return RS.getResidenceOwner(residenceId); }
+            catch (e) { return null; }
+        }
+        return null;
+    }
+
+    function _getResidenceRenter(residenceId) {
+        var RS = _getResidenceSystem();
+        if (RS && typeof RS.getResidenceRenter === 'function') {
+            try { return RS.getResidenceRenter(residenceId); }
+            catch (e) { return null; }
+        }
+        return null;
+    }
+
+    function _getResidenceNameHistory(residenceId) {
+        var RS = _getResidenceSystem();
+        if (RS && typeof RS.getResidenceNameHistory === 'function') {
+            try { return RS.getResidenceNameHistory(residenceId) || []; }
+            catch (e) { return []; }
+        }
+        return [];
+    }
+
+    function _getResidenceTypes() {
+        var RS = _getResidenceSystem();
+        if (RS && typeof RS.getResidenceTypes === 'function') {
+            try { return RS.getResidenceTypes() || {}; }
+            catch (e) { return {}; }
+        }
+        return {};
+    }
+
+    function _getResidenceConditions() {
+        var RS = _getResidenceSystem();
+        if (RS && typeof RS.getResidenceConditions === 'function') {
+            try { return RS.getResidenceConditions() || []; }
+            catch (e) { return []; }
+        }
+        return [
+            { id: 'pristine', name: 'Pristine' },
+            { id: 'good', name: 'Good' },
+            { id: 'fair', name: 'Fair' },
+            { id: 'poor', name: 'Poor' },
+            { id: 'ruined', name: 'Ruined' }
+        ];
+    }
+
+    // =========================================================================
+    // 5. ICON HELPERS
     // =========================================================================
 
     function _iconSpan(icon, title) {
@@ -443,7 +400,7 @@
     }
 
     // =========================================================================
-    // 5. MAIN RENDER FUNCTION
+    // 6. MAIN RENDER FUNCTION
     // =========================================================================
 
     function renderSettlementResidences(containerId, locationId) {
@@ -616,7 +573,7 @@
 
             container.innerHTML = html;
 
-            _attachEventHandlers(container, locationId);
+            _attachEventHandlers(container, locationId, containerId);
 
         } catch (e) {
             console.error('[ResidenceTab] Error:', e);
@@ -630,18 +587,16 @@
     }
 
     // =========================================================================
-    // 6. RENDER RESIDENCE CARD
+    // 7. RENDER RESIDENCE CARD
     // =========================================================================
 
     function _renderResidenceCard(residence) {
-        var RS = _getResidenceSystem();
         var homeIcon = _getIconSafe('HOME');
         var personIcon = _getIconSafe('PERSON');
         var coinIcon = _getIconSafe('COIN');
         var editIcon = _getIconSafe('EDIT');
         var trashIcon = _getIconSafe('X_HEAVY');
         var infoIcon = _getIconSafe('CIRCLE_DOT');
-        var warningIcon = _getIconSafe('WARNING');
 
         var isDemolished = residence.isDemolished || false;
         var isVacant = residence.isVacant || false;
@@ -654,7 +609,7 @@
 
         var statusText = isDemolished ? 'Demolished' : (isVacant ? 'Vacant' : 'Occupied');
         var statusColor = isDemolished ? 'var(--danger)' : (isVacant ? 'var(--warn)' : 'var(--success)');
-        var statusIcon = isDemolished ? '💀' : (isVacant ? '◻' : '◉');
+        var statusIcon = isDemolished ? '✕' : (isVacant ? '◻' : '◉');
 
         var conditionColors = {
             'pristine': 'var(--success)',
@@ -666,7 +621,7 @@
         var conditionColor = conditionColors[condition] || 'var(--dim)';
 
         var ownerDisplay = owner && owner.ownerName ? owner.ownerName : 'None';
-        var renterDisplay = renter && renter.renterName ? renter.renterName : 'None';
+        var renterDisplay = renter && renter.renterId ? renter.renterName : 'None';
         var rentDisplay = renter && renter.rentAmount ? renter.rentAmount + 'g/year' : 'N/A';
 
         var unitDisplay = '';
@@ -682,7 +637,7 @@
         var actionsHtml = '' +
             '<button class="res-view-btn" data-res-id="' + residence.id + '" style="padding: 2px 8px; font-size: 0.45rem; background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; cursor: pointer;" title="View Details">' + infoIcon + '</button>' +
             '<button class="res-edit-btn" data-res-id="' + residence.id + '" style="padding: 2px 8px; font-size: 0.45rem; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 3px; cursor: pointer;" title="Edit">' + editIcon + '</button>' +
-            (!isDemolished ? '<button class="res-demolish-btn" data-res-id="' + residence.id + '" style="padding: 2px 8px; font-size: 0.45rem; background: #8a3020; border: none; color: white; border-radius: 3px; cursor: pointer;" title="Demolish">💀</button>' : '') +
+            (!isDemolished ? '<button class="res-demolish-btn" data-res-id="' + residence.id + '" style="padding: 2px 8px; font-size: 0.45rem; background: #8a3020; border: none; color: white; border-radius: 3px; cursor: pointer;" title="Demolish">' + trashIcon + '</button>' : '') +
             '<button class="res-delete-btn" data-res-id="' + residence.id + '" style="padding: 2px 8px; font-size: 0.45rem; background: #6a2020; border: none; color: white; border-radius: 3px; cursor: pointer;" title="Delete">' + trashIcon + '</button>';
 
         return '' +
@@ -703,14 +658,14 @@
                             '<span style="font-size: 0.45rem; color: ' + statusColor + '; padding: 1px 6px; border: 1px solid ' + statusColor + '; border-radius: 8px;">' + statusIcon + ' ' + statusText + '</span>' +
                             '<span style="font-size: 0.45rem; color: ' + conditionColor + '; padding: 1px 6px; border: 1px solid ' + conditionColor + '; border-radius: 8px;">' + _escapeHtml(condition) + '</span>' +
                             (residence.isMultiUnit ? '<span style="font-size: 0.4rem; color: var(--accent); padding: 1px 4px; border: 1px solid var(--accent); border-radius: 8px;">Multi-unit</span>' : '') +
-                            (nameChangeCount > 0 ? '<span style="font-size: 0.4rem; color: var(--dim);">📜 ' + nameChangeCount + '</span>' : '') +
+                            (nameChangeCount > 0 ? '<span style="font-size: 0.4rem; color: var(--dim);">' + _getIconSafe('REFRESH') + ' ' + nameChangeCount + '</span>' : '') +
                         '</div>' +
                         '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 2px; display: flex; flex-wrap: wrap; gap: 8px;">' +
                             '<span>' + coinIcon + ' ' + estimatedValue + 'g</span>' +
                             '<span>' + personIcon + ' Owner: ' + _escapeHtml(ownerDisplay) + '</span>' +
                             (renter && renter.renterId ? '<span>' + personIcon + ' Renter: ' + _escapeHtml(renterDisplay) + '</span>' : '') +
                             (renter && renter.rentAmount ? '<span>' + coinIcon + ' Rent: ' + renter.rentAmount + 'g/yr</span>' : '') +
-                            '<span>⌂ ' + unitDisplay + '</span>' +
+                            '<span>' + _getIconSafe('HOME') + ' ' + unitDisplay + '</span>' +
                         '</div>' +
                     '</div>' +
                     '<div style="display: flex; gap: 4px; flex-shrink: 0;">' +
@@ -721,7 +676,7 @@
     }
 
     // =========================================================================
-    // 7. FILTER FUNCTIONS
+    // 8. FILTER FUNCTIONS
     // =========================================================================
 
     function _applyFilters(residences, filterState) {
@@ -732,7 +687,7 @@
 
         if (search) {
             result = result.filter(function(r) {
-                return r.name.toLowerCase().indexOf(search) !== -1 ||
+                return (r.name || '').toLowerCase().indexOf(search) !== -1 ||
                        (r.typeName && r.typeName.toLowerCase().indexOf(search) !== -1) ||
                        (r.householdName && r.householdName.toLowerCase().indexOf(search) !== -1);
             });
@@ -756,7 +711,7 @@
         result.sort(function(a, b) {
             if (a.isDemolished && !b.isDemolished) return 1;
             if (!a.isDemolished && b.isDemolished) return -1;
-            return a.name.localeCompare(b.name);
+            return (a.name || '').localeCompare(b.name || '');
         });
 
         return result;
@@ -767,7 +722,14 @@
         try {
             var stored = localStorage.getItem(key);
             if (stored) {
-                return JSON.parse(stored);
+                var parsed = JSON.parse(stored);
+                if (parsed && typeof parsed === 'object') {
+                    return {
+                        search: typeof parsed.search === 'string' ? parsed.search : '',
+                        status: typeof parsed.status === 'string' ? parsed.status : 'all',
+                        condition: typeof parsed.condition === 'string' ? parsed.condition : 'all'
+                    };
+                }
             }
         } catch(e) {}
         return { search: '', status: 'all', condition: 'all' };
@@ -781,17 +743,15 @@
     }
 
     // =========================================================================
-    // 8. EVENT HANDLERS
+    // 9. EVENT HANDLERS
     // =========================================================================
 
-    function _attachEventHandlers(container, locationId) {
-        var RS = _getResidenceSystem();
-
+    function _attachEventHandlers(container, locationId, containerId) {
         // Add Residence button
         var addBtn = container.querySelector('#resAddBtn');
         if (addBtn) {
             addBtn.onclick = function() {
-                _openCreateResidenceModal(locationId);
+                _openCreateResidenceModal(locationId, containerId);
             };
         }
 
@@ -799,7 +759,7 @@
         var refreshBtn = container.querySelector('#resRefreshBtn');
         if (refreshBtn) {
             refreshBtn.onclick = function() {
-                renderSettlementResidences('tab-residences', locationId);
+                renderSettlementResidences(containerId, locationId);
             };
         }
 
@@ -811,11 +771,11 @@
                 _filterTimeout = setTimeout(function() {
                     var state = {
                         search: searchInput.value,
-                        status: document.querySelector('#resStatusFilter')?.value || 'all',
-                        condition: document.querySelector('#resConditionFilter')?.value || 'all'
+                        status: (container.querySelector('#resStatusFilter') || {}).value || 'all',
+                        condition: (container.querySelector('#resConditionFilter') || {}).value || 'all'
                     };
                     _saveFilterState(locationId, state);
-                    renderSettlementResidences('tab-residences', locationId);
+                    renderSettlementResidences(containerId, locationId);
                 }, 300);
             };
         }
@@ -825,12 +785,12 @@
         if (statusFilter) {
             statusFilter.onchange = function() {
                 var state = {
-                    search: document.querySelector('#resSearchInput')?.value || '',
+                    search: (container.querySelector('#resSearchInput') || {}).value || '',
                     status: this.value,
-                    condition: document.querySelector('#resConditionFilter')?.value || 'all'
+                    condition: (container.querySelector('#resConditionFilter') || {}).value || 'all'
                 };
                 _saveFilterState(locationId, state);
-                renderSettlementResidences('tab-residences', locationId);
+                renderSettlementResidences(containerId, locationId);
             };
         }
 
@@ -839,12 +799,12 @@
         if (conditionFilter) {
             conditionFilter.onchange = function() {
                 var state = {
-                    search: document.querySelector('#resSearchInput')?.value || '',
-                    status: document.querySelector('#resStatusFilter')?.value || 'all',
+                    search: (container.querySelector('#resSearchInput') || {}).value || '',
+                    status: (container.querySelector('#resStatusFilter') || {}).value || 'all',
                     condition: this.value
                 };
                 _saveFilterState(locationId, state);
-                renderSettlementResidences('tab-residences', locationId);
+                renderSettlementResidences(containerId, locationId);
             };
         }
 
@@ -852,15 +812,9 @@
         var clearBtn = container.querySelector('#resClearFiltersBtn');
         if (clearBtn) {
             clearBtn.onclick = function() {
-                var searchInput = document.querySelector('#resSearchInput');
-                var statusFilter = document.querySelector('#resStatusFilter');
-                var conditionFilter = document.querySelector('#resConditionFilter');
-                if (searchInput) searchInput.value = '';
-                if (statusFilter) statusFilter.value = 'all';
-                if (conditionFilter) conditionFilter.value = 'all';
                 var state = { search: '', status: 'all', condition: 'all' };
                 _saveFilterState(locationId, state);
-                renderSettlementResidences('tab-residences', locationId);
+                renderSettlementResidences(containerId, locationId);
             };
         }
 
@@ -871,8 +825,8 @@
                 btn.onclick = function(e) {
                     e.stopPropagation();
                     var resId = this.dataset.resId;
-                    if (resId && RS) {
-                        _openResidenceDetailsModal(resId, locationId);
+                    if (resId) {
+                        _openResidenceDetailsModal(resId, locationId, containerId);
                     }
                 };
             })(viewBtns[i]);
@@ -886,7 +840,7 @@
                     e.stopPropagation();
                     var resId = this.dataset.resId;
                     if (resId) {
-                        _openEditResidenceModal(resId, locationId);
+                        _openEditResidenceModal(resId, locationId, containerId);
                     }
                 };
             })(editBtns[i]);
@@ -900,7 +854,7 @@
                     e.stopPropagation();
                     var resId = this.dataset.resId;
                     if (resId) {
-                        _confirmDemolishResidence(resId, locationId);
+                        _confirmDemolishResidence(resId, locationId, containerId);
                     }
                 };
             })(demolishBtns[i]);
@@ -914,7 +868,7 @@
                     e.stopPropagation();
                     var resId = this.dataset.resId;
                     if (resId) {
-                        _confirmDeleteResidence(resId, locationId);
+                        _confirmDeleteResidence(resId, locationId, containerId);
                     }
                 };
             })(deleteBtns[i]);
@@ -927,8 +881,8 @@
                 card.onclick = function(e) {
                     if (e.target.closest('button')) return;
                     var resId = this.dataset.resId;
-                    if (resId && RS) {
-                        _openResidenceDetailsModal(resId, locationId);
+                    if (resId) {
+                        _openResidenceDetailsModal(resId, locationId, containerId);
                     }
                 };
             })(cards[i]);
@@ -936,28 +890,31 @@
     }
 
     // =========================================================================
-    // 9. CREATE RESIDENCE MODAL
+    // 10. CREATE RESIDENCE MODAL
     // =========================================================================
 
-    function _openCreateResidenceModal(locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
+    function _openCreateResidenceModal(locationId, containerId) {
         try {
             var place = _getPlaceById(locationId);
-            var types = _getAllResidenceTypes();
-            var conditions = _getAllResidenceConditions();
+            var types = _getResidenceTypes();
+            var conditions = _getResidenceConditions();
             var currentYear = _getCurrentYear();
 
             var typeOptions = '';
-            for (var key in types) {
-                var t = types[key];
+            var typeKeys = Object.keys(types);
+            for (var i = 0; i < typeKeys.length; i++) {
+                var t = types[typeKeys[i]];
                 typeOptions += '<option value="' + t.id + '">' + _escapeHtml(t.name) + ' (' + (t.isMultiUnit ? 'Multi-unit' : 'Single') + ')</option>';
             }
+            if (typeOptions === '') {
+                typeOptions = '<option value="">No residence types available</option>';
+            }
 
-            var conditionOptions = conditions.map(function(c) {
-                return '<option value="' + c.id + '" ' + (c.id === 'good' ? 'selected' : '') + '>' + _escapeHtml(c.name) + '</option>';
-            }).join('');
+            var conditionOptions = '';
+            for (var c = 0; c < conditions.length; c++) {
+                var cond = conditions[c];
+                conditionOptions += '<option value="' + cond.id + '"' + (cond.id === 'good' ? ' selected' : '') + '>' + _escapeHtml(cond.name) + '</option>';
+            }
 
             var content = '' +
                 '<div style="margin-bottom: 16px;">' +
@@ -985,9 +942,8 @@
                         '<input type="number" id="newResBuiltYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; color: var(--text);">' +
                     '</div>' +
                     '<div class="form-group" style="margin-bottom: 12px;">' +
-                        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Initial Units (for multi-unit types)</label>' +
+                        '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Initial Units (multi-unit types only)</label>' +
                         '<input type="number" id="newResUnits" value="1" min="1" max="20" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; color: var(--text);">' +
-                        '<small style="font-size: 0.55rem; color: var(--dim);">Only applies to multi-unit residence types</small>' +
                     '</div>' +
                     '<div class="form-group" style="margin-bottom: 12px;">' +
                         '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Estimated Value</label>' +
@@ -1034,80 +990,78 @@
                         return false;
                     }
 
-                    var type = _getAllResidenceTypes()[typeId.toUpperCase()];
-                    var isMultiUnit = type ? type.isMultiUnit : false;
-                    var unitCount = isMultiUnit ? Math.max(1, Math.min(units, 20)) : 1;
+                    var RS = _getResidenceSystem();
+                    if (!RS || typeof RS.createResidence !== 'function') {
+                        _showToast('Residence system not available', 'error');
+                        return false;
+                    }
 
-                    var newResidence = _createResidence(name, locationId, typeId, {
+                    var result = RS.createResidence(name, locationId, typeId, {
                         condition: condition,
                         builtYear: builtYear,
                         estimatedValue: value,
                         notes: notes,
-                        unitCount: unitCount,
-                        isMultiUnit: isMultiUnit
+                        unitCount: units
                     });
 
-                    if (newResidence) {
-                        _showToast('Residence "' + name + '" created with ' + unitCount + ' unit(s)', 'success');
-                        _closeTopModal();
-                        _modalOpen = false;
-                        renderSettlementResidences('tab-residences', locationId);
-                        return true;
-                    } else {
-                        _showToast('Failed to create residence', 'error');
+                    if (!result || result.success !== true) {
+                        _showToast(
+                            'Failed to create residence: ' +
+                            (result && result.reason ? result.reason : 'unknown error'),
+                            'error'
+                        );
                         return false;
                     }
-                },
-                onCancel: function() {
-                    _modalOpen = false;
+
+                    if (!_persistOrToastError()) return false;
+
+                    _showToast('Residence "' + name + '" created', 'success');
+                    _closeTopModal();
+                    renderSettlementResidences(containerId, locationId);
+                    return true;
                 }
             });
 
         } catch (e) {
-            _modalOpen = false;
-            _showToast('Error opening create residence modal', 'error');
+            _showToast('Error opening create residence modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
     // =========================================================================
-    // 10. EDIT RESIDENCE MODAL
+    // 11. EDIT RESIDENCE MODAL
     // =========================================================================
 
-    function _openEditResidenceModal(residenceId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
+    function _openEditResidenceModal(residenceId, locationId, containerId) {
         try {
-            var residence = _getResidenceById(residenceId);
+            var residence = _getResidence(residenceId);
             if (!residence) {
                 _showToast('Residence not found', 'error');
-                _modalOpen = false;
                 return;
             }
 
-            var types = _getAllResidenceTypes();
-            var conditions = _getAllResidenceConditions();
+            var types = _getResidenceTypes();
+            var conditions = _getResidenceConditions();
             var currentYear = _getCurrentYear();
 
             var typeOptions = '';
-            for (var key in types) {
-                var t = types[key];
+            var typeKeys = Object.keys(types);
+            for (var i = 0; i < typeKeys.length; i++) {
+                var t = types[typeKeys[i]];
                 var selected = (residence.typeId === t.id) ? 'selected' : '';
                 typeOptions += '<option value="' + t.id + '" ' + selected + '>' + _escapeHtml(t.name) + ' (' + (t.isMultiUnit ? 'Multi-unit' : 'Single') + ')</option>';
             }
 
-            var conditionOptions = conditions.map(function(c) {
-                var selected = (residence.condition === c.id) ? 'selected' : '';
-                return '<option value="' + c.id + '" ' + selected + '>' + _escapeHtml(c.name) + '</option>';
-            }).join('');
-
-            var currentNameInfo = _getResidenceCurrentNameInfo(residenceId);
-            var nameSince = currentNameInfo ? currentNameInfo.since : 'Unknown';
+            var conditionOptions = '';
+            for (var c = 0; c < conditions.length; c++) {
+                var cond = conditions[c];
+                var selected = (residence.condition === cond.id) ? 'selected' : '';
+                conditionOptions += '<option value="' + cond.id + '" ' + selected + '>' + _escapeHtml(cond.name) + '</option>';
+            }
 
             var content = '' +
                 '<div style="margin-bottom: 16px;">' +
                     '<div style="background: var(--bg3); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 0.6rem; color: var(--dim);">' +
-                        'Editing <strong>' + _escapeHtml(residence.name) + '</strong> · Name since ' + nameSince +
+                        'Editing <strong>' + _escapeHtml(residence.name) + '</strong>' +
                         (residence.isMultiUnit ? ' · Multi-unit' : '') +
                     '</div>' +
                     '<div class="form-group" style="margin-bottom: 12px;">' +
@@ -1125,7 +1079,7 @@
                                     '<input type="number" id="editRenameYear" value="' + currentYear + '" min="1" style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.55rem; color: var(--text);">' +
                                 '</div>' +
                                 '<div><label style="font-size: 0.55rem; color: var(--dim);">Reason</label>' +
-                                    '<input type="text" id="editRenameReason" placeholder="e.g., Renovation, Inheritance..." style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.55rem; color: var(--text);">' +
+                                    '<input type="text" id="editRenameReason" placeholder="e.g., Renovation..." style="width: 100%; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 0.55rem; color: var(--text);">' +
                                 '</div>' +
                             '</div>' +
                         '</div>' +
@@ -1175,6 +1129,12 @@
                     }
                 },
                 onConfirm: function() {
+                    var RS = _getResidenceSystem();
+                    if (!RS) {
+                        _showToast('Residence system not available', 'error');
+                        return false;
+                    }
+
                     var name = document.getElementById('editResName').value.trim();
                     var typeId = document.getElementById('editResType').value;
                     var condition = document.getElementById('editResCondition').value;
@@ -1195,25 +1155,31 @@
                         return false;
                     }
 
-                    // Handle name change
-                    if (name !== residence.name) {
-                        var nameResult = _updateResidenceNameWithHistory(residenceId, name, {
-                            year: renameYear || currentYear,
-                            reason: renameReason || 'Edited',
+                    // Name change goes through updateResidenceName,
+                    // which owns the nameHistory append.
+                    var nameChanged = (name !== residence.name);
+                    if (nameChanged) {
+                        if (typeof RS.updateResidenceName !== 'function') {
+                            _showToast('Residence rename is not available', 'error');
+                            return false;
+                        }
+                        var nameResult = RS.updateResidenceName(residenceId, name, {
+                            year: (!isNaN(renameYear) && renameYear >= 1) ? renameYear : currentYear,
+                            reason: renameReason || 'Renamed',
                             changedBy: 'User',
                             addToHistory: renameWithHistory
                         });
-
-                        if (!nameResult || !nameResult.success) {
-                            _showToast(nameResult ? nameResult.reason : 'Failed to rename residence', 'error');
+                        if (!nameResult || nameResult.success !== true) {
+                            _showToast(
+                                'Failed to rename residence: ' +
+                                (nameResult && nameResult.reason ? nameResult.reason : 'unknown'),
+                                'error'
+                            );
                             return false;
-                        }
-
-                        if (renameWithHistory) {
-                            _showToast('Residence renamed from "' + residence.name + '" to "' + name + '"', 'success');
                         }
                     }
 
+                    // Non-name updates go through updateResidence.
                     var updates = {
                         typeId: typeId,
                         condition: condition,
@@ -1222,67 +1188,60 @@
                         notes: notes || null
                     };
 
-                    if (name !== residence.name) {
-                        updates.name = name;
-                    }
-
-                    var result = _updateResidence(residenceId, updates);
-
-                    if (result) {
-                        _showToast('Residence updated', 'success');
-                        _closeTopModal();
-                        _modalOpen = false;
-                        renderSettlementResidences('tab-residences', locationId);
-                        return true;
-                    } else {
-                        _showToast('Failed to update residence', 'error');
+                    var updateResult = RS.updateResidence(residenceId, updates);
+                    if (!updateResult || updateResult.success !== true) {
+                        _showToast(
+                            'Failed to update residence: ' +
+                            (updateResult && updateResult.reason ? updateResult.reason : 'unknown'),
+                            'error'
+                        );
+                        // Name may have already been updated. Persist
+                        // what we have so the caller does not lose
+                        // the rename.
+                        if (nameChanged) _persistOrToastError();
                         return false;
                     }
-                },
-                onCancel: function() {
-                    _modalOpen = false;
+
+                    if (!_persistOrToastError()) return false;
+
+                    _showToast('Residence updated', 'success');
+                    _closeTopModal();
+                    renderSettlementResidences(containerId, locationId);
+                    return true;
                 }
             });
 
         } catch (e) {
-            _modalOpen = false;
-            _showToast('Error opening edit residence modal', 'error');
+            _showToast('Error opening edit residence modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
     // =========================================================================
-    // 11. RESIDENCE DETAILS MODAL
+    // 12. RESIDENCE DETAILS MODAL
     // =========================================================================
 
-    function _openResidenceDetailsModal(residenceId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
+    function _openResidenceDetailsModal(residenceId, locationId, containerId) {
         try {
-            var residence = _getResidenceById(residenceId);
+            var residence = _getResidence(residenceId);
             if (!residence) {
                 _showToast('Residence not found', 'error');
-                _modalOpen = false;
                 return;
             }
 
-            var RS = _getResidenceSystem();
-            var units = _getResidenceUnits(residenceId);
+            var units = _getUnits(residenceId);
             var unitStats = _getUnitStats(residenceId);
             var owner = _getResidenceOwner(residenceId);
             var renter = _getResidenceRenter(residenceId);
             var nameHistory = _getResidenceNameHistory(residenceId);
-            var currentNameInfo = _getResidenceCurrentNameInfo(residenceId);
-            var isMultiUnit = residence.isMultiUnit || false;
-            var isDemolished = residence.isDemolished || false;
-            var isVacant = residence.isVacant || false;
+            var isMultiUnit = residence.isMultiUnit === true;
+            var isDemolished = residence.isDemolished === true;
+            var isVacant = residence.isVacant === true;
 
             var homeIcon = _getIconSafe('HOME');
             var personIcon = _getIconSafe('PERSON');
             var coinIcon = _getIconSafe('COIN');
             var editIcon = _getIconSafe('EDIT');
             var trashIcon = _getIconSafe('X_HEAVY');
-            var infoIcon = _getIconSafe('CIRCLE_DOT');
 
             var statusText = isDemolished ? 'Demolished' : (isVacant ? 'Vacant' : 'Occupied');
             var statusColor = isDemolished ? 'var(--danger)' : (isVacant ? 'var(--warn)' : 'var(--success)');
@@ -1298,9 +1257,9 @@
 
             var ownerDisplay = owner && owner.ownerName ? owner.ownerName : 'None';
             var ownerType = owner && owner.ownerType ? owner.ownerType : 'none';
-            var renterDisplay = renter && renter.renterName ? renter.renterName : 'None';
+            var renterDisplay = renter && renter.renterId ? renter.renterName : 'None';
             var rentAmount = renter && renter.rentAmount ? renter.rentAmount : 0;
-            var rentalStatus = renter && renter.rentalStatus ? renter.rentalStatus : 'Vacant';
+            var rentalStatus = (renter && renter.rentalStatus) ? renter.rentalStatus : 'vacant';
 
             // Build units HTML
             var unitsHtml = '';
@@ -1326,7 +1285,7 @@
             // Build name history HTML
             var historyHtml = '';
             if (nameHistory && nameHistory.length > 0) {
-                var sortedHistory = nameHistory.slice().sort(function(a, b) { return b.year - a.year; });
+                var sortedHistory = nameHistory.slice().sort(function(a, b) { return (b.year || 0) - (a.year || 0); });
                 historyHtml = '<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);">' +
                     '<div style="font-size: 0.6rem; color: var(--accent); margin-bottom: 6px;">Name History (' + nameHistory.length + ' changes)</div>';
                 for (var i = 0; i < Math.min(sortedHistory.length, 5); i++) {
@@ -1350,7 +1309,6 @@
                             '<div>' +
                                 '<div style="font-size: 0.9rem; font-weight: bold;">' + homeIcon + ' ' + _escapeHtml(residence.name) + '</div>' +
                                 '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(residence.typeName || residence.typeId || 'Unknown') + ' · ' + statusText + ' · Condition: <span style="color:' + conditionColor + ';">' + _escapeHtml(residence.condition || 'good') + '</span></div>' +
-                                (currentNameInfo ? '<div style="font-size: 0.55rem; color: var(--dim);">Current name since ' + currentNameInfo.since + (currentNameInfo.original ? ' · Original: ' + _escapeHtml(currentNameInfo.original) : '') + '</div>' : '') +
                             '</div>' +
                             '<span style="font-size: 0.55rem; padding: 2px 10px; border-radius: 12px; background: ' + statusColor + '; color: white;">' + statusText + '</span>' +
                         '</div>' +
@@ -1364,7 +1322,7 @@
                         (renter && renter.renterId ? '<div><span style="color: var(--dim);">Renter</span><br><span style="font-weight: bold;">' + _escapeHtml(renterDisplay) + '</span></div>' : '') +
                         (renter && renter.rentAmount ? '<div><span style="color: var(--dim);">Rent</span><br><span style="font-weight: bold; color: var(--success);">' + rentAmount + 'g/year</span></div>' : '') +
                         '<div><span style="color: var(--dim);">Rental Status</span><br><span style="font-weight: bold;">' + _escapeHtml(rentalStatus) + '</span></div>' +
-                        (residence.isMultiUnit ? '<div><span style="color: var(--dim);">Units</span><br><span style="font-weight: bold;">' + unitStats.total + ' (' + unitStats.occupied + ' occupied, ' + unitStats.vacant + ' vacant)</span></div>' : '') +
+                        (isMultiUnit ? '<div><span style="color: var(--dim);">Units</span><br><span style="font-weight: bold;">' + unitStats.total + ' (' + unitStats.occupied + ' occupied, ' + unitStats.vacant + ' vacant)</span></div>' : '') +
                     '</div>' +
 
                     unitsHtml +
@@ -1373,14 +1331,14 @@
                     (residence.notes ? '<div style="margin-top: 12px; padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.6rem; color: var(--dim);">' + _escapeHtml(residence.notes) + '</div>' : '') +
 
                     '<div style="margin-top: 16px; display: flex; gap: 6px; flex-wrap: wrap; border-top: 1px solid var(--border); padding-top: 12px;">' +
-                        '<button id="resDetailEditBtn" class="btn" style="font-size: 0.55rem; padding: 4px 12px; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">' + editIcon + ' Edit</button>' +
+                        (!isDemolished ? '<button id="resDetailEditBtn" class="btn" style="font-size: 0.55rem; padding: 4px 12px; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer;">' + editIcon + ' Edit</button>' : '') +
                         (!isDemolished ? '<button id="resDetailVacateBtn" class="btn" style="font-size: 0.55rem; padding: 4px 12px; background: #8a5a20; border: none; color: white; border-radius: 4px; cursor: pointer;">Mark Vacant</button>' : '') +
                         (!isDemolished && residence.condition !== 'pristine' ? '<button id="resDetailRehabBtn" class="btn" style="font-size: 0.55rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Rehabilitate</button>' : '') +
                         (!isDemolished ? '<button id="resDetailDemolishBtn" class="btn" style="font-size: 0.55rem; padding: 4px 12px; background: #8a3020; border: none; color: white; border-radius: 4px; cursor: pointer;">Demolish</button>' : '') +
                         (!isDemolished ? '<button id="resDetailSetOwnerBtn" class="btn" style="font-size: 0.55rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Set Owner</button>' : '') +
                         (!isDemolished ? '<button id="resDetailSetRenterBtn" class="btn" style="font-size: 0.55rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Set Renter</button>' : '') +
                         (renter && renter.renterId && !isDemolished ? '<button id="resDetailEndRentalBtn" class="btn" style="font-size: 0.55rem; padding: 4px 12px; background: #8a5a20; border: none; color: white; border-radius: 4px; cursor: pointer;">End Rental</button>' : '') +
-                        (residence.isMultiUnit ? '<button id="resDetailAddUnitBtn" class="btn" style="font-size: 0.55rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Add Unit</button>' : '') +
+                        (isMultiUnit ? '<button id="resDetailAddUnitBtn" class="btn" style="font-size: 0.55rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer;">Add Unit</button>' : '') +
                         '<button id="resDetailDeleteBtn" class="btn" style="font-size: 0.55rem; padding: 4px 12px; background: #6a2020; border: none; color: white; border-radius: 4px; cursor: pointer;">' + trashIcon + ' Delete</button>' +
                     '</div>' +
                 '</div>';
@@ -1390,23 +1348,15 @@
                 content: content,
                 confirmText: 'Close',
                 cancelText: '',
-                onConfirm: function() {
-                    _closeTopModal();
-                    _modalOpen = false;
-                },
-                onCancel: function() {
-                    _modalOpen = false;
-                }
+                onConfirm: function() { /* close only */ }
             });
 
-            // Attach detail modal event handlers
             setTimeout(function() {
                 var editBtn = document.getElementById('resDetailEditBtn');
                 if (editBtn) {
                     editBtn.onclick = function() {
                         _closeTopModal();
-                        _modalOpen = false;
-                        _openEditResidenceModal(residenceId, locationId);
+                        _openEditResidenceModal(residenceId, locationId, containerId);
                     };
                 }
 
@@ -1414,8 +1364,7 @@
                 if (vacateBtn) {
                     vacateBtn.onclick = function() {
                         _closeTopModal();
-                        _modalOpen = false;
-                        _openVacateResidenceModal(residenceId, locationId);
+                        _openVacateResidenceModal(residenceId, locationId, containerId);
                     };
                 }
 
@@ -1423,8 +1372,7 @@
                 if (rehabBtn) {
                     rehabBtn.onclick = function() {
                         _closeTopModal();
-                        _modalOpen = false;
-                        _openRehabilitateResidenceModal(residenceId, locationId);
+                        _openRehabilitateResidenceModal(residenceId, locationId, containerId);
                     };
                 }
 
@@ -1432,8 +1380,7 @@
                 if (demolishBtn) {
                     demolishBtn.onclick = function() {
                         _closeTopModal();
-                        _modalOpen = false;
-                        _confirmDemolishResidence(residenceId, locationId);
+                        _confirmDemolishResidence(residenceId, locationId, containerId);
                     };
                 }
 
@@ -1441,8 +1388,7 @@
                 if (setOwnerBtn) {
                     setOwnerBtn.onclick = function() {
                         _closeTopModal();
-                        _modalOpen = false;
-                        _openSetOwnerModal(residenceId, locationId);
+                        _openSetOwnerModal(residenceId, locationId, containerId);
                     };
                 }
 
@@ -1450,8 +1396,7 @@
                 if (setRenterBtn) {
                     setRenterBtn.onclick = function() {
                         _closeTopModal();
-                        _modalOpen = false;
-                        _openSetRenterModal(residenceId, locationId);
+                        _openSetRenterModal(residenceId, locationId, containerId);
                     };
                 }
 
@@ -1459,8 +1404,7 @@
                 if (endRentalBtn) {
                     endRentalBtn.onclick = function() {
                         _closeTopModal();
-                        _modalOpen = false;
-                        _confirmEndRental(residenceId, locationId);
+                        _confirmEndRental(residenceId, locationId, containerId);
                     };
                 }
 
@@ -1468,8 +1412,7 @@
                 if (addUnitBtn) {
                     addUnitBtn.onclick = function() {
                         _closeTopModal();
-                        _modalOpen = false;
-                        _openAddUnitModal(residenceId, locationId);
+                        _openAddUnitModal(residenceId, locationId, containerId);
                     };
                 }
 
@@ -1477,43 +1420,35 @@
                 if (deleteBtn) {
                     deleteBtn.onclick = function() {
                         _closeTopModal();
-                        _modalOpen = false;
-                        _confirmDeleteResidence(residenceId, locationId);
+                        _confirmDeleteResidence(residenceId, locationId, containerId);
                     };
                 }
             }, 100);
 
         } catch (e) {
-            _modalOpen = false;
-            _showToast('Error opening residence details', 'error');
+            _showToast('Error opening residence details: ' + (e.message || 'unknown'), 'error');
         }
     }
 
     // =========================================================================
-    // 12. VACATE RESIDENCE MODAL
+    // 13. VACATE RESIDENCE MODAL
     // =========================================================================
 
-    function _openVacateResidenceModal(residenceId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
+    function _openVacateResidenceModal(residenceId, locationId, containerId) {
         try {
-            var residence = _getResidenceById(residenceId);
+            var residence = _getResidence(residenceId);
             if (!residence) {
                 _showToast('Residence not found', 'error');
-                _modalOpen = false;
                 return;
             }
 
             if (residence.isVacant) {
                 _showToast('Residence is already vacant', 'warning');
-                _modalOpen = false;
                 return;
             }
 
             if (residence.isDemolished) {
                 _showToast('Residence has been demolished', 'error');
-                _modalOpen = false;
                 return;
             }
 
@@ -1549,6 +1484,11 @@
                 confirmText: 'Mark Vacant',
                 cancelText: 'Cancel',
                 onConfirm: function() {
+                    var RS = _getResidenceSystem();
+                    if (!RS || typeof RS.markResidenceVacant !== 'function') {
+                        _showToast('Residence system not available', 'error');
+                        return false;
+                    }
                     var year = parseInt(document.getElementById('vacateYear').value);
                     var reason = document.getElementById('vacateReason').value;
 
@@ -1557,66 +1497,63 @@
                         return false;
                     }
 
-                    var result = _markResidenceVacant(residenceId, reason, year);
-
-                    if (result && result.success) {
-                        _showToast('Residence "' + residence.name + '" marked vacant', 'success');
-                        _closeTopModal();
-                        _modalOpen = false;
-                        renderSettlementResidences('tab-residences', locationId);
-                        return true;
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to mark vacant', 'error');
+                    var result = RS.markResidenceVacant(residenceId, reason, year);
+                    if (!result || result.success !== true) {
+                        _showToast(
+                            'Failed to mark vacant: ' +
+                            (result && result.reason ? result.reason : 'unknown'),
+                            'error'
+                        );
                         return false;
                     }
-                },
-                onCancel: function() {
-                    _modalOpen = false;
+
+                    if (!_persistOrToastError()) return false;
+
+                    _showToast('Residence "' + residence.name + '" marked vacant', 'success');
+                    _closeTopModal();
+                    renderSettlementResidences(containerId, locationId);
+                    return true;
                 }
             });
 
         } catch (e) {
-            _modalOpen = false;
-            _showToast('Error opening vacate residence modal', 'error');
+            _showToast('Error opening vacate residence modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
     // =========================================================================
-    // 13. REHABILITATE RESIDENCE MODAL
+    // 14. REHABILITATE RESIDENCE MODAL
     // =========================================================================
 
-    function _openRehabilitateResidenceModal(residenceId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
+    function _openRehabilitateResidenceModal(residenceId, locationId, containerId) {
         try {
-            var residence = _getResidenceById(residenceId);
+            var residence = _getResidence(residenceId);
             if (!residence) {
                 _showToast('Residence not found', 'error');
-                _modalOpen = false;
                 return;
             }
 
             if (residence.isDemolished) {
                 _showToast('Residence has been demolished', 'error');
-                _modalOpen = false;
                 return;
             }
 
-            var conditions = _getAllResidenceConditions();
+            var RS = _getResidenceSystem();
+            var conditions = _getResidenceConditions();
             var currentYear = _getCurrentYear();
 
-            // Calculate repair cost using ResidenceSystem if available
-            var RS = _getResidenceSystem();
             var repairCost = 0;
             if (RS && typeof RS.calculateRepairCost === 'function') {
-                repairCost = RS.calculateRepairCost(residence, 'good');
+                try { repairCost = RS.calculateRepairCost(residenceId, 'good') || 0; }
+                catch (e) { repairCost = 0; }
             }
 
-            var conditionOptions = conditions.map(function(c) {
-                var selected = (c.id === 'good' || c.id === residence.condition) ? 'selected' : '';
-                return '<option value="' + c.id + '" ' + selected + '>' + _escapeHtml(c.name) + '</option>';
-            }).join('');
+            var conditionOptions = '';
+            for (var c = 0; c < conditions.length; c++) {
+                var cond = conditions[c];
+                var selected = (cond.id === residence.condition) ? 'selected' : '';
+                conditionOptions += '<option value="' + cond.id + '" ' + selected + '>' + _escapeHtml(cond.name) + '</option>';
+            }
 
             var content = '' +
                 '<div style="margin-bottom: 16px;">' +
@@ -1648,6 +1585,10 @@
                 confirmText: 'Rehabilitate',
                 cancelText: 'Cancel',
                 onConfirm: function() {
+                    if (!RS || typeof RS.rehabilitateResidence !== 'function') {
+                        _showToast('Residence system not available', 'error');
+                        return false;
+                    }
                     var targetCondition = document.getElementById('rehabTargetCondition').value;
                     var year = parseInt(document.getElementById('rehabYear').value);
 
@@ -1656,21 +1597,22 @@
                         return false;
                     }
 
-                    var result = _rehabilitateResidence(residenceId, targetCondition, year);
-
-                    if (result && result.success) {
-                        _showToast('Residence rehabilitated from "' + result.oldCondition + '" to "' + result.newCondition + '"', 'success');
-                        _closeTopModal();
-                        _modalOpen = false;
-                        renderSettlementResidences('tab-residences', locationId);
-                        return true;
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to rehabilitate residence', 'error');
+                    var result = RS.rehabilitateResidence(residenceId, targetCondition, year);
+                    if (!result || result.success !== true) {
+                        _showToast(
+                            'Failed to rehabilitate: ' +
+                            (result && result.reason ? result.reason : 'unknown'),
+                            'error'
+                        );
                         return false;
                     }
-                },
-                onCancel: function() {
-                    _modalOpen = false;
+
+                    if (!_persistOrToastError()) return false;
+
+                    _showToast('Residence rehabilitated from "' + result.oldCondition + '" to "' + result.newCondition + '"', 'success');
+                    _closeTopModal();
+                    renderSettlementResidences(containerId, locationId);
+                    return true;
                 }
             });
 
@@ -1679,24 +1621,25 @@
                 var costDisplay = document.getElementById('rehabCostDisplay');
                 if (targetSelect && costDisplay && RS && typeof RS.calculateRepairCost === 'function') {
                     targetSelect.onchange = function() {
-                        var cost = RS.calculateRepairCost(residence, targetSelect.value);
+                        var cost = 0;
+                        try { cost = RS.calculateRepairCost(residenceId, targetSelect.value) || 0; }
+                        catch (e) { cost = 0; }
                         costDisplay.textContent = cost;
                     };
                 }
             }, 100);
 
         } catch (e) {
-            _modalOpen = false;
-            _showToast('Error opening rehabilitate residence modal', 'error');
+            _showToast('Error opening rehabilitate residence modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
     // =========================================================================
-    // 14. CONFIRM DEMOLISH RESIDENCE
+    // 15. CONFIRM DEMOLISH RESIDENCE
     // =========================================================================
 
-    function _confirmDemolishResidence(residenceId, locationId) {
-        var residence = _getResidenceById(residenceId);
+    function _confirmDemolishResidence(residenceId, locationId, containerId) {
+        var residence = _getResidence(residenceId);
         if (!residence) {
             _showToast('Residence not found', 'error');
             return;
@@ -1716,16 +1659,29 @@
             'This action cannot be undone.',
             'Demolish Residence',
             function() {
-                var result = _demolishResidence(residenceId, 'Manual demolition', _getCurrentYear(), {
-                    destroyedBy: 'manual'
-                });
-
-                if (result && result.success) {
-                    _showToast('Residence "' + residence.name + '" demolished', 'info');
-                    renderSettlementResidences('tab-residences', locationId);
-                } else {
-                    _showToast(result && result.error ? result.error : 'Failed to demolish residence', 'error');
+                var RS = _getResidenceSystem();
+                if (!RS || typeof RS.demolishResidence !== 'function') {
+                    _showToast('Residence system not available', 'error');
+                    return;
                 }
+                var result = RS.demolishResidence(
+                    residenceId, 'Manual demolition', _getCurrentYear(),
+                    { force: true, destroyedBy: 'manual' }
+                );
+
+                if (!result || result.success !== true) {
+                    _showToast(
+                        'Failed to demolish residence: ' +
+                        (result && result.reason ? result.reason : 'unknown'),
+                        'error'
+                    );
+                    return;
+                }
+
+                if (!_persistOrToastError()) return false;
+
+                _showToast('Residence "' + residence.name + '" demolished', 'info');
+                renderSettlementResidences(containerId, locationId);
             },
             function() {
                 // Cancel
@@ -1734,11 +1690,11 @@
     }
 
     // =========================================================================
-    // 15. CONFIRM DELETE RESIDENCE
+    // 16. CONFIRM DELETE RESIDENCE
     // =========================================================================
 
-    function _confirmDeleteResidence(residenceId, locationId) {
-        var residence = _getResidenceById(residenceId);
+    function _confirmDeleteResidence(residenceId, locationId, containerId) {
+        var residence = _getResidence(residenceId);
         if (!residence) {
             _showToast('Residence not found', 'error');
             return;
@@ -1749,19 +1705,40 @@
 
         _confirmDialog(
             'Delete "' + residence.name + '"?\n\n' +
-            (hasOccupied ? 'Warning: ' + unitStats.occupied + ' unit(s) are still occupied!\n' : '') +
+            (hasOccupied ? 'Warning: ' + unitStats.occupied + ' unit(s) are still occupied!\n\n' : '') +
             'This will permanently remove the residence from the game world.\n\n' +
             'This action cannot be undone.',
             'Delete Residence',
             function() {
-                var result = _deleteResidence(residenceId, { force: !hasOccupied });
-
-                if (result) {
-                    _showToast('Residence "' + residence.name + '" deleted', 'info');
-                    renderSettlementResidences('tab-residences', locationId);
-                } else {
-                    _showToast('Failed to delete residence - occupied units must be vacated first', 'error');
+                var RS = _getResidenceSystem();
+                if (!RS || typeof RS.deleteResidence !== 'function') {
+                    _showToast('Residence system not available', 'error');
+                    return;
                 }
+                // deleteResidence refuses to delete a residence with
+                // occupied units unless { force: true } is passed. The
+                // confirm dialog above warns the user; passing force
+                // here means the delete goes through after the user
+                // confirmed the warning. Use { force: false } on
+                // occupied units to surface the command's own refusal
+                // (which matches the dialog's warning text).
+                var result = RS.deleteResidence(residenceId, {
+                    force: hasOccupied ? false : true
+                });
+
+                if (!result || result.success !== true) {
+                    _showToast(
+                        'Failed to delete residence: ' +
+                        (result && result.reason ? result.reason : 'occupied units must be vacated first'),
+                        'error'
+                    );
+                    return;
+                }
+
+                if (!_persistOrToastError()) return false;
+
+                _showToast('Residence "' + residence.name + '" deleted', 'info');
+                renderSettlementResidences(containerId, locationId);
             },
             function() {
                 // Cancel
@@ -1770,18 +1747,14 @@
     }
 
     // =========================================================================
-    // 16. SET OWNER MODAL
+    // 17. SET OWNER MODAL
     // =========================================================================
 
-    function _openSetOwnerModal(residenceId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
+    function _openSetOwnerModal(residenceId, locationId, containerId) {
         try {
-            var residence = _getResidenceById(residenceId);
+            var residence = _getResidence(residenceId);
             if (!residence) {
                 _showToast('Residence not found', 'error');
-                _modalOpen = false;
                 return;
             }
 
@@ -1792,7 +1765,7 @@
                 '<div style="margin-bottom: 16px;">' +
                     '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
                         '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(residence.name) + '</strong></div>' +
-                        '<div style="font-size: 0.6rem; color: var(--dim);">Current Owner: ' + (currentOwner ? _escapeHtml(currentOwner.ownerName) : 'None') + '</div>' +
+                        '<div style="font-size: 0.6rem; color: var(--dim);">Current Owner: ' + (currentOwner && currentOwner.ownerName ? _escapeHtml(currentOwner.ownerName) : 'None') + '</div>' +
                     '</div>' +
                     '<div class="form-group" style="margin-bottom: 12px;">' +
                         '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Owner Type</label>' +
@@ -1864,6 +1837,11 @@
                     }
                 },
                 onConfirm: function() {
+                    var RS = _getResidenceSystem();
+                    if (!RS || typeof RS.setResidenceOwner !== 'function') {
+                        _showToast('Residence system not available', 'error');
+                        return false;
+                    }
                     var ownerType = document.getElementById('setOwnerType').value;
                     var ownerId = document.getElementById('setOwnerId').value;
                     var ownerSince = parseInt(document.getElementById('setOwnerSince').value) || currentYear;
@@ -1873,51 +1851,47 @@
                         return false;
                     }
 
-                    var result = _setResidenceOwner(residenceId, ownerType, ownerId, {
+                    var result = RS.setResidenceOwner(residenceId, ownerType, ownerId, {
                         ownerSince: ownerSince
                     });
 
-                    if (result) {
-                        _showToast('Owner set successfully', 'success');
-                        _closeTopModal();
-                        _modalOpen = false;
-                        renderSettlementResidences('tab-residences', locationId);
-                        return true;
-                    } else {
-                        _showToast('Failed to set owner', 'error');
+                    if (!result || result.success !== true) {
+                        _showToast(
+                            'Failed to set owner: ' +
+                            (result && result.reason ? result.reason : 'unknown'),
+                            'error'
+                        );
                         return false;
                     }
-                },
-                onCancel: function() {
-                    _modalOpen = false;
+
+                    if (!_persistOrToastError()) return false;
+
+                    _showToast('Owner set successfully', 'success');
+                    _closeTopModal();
+                    renderSettlementResidences(containerId, locationId);
+                    return true;
                 }
             });
 
         } catch (e) {
-            _modalOpen = false;
-            _showToast('Error opening set owner modal', 'error');
+            _showToast('Error opening set owner modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
     // =========================================================================
-    // 17. SET RENTER MODAL
+    // 18. SET RENTER MODAL
     // =========================================================================
 
-    function _openSetRenterModal(residenceId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
+    function _openSetRenterModal(residenceId, locationId, containerId) {
         try {
-            var residence = _getResidenceById(residenceId);
+            var residence = _getResidence(residenceId);
             if (!residence) {
                 _showToast('Residence not found', 'error');
-                _modalOpen = false;
                 return;
             }
 
             if (!residence.ownerId) {
                 _showToast('Residence must have an owner before it can be rented', 'error');
-                _modalOpen = false;
                 return;
             }
 
@@ -1929,8 +1903,8 @@
                     '<div style="background: var(--bg3); border-radius: 6px; padding: 12px; margin-bottom: 12px;">' +
                         '<div style="font-size: 0.7rem;"><strong>' + _escapeHtml(residence.name) + '</strong></div>' +
                         '<div style="font-size: 0.6rem; color: var(--dim);">Owner: ' + (residence.ownerName || 'Unknown') + '</div>' +
-                        '<div style="font-size: 0.6rem; color: var(--dim);">Current Renter: ' + (currentRenter ? _escapeHtml(currentRenter.renterName) : 'None') + '</div>' +
-                        '<div style="font-size: 0.6rem; color: var(--dim);">Current Rent: ' + (currentRenter ? currentRenter.rentAmount + 'g' : '0g') + '</div>' +
+                        '<div style="font-size: 0.6rem; color: var(--dim);">Current Renter: ' + (currentRenter && currentRenter.renterId ? _escapeHtml(currentRenter.renterName) : 'None') + '</div>' +
+                        '<div style="font-size: 0.6rem; color: var(--dim);">Current Rent: ' + (currentRenter && currentRenter.rentAmount ? currentRenter.rentAmount : 0) + 'g</div>' +
                     '</div>' +
                     '<div class="form-group" style="margin-bottom: 12px;">' +
                         '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Renter Type</label>' +
@@ -1950,7 +1924,7 @@
                     '</div>' +
                     '<div class="form-group" style="margin-bottom: 12px;">' +
                         '<label style="display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px;">Annual Rent Amount (gold)</label>' +
-                        '<input type="number" id="setRentAmount" value="' + (currentRenter ? currentRenter.rentAmount || 50 : 50) + '" min="0" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; color: var(--text);">' +
+                        '<input type="number" id="setRentAmount" value="' + ((currentRenter && currentRenter.rentAmount) || 50) + '" min="0" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; color: var(--text);">' +
                         '<small style="font-size: 0.55rem; color: var(--dim);">Rent is collected annually</small>' +
                     '</div>' +
                     '<div class="form-group" style="margin-bottom: 12px;">' +
@@ -2011,6 +1985,11 @@
                     }
                 },
                 onConfirm: function() {
+                    var RS = _getResidenceSystem();
+                    if (!RS || typeof RS.setResidenceRenter !== 'function') {
+                        _showToast('Residence system not available', 'error');
+                        return false;
+                    }
                     var renterType = document.getElementById('setRenterType').value;
                     var renterId = document.getElementById('setRenterId').value;
                     var rentAmount = parseInt(document.getElementById('setRentAmount').value) || 0;
@@ -2027,39 +2006,40 @@
                         return false;
                     }
 
-                    var result = _setResidenceRenter(residenceId, renterType, renterId, rentAmount, {
+                    var result = RS.setResidenceRenter(residenceId, renterType, renterId, rentAmount, {
                         rentStartYear: rentStartYear,
                         notes: notes
                     });
 
-                    if (result) {
-                        _showToast('Renter set successfully (Rent: ' + rentAmount + 'g/year)', 'success');
-                        _closeTopModal();
-                        _modalOpen = false;
-                        renderSettlementResidences('tab-residences', locationId);
-                        return true;
-                    } else {
-                        _showToast('Failed to set renter', 'error');
+                    if (!result || result.success !== true) {
+                        _showToast(
+                            'Failed to set renter: ' +
+                            (result && result.reason ? result.reason : 'unknown'),
+                            'error'
+                        );
                         return false;
                     }
-                },
-                onCancel: function() {
-                    _modalOpen = false;
+
+                    if (!_persistOrToastError()) return false;
+
+                    _showToast('Renter set successfully (Rent: ' + rentAmount + 'g/year)', 'success');
+                    _closeTopModal();
+                    renderSettlementResidences(containerId, locationId);
+                    return true;
                 }
             });
 
         } catch (e) {
-            _modalOpen = false;
-            _showToast('Error opening set renter modal', 'error');
+            _showToast('Error opening set renter modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
     // =========================================================================
-    // 18. CONFIRM END RENTAL
+    // 19. CONFIRM END RENTAL
     // =========================================================================
 
-    function _confirmEndRental(residenceId, locationId) {
-        var residence = _getResidenceById(residenceId);
+    function _confirmEndRental(residenceId, locationId, containerId) {
+        var residence = _getResidence(residenceId);
         if (!residence) {
             _showToast('Residence not found', 'error');
             return;
@@ -2077,14 +2057,28 @@
             'This will mark the residence as vacant.',
             'End Rental',
             function() {
-                var result = _endResidenceRental(residenceId, _getCurrentYear(), 'Ended by administrator');
-
-                if (result) {
-                    _showToast('Rental ended for ' + (residence.renterName || 'Unknown'), 'success');
-                    renderSettlementResidences('tab-residences', locationId);
-                } else {
-                    _showToast('Failed to end rental', 'error');
+                var RS = _getResidenceSystem();
+                if (!RS || typeof RS.endResidenceRental !== 'function') {
+                    _showToast('Residence system not available', 'error');
+                    return;
                 }
+                var result = RS.endResidenceRental(
+                    residenceId, _getCurrentYear(), 'Ended by administrator'
+                );
+
+                if (!result || result.success !== true) {
+                    _showToast(
+                        'Failed to end rental: ' +
+                        (result && result.reason ? result.reason : 'unknown'),
+                        'error'
+                    );
+                    return;
+                }
+
+                if (!_persistOrToastError()) return false;
+
+                _showToast('Rental ended for ' + (residence.renterName || 'Unknown'), 'success');
+                renderSettlementResidences(containerId, locationId);
             },
             function() {
                 // Cancel
@@ -2093,40 +2087,33 @@
     }
 
     // =========================================================================
-    // 19. ADD UNIT MODAL
+    // 20. ADD UNIT MODAL
     // =========================================================================
 
-    function _openAddUnitModal(residenceId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
+    function _openAddUnitModal(residenceId, locationId, containerId) {
         try {
-            var residence = _getResidenceById(residenceId);
+            var residence = _getResidence(residenceId);
             if (!residence) {
                 _showToast('Residence not found', 'error');
-                _modalOpen = false;
                 return;
             }
 
             if (!residence.isMultiUnit) {
                 _showToast('Cannot add units to a non-multi-unit residence', 'error');
-                _modalOpen = false;
                 return;
             }
 
             if (residence.isDemolished) {
                 _showToast('Residence has been demolished', 'error');
-                _modalOpen = false;
                 return;
             }
 
-            var currentUnits = residence.units || [];
+            var units = _getUnits(residenceId);
             var maxUnits = residence.maxUnits || 20;
-            var unitCount = currentUnits.length;
+            var unitCount = units.length;
 
             if (unitCount >= maxUnits) {
                 _showToast('Maximum units reached (' + maxUnits + ')', 'warning');
-                _modalOpen = false;
                 return;
             }
 
@@ -2153,6 +2140,11 @@
                 confirmText: 'Add Unit',
                 cancelText: 'Cancel',
                 onConfirm: function() {
+                    var RS = _getResidenceSystem();
+                    if (!RS || typeof RS.addUnit !== 'function') {
+                        _showToast('Residence system not available', 'error');
+                        return false;
+                    }
                     var unitNumberInput = document.getElementById('addUnitNumber').value;
                     var notes = document.getElementById('addUnitNotes').value.trim();
 
@@ -2167,32 +2159,32 @@
                         }
                     }
 
-                    var result = _addResidenceUnit(residenceId, options);
-
-                    if (result && result.success) {
-                        _showToast('Unit ' + result.unitNumber + ' added to ' + residence.name, 'success');
-                        _closeTopModal();
-                        _modalOpen = false;
-                        renderSettlementResidences('tab-residences', locationId);
-                        return true;
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to add unit', 'error');
+                    var result = RS.addUnit(residenceId, options);
+                    if (!result || result.success !== true) {
+                        _showToast(
+                            'Failed to add unit: ' +
+                            (result && result.reason ? result.reason : 'unknown'),
+                            'error'
+                        );
                         return false;
                     }
-                },
-                onCancel: function() {
-                    _modalOpen = false;
+
+                    if (!_persistOrToastError()) return false;
+
+                    _showToast('Unit ' + result.data.unitNumber + ' added to ' + residence.name, 'success');
+                    _closeTopModal();
+                    renderSettlementResidences(containerId, locationId);
+                    return true;
                 }
             });
 
         } catch (e) {
-            _modalOpen = false;
-            _showToast('Error opening add unit modal', 'error');
+            _showToast('Error opening add unit modal: ' + (e.message || 'unknown'), 'error');
         }
     }
 
     // =========================================================================
-    // 20. REGISTER WITH TAB SYSTEM
+    // 21. REGISTER WITH TAB SYSTEM
     // =========================================================================
 
     function registerResidenceTabRenderer() {
@@ -2205,7 +2197,7 @@
     }
 
     // =========================================================================
-    // 21. EXPORTS
+    // 22. EXPORTS
     // =========================================================================
 
     window.renderSettlementResidences = renderSettlementResidences;
