@@ -16,7 +16,579 @@
     <!-- 3. Stylesheets -->
     <link rel="stylesheet" href="css/themes.css" />
     <link rel="stylesheet" href="css/common.css" />
-    <link rel="stylesheet" href="css/nexus.css" />
+
+    <style>
+        /* ==================================================================
+           NEXUS DASHBOARD — INLINE STYLES
+           ==================================================================
+           Structural only. Every color, radius, shadow, and font value
+           comes from themes.css. The document is allowed to scroll
+           (common.css makes the body an app shell; we override that
+           here because the Nexus is a scrolling dashboard, not a fixed
+           panel).
+           ================================================================== */
+
+        /* ---- Reset / base ---- */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html, body {
+            height: auto !important;
+            min-height: 100%;
+            overflow-x: hidden;
+            overflow-y: auto !important;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 16px;
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        h1, h2, h3, h4 {
+            font-family: var(--f-display);
+            color: var(--fg);
+            font-weight: 500;
+            line-height: 1.25;
+        }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { color: var(--accent-light); }
+        button {
+            font: inherit;
+            color: inherit;
+            cursor: pointer;
+            background: none;
+            border: none;
+            font-family: var(--f-body);
+        }
+        code {
+            font-family: var(--f-mono);
+            font-size: 0.85em;
+            color: var(--accent-light);
+            background: var(--bg3);
+            padding: 1px 5px;
+            border-radius: var(--radius);
+            border: 1px solid var(--border-light);
+        }
+        :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        svg { display: block; fill: currentColor; width: 1em; height: 1em; }
+
+        /* ---- Layout ---- */
+        .dashboard {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px 24px 60px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        /* ---- Heraldic header ---- */
+        .heraldic-header {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            padding: 24px 16px 16px;
+            border-bottom: 1px solid var(--line);
+            position: relative;
+        }
+        .heraldic-header .title-glow {
+            display: inline-flex;
+            align-items: center;
+            gap: 14px;
+            font-family: var(--f-display);
+            font-size: 2.2rem;
+            font-weight: 600;
+            letter-spacing: 0.14em;
+            color: var(--accent);
+            text-shadow: var(--glow-md);
+        }
+        .heraldic-header .title-glow .icon-symbol {
+            font-size: 1.4rem;
+            color: var(--accent-light);
+            opacity: 0.85;
+        }
+        .heraldic-header .sub {
+            margin-top: 6px;
+            font-family: var(--f-display);
+            font-size: 0.7rem;
+            letter-spacing: 0.28em;
+            text-transform: uppercase;
+            color: var(--dim);
+        }
+        .heraldic-header .topbar-controls {
+            margin-top: 18px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* ---- Topbar buttons ---- */
+        .topbar-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-display);
+            font-size: 0.7rem;
+            font-weight: 500;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+        }
+        .topbar-btn:hover {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+        .topbar-btn .icon-symbol { font-size: 0.9rem; color: var(--accent); }
+
+        /* ---- Theme menu ---- */
+        .theme-toggle { position: relative; display: inline-flex; }
+        .theme-toggle__btn { min-width: 110px; justify-content: center; }
+        .theme-toggle__menu {
+            position: absolute;
+            top: calc(100% + 6px);
+            right: 0;
+            min-width: 180px;
+            max-height: 340px;
+            overflow-y: auto;
+            background: var(--surface);
+            border: 1px solid var(--border2);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            list-style: none;
+            z-index: 100;
+            padding: 4px;
+        }
+        .theme-toggle__menu[hidden] { display: none; }
+        .theme-toggle__menu li { list-style: none; }
+        .theme-toggle__menu button {
+            display: block;
+            width: 100%;
+            padding: 6px 10px;
+            text-align: left;
+            font-family: var(--f-body);
+            font-size: 0.72rem;
+            border-radius: calc(var(--radius) - 1px);
+            color: var(--text);
+            transition: background-color 0.12s ease, color 0.12s ease;
+        }
+        .theme-toggle__menu button:hover,
+        .theme-toggle__menu button:focus-visible {
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+
+        /* ---- Info banner ---- */
+        .info-banner {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            padding: 8px 14px;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-size: 0.7rem;
+            color: var(--dim);
+        }
+        .info-banner > span { display: inline-flex; align-items: center; gap: 6px; }
+        .info-banner .icon-symbol { color: var(--accent); font-size: 0.8rem; }
+        .info-banner .version-tag {
+            font-family: var(--f-mono);
+            font-size: 0.62rem;
+            color: var(--accent-light);
+        }
+
+        /* ---- Recently visited ---- */
+        .recent-section {
+            padding: 10px 14px;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+        }
+        .recent-section[hidden] { display: none; }
+        .recent-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-family: var(--f-display);
+            font-size: 0.62rem;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--dim);
+            margin-bottom: 8px;
+        }
+        .recent-label .icon-symbol { color: var(--accent); }
+        .recent-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+        .recent-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 3px 12px;
+            background: var(--bg3);
+            border: 1px solid var(--border-light);
+            border-radius: 14px;
+            font-size: 0.65rem;
+            color: var(--text);
+            transition: border-color 0.15s ease, color 0.15s ease;
+        }
+        .recent-chip:hover { border-color: var(--accent); color: var(--accent-light); }
+
+        /* ---- Section dividers ---- */
+        .divider { display: flex; align-items: center; gap: 14px; margin: 24px 0 8px; }
+        .divider-line {
+            flex: 1;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--line), transparent);
+        }
+        .divider-text {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--f-display);
+            font-size: 0.7rem;
+            font-weight: 600;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            color: var(--accent-light);
+            white-space: nowrap;
+        }
+        .divider-text .icon-symbol { color: var(--accent); font-size: 0.85rem; }
+
+        /* ---- Tool grid ---- */
+        .tool-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 14px;
+            margin-bottom: 8px;
+        }
+
+        /* ---- Tool card ----
+           Layout + hover state only. Colors come from themes.css.
+           The .card-icon receives its SVG via data-icon → injectIcons().
+           Do NOT add !important color rules that would override the
+           currentColor on the injected SVG. */
+        .tool-card {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 16px 18px;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) * 2);
+            color: var(--text);
+            text-decoration: none;
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.2s ease,
+                        background-color 0.2s ease,
+                        transform 0.15s ease,
+                        box-shadow 0.2s ease;
+        }
+        .tool-card::before {
+            content: '';
+            position: absolute;
+            left: 0; top: 0; bottom: 0;
+            width: 3px;
+            background: var(--accent);
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+        .tool-card:hover {
+            border-color: var(--accent);
+            background: var(--bg3);
+            transform: translateY(-2px);
+            box-shadow: var(--glow-sm);
+        }
+        .tool-card:hover::before { opacity: 1; }
+
+        .tool-card .card-icon {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--accent);
+            flex-shrink: 0;
+        }
+        .tool-card .card-icon svg { width: 100%; height: 100%; }
+
+        .tool-card .card-title {
+            font-family: var(--f-display);
+            font-size: 0.95rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            color: var(--accent);
+            line-height: 1.3;
+        }
+        .tool-card .card-desc {
+            font-size: 0.7rem;
+            color: var(--text);
+            line-height: 1.5;
+            flex: 1;
+        }
+        .tool-card .badge-strip {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 4px;
+        }
+        .tool-card .badge {
+            display: inline-block;
+            padding: 1px 8px;
+            font-family: var(--f-display);
+            font-size: 0.5rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            background: var(--accent-dim);
+            border: 1px solid var(--accent-soft);
+            border-radius: 10px;
+            color: var(--accent-light);
+            line-height: 1.6;
+        }
+        .tool-card .tool-path {
+            display: none;
+            font-family: var(--f-mono);
+            font-size: 0.58rem;
+            color: var(--tmut);
+            word-break: break-all;
+            padding-top: 4px;
+            border-top: 1px dashed var(--border-light);
+        }
+
+        /* Body-class gated */
+        body.nexus-show-paths .tool-card .tool-path { display: block; }
+        body.nexus-compact-grid .tool-grid { gap: 8px; }
+        body.nexus-compact-grid .tool-card { padding: 10px 12px; gap: 5px; }
+        body.nexus-compact-grid .tool-card .card-icon { width: 22px; height: 22px; }
+        body.nexus-compact-grid .tool-card .card-title { font-size: 0.85rem; }
+        body.nexus-compact-grid .tool-card .card-desc { font-size: 0.65rem; }
+
+        /* ---- Footer ---- */
+        .footer-note {
+            margin-top: 32px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            font-size: 0.6rem;
+            color: var(--tmut);
+            line-height: 1.9;
+        }
+        .footer-note .icon-symbol {
+            color: var(--accent);
+            font-size: 0.7rem;
+            vertical-align: middle;
+            margin: 0 2px;
+        }
+        .footer-note code { font-size: 0.55rem; }
+
+        /* ---- Settings panel ---- */
+        .settings-panel {
+            position: fixed;
+            inset: 0;
+            z-index: 500;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .settings-panel[hidden] { display: none; }
+        .settings-panel__backdrop {
+            position: absolute;
+            inset: 0;
+            background: var(--modal-overlay);
+            backdrop-filter: blur(2px);
+        }
+        .settings-panel__sheet {
+            position: relative;
+            width: 100%;
+            max-width: 460px;
+            max-height: 90vh;
+            background: var(--modal-bg, var(--surface));
+            border: 1px solid var(--border2);
+            border-radius: calc(var(--radius) * 2);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .settings-panel__header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg2);
+        }
+        .settings-panel__header h2 {
+            font-family: var(--f-display);
+            font-size: 0.9rem;
+            letter-spacing: 0.06em;
+            color: var(--accent);
+        }
+        .settings-panel__close {
+            font-size: 1.2rem;
+            line-height: 1;
+            padding: 2px 8px;
+            border-radius: var(--radius);
+            color: var(--dim);
+            transition: color 0.15s ease, background-color 0.15s ease;
+        }
+        .settings-panel__close:hover { color: var(--accent); background: var(--accent-dim); }
+        .settings-panel__body {
+            padding: 12px 20px 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .settings-group { display: flex; flex-direction: column; gap: 6px; }
+        .settings-group__title {
+            font-family: var(--f-display);
+            font-size: 0.62rem;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: var(--dim);
+            padding-bottom: 4px;
+            border-bottom: 1px solid var(--border-light);
+        }
+        .settings-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 6px 0;
+            cursor: pointer;
+            font-size: 0.75rem;
+            color: var(--text);
+        }
+        .settings-row--static { cursor: default; }
+        .settings-row__label { flex: 1; }
+        .settings-row__value {
+            font-family: var(--f-mono);
+            font-size: 0.68rem;
+            color: var(--dim);
+            text-align: right;
+        }
+        .settings-row input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+            accent-color: var(--accent);
+        }
+        .settings-row__hint {
+            font-size: 0.6rem;
+            color: var(--tmut);
+            line-height: 1.4;
+            margin-top: 2px;
+            margin-bottom: 6px;
+        }
+        .settings-row__hint strong { color: var(--fg); font-weight: 600; }
+        .settings-button {
+            display: block;
+            width: 100%;
+            padding: 8px 14px;
+            text-align: left;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.72rem;
+            transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+        }
+        .settings-button:hover {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+        .settings-button--danger { color: var(--danger-lt); border-color: var(--danger-lt); }
+        .settings-button--danger:hover {
+            background: var(--danger-soft);
+            border-color: var(--danger);
+            color: var(--danger-lt);
+        }
+
+        /* ---- Responsive ---- */
+        @media (max-width: 900px) {
+            .dashboard { padding: 14px 16px 50px; }
+            .heraldic-header .title-glow { font-size: 1.6rem; gap: 10px; }
+            .heraldic-header .title-glow .icon-symbol { font-size: 1.05rem; }
+            .heraldic-header .sub { font-size: 0.6rem; letter-spacing: 0.22em; }
+            .tool-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+            .tool-card { padding: 12px 14px; }
+            .tool-card .card-title { font-size: 0.85rem; }
+            .tool-card .card-desc { font-size: 0.65rem; }
+        }
+        @media (max-width: 600px) {
+            .dashboard { padding: 10px 10px 40px; gap: 8px; }
+            .heraldic-header { padding: 16px 8px 12px; }
+            .heraldic-header .title-glow { font-size: 1.25rem; letter-spacing: 0.1em; }
+            .heraldic-header .title-glow .icon-symbol { font-size: 0.9rem; }
+            .heraldic-header .sub { font-size: 0.55rem; letter-spacing: 0.16em; }
+            .topbar-controls { flex-direction: column; gap: 6px; width: 100%; }
+            .topbar-btn {
+                padding: 5px 12px; font-size: 0.6rem;
+                justify-content: center; width: 100%;
+            }
+            .theme-toggle { width: 100%; }
+            .theme-toggle__btn { width: 100%; min-width: 0; }
+            .theme-toggle__menu { right: auto; left: 0; width: 100%; }
+            .info-banner { padding: 6px 10px; font-size: 0.6rem; }
+            .info-banner .version-tag { font-size: 0.55rem; }
+            .recent-section { padding: 8px 10px; }
+            .divider { gap: 8px; margin: 16px 0 6px; }
+            .divider-text { font-size: 0.55rem; letter-spacing: 0.14em; }
+            .divider-text .icon-symbol { font-size: 0.7rem; }
+            .tool-grid { grid-template-columns: 1fr; gap: 8px; }
+            .tool-card { padding: 12px 14px; }
+            .tool-card .card-title { font-size: 0.8rem; }
+            .tool-card .card-desc { font-size: 0.62rem; }
+            .tool-card .badge { font-size: 0.45rem; }
+            .footer-note { font-size: 0.55rem; line-height: 1.7; }
+            .settings-panel__sheet { max-width: 100%; max-height: 100vh; border-radius: 0; }
+            .settings-panel__body { padding: 12px 14px 18px; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                transition-duration: 0.01ms !important;
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                scroll-behavior: auto !important;
+            }
+        }
+
+        @media print {
+            .heraldic-header .topbar-controls,
+            .info-banner, .recent-section, .footer-note, .settings-panel {
+                display: none !important;
+            }
+            body { background: #fff !important; color: #000 !important; }
+            .tool-card {
+                border: 1px solid #333 !important;
+                background: #fff !important;
+                color: #000 !important;
+                box-shadow: none !important;
+                break-inside: avoid;
+            }
+            .tool-card .card-title { color: #000 !important; }
+            .tool-card .card-desc  { color: #555 !important; }
+            .tool-card .badge {
+                background: #eee !important;
+                color: #333 !important;
+                border-color: #ccc !important;
+            }
+        }
+    </style>
 </head>
 <body>
 
@@ -64,7 +636,9 @@
         <div class="recent-chips" id="recentChips"></div>
     </section>
 
-    <!-- PRIMARY TOOLS -->
+    <!-- ============================================================
+         CHRONICLES & RULERSHIP
+         ============================================================ -->
     <div class="divider">
         <span class="divider-line"></span>
         <span class="divider-text">
@@ -75,79 +649,81 @@
         <span class="divider-line"></span>
     </div>
 
-    <div class="tool-grid" id="primaryToolsGrid">
-        <a class="tool-card" href="CharacterManager.html" data-icon="PERSON" data-label="Character Manager">
-            <div class="card-icon"></div>
+    <div class="tool-grid">
+        <a class="tool-card" href="CharacterManager.html" data-label="Character Manager">
+            <div class="card-icon" data-icon="PERSON"></div>
             <div class="card-title">Character Manager</div>
             <div class="card-desc">Full character editor: identity, location, family, partners, friendships, roles, ranks &amp; mortality.</div>
             <div class="badge-strip"><span class="badge">CRUD</span><span class="badge">genealogy</span><span class="badge">relationships</span></div>
         </a>
 
-        <a class="tool-card" href="Census_v03.html" data-icon="CENSUS" data-label="Census &amp; Analytics">
-            <div class="card-icon"></div>
+        <a class="tool-card" href="Census.html" data-label="Census &amp; Analytics">
+            <div class="card-icon" data-icon="CENSUS"></div>
             <div class="card-title">Census &amp; Analytics</div>
             <div class="card-desc">Population pyramids, location demographics, filters, presets — living/deceased breakdown.</div>
             <div class="badge-strip"><span class="badge">charts</span><span class="badge">pyramid</span><span class="badge">filtering</span></div>
         </a>
 
-        <a class="tool-card" href="Household_v03.html" data-icon="HOUSEHOLD" data-label="Household Manager">
-            <div class="card-icon"></div>
+        <a class="tool-card" href="Household.html" data-label="Household Manager">
+            <div class="card-icon" data-icon="HOUSEHOLD"></div>
             <div class="card-title">Household Manager</div>
             <div class="card-desc">Household economy, departments, head of household, membership &amp; analytics (health, loyalty, crime risk).</div>
             <div class="badge-strip"><span class="badge">wealth</span><span class="badge">staff</span><span class="badge">analytics</span></div>
         </a>
 
-        <a class="tool-card" href="RankManager_v03.html" data-icon="RANK" data-label="Rank Manager">
-            <div class="card-icon"></div>
+        <a class="tool-card" href="RankManager.html" data-label="Rank Manager">
+            <div class="card-icon" data-icon="RANK"></div>
             <div class="card-title">Rank Manager</div>
             <div class="card-desc">Nobility hierarchy, inheritance rules, symbols, numbered titles, issue detection &amp; fixing.</div>
             <div class="badge-strip"><span class="badge">peerage</span><span class="badge">succession</span><span class="badge">analytics</span></div>
         </a>
 
-        <a class="tool-card" href="RolesManager_v03.html" data-icon="ROLES" data-label="Roles Manager">
-            <div class="card-icon"></div>
+        <a class="tool-card" href="RolesManager.html" data-label="Roles Manager">
+            <div class="card-icon" data-icon="ROLES"></div>
             <div class="card-title">Roles Manager</div>
             <div class="card-desc">Professions &amp; vocations, skill tracking, apprenticeship management, educational institutions.</div>
             <div class="badge-strip"><span class="badge">apprenticeship</span><span class="badge">education</span><span class="badge">skill</span></div>
         </a>
 
-        <a class="tool-card" href="Matchmaker_v03.html" data-icon="MATCHMAKER" data-label="Matchmaker">
-            <div class="card-icon"></div>
+        <a class="tool-card" href="Matchmaker.html" data-label="Matchmaker">
+            <div class="card-icon" data-icon="MATCHMAKER"></div>
             <div class="card-title">Matchmaker</div>
             <div class="card-desc">Romance, friendship, polygyny, apprenticeship matching, heartbreak &amp; adoption proposals.</div>
             <div class="badge-strip"><span class="badge">alliances</span><span class="badge">bonds</span><span class="badge">fate</span></div>
         </a>
 
-        <a class="tool-card" href="LocationManager.html" data-icon="LOCATION" data-label="Location Manager">
-            <div class="card-icon"></div>
+        <a class="tool-card" href="LocationManager.html" data-label="Location Manager">
+            <div class="card-icon" data-icon="LOCATION"></div>
             <div class="card-title">Location Manager</div>
             <div class="card-desc">Place hierarchy, types, movement history, leadership assignments, capital/status flags.</div>
             <div class="badge-strip"><span class="badge">geography</span><span class="badge">hierarchy</span><span class="badge">leadership</span></div>
         </a>
 
-        <a class="tool-card" href="SettlementManager.html" data-icon="HOUSEHOLD" data-label="Settlement Manager">
-            <div class="card-icon"></div>
+        <a class="tool-card" href="SettlementManager.html" data-label="Settlement Manager">
+            <div class="card-icon" data-icon="HOUSEHOLD"></div>
             <div class="card-title">Settlement Manager</div>
             <div class="card-desc">Rank, features, economy, crime, prosperity, employment, budget — the full settlement domain.</div>
             <div class="badge-strip"><span class="badge">economy</span><span class="badge">prosperity</span><span class="badge">features</span></div>
         </a>
 
-        <a class="tool-card" href="ReligionManager.html" data-icon="STAR_4" data-label="Religion Manager">
-            <div class="card-icon"></div>
+        <a class="tool-card" href="ReligionManager.html" data-label="Religion Manager">
+            <div class="card-icon" data-icon="STAR_4"></div>
             <div class="card-title">Religion Manager</div>
             <div class="card-desc">Religions, gods, laws, places of worship, followers, inheritance rules, leadership.</div>
             <div class="badge-strip"><span class="badge">faith</span><span class="badge">doctrine</span><span class="badge">followers</span></div>
         </a>
 
-        <a class="tool-card" href="CultureManager.html" data-icon="BOOK" data-label="Culture Manager">
-            <div class="card-icon"></div>
+        <a class="tool-card" href="CultureManager.html" data-label="Culture Manager">
+            <div class="card-icon" data-icon="BOOK"></div>
             <div class="card-title">Culture Manager</div>
             <div class="card-desc">Culture editor: appearance templates, mythology, character associations, locations.</div>
             <div class="badge-strip"><span class="badge">appearance</span><span class="badge">mythology</span><span class="badge">characters</span></div>
         </a>
     </div>
 
-    <!-- WORLD & EVENTS -->
+    <!-- ============================================================
+         REALMS & CATASTROPHES
+         ============================================================ -->
     <div class="divider">
         <span class="divider-line"></span>
         <span class="divider-text">
@@ -158,30 +734,25 @@
         <span class="divider-line"></span>
     </div>
 
-    <div class="tool-grid" id="worldToolsGrid">
-        <a class="tool-card" href="WorldManager_v03.html" data-icon="WORLD" data-label="World Manager">
-            <div class="card-icon"></div>
-            <div class="card-title">World Manager</div>
-            <div class="card-desc">Location hierarchy (countries, districts), government types, settlement specializations, place editor.</div>
-            <div class="badge-strip"><span class="badge">geography</span><span class="badge">government</span><span class="badge">settlement</span></div>
-        </a>
-
-        <a class="tool-card" href="GovernmentManager.html" data-icon="CROWN" data-label="Government Manager">
-            <div class="card-icon"></div>
+    <div class="tool-grid">
+        <a class="tool-card" href="GovernmentManager.html" data-label="Government Manager">
+            <div class="card-icon" data-icon="CROWN"></div>
             <div class="card-title">Government Manager</div>
             <div class="card-desc">Government types, departments, positions, structure hierarchy — full administration editor.</div>
             <div class="badge-strip"><span class="badge">departments</span><span class="badge">positions</span><span class="badge">hierarchy</span></div>
         </a>
 
-        <a class="tool-card" href="EventsManager_v03.html" data-icon="EVENTS" data-label="Events Hub">
-            <div class="card-icon"></div>
+        <a class="tool-card" href="EventsManager.html" data-label="Events Hub">
+            <div class="card-icon" data-icon="EVENTS"></div>
             <div class="card-title">Events Hub</div>
             <div class="card-desc">Disasters, crimes, social events — trigger plagues, famines, executions, vendettas.</div>
             <div class="badge-strip"><span class="badge">disaster</span><span class="badge">crime</span><span class="badge">social</span></div>
         </a>
     </div>
 
-    <!-- LIFE & LEGACY -->
+    <!-- ============================================================
+         BLOOD & BEREAVEMENT
+         ============================================================ -->
     <div class="divider">
         <span class="divider-line"></span>
         <span class="divider-text">
@@ -192,37 +763,39 @@
         <span class="divider-line"></span>
     </div>
 
-    <div class="tool-grid" id="lifeToolsGrid">
-        <a class="tool-card" href="Stork_v03.html" data-icon="STORK" data-label="Stork Manager">
-            <div class="card-icon"></div>
+    <div class="tool-grid">
+        <a class="tool-card" href="Stork.html" data-label="Stork Manager">
+            <div class="card-icon" data-icon="STORK"></div>
             <div class="card-title">Stork Manager</div>
             <div class="card-desc">Biological children, surrogacy arrangements, adoption tracking — heir generation.</div>
             <div class="badge-strip"><span class="badge">birth</span><span class="badge">surrogacy</span><span class="badge">adoption</span></div>
         </a>
 
-        <a class="tool-card" href="Deathstars_v03.html" data-icon="DEATHSTARS" data-label="Deathstars">
-            <div class="card-icon"></div>
+        <a class="tool-card" href="Deathstars.html" data-label="Deathstars">
+            <div class="card-icon" data-icon="DEATHSTARS"></div>
             <div class="card-title">Deathstars</div>
             <div class="card-desc">Mortality management: cause of death, execution, murder, natural demise &amp; lifespan tracking.</div>
             <div class="badge-strip"><span class="badge">death cause</span><span class="badge">mortality</span><span class="badge">funeral</span></div>
         </a>
 
-        <a class="tool-card" href="Tree_v03.html" data-icon="FAMILY_TREE" data-label="Family &amp; Social Circles">
-            <div class="card-icon"></div>
+        <a class="tool-card" href="Tree.html" data-label="Family &amp; Social Circles">
+            <div class="card-icon" data-icon="FAMILY_TREE"></div>
             <div class="card-title">Family &amp; Social Circles</div>
             <div class="card-desc">Interactive family tree, social circles (friends, colleagues), relationship pathfinder.</div>
             <div class="badge-strip"><span class="badge">genealogy</span><span class="badge">ancestry</span><span class="badge">connection</span></div>
         </a>
 
-        <a class="tool-card" href="Timeline_v01.html" data-icon="TIMELINE" data-label="Timeline">
-            <div class="card-icon"></div>
+        <a class="tool-card" href="Timeline.html" data-label="Timeline">
+            <div class="card-icon" data-icon="TIMELINE"></div>
             <div class="card-title">Timeline</div>
             <div class="card-desc">World events, births, deaths, marriages, apprenticeships — filter by year/type.</div>
             <div class="badge-strip"><span class="badge">chronicle</span><span class="badge">history</span></div>
         </a>
     </div>
 
-    <!-- DATA WEAVING -->
+    <!-- ============================================================
+         DATA WEAVING
+         ============================================================ -->
     <div class="divider">
         <span class="divider-line"></span>
         <span class="divider-text">
@@ -233,9 +806,9 @@
         <span class="divider-line"></span>
     </div>
 
-    <div class="tool-grid" id="dataToolsGrid">
-        <a class="tool-card" href="DataManager.html" data-icon="EDIT" data-label="Data Manager">
-            <div class="card-icon"></div>
+    <div class="tool-grid">
+        <a class="tool-card" href="DataManager.html" data-label="Data Manager">
+            <div class="card-icon" data-icon="EDIT"></div>
             <div class="card-title">Data Manager</div>
             <div class="card-desc">Canonical reference editor for location types, government types, and ranks — the vocabulary every other tool consumes.</div>
             <div class="badge-strip">
@@ -246,55 +819,18 @@
             </div>
         </a>
 
-        <a class="tool-card" href="BulkImporter_v03.html" data-icon="BULK_IMPORT" data-label="Bulk Importer">
-            <div class="card-icon"></div>
+        <a class="tool-card" href="BulkImporter.html" data-label="Bulk Importer">
+            <div class="card-icon" data-icon="BULK_IMPORT"></div>
             <div class="card-title">Bulk Importer</div>
             <div class="card-desc">Batch import characters via CSV/Excel, column mapping to in-game fields (name, birth, gender, notes).</div>
             <div class="badge-strip"><span class="badge">csv/xlsx</span><span class="badge">mass creation</span></div>
         </a>
 
-        <a class="tool-card" href="Diagnostics_v03.html" data-icon="DIAGNOSTICS" data-label="Diagnostics &amp; Repair">
-            <div class="card-icon"></div>
+        <a class="tool-card" href="Diagnostics.html" data-label="Diagnostics &amp; Repair">
+            <div class="card-icon" data-icon="DIAGNOSTICS"></div>
             <div class="card-title">Diagnostics &amp; Repair</div>
             <div class="card-desc">Audit data integrity: orphaned characters, broken relationships, rank/role fixes, data wipe tools.</div>
             <div class="badge-strip"><span class="badge">integrity</span><span class="badge">repair</span><span class="badge">audit</span></div>
-        </a>
-    </div>
-
-    <!-- TESTING GROUND -->
-    <div class="divider test-divider">
-        <span class="divider-line"></span>
-        <span class="divider-text">
-            <span class="icon-symbol" data-icon="DIAGNOSTICS" aria-hidden="true"></span>
-            TESTING GROUND
-            <span class="icon-symbol" data-icon="GEAR" aria-hidden="true"></span>
-        </span>
-        <span class="divider-line"></span>
-    </div>
-
-    <div class="tool-grid" id="testingToolsGrid">
-        <a class="tool-card test-card" href="js/testing/householdTest.html" data-icon="HOUSEHOLD" data-label="Household Modals Test">
-            <div class="card-icon"></div>
-            <div class="card-title">Household Modals Test</div>
-            <div class="card-desc">Interactive test ground for all household modals: create, edit, members, departments, analytics, selectors.</div>
-            <div class="badge-strip">
-                <span class="badge test">CRUD</span>
-                <span class="badge test">members</span>
-                <span class="badge test">departments</span>
-                <span class="badge test">analytics</span>
-            </div>
-        </a>
-
-        <a class="tool-card test-card" href="js/testing/residenceTest.html" data-icon="LOCATION" data-label="Residence Modals Test">
-            <div class="card-icon"></div>
-            <div class="card-title">Residence Modals Test</div>
-            <div class="card-desc">Interactive test ground for all residence modals: add, edit, details, vacancy, units, assignment, history.</div>
-            <div class="badge-strip">
-                <span class="badge test">CRUD</span>
-                <span class="badge test">vacancy</span>
-                <span class="badge test">units</span>
-                <span class="badge test">history</span>
-            </div>
         </a>
     </div>
 
@@ -370,7 +906,7 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- CORE PREREQUISITES (needed by storage.js)                    -->
+<!-- CORE PREREQUISITES                                           -->
 <!-- ============================================================ -->
 <script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
@@ -397,17 +933,11 @@
     var MAX_RECENT_TOOLS   = 4;
 
     function readLS(key, fallback) {
-        try {
-            var v = localStorage.getItem(key);
-            return v === null ? fallback : v;
-        } catch (e) { return fallback; }
+        try { var v = localStorage.getItem(key); return v === null ? fallback : v; }
+        catch (e) { return fallback; }
     }
-    function writeLS(key, value) {
-        try { localStorage.setItem(key, value); } catch (e) {}
-    }
-    function removeLS(key) {
-        try { localStorage.removeItem(key); } catch (e) {}
-    }
+    function writeLS(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
+    function removeLS(key) { try { localStorage.removeItem(key); } catch (e) {} }
 
     function injectIcons() {
         if (typeof window.Icons === 'undefined') {
@@ -417,6 +947,10 @@
         var nodes = document.querySelectorAll('[data-icon]');
         for (var i = 0; i < nodes.length; i++) {
             var node = nodes[i];
+            // Skip any element that already contains child elements —
+            // this prevents the card children from being wiped by
+            // injecting into a container that has real content.
+            if (node.children.length > 0) continue;
             var name = node.getAttribute('data-icon');
             var svg = window.Icons[name] || window.Icons.CIRCLE || '';
             node.innerHTML = svg;
@@ -435,7 +969,6 @@
             });
         } catch (e) { return []; }
     }
-
     function rememberTool(href, label) {
         var arr = getRecentTools();
         arr = arr.filter(function (entry) { return entry.href !== href; });
@@ -443,19 +976,12 @@
         if (arr.length > MAX_RECENT_TOOLS) arr = arr.slice(0, MAX_RECENT_TOOLS);
         writeLS(KEY_RECENT_TOOLS, JSON.stringify(arr));
     }
-
     function renderRecent() {
         var section = document.getElementById('recentSection');
         var chips   = document.getElementById('recentChips');
         if (!section || !chips) return;
-
         var arr = getRecentTools();
-        if (arr.length === 0) {
-            section.hidden = true;
-            chips.innerHTML = '';
-            return;
-        }
-
+        if (arr.length === 0) { section.hidden = true; chips.innerHTML = ''; return; }
         section.hidden = false;
         var html = '';
         for (var i = 0; i < arr.length; i++) {
@@ -469,12 +995,10 @@
     function updateStorageStatus() {
         var el = document.getElementById('storageStatusText');
         if (!el) return;
-
         if (!window.masterData || !window.masterData.data) {
             el.textContent = 'No canonical data loaded';
             return;
         }
-
         var d = window.masterData.data;
         var parts = [];
         if (Array.isArray(d.characters)) parts.push(d.characters.length + ' characters');
@@ -485,10 +1009,7 @@
         if (d.settlementData && typeof d.settlementData === 'object') {
             parts.push(Object.keys(d.settlementData).length + ' settlements');
         }
-
-        el.textContent = parts.length === 0
-            ? 'Empty save'
-            : parts.join(' · ');
+        el.textContent = parts.length === 0 ? 'Empty save' : parts.join(' · ');
     }
 
     function attachCardHandlers() {
@@ -516,9 +1037,7 @@
             if (/^(https?:)?\/\//.test(href)) continue;
             fetch(href, { method: 'HEAD' })
                 .then(function (resp) {
-                    if (!resp.ok) {
-                        console.warn('[nexus] card target missing:', href, resp.status);
-                    }
+                    if (!resp.ok) console.warn('[nexus] card target missing:', href, resp.status);
                 })
                 .catch(function () {
                     console.warn('[nexus] card target unreachable:', href);
@@ -526,13 +1045,8 @@
         }
     }
 
-    function applyCompactGrid(on) {
-        document.body.classList.toggle('nexus-compact-grid', on);
-    }
-
-    function applyShowPaths(on) {
-        document.body.classList.toggle('nexus-show-paths', on);
-    }
+    function applyCompactGrid(on) { document.body.classList.toggle('nexus-compact-grid', on); }
+    function applyShowPaths(on) { document.body.classList.toggle('nexus-show-paths', on); }
 
     function injectPathLabels() {
         var cards = document.querySelectorAll('.tool-card[href]');
@@ -556,7 +1070,6 @@
         btn.setAttribute('aria-expanded', 'true');
         refreshSettingsValues();
     }
-
     function closeSettings() {
         var panel = document.getElementById('settingsPanel');
         var btn   = document.getElementById('settingsBtn');
@@ -564,15 +1077,12 @@
         panel.hidden = true;
         btn.setAttribute('aria-expanded', 'false');
     }
-
     function refreshSettingsValues() {
         var compactEl = document.getElementById('settingCompactGrid');
         var pathsEl   = document.getElementById('settingShowPaths');
         var countsEl  = document.getElementById('settingStorageCounts');
-
         if (compactEl) compactEl.checked = readLS(KEY_COMPACT_GRID, 'false') === 'true';
         if (pathsEl)   pathsEl.checked   = readLS(KEY_SHOW_PATHS, 'false') === 'true';
-
         if (countsEl) {
             if (!window.masterData || !window.masterData.data) {
                 countsEl.textContent = '—';
@@ -613,7 +1123,6 @@
                 applyCompactGrid(on);
             });
         }
-
         if (pathsEl) {
             pathsEl.addEventListener('change', function () {
                 var on = pathsEl.checked === true;
@@ -622,7 +1131,6 @@
                 applyShowPaths(on);
             });
         }
-
         if (clearRecentBtn) {
             clearRecentBtn.addEventListener('click', function () {
                 removeLS(KEY_RECENT_TOOLS);
@@ -630,7 +1138,6 @@
                 refreshSettingsValues();
             });
         }
-
         if (clearUIBtn) {
             clearUIBtn.addEventListener('click', function () {
                 var keysToClear = [
@@ -656,9 +1163,7 @@
                     'adoption_agency_state',
                     'stillwaters_theme'
                 ];
-                for (var i = 0; i < keysToClear.length; i++) {
-                    removeLS(keysToClear[i]);
-                }
+                for (var i = 0; i < keysToClear.length; i++) removeLS(keysToClear[i]);
                 try { window.location.reload(); } catch (e) {}
             });
         }
@@ -673,9 +1178,7 @@
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
     }
-    function escapeAttr(value) {
-        return escapeHtml(value);
-    }
+    function escapeAttr(value) { return escapeHtml(value); }
 
     function boot() {
         applyCompactGrid(readLS(KEY_COMPACT_GRID, 'false') === 'true');
@@ -713,19 +1216,13 @@
     var themeBtn  = document.getElementById('themeBtn');
     var themeMenu = document.getElementById('themeMenu');
     var themeName = document.getElementById('themeName');
-
-    // Use the global API from theme-boot.js
-    var switcher = window.ThemeSwitcher;
-    if (!switcher) {
-        console.error('theme-boot.js not loaded.');
-        return;
-    }
+    var switcher  = window.ThemeSwitcher;
+    if (!switcher) { console.error('theme-boot.js not loaded.'); return; }
 
     function updateLabel(id) {
         var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
         if (themeName) themeName.textContent = label;
     }
-
     function buildMenu() {
         var html = '';
         for (var i = 0; i < switcher.themes.length; i++) {
@@ -736,17 +1233,8 @@
         }
         if (themeMenu) themeMenu.innerHTML = html;
     }
-
-    function openMenu() {
-        if (!themeMenu) return;
-        themeMenu.hidden = false;
-        themeBtn.setAttribute('aria-expanded', 'true');
-    }
-    function closeMenu() {
-        if (!themeMenu) return;
-        themeMenu.hidden = true;
-        themeBtn.setAttribute('aria-expanded', 'false');
-    }
+    function openMenu()  { if (!themeMenu) return; themeMenu.hidden = false; themeBtn.setAttribute('aria-expanded', 'true'); }
+    function closeMenu() { if (!themeMenu) return; themeMenu.hidden = true;  themeBtn.setAttribute('aria-expanded', 'false'); }
 
     if (themeBtn) {
         themeBtn.addEventListener('click', function (e) {
@@ -754,18 +1242,14 @@
             if (themeMenu.hidden) openMenu(); else closeMenu();
         });
     }
-
     if (themeMenu) {
         themeMenu.addEventListener('click', function (e) {
             var btn = e.target.closest('[data-theme-id]');
             if (!btn) return;
             var id = btn.getAttribute('data-theme-id');
-            switcher.apply(id);
-            updateLabel(id);
-            closeMenu();
+            switcher.apply(id); updateLabel(id); closeMenu();
         });
     }
-
     document.addEventListener('click', function (e) {
         if (themeMenu && !themeMenu.hidden) {
             if (themeMenu.contains(e.target)) return;
@@ -773,18 +1257,13 @@
             closeMenu();
         }
     });
-
     document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && themeMenu && !themeMenu.hidden) {
-            closeMenu();
-        }
+        if (e.key === 'Escape' && themeMenu && !themeMenu.hidden) closeMenu();
     });
 
-    // Initialize
     buildMenu();
     var saved = switcher.getSaved();
     if (saved) updateLabel(saved);
-
 })();
 </script>
 
