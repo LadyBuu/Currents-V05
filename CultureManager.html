@@ -1,272 +1,41 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Culture Manager</title>
-    <style>
-        /* ============================================================ */
-        /* MINIMAL STYLES                                               */
-        /* ============================================================ */
-        :root {
-            --bg: #1a1a2e;
-            --bg2: #16213e;
-            --bg3: #0f3460;
-            --border: #2a3a5c;
-            --border2: #3a4a6c;
-            --text: #e0e0e0;
-            --dim: #8899bb;
-            --accent: #6a9ecf;
-            --accent-dim: rgba(106, 158, 207, 0.2);
-            --accent-hover: #5a8ebf;
-            --success: #4a9060;
-            --danger: #c84444;
-            --warn: #c87040;
-            --bg-modal: rgba(0,0,0,0.8);
-        }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
-        
-        /* TOPBAR */
-        .topbar {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 16px;
-            background: var(--bg2);
-            border-bottom: 1px solid var(--border);
-            flex-wrap: wrap;
-            min-height: 48px;
-        }
-        .topbar .title { font-size: 1rem; font-weight: bold; color: var(--accent); }
-        .topbar .spacer { flex: 1; }
-        .topbar input, .topbar select {
-            background: var(--bg);
-            border: 1px solid var(--border);
-            color: var(--text);
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.75rem;
-        }
-        .topbar .tb-btn {
-            padding: 4px 12px;
-            background: var(--bg3);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            color: var(--text);
-            cursor: pointer;
-            font-size: 0.7rem;
-            transition: all 0.15s;
-        }
-        .topbar .tb-btn:hover { background: var(--accent-dim); border-color: var(--accent); }
-        .topbar .tb-btn.primary { background: var(--accent); color: white; border-color: var(--accent); }
-        .topbar .tb-btn.primary:hover { background: var(--accent-hover); }
-        .topbar .burger-btn { display: none; background: none; border: none; color: var(--text); font-size: 1.2rem; cursor: pointer; }
 
-        /* LAYOUT */
-        .app-layout { display: flex; height: calc(100vh - 56px); }
-        
-        /* SIDEBAR */
-        .sidebar {
-            width: 280px;
-            background: var(--bg2);
-            border-right: 1px solid var(--border);
-            overflow-y: auto;
-            padding: 8px;
-            flex-shrink: 0;
-            transition: transform 0.3s ease;
-        }
-        .sidebar h3 {
-            font-size: 0.7rem;
-            color: var(--accent);
-            padding: 8px 4px;
-            border-bottom: 1px solid var(--border);
-            margin-bottom: 8px;
-        }
-        .sidebar .loading-placeholder { color: var(--dim); font-size: 0.7rem; padding: 16px; text-align: center; }
-        
-        /* CULTURE ROW */
-        .culture-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 12px;
-            background: var(--bg3);
-            border-radius: 6px;
-            margin-bottom: 4px;
-            cursor: pointer;
-            transition: all 0.15s;
-            border-left: 3px solid transparent;
-        }
-        .culture-row:hover { background: var(--bg2); }
-        .culture-row.selected { background: var(--accent-dim); border-left-color: var(--accent); }
-        .culture-row .name { font-size: 0.75rem; font-weight: bold; display: flex; align-items: center; gap: 6px; }
-        .culture-row .name .icon { font-size: 0.9rem; }
-        .culture-row .details { font-size: 0.55rem; color: var(--dim); margin-top: 2px; }
-        .culture-row .badge { font-size: 0.5rem; color: var(--dim); background: var(--bg2); padding: 2px 8px; border-radius: 10px; }
-
-        /* MAIN PANEL */
-        .main-panel {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            background: var(--bg);
-        }
-
-        /* TABS */
-        .panel-tabs {
-            display: flex;
-            gap: 2px;
-            padding: 8px 12px 0 12px;
-            background: var(--bg2);
-            border-bottom: 1px solid var(--border);
-            flex-wrap: wrap;
-        }
-        .panel-tabs .tab-btn {
-            padding: 6px 14px;
-            background: transparent;
-            border: none;
-            border-bottom: 2px solid transparent;
-            color: var(--dim);
-            cursor: pointer;
-            font-size: 0.7rem;
-            transition: all 0.15s;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-        .panel-tabs .tab-btn:hover { color: var(--text); }
-        .panel-tabs .tab-btn.active {
-            color: var(--accent);
-            border-bottom-color: var(--accent);
-        }
-        .panel-tabs .tab-btn .tab-icon { font-size: 0.75rem; }
-
-        /* TAB CONTENT */
-        .tab-content {
-            flex: 1;
-            overflow-y: auto;
-            padding: 12px;
-        }
-        .tab-pane { display: none; }
-        .tab-pane.active { display: block; }
-
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: var(--dim);
-        }
-        .empty-state .icon { font-size: 2rem; margin-bottom: 12px; opacity: 0.4; }
-        .empty-state .message { font-size: 0.8rem; }
-        .empty-state .sub-message { font-size: 0.6rem; margin-top: 4px; opacity: 0.6; }
-
-        /* FORM */
-        .form-group { margin-bottom: 10px; }
-        .form-group label { display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px; }
-        .form-group input, .form-group textarea, .form-group select {
-            width: 100%;
-            padding: 8px;
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            color: var(--text);
-            font-size: 0.8rem;
-            font-family: inherit;
-        }
-        .form-group textarea { resize: vertical; min-height: 60px; }
-        .form-group select[multiple] { min-height: 80px; }
-
-        /* BUTTONS */
-        .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg3); color: var(--text); cursor: pointer; font-size: 0.7rem; transition: all 0.15s; }
-        .btn:hover { background: var(--bg2); }
-        .btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
-        .btn.primary:hover { background: var(--accent-hover); }
-        .btn.danger { background: var(--danger); border-color: var(--danger); color: white; }
-        .btn.danger:hover { opacity: 0.8; }
-        .btn.small { font-size: 0.6rem; padding: 3px 10px; }
-
-        /* CULTURE EDITOR */
-        .ce-tab-nav { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
-        .ce-tab-btn {
-            padding: 5px 12px;
-            background: var(--bg3);
-            border: 1px solid var(--border);
-            border-radius: 6px 6px 0 0;
-            cursor: pointer;
-            font-size: 0.65rem;
-            transition: all 0.15s;
-            color: var(--dim);
-        }
-        .ce-tab-btn:hover { background: var(--bg2); }
-        .ce-tab-btn.active {
-            background: var(--accent-dim);
-            border-color: var(--accent);
-            color: var(--text);
-        }
-        .ce-tab-content {
-            padding: 12px;
-            background: var(--bg3);
-            border: 1px solid var(--border);
-            border-radius: 0 6px 6px 6px;
-            min-height: 200px;
-        }
-        .ce-tab-content .ce-tab-inner { min-height: 100px; }
-
-        /* MODAL OVERRIDES */
-        .modal-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--bg-modal); }
-        .modal-container { position: relative; background: var(--bg2); border-radius: 12px; max-width: 700px; width: 90%; max-height: 85vh; overflow-y: auto; border: 1px solid var(--border); }
-        .modal-header { padding: 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-        .modal-header h3 { margin: 0; font-size: 0.9rem; display: flex; align-items: center; gap: 8px; }
-        .modal-close-btn { background: none; border: none; color: var(--dim); font-size: 1.2rem; cursor: pointer; padding: 4px 8px; }
-        .modal-body { padding: 16px; }
-        .modal-footer { padding: 16px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
-
-        /* RESPONSIVE */
-        @media (max-width: 768px) {
-            .topbar .burger-btn { display: inline-block; }
-            .sidebar {
-                position: fixed;
-                top: 48px;
-                left: 0;
-                bottom: 0;
-                width: 280px;
-                transform: translateX(-100%);
-                z-index: 999;
-                background: var(--bg2);
-                border-right: 1px solid var(--border);
-            }
-            .sidebar.open { transform: translateX(0); }
-            .topbar .title { font-size: 0.85rem; }
-        }
-
-        /* SCROLLBAR */
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: var(--bg2); border-radius: 3px; }
-        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
-    </style>
+    <!-- Theme tokens first -->
+    <link rel="stylesheet" href="css/themes.css" />
+    <link rel="stylesheet" href="css/common.css" />
+    <link rel="stylesheet" href="css/data-manager.css" />
+    <link rel="stylesheet" href="css/culture.css" />
 </head>
 <body>
 
-<!-- ============================================================ -->
-<!-- CULTURE MANAGER APP WRAPPER                                  -->
-<!-- ============================================================ -->
 <div class="data-manager-app">
 
     <!-- TOP BAR -->
     <div class="topbar">
-        <button class="burger-btn" id="burgerBtn">☰</button>
-        <span class="title">✦ Culture Manager</span>
-        <span class="spacer"></span>
+        <button class="burger-btn" id="burgerBtn" type="button" aria-label="Toggle sidebar">☰</button>
+        <span class="title" id="appTitle">Culture Manager</span>
+        <span class="spacer" aria-hidden="true"></span>
 
-        <label for="yearInput" style="font-size:0.65rem;color:var(--dim);">Year</label>
-        <input type="number" id="yearInput" value="1250" style="width:60px;" />
-        <button class="tb-btn" id="setYearBtn">✓ Set</button>
-        <button class="tb-btn" id="exportBtn">⬇ Export</button>
-        <button class="tb-btn" id="importBtn">⬆ Import</button>
+        <label for="yearInput">Year</label>
+        <input type="number" class="year-input" id="yearInput" name="yearInput" inputmode="numeric" />
+        <button class="tb-btn" id="setYearBtn" type="button">Set</button>
+        <button class="tb-btn" id="exportBtn" type="button">Export</button>
+        <button class="tb-btn" id="importBtn" type="button">Import</button>
         <input type="file" id="fileInput" accept=".json" style="display:none;" />
-        <button class="tb-btn primary" id="createCultureBtn">+ Culture</button>
+        <button class="tb-btn primary" id="createCultureBtn" type="button">+ Culture</button>
+
+        <div class="theme-toggle" role="group" aria-label="Theme">
+            <button class="btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+                <span aria-hidden="true">◐</span>
+                <span id="themeName">Dark</span>
+            </button>
+            <ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden></ul>
+        </div>
     </div>
 
     <!-- APP LAYOUT -->
@@ -276,55 +45,36 @@
         <div class="sidebar" id="sidebar">
             <h3>Cultures</h3>
             <div id="cultureListContainer">
-                <div class="loading-placeholder">Loading cultures...</div>
+                <div class="loading-placeholder">Loading cultures…</div>
             </div>
         </div>
 
-        <!-- MAIN PANEL WITH TABS -->
+        <!-- MAIN PANEL -->
         <div class="main-panel" id="mainPanel">
-            <div class="panel-tabs" id="panelTabs">
-                <button class="tab-btn active" data-tab="details">
-                    <span class="tab-icon">✦</span> Details
+            <div class="panel-tabs" id="panelTabs" role="tablist">
+                <button class="tab-btn active" role="tab" type="button" data-tab="details" aria-selected="true" tabindex="0">
+                    <span class="tab-icon" data-icon="CIRCLE_DOT" aria-hidden="true"></span> Details
                 </button>
-                <button class="tab-btn" data-tab="appearance">
-                    <span class="tab-icon">👤</span> Appearance
+                <button class="tab-btn" role="tab" type="button" data-tab="appearance" aria-selected="false" tabindex="-1">
+                    <span class="tab-icon" data-icon="PERSON" aria-hidden="true"></span> Appearance
                 </button>
-                <button class="tab-btn" data-tab="mythology">
-                    <span class="tab-icon">📖</span> Mythology
+                <button class="tab-btn" role="tab" type="button" data-tab="mythology" aria-selected="false" tabindex="-1">
+                    <span class="tab-icon" data-icon="BOOK" aria-hidden="true"></span> Mythology
                 </button>
-                <button class="tab-btn" data-tab="characters">
-                    <span class="tab-icon">👥</span> Characters
+                <button class="tab-btn" role="tab" type="button" data-tab="characters" aria-selected="false" tabindex="-1">
+                    <span class="tab-icon" data-icon="PERSON" aria-hidden="true"></span> Characters
+                </button>
+                <button class="tab-btn" role="tab" type="button" data-tab="names" aria-selected="false" tabindex="-1">
+                    <span class="tab-icon" data-icon="BOOK" aria-hidden="true"></span> Names
                 </button>
             </div>
 
-            <div class="tab-content" id="tabContent">
-                <div class="tab-pane active" id="tab-details">
-                    <div class="empty-state">
-                        <div class="icon">✦</div>
-                        <div class="message">Select a culture from the sidebar</div>
-                    </div>
-                </div>
-                <div class="tab-pane" id="tab-appearance">
-                    <div class="empty-state">
-                        <div class="icon">👤</div>
-                        <div class="message">Appearance options will appear here</div>
-                        <div class="sub-message">Select a culture first</div>
-                    </div>
-                </div>
-                <div class="tab-pane" id="tab-mythology">
-                    <div class="empty-state">
-                        <div class="icon">📖</div>
-                        <div class="message">Mythology will appear here</div>
-                        <div class="sub-message">Select a culture first</div>
-                    </div>
-                </div>
-                <div class="tab-pane" id="tab-characters">
-                    <div class="empty-state">
-                        <div class="icon">👥</div>
-                        <div class="message">Characters will appear here</div>
-                        <div class="sub-message">Select a culture first</div>
-                    </div>
-                </div>
+            <div class="tab-content" id="tabContent" role="tabpanel">
+                <div class="tab-pane active" id="tab-details"    data-tab-content="details"></div>
+                <div class="tab-pane"        id="tab-appearance" data-tab-content="appearance"></div>
+                <div class="tab-pane"        id="tab-mythology"  data-tab-content="mythology"></div>
+                <div class="tab-pane"        id="tab-characters" data-tab-content="characters"></div>
+                <div class="tab-pane"        id="tab-names"      data-tab-content="names"></div>
             </div>
         </div>
     </div>
@@ -332,1018 +82,1047 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- JAVASCRIPT - ALL IN ONE FILE FOR SIMPLICITY                 -->
+<!-- CORE CONSTANTS (Block 1)                                     -->
+<!-- ============================================================ -->
+<script src="js/core/constants/constants.js"></script>
+<script src="js/core/constants/age-constants.js"></script>
+<script src="js/core/constants/character-constants.js"></script>
+<script src="js/core/constants/character-traits.js"></script>
+<script src="js/core/constants/location-constants.js"></script>
+<script src="js/core/constants/relationship-constants.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE UTILITIES (Block 2)                                     -->
+<!-- ============================================================ -->
+<script src="js/core/formatting.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/randomness.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE TIME (Block 3)                                          -->
+<!-- ============================================================ -->
+<script src="js/core/time.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE STORAGE (Block 4)                                       -->
+<!-- ============================================================ -->
+<script src="js/core/storage-schema.js"></script>
+<script src="js/core/storage.js"></script>
+<script>
+    (function () {
+        try {
+            if (typeof window.initializeStorage === 'function') {
+                window.initializeStorage();
+            }
+        } catch (e) {
+            console.error('[CultureManager] initializeStorage failed:', e);
+        }
+    })();
+</script>
+
+<!-- ============================================================ -->
+<!-- CORE ACCESSORS / VALIDATION / WORLD / NAMES (Block 5)        -->
+<!-- ============================================================ -->
+<script src="js/core/accessors.js"></script>
+<script src="js/core/validation.js"></script>
+<script src="js/core/world.js"></script>
+<script src="js/core/names.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE UI PRIMITIVES (Block 6)                                 -->
+<!-- ============================================================ -->
+<script src="js/core/ui.js"></script>
+<script src="js/core/ui-state.js"></script>
+<script src="js/core/modals-core.js"></script>
+<script src="js/core/responsive.js"></script>
+<script src="js/core/collapsible.js"></script>
+<script src="js/core/exportUtils.js"></script>
+
+<!-- ============================================================ -->
+<!-- SKILL UTILS (Block 9) — required by role constants            -->
+<!-- ============================================================ -->
+<script src="js/skill/skill-utils.js"></script>
+
+<!-- ============================================================ -->
+<!-- EVENT LOGGER (Block 10)                                       -->
+<!-- ============================================================ -->
+<script src="js/events/eventLogger.js"></script>
+
+<!-- ============================================================ -->
+<!-- CHARACTER SUBSYSTEM (Blocks 11–17)                            -->
+<!-- ============================================================ -->
+<script src="js/character/family-rules.js"></script>
+<script src="js/character/children-rules.js"></script>
+<script src="js/character/mortality-rules.js"></script>
+
+<script src="js/character/character-state.js"></script>
+<script src="js/character/family-state.js"></script>
+<script src="js/character/children-state.js"></script>
+
+<script src="js/character/character-commands.js"></script>
+<script src="js/character/character-queries.js"></script>
+<script src="js/character/family-queries.js"></script>
+<script src="js/character/family-commands.js"></script>
+
+<script src="js/character/mortality-queries.js"></script>
+<script src="js/character/mortality-statistics.js"></script>
+<script src="js/character/family-statistics.js"></script>
+<script src="js/character/character-statistics.js"></script>
+
+<script src="js/character/character-factory.js"></script>
+<script src="js/character/character-generator.js"></script>
+<script src="js/character/character-creation-commands.js"></script>
+<script src="js/character/character-deletion-commands.js"></script>
+
+<script src="js/character/children-queries.js"></script>
+<script src="js/character/children-generator.js"></script>
+<script src="js/character/children-commands.js"></script>
+<script src="js/character/children-statistics.js"></script>
+
+<!-- ============================================================ -->
+<!-- NAME SUBSYSTEM (Block 18) — culture-names-tab needs it        -->
+<!-- ============================================================ -->
+<script src="js/modules/names/name-queries.js"></script>
+<script src="js/modules/names/name-rules.js"></script>
+<script src="js/modules/names/name-state.js"></script>
+<script src="js/modules/names/name-commands.js"></script>
+<script src="js/modules/names/modals-name.js"></script>
+
+<!-- ============================================================ -->
+<!-- RANK SUBSYSTEM (Block 19)                                    -->
+<!-- ============================================================ -->
+<script src="js/core/rank/rank-constants.js"></script>
+<script src="js/core/rank/rank-rules.js"></script>
+<script src="js/core/rank/rank-state.js"></script>
+<script src="js/core/rank/rank-queries.js"></script>
+<script src="js/core/rank/rank-assignment.js"></script>
+<script src="js/core/rank/rank-commands.js"></script>
+<script src="js/core/rank/rank-issues.js"></script>
+<script src="js/core/rank/rank-ui-list.js"></script>
+<script src="js/core/rank/modals-rank.js"></script>
+<script src="js/core/rank/rank-bootstrap.js"></script>
+
+<!-- ============================================================ -->
+<!-- ROLE SUBSYSTEM (Block 20) — CultureQueries needs RoleQueries  -->
+<!-- ============================================================ -->
+<script src="js/systems/roles/role-constants.js"></script>
+<script src="js/systems/roles/role-state.js"></script>
+<script src="js/systems/roles/role-queries.js"></script>
+<script src="js/systems/roles/role-commands.js"></script>
+<script src="js/systems/roles/role-ui-list.js"></script>
+<script src="js/systems/roles/modals-roles.js"></script>
+
+<!-- ============================================================ -->
+<!-- RELATIONSHIP PREREQUISITES (Block 21)                        -->
+<!-- ============================================================ -->
+<script src="js/relationships/relationship-types.js"></script>
+<script src="js/relationships/relationship-state.js"></script>
+<script src="js/relationships/relationship-queries.js"></script>
+<script src="js/relationships/relationship-commands.js"></script>
+<script src="js/relationships/relationship-utils.js"></script>
+<script src="js/relationships/relationship-bootstrap.js"></script>
+<script src="js/relationships/relationship-integrations.js"></script>
+<script src="js/relationships/romance-rules.js"></script>
+<script src="js/relationships/romance-queries.js"></script>
+<script src="js/relationships/romance-commands.js"></script>
+<script src="js/relationships/friendship-rules.js"></script>
+<script src="js/relationships/friendship-queries.js"></script>
+<script src="js/relationships/friendship-commands.js"></script>
+<script src="js/relationships/professional-rules.js"></script>
+<script src="js/relationships/professional-queries.js"></script>
+<script src="js/relationships/professional-commands.js"></script>
+<script src="js/relationships/affair-rules.js"></script>
+<script src="js/relationships/affair-queries.js"></script>
+<script src="js/relationships/affair-commands.js"></script>
+<script src="js/relationships/jealousy-rules.js"></script>
+<script src="js/relationships/jealousy-queries.js"></script>
+<script src="js/relationships/jealousy-commands.js"></script>
+<script src="js/relationships/rivalry-rules.js"></script>
+<script src="js/relationships/rivalry-queries.js"></script>
+<script src="js/relationships/rivalry-commands.js"></script>
+<script src="js/relationships/matchmaking-rules.js"></script>
+<script src="js/relationships/matchmaking-queries.js"></script>
+<script src="js/relationships/relationship-finder-queries.js"></script>
+<script src="js/relationships/relationship-ui-metadata.js"></script>
+<script src="js/relationships/modals-relationship.js"></script>
+<script src="js/relationships/modals-friendship.js"></script>
+
+<!-- ============================================================ -->
+<!-- RELIGION SUBSYSTEM (Block 22) — CultureQueries HARD-depends   -->
+<!-- on ReligionQueries                                            -->
+<!-- ============================================================ -->
+<script src="js/religion/religion-constants.js"></script>
+<script src="js/religion/religion-format.js"></script>
+<script src="js/religion/religion-validation.js"></script>
+<script src="js/religion/religion-state.js"></script>
+<script src="js/religion/religion-queries.js"></script>
+<script src="js/religion/religion-rules.js"></script>
+<script src="js/religion/religion-commands.js"></script>
+<script src="js/religion/religion-laws.js"></script>
+<script src="js/religion/religion-inheritance.js"></script>
+<script src="js/religion/religion-view-models.js"></script>
+<script src="js/religion/religion-render.js"></script>
+<script src="js/religion/religion-ui-state.js"></script>
+<script src="js/religion/modals-religion.js"></script>
+<script src="js/religion/religion-bootstrap.js"></script>
+
+<!-- ============================================================ -->
+<!-- SETTLEMENT SUBSYSTEM (Block 23) — needed for culture's        -->
+<!-- religion/character projections and law enums                  -->
+<!-- ============================================================ -->
+<script src="js/settlement/settlement-fiscal-definitions.js"></script>
+<script src="js/settlement/settlement-government-definitions.js"></script>
+<script src="js/settlement/settlement-rank-definitions.js"></script>
+<script src="js/settlement/settlement-law-definitions.js"></script>
+<script src="js/settlement/settlement-finance-definitions.js"></script>
+<script src="js/settlement/settlement-prosperity-definitions.js"></script>
+<script src="js/settlement/settlement-feature-definitions.js"></script>
+<script src="js/settlement/settlement-education-definitions.js"></script>
+
+<script src="js/settlement/settlement-rank-rules.js"></script>
+<script src="js/settlement/settlement-fiscal-rules.js"></script>
+<script src="js/settlement/settlement-government-rules.js"></script>
+<script src="js/settlement/settlement-feature-rules.js"></script>
+<script src="js/settlement/settlement-law-rules.js"></script>
+
+<script src="js/settlement/settlement-state.js"></script>
+<script src="js/settlement/settlement-command-commit.js"></script>
+
+<script src="js/settlement/settlement-queries.js"></script>
+<script src="js/settlement/settlement-rank-queries.js"></script>
+<script src="js/settlement/settlement-feature-queries.js"></script>
+<script src="js/settlement/settlement-law-queries.js"></script>
+<script src="js/settlement/settlement-education-queries.js"></script>
+<script src="js/settlement/settlement-religion-queries.js"></script>
+<script src="js/settlement/settlement-employment-queries.js"></script>
+<script src="js/settlement/settlement-economy-queries.js"></script>
+<script src="js/settlement/settlement-crime-queries.js"></script>
+<script src="js/settlement/settlement-prosperity-queries.js"></script>
+
+<script src="js/settlement/settlement-feature-commands.js"></script>
+<script src="js/settlement/settlement-government-commands.js"></script>
+<script src="js/settlement/settlement-fiscal-commands.js"></script>
+<script src="js/settlement/settlement-law-commands.js"></script>
+<script src="js/settlement/settlement-wealth-commands.js"></script>
+<script src="js/settlement/settlement-debt-commands.js"></script>
+<script src="js/settlement/settlement-rank-commands.js"></script>
+<script src="js/settlement/settlement-specialization-commands.js"></script>
+
+<script src="js/settlement/settlement-factory.js"></script>
+<script src="js/settlement/settlement-annual-processor.js"></script>
+
+<script src="js/settlement/settlement-view-models.js"></script>
+<script src="js/settlement/settlement-ui-state.js"></script>
+
+<!-- ============================================================ -->
+<!-- CULTURE SUBSYSTEM (Block 24)                                 -->
+<!-- ============================================================ -->
+<script src="js/culture/culture-constants.js"></script>
+<script src="js/culture/culture-validation.js"></script>
+<script src="js/culture/culture-state.js"></script>
+<script src="js/culture/culture-commands.js"></script>
+
+<!-- CultureQueries requires window.PlaceQueries, ReligionQueries,
+     CharacterQueries (all HARD). The settlement/location/character
+     modules above provide CharacterQueries; ReligionQueries is above.
+     PlaceQueries comes from the location system — provide a shim. -->
+<script>
+    (function () {
+        // PlaceQueries shim: LocationQueries provides the same surface.
+        // The culture-queries.js HARD guard checks for window.PlaceQueries.
+        if (typeof window.PlaceQueries === 'undefined'
+            && typeof window.LocationQueries !== 'undefined') {
+            window.PlaceQueries = window.LocationQueries;
+        }
+    })();
+</script>
+
+<script src="js/culture/culture-queries.js"></script>
+<script src="js/culture/culture-generation.js"></script>
+<script src="js/culture/culture-view-models.js"></script>
+<script src="js/culture/culture-ui-list.js"></script>
+<script src="js/culture/modals-culture.js"></script>
+<script src="js/culture/culture-bootstrap.js"></script>
+
+<!-- ============================================================ -->
+<!-- LOCATION SUBSYSTEM (Block 33) — CultureQueries soft-depends   -->
+<!-- on LocationQueries for place resolution. Load after culture.  -->
+<!-- ============================================================ -->
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
+<script src="js/location/location-commands.js"></script>
+<script src="js/location/location-queries.js"></script>
+<script src="js/location/location-movement.js"></script>
+<script src="js/location/location-view-models.js"></script>
+<script src="js/location/location-ui-state.js"></script>
+<script src="js/location/location-ui-list.js"></script>
+<script src="js/location/location-presentation.js"></script>
+<script src="js/location/modals-location-helper.js"></script>
+<script src="js/location/modals-location.js"></script>
+<script src="js/location/modals-moves.js"></script>
+<script src="js/location/location-bootstrap.js"></script>
+
+<!-- ============================================================ -->
+<!-- CHARACTER LIFECYCLE (Block 34) — needed by culture-generator  -->
+<!-- ============================================================ -->
+<script src="js/character/character-lifecycle.js"></script>
+
+<!-- ============================================================ -->
+<!-- HOUSEHOLD (Block 35)                                          -->
+<!-- ============================================================ -->
+<script src="js/households/household-constants.js"></script>
+<script src="js/households/household-rules.js"></script>
+<script src="js/households/household-state.js"></script>
+<script src="js/households/household-queries.js"></script>
+<script src="js/households/household-commands.js"></script>
+
+<!-- ============================================================ -->
+<!-- SELECTORS (Block 37) — culture-characters-tab needs these     -->
+<!-- ============================================================ -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
+
+<!-- ============================================================ -->
+<!-- CULTURE EDITOR HOST + TABS (the whole point of this file)     -->
+<!-- ============================================================ -->
+<!-- The host MUST load first. It installs window.CultureEditorTabs.
+     Then each tab file registers itself via
+     CultureEditorTabs.registerTab(...). The order of the tab files
+     after the host is unimportant — each one only needs the host
+     and its own dependencies, which are all loaded above. -->
+<script src="js/tabs/culture-editor-tab.js"></script>
+<script src="js/tabs/culture-appearance-tab.js"></script>
+<script src="js/tabs/culture-mythology-tab.js"></script>
+<script src="js/tabs/culture-characters-tab.js"></script>
+<script src="js/tabs/culture-names-tab.js"></script>
+
+<!-- ============================================================ -->
+<!-- THEME SWITCHER                                                -->
 <!-- ============================================================ -->
 <script>
-(function() {
+(function () {
     'use strict';
 
-    // =============================================================
-    // 1. STORAGE KEY
-    // =============================================================
-    var STORAGE_KEY = 'stillwaters_master';
+    var STORAGE_KEY = 'stillwaters_theme';
 
-    // =============================================================
-    // 2. MASTER DATA - LOAD FROM LOCALSTORAGE
-    // =============================================================
-    function loadMasterData() {
-        try {
-            var stored = localStorage.getItem(STORAGE_KEY);
-            if (stored) {
-                var parsed = JSON.parse(stored);
-                if (parsed && parsed.data) {
-                    return parsed;
-                }
-            }
-        } catch(e) {}
-        return null;
+    var THEMES = [
+        { id: 'dark',            label: 'Dark' },
+        { id: 'light',           label: 'Light' },
+        { id: 'vaporwave',       label: 'Vaporwave' },
+        { id: 'pastel',          label: 'Pastel' },
+        { id: 'carnival',        label: 'Carnival' },
+        { id: 'maximal',         label: 'Maximal' },
+        { id: 'gits',            label: 'GITS' },
+        { id: 'nouveau',         label: 'Nouveau' },
+        { id: 'ukiyo-e',         label: 'Ukiyo-e' },
+        { id: 'nature',          label: 'Nature' },
+        { id: 'kmt',             label: 'KMT' },
+        { id: 'gaslight',        label: 'Gaslight' },
+        { id: 'grotesque',       label: 'Grotesque' },
+        { id: 'illuminated',     label: 'Illuminated' },
+        { id: 'discowing',       label: 'Discowing' },
+        { id: 'choc-cake',       label: 'Choc Cake' },
+        { id: 'dada',            label: 'Dada' },
+        { id: 'brutalist',       label: 'Brutalist' },
+        { id: 'orchestrion',     label: 'Orchestrion' },
+        { id: 'rococo',          label: 'Rococo' },
+        { id: 'nautical-tile',   label: 'Nautical Tile' }
+    ];
+
+    var byId = {};
+    for (var i = 0; i < THEMES.length; i++) byId[THEMES[i].id] = THEMES[i];
+
+    var themeBtn  = document.getElementById('themeBtn');
+    var themeMenu = document.getElementById('themeMenu');
+    var themeName = document.getElementById('themeName');
+
+    function apply(id) {
+        if (!byId[id]) id = 'dark';
+        document.documentElement.setAttribute('data-theme', id);
+        if (themeName) themeName.textContent = byId[id].label;
+        try { localStorage.setItem(STORAGE_KEY, id); } catch (e) {}
     }
 
-    function saveMasterData() {
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(window.masterData));
-        } catch(e) {}
+    function buildMenu() {
+        var html = '';
+        for (var i = 0; i < THEMES.length; i++) {
+            html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' +
+                THEMES[i].id + '">' + THEMES[i].label + '</button></li>';
+        }
+        if (themeMenu) themeMenu.innerHTML = html;
     }
 
-    // Initialize masterData
-    var loaded = loadMasterData();
-    if (loaded) {
-        window.masterData = loaded;
-    } else {
-        window.masterData = {
-            version: '2.0',
-            lastUpdated: new Date().toISOString(),
-            data: {
-                characters: [],
-                places: [],
-                cultures: [],
-                nameLists: {},
-                currentYear: 1250
-            }
-        };
-        saveMasterData();
-    }
-
-    // Ensure cultures array exists
-    if (!window.masterData.data.cultures) {
-        window.masterData.data.cultures = [];
-        saveMasterData();
-    }
-
-    // =============================================================
-    // 3. CULTURE STATE - SINGLE SOURCE OF TRUTH
-    // =============================================================
-    var CultureState = {
-        _cultures: null,
-        _cache: { byId: new Map() },
-
-        _loadCultures: function() {
-            var md = window.masterData;
-            if (md && md.data) {
-                if (!md.data.cultures) md.data.cultures = [];
-                this._cultures = md.data.cultures;
-                this._rebuildCache();
-            }
-            return this._cultures || [];
-        },
-
-        _rebuildCache: function() {
-            this._cache.byId.clear();
-            var cultures = this._cultures || [];
-            for (var i = 0; i < cultures.length; i++) {
-                var c = cultures[i];
-                if (c && c.id) {
-                    this._cache.byId.set(c.id, c);
-                }
-            }
-        },
-
-        getCulture: function(id) {
-            if (!id) return null;
-            var cached = this._cache.byId.get(id);
-            if (cached) return cached;
-            this._loadCultures();
-            return this._cache.byId.get(id) || null;
-        },
-
-        getAllCultures: function() {
-            if (!this._cultures) this._loadCultures();
-            return (this._cultures || []).slice();
-        },
-
-        getCultureCount: function() {
-            return (this._cultures || []).length;
-        },
-
-        refreshFromMasterData: function() {
-            this._loadCultures();
-        },
-
-        invalidateCache: function() {
-            this._rebuildCache();
-        },
-
-        // Internal: set cultures (used by commands)
-        _setCultures: function(cultures) {
-            this._cultures = cultures;
-            if (window.masterData && window.masterData.data) {
-                window.masterData.data.cultures = cultures;
-                saveMasterData();
-            }
-            this._rebuildCache();
-        },
-
-        // Internal: emit change
-        _emitChange: function(action, culture) {
-            try {
-                if (typeof window.dispatchEvent === 'function') {
-                    window.dispatchEvent(new CustomEvent('cultureDataChanged', {
-                        detail: { action: action, cultureId: culture?.id }
-                    }));
-                }
-            } catch(e) {}
-        }
-    };
-
-    // =============================================================
-    // 4. CULTURE COMMANDS
-    // =============================================================
-    var CultureCommands = {
-        _processing: false,
-
-        createCulture: function(data) {
-            if (this._processing) return { success: false, reason: 'Already processing' };
-            this._processing = true;
-
-            try {
-                data = data || {};
-                var cultures = CultureState.getAllCultures();
-
-                var newCulture = {
-                    id: 'culture_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
-                    name: data.name || 'New Culture',
-                    displayName: data.displayName || data.name || 'New Culture',
-                    description: data.description || '',
-                    icon: data.icon || '✦',
-                    locations: data.locations || [],
-                    notes: data.notes || '',
-                    // Appearance (weighted options)
-                    appearance: data.appearance || {
-                        skinTones: [{ value: 'Fair', weight: 50 }, { value: 'Olive', weight: 30 }, { value: 'Dark', weight: 20 }],
-                        eyeColors: [{ value: 'Brown', weight: 40 }, { value: 'Blue', weight: 30 }, { value: 'Green', weight: 30 }],
-                        hairColors: [{ value: 'Brown', weight: 40 }, { value: 'Blonde', weight: 30 }, { value: 'Black', weight: 30 }],
-                        hairTypes: [{ value: 'Straight', weight: 40 }, { value: 'Wavy', weight: 30 }, { value: 'Curly', weight: 30 }],
-                        buildTypes: [{ value: 'Slim', weight: 30 }, { value: 'Average', weight: 40 }, { value: 'Athletic', weight: 30 }],
-                        height: { male: { min: 155, max: 200 }, female: { min: 145, max: 185 } },
-                        commonFeatures: [{ value: 'High cheekbones', weight: 50 }, { value: 'Strong jawline', weight: 50 }]
-                    },
-                    // Mythology (flavor text)
-                    mythology: data.mythology || {
-                        creation: '',
-                        afterlife: '',
-                        cosmology: '',
-                        keyDeities: [],
-                        keyEvents: [],
-                        symbols: [],
-                        themes: []
-                    },
-                    createdAt: Date.now(),
-                    updatedAt: Date.now()
-                };
-
-                if (!newCulture.name.trim()) {
-                    return { success: false, reason: 'Culture name is required' };
-                }
-
-                cultures.push(newCulture);
-                CultureState._setCultures(cultures);
-                CultureState._emitChange('create', newCulture);
-
-                return { success: true, data: newCulture };
-
-            } finally {
-                this._processing = false;
-            }
-        },
-
-        updateCulture: function(id, updates) {
-            if (this._processing) return { success: false, reason: 'Already processing' };
-            this._processing = true;
-
-            try {
-                var cultures = CultureState.getAllCultures();
-                var index = -1;
-                for (var i = 0; i < cultures.length; i++) {
-                    if (cultures[i].id === id) { index = i; break; }
-                }
-                if (index === -1) return { success: false, reason: 'Culture not found' };
-
-                var culture = cultures[index];
-                var allowed = ['name', 'displayName', 'description', 'icon', 'appearance', 'mythology', 'locations', 'notes'];
-                for (var i = 0; i < allowed.length; i++) {
-                    var key = allowed[i];
-                    if (updates[key] !== undefined) {
-                        culture[key] = updates[key];
-                    }
-                }
-                culture.updatedAt = Date.now();
-
-                cultures[index] = culture;
-                CultureState._setCultures(cultures);
-                CultureState._emitChange('update', culture);
-
-                return { success: true, data: culture };
-
-            } finally {
-                this._processing = false;
-            }
-        },
-
-        deleteCulture: function(id) {
-            if (this._processing) return { success: false, reason: 'Already processing' };
-            this._processing = true;
-
-            try {
-                var cultures = CultureState.getAllCultures();
-                var newCultures = [];
-                var removed = null;
-                for (var i = 0; i < cultures.length; i++) {
-                    if (cultures[i].id === id) {
-                        removed = cultures[i];
-                    } else {
-                        newCultures.push(cultures[i]);
-                    }
-                }
-                if (!removed) return { success: false, reason: 'Culture not found' };
-
-                CultureState._setCultures(newCultures);
-                CultureState._emitChange('delete', removed);
-
-                return { success: true };
-
-            } finally {
-                this._processing = false;
-            }
-        }
-    };
-
-    // =============================================================
-    // 5. CULTURE UI LIST
-    // =============================================================
-    var CultureUI = {
-        renderCultureList: function(containerId, options) {
-            options = options || {};
-            var container = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
-            if (!container) return false;
-
-            var cultures = options.filteredCultures || CultureState.getAllCultures();
-            var onSelect = options.onSelect || null;
-            var selectedId = options.selectedId || null;
-
-            if (!cultures || cultures.length === 0) {
-                container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.7rem;">' +
-                    'No cultures found<br><span style="font-size:0.55rem;">Click "Create Culture" to add one</span></div>';
-                return true;
-            }
-
-            var sorted = cultures.slice().sort(function(a, b) {
-                return (a.displayName || a.name || '').localeCompare(b.displayName || b.name || '');
-            });
-
-            var html = '<div style="display:flex;flex-direction:column;gap:4px;">';
-
-            for (var i = 0; i < sorted.length; i++) {
-                var c = sorted[i];
-                var isSelected = (selectedId === c.id);
-                var icon = c.icon || '✦';
-                var locationCount = (c.locations && c.locations.length) || 0;
-
-                html += '<div class="culture-row' + (isSelected ? ' selected' : '') + '" data-culture-id="' + c.id + '">';
-                html += '<div style="flex:1;min-width:0;">';
-                html += '<div class="name"><span class="icon">' + icon + '</span> ' + (c.displayName || c.name) + '</div>';
-                if (c.description) {
-                    html += '<div class="details">' + c.description + '</div>';
-                }
-                html += '</div>';
-                if (locationCount > 0) {
-                    html += '<div class="badge">' + locationCount + ' locations</div>';
-                }
-                html += '</div>';
-            }
-
-            html += '</div>';
-            container.innerHTML = html;
-
-            // Attach click events
-            if (onSelect) {
-                var rows = container.querySelectorAll('.culture-row');
-                for (var i = 0; i < rows.length; i++) {
-                    (function(row) {
-                        row.addEventListener('click', function() {
-                            var id = this.dataset.cultureId;
-                            var culture = CultureState.getCulture(id);
-                            if (culture && onSelect) onSelect(culture);
-                        });
-                    })(rows[i]);
-                }
-            }
-
-            return true;
-        }
-    };
-
-    // =============================================================
-    // 6. TAB RENDERERS
-    // =============================================================
-
-    // --- DETAILS TAB ---
-    function renderDetailsTab(container, culture) {
-        if (!culture) {
-            container.innerHTML = '<div class="empty-state"><div class="icon">✦</div><div class="message">No culture selected</div></div>';
-            return;
-        }
-
-        var html = 
-            '<div style="padding:4px;">' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-
-            // Name
-            '<div class="form-group" style="grid-column:1 / 2;">' +
-            '<label>Name *</label>' +
-            '<input type="text" id="ce_name" value="' + escapeHtml(culture.name) + '">' +
-            '</div>' +
-
-            // Display Name
-            '<div class="form-group" style="grid-column:2 / 3;">' +
-            '<label>Display Name</label>' +
-            '<input type="text" id="ce_displayName" value="' + escapeHtml(culture.displayName || '') + '">' +
-            '</div>' +
-
-            // Icon
-            '<div class="form-group" style="grid-column:1 / 2;">' +
-            '<label>Icon</label>' +
-            '<select id="ce_icon">' +
-            '<option value="✦" ' + (culture.icon === '✦' ? 'selected' : '') + '>✦</option>' +
-            '<option value="★" ' + (culture.icon === '★' ? 'selected' : '') + '>★</option>' +
-            '<option value="◈" ' + (culture.icon === '◈' ? 'selected' : '') + '>◈</option>' +
-            '<option value="⚜" ' + (culture.icon === '⚜' ? 'selected' : '') + '>⚜</option>' +
-            '<option value="☀" ' + (culture.icon === '☀' ? 'selected' : '') + '>☀</option>' +
-            '<option value="🌙" ' + (culture.icon === '🌙' ? 'selected' : '') + '>🌙</option>' +
-            '</select>' +
-            '</div>' +
-
-            // Description
-            '<div class="form-group" style="grid-column:1 / 3;">' +
-            '<label>Description</label>' +
-            '<textarea id="ce_description" rows="2">' + escapeHtml(culture.description || '') + '</textarea>' +
-            '</div>' +
-
-            // Notes
-            '<div class="form-group" style="grid-column:1 / 3;">' +
-            '<label>Notes</label>' +
-            '<textarea id="ce_notes" rows="2">' + escapeHtml(culture.notes || '') + '</textarea>' +
-            '</div>' +
-
-            '</div>' +
-            '<div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">' +
-            '<button id="ce_save_details" class="btn primary">Save Details</button>' +
-            '<button id="ce_delete" class="btn danger">Delete Culture</button>' +
-            '</div>' +
-            '</div>';
-
-        container.innerHTML = html;
-
-        // Save button
-        var saveBtn = document.getElementById('ce_save_details');
-        if (saveBtn) {
-            saveBtn.addEventListener('click', function() {
-                var name = document.getElementById('ce_name').value.trim();
-                var displayName = document.getElementById('ce_displayName').value.trim();
-                var icon = document.getElementById('ce_icon').value;
-                var description = document.getElementById('ce_description').value.trim();
-                var notes = document.getElementById('ce_notes').value.trim();
-
-                if (!name) {
-                    showToast('Culture name is required', 'error');
-                    return;
-                }
-
-                var result = CultureCommands.updateCulture(culture.id, {
-                    name: name,
-                    displayName: displayName || name,
-                    icon: icon,
-                    description: description,
-                    notes: notes
-                });
-
-                if (result && result.success) {
-                    showToast('Culture updated', 'success');
-                    culture = result.data;
-                    renderDetailsTab(container, culture);
-                    refreshCultureList();
-                } else {
-                    showToast('Failed to update: ' + (result ? result.reason : 'Unknown error'), 'error');
-                }
-            });
-        }
-
-        // Delete button
-        var deleteBtn = document.getElementById('ce_delete');
-        if (deleteBtn) {
-            deleteBtn.addEventListener('click', function() {
-                if (confirm('Delete "' + (culture.displayName || culture.name) + '" permanently?')) {
-                    var result = CultureCommands.deleteCulture(culture.id);
-                    if (result && result.success) {
-                        showToast('Culture deleted', 'info');
-                        selectedCultureId = null;
-                        refreshCultureList();
-                        // Clear all tabs
-                        document.querySelectorAll('.tab-pane').forEach(function(pane) {
-                            pane.innerHTML = '<div class="empty-state"><div class="icon">✦</div><div class="message">Select a culture from the sidebar</div></div>';
-                        });
-                    } else {
-                        showToast('Failed to delete: ' + (result ? result.reason : 'Unknown error'), 'error');
-                    }
-                }
-            });
-        }
-    }
-
-    // --- APPEARANCE TAB ---
-    function renderAppearanceTab(container, culture) {
-        if (!culture) {
-            container.innerHTML = '<div class="empty-state"><div class="icon">👤</div><div class="message">No culture selected</div></div>';
-            return;
-        }
-
-        var appearance = culture.appearance || {};
-
-        var categories = [
-            { key: 'skinTones', label: 'Skin Tones' },
-            { key: 'eyeColors', label: 'Eye Colors' },
-            { key: 'hairColors', label: 'Hair Colors' },
-            { key: 'hairTypes', label: 'Hair Types' },
-            { key: 'buildTypes', label: 'Build Types' },
-            { key: 'commonFeatures', label: 'Common Features' }
-        ];
-
-        var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">';
-
-        for (var i = 0; i < categories.length; i++) {
-            var cat = categories[i];
-            var items = appearance[cat.key] || [];
-            html += '<div style="background:var(--bg3);border-radius:6px;padding:12px;border:1px solid var(--border);">';
-            html += '<div style="font-size:0.7rem;font-weight:bold;color:var(--accent);margin-bottom:6px;">' + cat.label + '</div>';
-            html += '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
-            for (var j = 0; j < items.length; j++) {
-                var item = items[j];
-                html += '<span style="background:var(--bg2);padding:2px 10px;border-radius:12px;font-size:0.6rem;border:1px solid var(--border);">' +
-                    escapeHtml(item.value) + ' (' + (item.weight || 10) + ')</span>';
-            }
-            if (items.length === 0) {
-                html += '<span style="font-size:0.55rem;color:var(--dim);">No options defined</span>';
-            }
-            html += '</div></div>';
-        }
-
-        // Height ranges
-        var height = appearance.height || { male: { min: 155, max: 200 }, female: { min: 145, max: 185 } };
-        html += '<div style="grid-column:1 / 3;background:var(--bg3);border-radius:6px;padding:12px;border:1px solid var(--border);">';
-        html += '<div style="font-size:0.7rem;font-weight:bold;color:var(--accent);margin-bottom:6px;">Height Ranges</div>';
-        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">';
-        html += '<div><span style="font-size:0.55rem;color:var(--dim);">Male</span> ' + (height.male?.min || 155) + '–' + (height.male?.max || 200) + ' cm</div>';
-        html += '<div><span style="font-size:0.55rem;color:var(--dim);">Female</span> ' + (height.female?.min || 145) + '–' + (height.female?.max || 185) + ' cm</div>';
-        html += '</div></div>';
-
-        html += '</div>';
-        container.innerHTML = html;
-    }
-
-    // --- MYTHOLOGY TAB ---
-    function renderMythologyTab(container, culture) {
-        if (!culture) {
-            container.innerHTML = '<div class="empty-state"><div class="icon">📖</div><div class="message">No culture selected</div></div>';
-            return;
-        }
-
-        var m = culture.mythology || {};
-
-        var sections = [
-            { key: 'creation', label: 'Creation Story', rows: 4 },
-            { key: 'afterlife', label: 'Afterlife Beliefs', rows: 4 },
-            { key: 'cosmology', label: 'Cosmology', rows: 3 }
-        ];
-
-        var listSections = [
-            { key: 'keyDeities', label: 'Key Deities' },
-            { key: 'keyEvents', label: 'Key Events' },
-            { key: 'symbols', label: 'Symbols' },
-            { key: 'themes', label: 'Themes' }
-        ];
-
-        var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">';
-
-        for (var i = 0; i < sections.length; i++) {
-            var s = sections[i];
-            var value = m[s.key] || '';
-            html += '<div class="form-group" style="grid-column:' + (i === 0 ? '1 / 3' : 'auto') + ';">';
-            html += '<label>' + s.label + '</label>';
-            html += '<textarea id="myth_' + s.key + '" rows="' + s.rows + '">' + escapeHtml(value) + '</textarea>';
-            html += '</div>';
-        }
-
-        for (var i = 0; i < listSections.length; i++) {
-            var s = listSections[i];
-            var items = m[s.key] || [];
-            html += '<div style="background:var(--bg3);border-radius:6px;padding:12px;border:1px solid var(--border);">';
-            html += '<div style="font-size:0.7rem;font-weight:bold;color:var(--accent);margin-bottom:6px;">' + s.label + '</div>';
-            html += '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
-            for (var j = 0; j < items.length; j++) {
-                html += '<span style="background:var(--bg2);padding:2px 10px;border-radius:12px;font-size:0.6rem;border:1px solid var(--border);">' +
-                    escapeHtml(items[j]) + '</span>';
-            }
-            if (items.length === 0) {
-                html += '<span style="font-size:0.55rem;color:var(--dim);">No items defined</span>';
-            }
-            html += '</div></div>';
-        }
-
-        html += '</div>';
-
-        // Save button
-        html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">';
-        html += '<button id="ce_save_mythology" class="btn primary">Save Mythology</button>';
-        html += '</div>';
-
-        container.innerHTML = html;
-
-        var saveBtn = document.getElementById('ce_save_mythology');
-        if (saveBtn) {
-            saveBtn.addEventListener('click', function() {
-                var mythology = {};
-                for (var i = 0; i < sections.length; i++) {
-                    var el = document.getElementById('myth_' + sections[i].key);
-                    if (el) mythology[sections[i].key] = el.value.trim();
-                }
-                // Keep existing list items
-                for (var i = 0; i < listSections.length; i++) {
-                    var key = listSections[i].key;
-                    mythology[key] = m[key] || [];
-                }
-
-                var result = CultureCommands.updateCulture(culture.id, { mythology: mythology });
-                if (result && result.success) {
-                    showToast('Mythology saved', 'success');
-                    culture = result.data;
-                    renderMythologyTab(container, culture);
-                } else {
-                    showToast('Failed to save: ' + (result ? result.reason : 'Unknown error'), 'error');
-                }
-            });
-        }
-    }
-
-    // --- CHARACTERS TAB (simplified) ---
-    function renderCharactersTab(container, culture) {
-        if (!culture) {
-            container.innerHTML = '<div class="empty-state"><div class="icon">👥</div><div class="message">No culture selected</div></div>';
-            return;
-        }
-
-        // Check if we have any characters with this culture
-        var chars = [];
-        if (window.masterData && window.masterData.data && window.masterData.data.characters) {
-            for (var i = 0; i < window.masterData.data.characters.length; i++) {
-                if (window.masterData.data.characters[i].cultureId === culture.id) {
-                    chars.push(window.masterData.data.characters[i]);
-                }
-            }
-        }
-
-        if (chars.length === 0) {
-            container.innerHTML = '<div class="empty-state"><div class="icon">👥</div><div class="message">No characters in this culture</div></div>';
-            return;
-        }
-
-        var html = '<div style="display:flex;flex-direction:column;gap:4px;">';
-        for (var i = 0; i < chars.length; i++) {
-            var c = chars[i];
-            html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:var(--bg3);border-radius:4px;">';
-            html += '<span style="font-size:0.7rem;">' + escapeHtml(c.name) + ' ' + escapeHtml(c.surname || '') + '</span>';
-            html += '<span style="font-size:0.55rem;color:var(--dim);">' + (c.gender || 'unknown') + '</span>';
-            html += '</div>';
-        }
-        html += '</div>';
-        container.innerHTML = html;
-    }
-
-    // =============================================================
-    // 7. HELPER FUNCTIONS
-    // =============================================================
-
-    function escapeHtml(str) {
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
-
-    function showToast(message, type) {
-        type = type || 'info';
-        var colors = { success: '#4a9060', error: '#c84444', warning: '#c87040', info: '#6a9ecf' };
-
-        var container = document.getElementById('toast-container');
-        if (!container) {
-            container = document.createElement('div');
-            container.id = 'toast-container';
-            container.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:10000;display:flex;flex-direction:column;gap:10px;';
-            document.body.appendChild(container);
-        }
-
-        var toast = document.createElement('div');
-        toast.style.cssText = 'background:var(--bg2);border-left:4px solid ' + colors[type] + ';border-radius:8px;padding:10px 16px;box-shadow:0 4px 12px rgba(0,0,0,0.3);min-width:200px;max-width:350px;font-size:0.7rem;animation:toastSlideIn 0.3s ease;';
-        toast.textContent = message;
-        container.appendChild(toast);
-
-        setTimeout(function() {
-            if (toast.parentNode) toast.remove();
-        }, 3000);
-    }
-
-    // =============================================================
-    // 8. APPLICATION STATE
-    // =============================================================
-
-    var selectedCultureId = null;
-    var currentTab = 'details';
-    var isInitialized = false;
-
-    // Tab mapping
-    var tabRenderers = {
-        'details': renderDetailsTab,
-        'appearance': renderAppearanceTab,
-        'mythology': renderMythologyTab,
-        'characters': renderCharactersTab
-    };
-
-    var tabPanes = {
-        details: document.getElementById('tab-details'),
-        appearance: document.getElementById('tab-appearance'),
-        mythology: document.getElementById('tab-mythology'),
-        characters: document.getElementById('tab-characters')
-    };
-
-    // =============================================================
-    // 9. RENDER FUNCTIONS
-    // =============================================================
-
-    function refreshCultureList() {
-        var container = document.getElementById('cultureListContainer');
-        if (!container) return;
-
-        CultureUI.renderCultureList(container, {
-            filteredCultures: CultureState.getAllCultures(),
-            selectedId: selectedCultureId,
-            onSelect: function(culture) {
-                selectedCultureId = culture.id;
-                refreshCultureList();
-                renderCurrentTab(culture);
-                // Close sidebar on mobile
-                if (window.innerWidth <= 768) closeSidebar();
-            }
+    function openMenu() { if (themeMenu) themeMenu.hidden = false; if (themeBtn) themeBtn.setAttribute('aria-expanded', 'true'); }
+    function closeMenu() { if (themeMenu) themeMenu.hidden = true; if (themeBtn) themeBtn.setAttribute('aria-expanded', 'false'); }
+
+    if (themeBtn) {
+        themeBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (themeMenu.hidden) openMenu(); else closeMenu();
         });
     }
+    if (themeMenu) {
+        themeMenu.addEventListener('click', function (e) {
+            var btn = e.target.closest('[data-theme-id]');
+            if (!btn) return;
+            apply(btn.getAttribute('data-theme-id'));
+            closeMenu();
+        });
+    }
+    document.addEventListener('click', function (e) {
+        if (!themeMenu || themeMenu.hidden) return;
+        if (themeMenu.contains(e.target)) return;
+        if (e.target === themeBtn) return;
+        closeMenu();
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && themeMenu && !themeMenu.hidden) closeMenu();
+    });
 
-    function renderCurrentTab(culture) {
-        culture = culture || (selectedCultureId ? CultureState.getCulture(selectedCultureId) : null);
+    var saved = null;
+    try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+    buildMenu();
 
-        var pane = tabPanes[currentTab];
-        if (!pane) return;
-
-        if (!culture) {
-            pane.innerHTML = '<div class="empty-state"><div class="icon">✦</div><div class="message">Select a culture from the sidebar</div></div>';
-            return;
-        }
-
-        var renderer = tabRenderers[currentTab];
-        if (renderer) {
-            renderer(pane, culture);
-        } else {
-            pane.innerHTML = '<div class="empty-state"><div class="icon">✦</div><div class="message">Tab not available</div></div>';
-        }
+    if (saved && byId[saved]) {
+        apply(saved);
+    } else {
+        var mq = window.matchMedia('(prefers-color-scheme: light)');
+        apply(mq.matches ? 'light' : 'dark');
     }
 
-    function switchTab(tabId) {
-        currentTab = tabId;
+    window.ThemeSwitcher = { apply: apply, themes: THEMES.slice() };
+})();
+</script>
 
-        // Update tab buttons
-        var btns = document.querySelectorAll('.panel-tabs .tab-btn');
-        for (var i = 0; i < btns.length; i++) {
-            btns[i].classList.toggle('active', btns[i].dataset.tab === tabId);
-        }
+<!-- ============================================================ -->
+<!-- ORCHESTRATOR                                                 -->
+<!-- ============================================================ -->
+<script>
+(function () {
+    'use strict';
 
-        // Update panes
-        for (var key in tabPanes) {
-            if (tabPanes[key]) {
-                tabPanes[key].classList.toggle('active', key === tabId);
-            }
-        }
+    var religionContainer = document.getElementById('cultureListContainer');
+    var sidebar           = document.getElementById('sidebar');
+    var burgerBtn         = document.getElementById('burgerBtn');
+    var yearInput         = document.getElementById('yearInput');
+    var setYearBtn        = document.getElementById('setYearBtn');
+    var exportBtn         = document.getElementById('exportBtn');
+    var importBtn         = document.getElementById('importBtn');
+    var fileInput         = document.getElementById('fileInput');
+    var createCultureBtn  = document.getElementById('createCultureBtn');
 
-        var culture = selectedCultureId ? CultureState.getCulture(selectedCultureId) : null;
-        if (culture) {
-            renderCurrentTab(culture);
-        }
-    }
+    var tabButtons = Array.prototype.slice.call(
+        document.querySelectorAll('.panel-tabs .tab-btn')
+    );
 
-    // =============================================================
-    // 10. SIDEBAR
-    // =============================================================
+    var selectedCultureId = null;
+    var activeTabId        = 'details';
+    var isInitialized      = false;
 
-    function toggleSidebar() {
-        var sidebar = document.getElementById('sidebar');
-        sidebar.classList.toggle('open');
-    }
-
-    function closeSidebar() {
-        var sidebar = document.getElementById('sidebar');
-        sidebar.classList.remove('open');
-    }
-
-    // =============================================================
-    // 11. INITIALIZATION
-    // =============================================================
-
-    function init() {
+    // -----------------------------------------------------------------
+    // Bootstrap
+    // -----------------------------------------------------------------
+    function bootstrap() {
         if (isInitialized) return;
         isInitialized = true;
 
-        // Load cultures
-        CultureState.refreshFromMasterData();
+        if (typeof window.initializeStorage === 'function') {
+            try { window.initializeStorage(); } catch (e) {
+                console.error('[culture-manager] storage init failed:', e);
+            }
+        }
 
-        // Render culture list
-        refreshCultureList();
+        // Bootstrap the domain indexes the culture subsystem reads
+        // from (character, religion, rank, location) before culture.
+        if (window.RankBootstrap && typeof window.RankBootstrap.init === 'function') {
+            try { window.RankBootstrap.init(); } catch (e) {
+                console.error('[culture-manager] rank bootstrap failed:', e);
+            }
+        }
+        if (window.ReligionBootstrap && typeof window.ReligionBootstrap.init === 'function') {
+            try { window.ReligionBootstrap.init(); } catch (e) {
+                console.error('[culture-manager] religion bootstrap failed:', e);
+            }
+        }
+        if (window.LocationBootstrap && typeof window.LocationBootstrap.init === 'function') {
+            try { window.LocationBootstrap.init(); } catch (e) {
+                console.error('[culture-manager] location bootstrap failed:', e);
+            }
+        }
+        if (window.CultureBootstrap && typeof window.CultureBootstrap.init === 'function') {
+            try { window.CultureBootstrap.init(); } catch (e) {
+                console.error('[culture-manager] culture bootstrap failed:', e);
+            }
+        }
 
-        // Set up tab clicks
-        var tabBtns = document.querySelectorAll('.panel-tabs .tab-btn');
-        for (var i = 0; i < tabBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function() {
-                    switchTab(this.dataset.tab);
+        injectIcons();
+        syncYearInput();
+        renderCultureList();
+        pickInitialSelection();
+        syncTabButtons(activeTabId);
+    }
+
+    // -----------------------------------------------------------------
+    // Icons
+    // -----------------------------------------------------------------
+    function injectIcons() {
+        if (typeof window.Icons === 'undefined') {
+            setTimeout(injectIcons, 100);
+            return;
+        }
+        var nodes = document.querySelectorAll('[data-icon]');
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i];
+            var name = node.getAttribute('data-icon');
+            var svg = window.Icons[name] || window.Icons.CIRCLE || '';
+            node.innerHTML = svg;
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Sidebar rendering
+    // -----------------------------------------------------------------
+    function renderCultureList() {
+        if (!religionContainer) return;
+
+        var UI = window.CultureUIList;
+        if (!UI || typeof UI.renderCultureList !== 'function') {
+            // Fallback: read directly from CultureState and render
+            // simple rows. This keeps the sidebar functional even if
+            // culture-ui-list.js fails to load.
+            renderCultureListFallback();
+            return;
+        }
+
+        var Queries = window.CultureQueries;
+        var cultures;
+        try {
+            cultures = Queries ? Queries.getAllCultures() : [];
+        } catch (e) {
+            console.error('[culture-manager] getAllCultures failed:', e);
+            cultures = [];
+        }
+
+        try {
+            UI.renderCultureList(religionContainer, cultures, {
+                selectedId: selectedCultureId,
+                showStats: true,
+                showActions: true,
+                onSelect: function (id) { selectCulture(id); },
+                onView:   function (id) { selectCulture(id); },
+                onEdit:   function (id) { openEditCulture(id); }
+            });
+        } catch (e) {
+            console.error('[culture-manager] renderCultureList failed:', e);
+            renderCultureListFallback();
+        }
+    }
+
+    function renderCultureListFallback() {
+        if (!religionContainer) return;
+        var cultures = [];
+        if (window.masterData && window.masterData.data
+            && Array.isArray(window.masterData.data.cultures)) {
+            cultures = window.masterData.data.cultures;
+        }
+        if (cultures.length === 0) {
+            religionContainer.innerHTML =
+                '<div class="empty-state">' +
+                '<div class="message">No cultures found</div>' +
+                '<div class="sub-message">Click "+ Culture" to add one</div>' +
+                '</div>';
+            return;
+        }
+        var html = '<div class="culture-list">';
+        for (var i = 0; i < cultures.length; i++) {
+            var c = cultures[i];
+            var sel = c.id === selectedCultureId ? ' is-selected' : '';
+            html += '<div class="culture-row' + sel + '" data-culture-id="' + c.id + '">' +
+                '<div class="culture-row__icon">' + (c.icon || '✦') + '</div>' +
+                '<div class="culture-row__main">' +
+                '<div class="culture-row__label">' + escapeHtml(c.displayName || c.name) + '</div>' +
+                (c.description
+                    ? '<div class="culture-row__desc">' + escapeHtml(c.description) + '</div>'
+                    : '') +
+                '</div></div>';
+        }
+        html += '</div>';
+        religionContainer.innerHTML = html;
+
+        var rows = religionContainer.querySelectorAll('.culture-row');
+        for (var j = 0; j < rows.length; j++) {
+            (function (row) {
+                row.addEventListener('click', function () {
+                    var id = row.getAttribute('data-culture-id');
+                    if (id) selectCulture(id);
                 });
-            })(tabBtns[i]);
+            })(rows[j]);
+        }
+    }
+
+    function pickInitialSelection() {
+        if (selectedCultureId) return;
+        var cultures = [];
+        try {
+            cultures = window.CultureQueries
+                ? window.CultureQueries.getAllCultures()
+                : [];
+        } catch (e) { /* ignore */ }
+        if (cultures && cultures.length > 0) {
+            selectCulture(cultures[0].id);
+        }
+    }
+
+    function selectCulture(id) {
+        if (!id) return;
+        selectedCultureId = id;
+        renderCultureList();
+        renderActiveTab();
+    }
+
+    // -----------------------------------------------------------------
+    // Tab dispatch
+    // -----------------------------------------------------------------
+    function activateTab(tabId) {
+        activeTabId = tabId;
+        syncTabButtons(tabId);
+        renderActiveTab();
+    }
+
+    function syncTabButtons(tabId) {
+        for (var i = 0; i < tabButtons.length; i++) {
+            var btn = tabButtons[i];
+            var isActive = btn.dataset.tab === tabId;
+            btn.classList.toggle('active', isActive);
+            btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            btn.setAttribute('tabindex', isActive ? '0' : '-1');
+        }
+        var panes = document.querySelectorAll('#tabContent .tab-pane');
+        for (var j = 0; j < panes.length; j++) {
+            panes[j].classList.toggle(
+                'active',
+                panes[j].getAttribute('data-tab-content') === tabId
+            );
+        }
+    }
+
+    for (var i = 0; i < tabButtons.length; i++) {
+        (function (btn) {
+            btn.addEventListener('click', function () {
+                activateTab(btn.dataset.tab);
+            });
+        })(tabButtons[i]);
+    }
+
+    function renderActiveTab() {
+        var container = document.getElementById('tab-' + activeTabId);
+        if (!container) return;
+
+        if (!selectedCultureId) {
+            setEmptyState(container, 'Select a culture from the sidebar');
+            return;
         }
 
-        // Burger button
-        var burgerBtn = document.getElementById('burgerBtn');
-        if (burgerBtn) {
-            burgerBtn.addEventListener('click', toggleSidebar);
+        var culture = null;
+        try {
+            culture = window.CultureQueries
+                ? window.CultureQueries.getCultureById(selectedCultureId)
+                : null;
+        } catch (e) {
+            console.error('[culture-manager] getCultureById failed:', e);
+        }
+        if (!culture) {
+            setEmptyState(container, 'Culture not found');
+            return;
         }
 
-        // Close sidebar on outside click
-        document.addEventListener('click', function(e) {
-            if (window.innerWidth <= 768) {
-                var sidebar = document.getElementById('sidebar');
-                var burger = document.getElementById('burgerBtn');
-                if (!sidebar.contains(e.target) && e.target !== burger) {
-                    closeSidebar();
+        if (activeTabId === 'details') {
+            renderDetailsView(container, culture);
+            return;
+        }
+
+        // For appearance/mythology/characters/names, the tab files
+        // register themselves with CultureEditorTabs, which is a
+        // MODAL host. The inline tab panes here render a read-only
+        // preview with an "Edit" button that opens the modal at that
+        // tab. This matches the architecture: the composite editor is
+        // a modal, not an inline pane.
+        renderTabPreview(container, culture, activeTabId);
+    }
+
+    function renderDetailsView(container, culture) {
+        var desc = culture.description
+            ? '<p class="culture-card__desc">' + escapeHtml(culture.description) + '</p>'
+            : '';
+        var notes = culture.notes
+            ? '<div class="culture-card__notes">' + escapeHtml(culture.notes) + '</div>'
+            : '';
+        var locations = (culture.locations && culture.locations.length > 0)
+            ? '<div class="culture-card__relation">' +
+              '<span class="culture-card__relation-label">Locations</span>' +
+              '<span class="culture-card__relation-values">' +
+              culture.locations.length + ' linked</span></div>'
+            : '';
+
+        var html =
+            '<div class="culture-card">' +
+            '<div class="culture-card__header">' +
+            '<div class="culture-card__icon">' + (culture.icon || '✦') + '</div>' +
+            '<div class="culture-card__label">' +
+            escapeHtml(culture.displayName || culture.name) + '</div>' +
+            '</div>' +
+            desc +
+            '<div class="culture-card__relations">' + locations + '</div>' +
+            notes +
+            '<div style="display:flex;gap:8px;margin-top:12px;">' +
+            '<button type="button" class="rt-btn rt-btn--primary" id="ct_details_edit">Edit Details</button>' +
+            '<button type="button" class="rt-btn" id="ct_details_open_editor">Open Editor</button>' +
+            '</div>' +
+            '</div>';
+
+        container.innerHTML = html;
+
+        var editBtn = document.getElementById('ct_details_edit');
+        if (editBtn) {
+            editBtn.addEventListener('click', function () {
+                openEditCulture(culture.id);
+            });
+        }
+        var openBtn = document.getElementById('ct_details_open_editor');
+        if (openBtn) {
+            openBtn.addEventListener('click', function () {
+                openEditor(culture.id, 'details');
+            });
+        }
+    }
+
+    function renderTabPreview(container, culture, tabId) {
+        var labelMap = {
+            appearance: 'Appearance',
+            mythology:  'Mythology',
+            characters: 'Characters',
+            names:      'Names'
+        };
+        var tabLabel = labelMap[tabId] || tabId;
+
+        var summary = '';
+        if (tabId === 'appearance') {
+            var ap = culture.appearance || {};
+            var cats = ['skinTones', 'eyeColors', 'hairColors', 'hairTypes', 'buildTypes', 'commonFeatures'];
+            var parts = [];
+            for (var i = 0; i < cats.length; i++) {
+                var list = ap[cats[i]];
+                if (Array.isArray(list) && list.length > 0) {
+                    parts.push(cats[i] + ': ' + list.length + ' options');
+                }
+            }
+            summary = parts.length > 0
+                ? '<ul class="ct-details__list">' +
+                  parts.map(function (p) { return '<li>' + escapeHtml(p) + '</li>'; }).join('') +
+                  '</ul>'
+                : '<p class="culture-card__desc">No appearance options defined.</p>';
+        } else if (tabId === 'mythology') {
+            var my = culture.mythology || {};
+            var sections = ['creation', 'afterlife', 'cosmology'];
+            var sParts = [];
+            for (var j = 0; j < sections.length; j++) {
+                if (my[sections[j]]) {
+                    sParts.push('<li><strong>' + sections[j] + ':</strong> ' +
+                        escapeHtml(String(my[sections[j]]).substring(0, 80)) +
+                        (String(my[sections[j]]).length > 80 ? '…' : '') + '</li>');
+                }
+            }
+            summary = sParts.length > 0
+                ? '<ul class="ct-details__list">' + sParts.join('') + '</ul>'
+                : '<p class="culture-card__desc">No mythology defined.</p>';
+        } else if (tabId === 'characters') {
+            var chars = [];
+            try {
+                chars = window.CultureQueries
+                    ? window.CultureQueries.getCharactersForCulture(culture.id)
+                    : [];
+            } catch (e) { /* ignore */ }
+            summary = chars.length > 0
+                ? '<p class="culture-card__desc">' + chars.length + ' character(s) assigned.</p>'
+                : '<p class="culture-card__desc">No characters assigned.</p>';
+        } else if (tabId === 'names') {
+            summary = '<p class="culture-card__desc">' +
+                'Names are managed through the culture editor modal. ' +
+                'Open the editor to add male names, female names, surnames, ' +
+                'and surname rules.</p>';
+        }
+
+        container.innerHTML =
+            '<div class="culture-card">' +
+            '<div class="culture-card__header">' +
+            '<div class="culture-card__label">' + escapeHtml(tabLabel) + '</div>' +
+            '</div>' +
+            summary +
+            '<div style="display:flex;gap:8px;margin-top:12px;">' +
+            '<button type="button" class="rt-btn rt-btn--primary" id="ct_preview_edit">' +
+            'Open ' + escapeHtml(tabLabel) + ' Editor</button>' +
+            '</div>' +
+            '</div>';
+
+        var editBtn = document.getElementById('ct_preview_edit');
+        if (editBtn) {
+            editBtn.addEventListener('click', function () {
+                openEditor(culture.id, tabId);
+            });
+        }
+    }
+
+    function setEmptyState(container, message) {
+        container.innerHTML = '<div class="empty-state">' +
+            '<div class="message">' + escapeHtml(message) + '</div>' +
+            '</div>';
+    }
+
+    // -----------------------------------------------------------------
+    // Open the composite editor modal
+    // -----------------------------------------------------------------
+    function openEditor(cultureId, initialTab) {
+        if (!window.CultureEditorTabs
+            || typeof window.CultureEditorTabs.openEditor !== 'function') {
+            window.alert('Culture editor is not loaded. Check that ' +
+                'js/tabs/culture-editor-tab.js and the four tab files loaded.');
+            return;
+        }
+        window.CultureEditorTabs.openEditor(cultureId, {
+            initialTab: initialTab || 'appearance',
+            onSave: function (updated) {
+                renderCultureList();
+                if (updated && updated.id === selectedCultureId) {
+                    renderActiveTab();
+                }
+            },
+            onCancel: function () {
+                // Nothing to do — the editor discarded its working copy.
+            }
+        });
+    }
+
+    // -----------------------------------------------------------------
+    // Create / edit culture (uses culture-modals.js)
+    // -----------------------------------------------------------------
+    function openCreateCulture() {
+        if (typeof window.openCreateCultureModal !== 'function') {
+            window.alert('Create Culture modal not loaded (modals-culture.js).');
+            return;
+        }
+        window.openCreateCultureModal({
+            onSuccess: function (newCulture) {
+                renderCultureList();
+                if (newCulture && newCulture.id) {
+                    selectCulture(newCulture.id);
                 }
             }
         });
+    }
 
-        // Create culture button
-        var createBtn = document.getElementById('createCultureBtn');
-        if (createBtn) {
-            createBtn.addEventListener('click', function() {
-                openCreateCultureModal(function(culture) {
-                    refreshCultureList();
-                    selectedCultureId = culture.id;
-                    refreshCultureList();
-                    switchTab('details');
-                });
-            });
+    function openEditCulture(id) {
+        if (typeof window.openEditCultureModal !== 'function') {
+            window.alert('Edit Culture modal not loaded (modals-culture.js).');
+            return;
         }
-
-        // Set year
-        var setYearBtn = document.getElementById('setYearBtn');
-        if (setYearBtn) {
-            setYearBtn.addEventListener('click', function() {
-                var yearInput = document.getElementById('yearInput');
-                var val = parseInt(yearInput.value, 10);
-                if (!isNaN(val) && window.masterData) {
-                    window.masterData.data.currentYear = val;
-                    saveMasterData();
-                    showToast('Year set to ' + val, 'success');
+        window.openEditCultureModal(id, {
+            onSuccess: function (updated) {
+                renderCultureList();
+                if (updated && updated.id === selectedCultureId) {
+                    renderActiveTab();
                 }
-            });
-        }
+            }
+        });
+    }
 
-        // Export
-        var exportBtn = document.getElementById('exportBtn');
-        if (exportBtn) {
-            exportBtn.addEventListener('click', function() {
-                var data = window.masterData;
-                if (!data) { showToast('No data to export', 'error'); return; }
-                var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-                var url = URL.createObjectURL(blob);
-                var a = document.createElement('a');
-                a.href = url;
-                a.download = 'cultures_export_' + Date.now() + '.json';
-                a.click();
-                URL.revokeObjectURL(url);
-                showToast('Export complete', 'success');
-            });
-        }
+    if (createCultureBtn) {
+        createCultureBtn.addEventListener('click', openCreateCulture);
+    }
 
-        // Import
-        var importBtn = document.getElementById('importBtn');
-        var fileInput = document.getElementById('fileInput');
-        if (importBtn && fileInput) {
-            importBtn.addEventListener('click', function() { fileInput.click(); });
-            fileInput.addEventListener('change', function() {
-                var file = this.files[0];
-                if (!file) return;
-                var reader = new FileReader();
-                reader.onload = function(e) {
-                    try {
-                        var imported = JSON.parse(e.target.result);
-                        if (imported.data && imported.data.cultures) {
-                            window.masterData.data.cultures = imported.data.cultures;
-                            if (imported.data.nameLists) window.masterData.data.nameLists = imported.data.nameLists;
-                            if (imported.data.currentYear !== undefined) window.masterData.data.currentYear = imported.data.currentYear;
-                            saveMasterData();
-                            CultureState.refreshFromMasterData();
-                            refreshCultureList();
-                            selectedCultureId = null;
-                            switchTab('details');
-                            showToast('Import successful!', 'success');
-                        } else if (imported.cultures) {
-                            window.masterData.data.cultures = imported.cultures;
-                            saveMasterData();
-                            CultureState.refreshFromMasterData();
-                            refreshCultureList();
-                            selectedCultureId = null;
-                            switchTab('details');
-                            showToast('Import successful!', 'success');
-                        } else {
-                            showToast('Invalid file format', 'error');
-                        }
-                    } catch(err) {
-                        showToast('Invalid JSON: ' + err.message, 'error');
-                    }
-                };
-                reader.readAsText(file);
-                this.value = '';
-            });
-        }
+    // -----------------------------------------------------------------
+    // Sidebar toggle
+    // -----------------------------------------------------------------
+    function toggleSidebar() { if (sidebar) sidebar.classList.toggle('open'); }
+    function closeSidebar()  { if (sidebar) sidebar.classList.remove('open'); }
 
-        // Keyboard shortcuts
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') closeSidebar();
+    if (burgerBtn) burgerBtn.addEventListener('click', toggleSidebar);
+
+    document.addEventListener('click', function (e) {
+        if (window.innerWidth > 768) return;
+        if (!sidebar) return;
+        if (sidebar.contains(e.target)) return;
+        if (e.target === burgerBtn) return;
+        closeSidebar();
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeSidebar();
+    });
+
+    window.addEventListener('resize', function () {
+        if (window.innerWidth > 768) closeSidebar();
+    });
+
+    // -----------------------------------------------------------------
+    // Year
+    // -----------------------------------------------------------------
+    function syncYearInput() {
+        if (typeof window.getCurrentYear !== 'function') return;
+        try { yearInput.value = String(window.getCurrentYear()); } catch (e) {}
+    }
+
+    if (setYearBtn) {
+        setYearBtn.addEventListener('click', function () {
+            if (typeof window.isValidYear !== 'function') return;
+            var val = parseInt(yearInput.value, 10);
+            if (isNaN(val)) { window.alert('Enter a valid year.'); return; }
+            if (!window.isValidYear(val)) {
+                window.alert('Year is outside the allowed range.');
+                return;
+            }
+            if (window.masterData && window.masterData.data) {
+                window.masterData.data.currentYear = val;
+            }
+            if (typeof window.markDataDirty === 'function') window.markDataDirty();
+            if (typeof window.saveMasterData === 'function') window.saveMasterData();
+            renderActiveTab();
+        });
+    }
+
+    // -----------------------------------------------------------------
+    // Export / Import
+    // -----------------------------------------------------------------
+    if (exportBtn) {
+        exportBtn.addEventListener('click', function () {
+            if (typeof window.exportToJSON !== 'function') {
+                window.alert('Export module not available.'); return;
+            }
+            if (!window.masterData) {
+                window.alert('No data to export.'); return;
+            }
+            try { window.exportToJSON(window.masterData, 'stillwaters'); }
+            catch (e) { window.alert('Export failed: ' + (e.message || 'unknown')); }
+        });
+    }
+
+    if (importBtn && fileInput) {
+        importBtn.addEventListener('click', function () {
+            fileInput.value = '';
+            fileInput.click();
         });
 
-        // Select first culture if available
-        var cultures = CultureState.getAllCultures();
-        if (cultures.length > 0) {
-            selectedCultureId = cultures[0].id;
-            refreshCultureList();
-            renderCurrentTab(cultures[0]);
-        }
+        fileInput.addEventListener('change', function () {
+            var file = this.files && this.files[0];
+            if (!file) return;
 
-        // Show toast with culture count
-        var count = CultureState.getCultureCount();
-        if (count > 0) {
-            // Don't show toast on load - just log
+            var reader = new FileReader();
+            reader.onload = function (ev) {
+                try {
+                    var parsed = JSON.parse(ev.target.result);
+                    var dataToInstall = null;
+                    if (parsed && parsed.data && parsed.data.cultures !== undefined) {
+                        dataToInstall = parsed.data;
+                    } else if (parsed && parsed.cultures !== undefined) {
+                        dataToInstall = parsed;
+                    } else if (parsed && parsed.data) {
+                        dataToInstall = parsed.data;
+                    }
+                    if (!dataToInstall) {
+                        window.alert('Unrecognized import format.');
+                        return;
+                    }
+
+                    if (typeof window.normalizeMasterData !== 'function') {
+                        window.alert('Schema module not available; cannot import.');
+                        return;
+                    }
+
+                    window.masterData = window.normalizeMasterData({
+                        schemaVersion: window.STORAGE_SCHEMA_VERSION,
+                        savedAt: new Date().toISOString(),
+                        data: dataToInstall
+                    });
+
+                    if (typeof window.invalidateAccessorCaches === 'function') {
+                        window.invalidateAccessorCaches();
+                    }
+                    if (typeof window.markDataDirty === 'function') window.markDataDirty();
+                    if (typeof window.saveMasterData === 'function' && !window.saveMasterData()) {
+                        window.alert('Save failed after import.'); return;
+                    }
+
+                    // Re-hydrate every index the culture system reads.
+                    if (window.CultureBootstrap
+                        && typeof window.CultureBootstrap.init === 'function') {
+                        try { window.CultureBootstrap.init(); } catch (e) {}
+                    }
+                    if (window.ReligionBootstrap
+                        && typeof window.ReligionBootstrap.init === 'function') {
+                        try { window.ReligionBootstrap.init(); } catch (e) {}
+                    }
+                    if (window.LocationBootstrap
+                        && typeof window.LocationBootstrap.init === 'function') {
+                        try { window.LocationBootstrap.init(); } catch (e) {}
+                    }
+
+                    selectedCultureId = null;
+                    syncYearInput();
+                    renderCultureList();
+                    pickInitialSelection();
+
+                    window.alert('Import complete.');
+                } catch (err) {
+                    window.alert('Invalid JSON: ' + err.message);
+                }
+            };
+            reader.onerror = function () {
+                window.alert('Failed to read file.');
+            };
+            reader.readAsText(file);
+            this.value = '';
+        });
+    }
+
+    // -----------------------------------------------------------------
+    // Cross-tab reload
+    // -----------------------------------------------------------------
+    if (typeof window.addEventListener === 'function') {
+        window.addEventListener('masterDataUpdated', function () {
+            renderCultureList();
+            if (selectedCultureId) renderActiveTab();
+        });
+    }
+
+    // -----------------------------------------------------------------
+    // Utilities
+    // -----------------------------------------------------------------
+    function escapeHtml(value) {
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(value);
+        if (value === null || value === undefined) return '';
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    // -----------------------------------------------------------------
+    // Init
+    // -----------------------------------------------------------------
+    function onDomReady(fn) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', fn);
         } else {
-            // Empty state already showing
+            fn();
         }
     }
 
-    // =============================================================
-    // 12. CREATE CULTURE MODAL
-    // =============================================================
-
-    function openCreateCultureModal(onSuccess) {
-        var modalContent =
-            '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
-            '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;font-size:0.65rem;color:var(--dim);">' +
-            'Create a new culture with appearance templates and mythology.' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label>Name *</label>' +
-            '<input type="text" id="createCultureName" placeholder="e.g., Nordic, Mediterranean" autofocus>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label>Display Name</label>' +
-            '<input type="text" id="createCultureDisplayName" placeholder="e.g., Nordic Peoples">' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label>Icon</label>' +
-            '<select id="createCultureIcon">' +
-            '<option value="✦">✦</option>' +
-            '<option value="★">★</option>' +
-            '<option value="◈">◈</option>' +
-            '<option value="⚜">⚜</option>' +
-            '<option value="☀">☀</option>' +
-            '<option value="🌙">🌙</option>' +
-            '</select>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label>Description</label>' +
-            '<textarea id="createCultureDescription" rows="2" placeholder="Describe this culture..."></textarea>' +
-            '</div>' +
-
-            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
-            'You can add appearance options and mythology after creation.' +
-            '</div>' +
-            '</div>';
-
-        var modal = document.createElement('div');
-        modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.8);';
-
-        modal.innerHTML =
-            '<div style="position:relative;background:var(--bg2);border-radius:12px;max-width:500px;width:90%;max-height:85vh;overflow-y:auto;border:1px solid var(--border);">' +
-            '<div style="padding:16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">' +
-            '<h3 style="margin:0;font-size:0.9rem;">Create Culture</h3>' +
-            '<button class="modal-close-btn" style="background:none;border:none;color:var(--dim);font-size:1.2rem;cursor:pointer;padding:4px 8px;">✕</button>' +
-            '</div>' +
-            '<div style="padding:16px;">' + modalContent + '</div>' +
-            '<div style="padding:16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;">' +
-            '<button class="btn" id="createCancelBtn">Cancel</button>' +
-            '<button class="btn primary" id="createConfirmBtn">Create</button>' +
-            '</div>' +
-            '</div>';
-
-        document.body.appendChild(modal);
-
-        var closeModal = function() {
-            if (modal.parentNode) modal.remove();
-        };
-
-        modal.querySelector('.modal-close-btn').addEventListener('click', closeModal);
-
-        var cancelBtn = document.getElementById('createCancelBtn');
-        if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
-
-        var confirmBtn = document.getElementById('createConfirmBtn');
-        if (confirmBtn) {
-            confirmBtn.addEventListener('click', function() {
-                var name = document.getElementById('createCultureName').value.trim();
-                var displayName = document.getElementById('createCultureDisplayName').value.trim();
-                var icon = document.getElementById('createCultureIcon').value;
-                var description = document.getElementById('createCultureDescription').value.trim();
-
-                if (!name) {
-                    showToast('Culture name is required', 'error');
-                    return;
-                }
-
-                var result = CultureCommands.createCulture({
-                    name: name,
-                    displayName: displayName || name,
-                    icon: icon,
-                    description: description,
-                    notes: 'Created manually'
-                });
-
-                if (result && result.success) {
-                    showToast('Created: ' + name, 'success');
-                    closeModal();
-                    if (onSuccess) onSuccess(result.data);
-                } else {
-                    showToast('Failed to create: ' + (result ? result.reason : 'Unknown error'), 'error');
-                }
-            });
-        }
-
-        // Enter key to submit
-        var nameInput = document.getElementById('createCultureName');
-        if (nameInput) {
-            nameInput.addEventListener('keydown', function(e) {
-                if (e.key === 'Enter') {
-                    var btn = document.getElementById('createConfirmBtn');
-                    if (btn) btn.click();
-                }
-            });
-            setTimeout(function() { nameInput.focus(); }, 100);
-        }
-    }
-
-    // =============================================================
-    // 13. START
-    // =============================================================
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        setTimeout(init, 50);
-    }
-
-    // Listen for culture data changes
-    window.addEventListener('cultureDataChanged', function() {
-        refreshCultureList();
-    });
+    onDomReady(bootstrap);
 
 })();
 </script>
