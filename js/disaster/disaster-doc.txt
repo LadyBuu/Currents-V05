@@ -1,34 +1,1769 @@
-# Disaster System — Domain Documentation
+================================================================================
+STILL WATERS — DISASTER SUBSYSTEM DOCUMENTATION AND LOAD ORDER
+================================================================================
 
-Version: 3.0 (refactor complete)
-Replaces: `disaster-doc.txt`
-Owns: `disasters` on `masterData.data`
-Depends on: Settlement, Character, Household, Location, Education, Industry, Residence
+Scope of this document:
+  - Every disaster file provided in this batch (7 files):
+      js/core/disaster/disaster-constants.js
+      js/core/disaster/disaster-state.js
+      js/core/disaster/disaster-queries.js
+      js/core/disaster/disaster-damage.js
+      js/core/disaster/disaster-commands.js
+      js/core/disaster/disaster-view-models.js
+      js/core/disaster/disaster-ui-stats.js
+      js/core/disaster/modals-disaster.js
+      js/core/disaster/disaster-bootstrap.js
+  - Every core, character, location, settlement, education, industry,
+    household, and residence file the disaster subsystem depends on,
+    at LOAD time (module-level guards) or at CALL time (typeof-guarded
+    lookups), and how each is used.
+  - The cross-domain damage contract (disaster → settlement /
+    education / industry / household / residence).
+  - The load order across all disaster files, plus the invariants that
+    ordering enforces.
+  - Known hazards and behavioral contracts.
 
----
+Cross-references:
+  - disaster-doc.txt (narrative doc, v3.0; truncated in the supplied
+    batch at §2 "Load order:")
+  - stillwaters-docs.txt (core)
+  - character-doc.txt, household-doc.txt, industry docs (constituent
+    subsystems)
 
-## 1. Ownership contract
+This document is derived strictly from the supplied files. Anything not
+provable from the code is marked [UNVERIFIED]. Where disaster-doc.txt
+diverges from the supplied code, the code wins and the divergence is
+noted in PART 8 HAZARDS.
 
-The Disaster domain owns exactly one canonical array on `masterData.data`:
 
-| Array | Shape | Owner |
-|---|---|---|
-| `disasters` | `[{ id, year, disasterType, disasterId, locationId, locationName, severity, deaths, population, prosperityLoss, crimeIncrease, schoolsDestroyed, description, actualDeaths, metadata, createdAt, structuralDamage, featuresDestroyed, enterprisesDestroyed, residencesDemolished, householdsDestroyed, totalLoss }]` | Disaster |
+================================================================================
+PART 1 — LAYER STACK AND FILE CLASSIFICATION
+================================================================================
 
-Disaster **does not** own:
+The disaster subsystem sits above the settlement, character, household,
+location, education, industry, and residence domains. It orchestrates
+them; it does not own them.
 
-| Data | Owner | Read via | Written via |
-|---|---|---|---|
-| Settlement (prosperity, crime rate, features, civil laws) | Settlement | `SettlementQueries.getSettlementData`, `SettlementFeatureQueries.getFeatureById` | `modifySettlementProsperity`, `modifySettlementCrimeRate`, `SettlementFeatureCommands.demolishFeature` |
-| Character identity and death | Character | `getCharacterById`, `getCharacters`, `getCurrentLocation` | `killCharacter` |
-| Household membership, wealth, residence link | Household | `HouseholdState.getHouseholdsByLocation` | `HouseholdCommands.demolishHousehold` |
-| Places and locations | Location | `getPlaceById`, `getPlaces`, `getAllSubLocationIds`, `getLocationPopulationCount` | — |
-| Educational institutions | Education | `EducationState.getInstitutionsByLocation` | `EducationCommands.demolishInstitution` |
-| Enterprises | Industry | `IndustryState.getEnterprisesByLocation` | `IndustryCommands.demolishEnterprise` |
-| Residences | Residence | `ResidenceSystem.getResidencesByLocation` | `ResidenceSystem.demolishResidence` |
+  CONSTANTS (leaf)
+    js/core/disaster/disaster-constants.js
 
-Cross-domain **writes** go through the owning domain's commands. Cross-domain **reads** go through the owning domain's queries or state reads for the reads the domain exposes publicly. Disaster code never writes into another domain's canonical arrays.
+  STATE (canonical in-memory store for disasters)
+    js/core/disaster/disaster-state.js
 
----
+  QUERIES (semantic reads over DisasterState)
+    js/core/disaster/disaster-queries.js
 
-## 2. Load order
+  DAMAGE (structural damage coordinator; orchestrates into the owning
+          domains' commands)
+    js/core/disaster/disaster-damage.js
+
+  COMMANDS (single write boundary for disaster lifecycle; cross-domain
+            effect orchestration)
+    js/core/disaster/disaster-commands.js
+
+  VIEW MODELS (presentation shaping)
+    js/core/disaster/disaster-view-models.js
+
+  UI STATS (renderers over view models)
+    js/core/disaster/disaster-ui-stats.js
+
+  MODALS (input gathering + command invocation)
+    js/core/disaster/modals-disaster.js
+
+  BOOTSTRAP (verification + hydration + diagnostics + namespace)
+    js/core/disaster/disaster-bootstrap.js
+
+Dependency direction:
+
+  constants
+      |
+      v
+  state
+      |
+      v
+  queries, view-models
+      |
+      v
+  damage   (uses state; calls into cross-domain commands)
+      |
+      v
+  commands (uses state, damage)
+      |
+      v
+  modals, ui-stats (use queries + view-models + commands)
+      |
+      v
+  bootstrap
+
+
+================================================================================
+PART 2 — DEPENDENCIES
+================================================================================
+
+Terminology:
+  REQUIRED (load-time)   module-level guard throws if missing at load.
+  REQUIRED (call-time)   function throws/refuses if missing at call.
+  OPTIONAL               module checks and falls back.
+
+Cross-domain references:
+  [core]         js/core/...
+  [character]    js/character/...
+  [household]    js/households/...
+  [industry]     js/core/industry/...
+  [settlement]   js/settlement/...
+  [education]    js/systems/education/...
+  [time]         js/core/time.js
+  [storage]      js/core/storage.js
+  [accessors]    js/core/accessors.js
+  [ids]          js/core/ids.js
+  [random]       js/core/randomness.js
+  [formatting]   js/core/formatting.js
+  [icons]        js/core/icons.js
+  [ui]           js/core/ui.js
+  [modals]       js/core/modals-core.js
+  [event]        js/events/eventLogger.js
+  [world]        js/core/world.js
+
+
+--------------------------------------------------------------------------------
+2.1 CONSTANTS — disaster-constants.js
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-constants.js
+    Owns: window.DisasterConstants.
+
+    Exports (frozen catalogs):
+      DISASTER_TYPES          — 12 types (earthquake, tsunami, volcano,
+                                 fire, flood, hurricane, landslide, drought,
+                                 plague, famine, avalanche, tornado). Each
+                                 carries id, name, weight, severityRange,
+                                 desc, locationModifiers.
+      MASS_DEATH_TYPES        — plague, famine.
+      LOCATION_KEYWORDS       — terrain → keyword arrays.
+      SEVERITY_BANDS          — low, medium, high, critical.
+      DAMAGE_CATEGORIES       — features, schools, enterprises,
+                                 residences, households.
+      LOCATION_MODIFIER_BOUNDS — min 0.5, max 3.0.
+      CODES                   — stable error codes.
+      EVENTS                  — cross-domain CustomEvent names
+                                 (disasterAdded, disasterUpdated,
+                                 disasterDeleted).
+      STATE_EVENTS            — in-process publish names
+                                 (hydrated, cacheReloaded,
+                                 cacheInvalidated as legacy alias).
+      DAMAGE_CHANCE           — maxBaseChance 0.65,
+                                 maxAdjustedChance 0.9.
+      DISASTER_TYPE_DAMAGE_MULTIPLIERS — per disaster id.
+      DAMAGE_SYSTEM_MULTIPLIERS        — per damage category.
+      DAMAGE_ITEM_VALUES               — per damage category gold value.
+      DEFAULT_RANDOM_DISASTER_CHANCE   — 0.05.
+      DEFAULT_DISASTER                 — canonical empty record shape.
+
+    Helper functions (pure):
+      classifySeverity(severity) -> band string | null
+      getAllDisasterTypes() -> array copy
+      getDisasterTypeById(id) -> disaster type | null
+      isKnownDisasterType(id) -> boolean
+      getLocationKeywords(terrain) -> keyword array copy
+
+    Load-time dependencies: NONE.
+    Call-time dependencies: NONE.
+
+    Legacy aliases:
+      window.DISASTER_TYPES, window.MASS_DEATH_TYPES,
+      window.LOCATION_KEYWORDS, window.DEFAULT_DISASTER
+
+    Consumed by:
+      [load] disaster-state.js           (HARD — CODES, EVENTS,
+                                          STATE_EVENTS)
+      [load] disaster-queries.js         (HARD)
+      [load] disaster-damage.js          (HARD — CODES, DAMAGE_CHANCE,
+                                          DISASTER_TYPE_DAMAGE_MULTIPLIERS,
+                                          DAMAGE_SYSTEM_MULTIPLIERS,
+                                          DAMAGE_ITEM_VALUES)
+      [load] disaster-commands.js        (HARD — CODES, EVENTS)
+      [load] disaster-view-models.js     (HARD)
+      [load] modals-disaster.js          (HARD)
+      [load] disaster-ui-stats.js        (indirect via VM, Queries,
+                                          Modals)
+      [load] disaster-bootstrap.js       (HARD — via
+                                          window.DisasterConstants)
+
+    Contracts:
+      - Every catalog is frozen. Mutation throws in strict mode.
+      - Severity bands and their thresholds are the single source; no
+        other module re-derives them.
+      - Icon fields are intentionally absent from the catalog. The UI
+        resolves icons by disaster id via disaster-view-models'
+        disasterIconName (currently CIRCLE_DOT for every type; a future
+        revision can add per-type icons without changing the catalog).
+
+
+--------------------------------------------------------------------------------
+2.2 STATE — disaster-state.js
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-state.js
+    Owns: window.DisasterState.
+
+    Exports:
+      hydrateFromMasterData(force?), _initialize
+      validateIntegrity()
+      getDisaster, getAllDisasters, getDisastersByLocation,
+      getDisastersInYearRange, getDisasterCount, getDisasterTypeCount
+      _getDisasterCanonical, _getAllDisastersCanonical,
+      _getDisastersByLocationCanonical
+      addDisaster, updateDisaster, deleteDisaster
+      subscribe
+      reload, invalidateCache
+
+    Load-time dependencies:
+      window.DisasterConstants           — HARD (CODES, EVENTS,
+                                            STATE_EVENTS)
+      window.generateId                  — HARD
+      window.markDataDirty               — HARD
+      window.getCurrentYearSafe          — HARD
+
+    Call-time dependencies:
+      window.masterData                  — required at hydrate.
+
+    Consumed by:
+      [load] disaster-queries.js         (HARD)
+      [load] disaster-damage.js          (HARD)
+      [load] disaster-commands.js        (HARD)
+      [load] disaster-bootstrap.js       (HARD)
+
+    Contracts:
+      - Canonical array lives on masterData.data.disasters. State does
+        not own it.
+      - hydrateFromMasterData is transactional: duplicate ids throw.
+      - Public reads return clones. _get*Canonical returns live records
+        and is reserved for commands (and disaster-damage during a
+        command's call stack).
+      - Mutation primitives call window.markDataDirty but never save,
+        never dispatch CustomEvents. Commands own the commit tail.
+      - Structural damage normalisation: every record carries a
+        structuralDamage object with the five arrays (features, schools,
+        enterprises, residences, households). Missing sub-objects are
+        healed during hydration. The convenience top-level mirrors
+        (featuresDestroyed, etc.) are kept aligned with
+        structuralDamage on every mutation.
+      - Recursion guard (_mutatingState) wraps the mutation primitives
+        (addDisaster, updateDisaster, deleteDisaster) only. Public reads
+        ignore it.
+      - reload() emits both STATE_EVENTS.CACHE_RELOADED and the legacy
+        STATE_EVENTS.CACHE_INVALIDATED so subscribers keyed on either
+        name fire.
+      - validateIntegrity warns, does not throw.
+      - The state does NOT invalidate accessor caches. accessors.js does
+        not cache disasters, so no cache invalidation is required.
+        DisasterCommands.persist calls invalidateAccessorCaches after
+        save; see §2.5.
+
+
+--------------------------------------------------------------------------------
+2.3 QUERIES — disaster-queries.js
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-queries.js
+    Owns: window.DisasterQueries.
+
+    Exports:
+      Basic reads: getDisaster, getAllDisasters, getDisastersByLocation,
+                   getDisastersInYearRange, getDisasterCount,
+                   getDisasterTypeCount
+      Statistics: getDisasterStats, getDisasterTypeDistribution,
+                  getDisasterSeverityStats, getMostRecentDisaster,
+                  getDeadliestDisasters, getLocationDisasterRisk
+      Destruction: getDestructionStatistics, getDestroyedItems,
+                   getLocationDestroyedItems,
+                   getGlobalDestructionStatistics,
+                   getDisasterTypeDestructionStats
+
+    Load-time dependencies:
+      window.DisasterConstants           — HARD
+      window.DisasterState               — HARD
+
+    Call-time dependencies:
+      window.getPlaceById                — optional; missing → location
+                                            labels degrade to id.
+      window.getPlaceName                — optional; same.
+
+    Consumed by:
+      [load] disaster-ui-stats.js        (HARD — six methods)
+      [load] modals-disaster.js          (HARD — four methods)
+      [load] disaster-bootstrap.js       (HARD — five methods)
+
+    Contracts:
+      - Observational only. No mutation, no persistence, no UI.
+      - Severity classification delegates entirely to
+        DisasterConstants.classifySeverity.
+      - Missing settlement / location → return null.
+      - Empty query results → return { total: 0, ... } with empty
+        sub-aggregates, or [] for list queries.
+      - Location name resolution is best-effort. If neither
+        getPlaceById nor getPlaceName is available, the raw locationId
+        is returned where a name would go.
+
+
+--------------------------------------------------------------------------------
+2.4 DAMAGE — disaster-damage.js
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-damage.js
+    Owns: window.DisasterDamage.
+
+    Exports:
+      applyStructuralDamage(locationId, disaster, options?)
+      getDamageSummary(disasterId)
+      getDestructionList(disasterId, type?)
+      getLocationDestruction(locationId, options?)
+      _calculateDestructionChance(severity)
+      _selectItemsToDestroy(items, baseChance, disaster, systemMultiplier)
+
+    Load-time dependencies:
+      window.DisasterConstants           — HARD (CODES, DAMAGE_CHANCE,
+                                            DISASTER_TYPE_DAMAGE_MULTIPLIERS,
+                                            DAMAGE_SYSTEM_MULTIPLIERS,
+                                            DAMAGE_ITEM_VALUES)
+      window.DisasterState               — HARD
+
+    Call-time dependencies (checked via _isLoaded* helpers):
+      window.SettlementQueries.getSettlementData
+      window.SettlementFeatureCommands.demolishFeature
+      window.SettlementFeatureQueries.getFeatureById
+      window.EducationState.getInstitutionsByLocation
+      window.EducationCommands.demolishInstitution
+      window.IndustryState.getEnterprisesByLocation
+      window.IndustryCommands.demolishEnterprise
+      window.HouseholdState.getHouseholdsByLocation
+      window.HouseholdCommands.demolishHousehold
+      window.ResidenceSystem.getResidencesByLocation
+      window.ResidenceSystem.demolishResidence
+
+      Each of these is OPTIONAL. A missing system causes that damage
+      category to be SKIPPED (not error), and the report's `errors`
+      array records only actual failures, not skipped systems.
+
+    Consumed by:
+      [load] disaster-commands.js        (HARD — applyStructuralDamage)
+
+    Contracts:
+      - Coordinator, not a command. Calls the owning domain's commands
+        for each destruction. Each destruction is that domain's own
+        transaction. This module does NOT commit the aggregate; the
+        caller (DisasterCommands.applyDisasterEffects) commits.
+      - Randomness: uses Math.random() directly in
+        _selectItemsToDestroy. This is the ONLY disaster file that
+        calls Math.random. See HAZARDS §3.
+      - _saveDamageRecord persists the damage report back onto the
+        disaster via State.updateDisaster. If the disaster has no id
+        (never recorded), the update is skipped — legitimate when the
+        damage coordinator is called on an in-flight record before
+        DisasterCommands records it.
+      - DisasterCommands.applyDisasterEffects ALSO calls
+        State.updateDisaster to write the same structural damage
+        payload. See HAZARDS §4 for the double-write.
+      - The `options.demolishHouseholds` flag controls whether
+        household destruction runs. Defaults to false (households
+        survive disasters unless the caller opts in).
+
+
+--------------------------------------------------------------------------------
+2.5 COMMANDS — disaster-commands.js
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-commands.js
+    Owns: window.DisasterCommands.
+
+    Exports:
+      Generation:  generateDisaster, generateDisasterDescription,
+                   getDisasterLocationModifier
+      Effects:     applyDisasterEffects, applyDisasterSettlementEffects,
+                   applyDisasterCrimeEffect
+      Workflows:   triggerPlague, triggerFamine, triggerDisaster
+      Simulation:  simulateRandomDisaster
+      Persistence: persist
+
+    Load-time dependencies (HARD — throws if any is missing):
+      window.DisasterConstants           (CODES, EVENTS)
+      window.DisasterState
+      window.DisasterDamage
+      window.getCurrentYearSafe
+      window.generateId
+      window.markDataDirty
+      window.killCharacter
+      window.logEvent
+      window.getCharacterById
+      window.getCharacters
+      window.getPlaceById
+      window.getPlaces
+      window.getLocationPopulationCount
+      window.getAllSubLocationIds
+      window.getCurrentLocation
+      window.chance
+      window.randomInt
+      window.pickRandom
+      window.pickWeighted
+      window.modifySettlementProsperity
+      window.modifySettlementCrimeRate
+      window.SettlementQueries.getSettlementData
+      window.SettlementFeatureCommands.demolishFeature
+
+    Optional dependencies: NONE at load. DisasterCommands does NOT
+      verify EducationCommands / IndustryCommands / HouseholdCommands /
+      ResidenceSystem directly; those are verified by DisasterDamage
+      through its own _isLoaded* checks. DisasterCommands reaches them
+      indirectly via DisasterDamage.applyStructuralDamage.
+
+    Consumed by:
+      [load] modals-disaster.js          (HARD — triggerDisaster,
+                                          persist)
+      [load] disaster-bootstrap.js       (HARD — 6 required methods)
+
+    Contracts:
+      - Orchestration layer: validate → resolve → generate → record →
+        apply effects → commit → return.
+      - Result shape: { success: true, data } | { success: false,
+        reason, code? }. Codes come from DisasterConstants.CODES.
+      - Commit tail (_commit): State.hydrateFromMasterData(true) →
+        markDataDirty → State.publish → dispatch CustomEvent.
+      - No saveMasterData inside a command. Persistence is
+        DisasterCommands.persist(), called by the UI once per modal
+        action.
+      - Cross-domain effects go through the owning domain's public
+        command API. DisasterCommands never writes into another
+        domain's canonical arrays.
+      - Characters are killed via killCharacter(char, year,
+        disasterType, { disasterId, disasterType }). This is the
+        CANONICAL death signature required by the crime domain and
+        other cross-domain code.
+      - Victims are collected at the disaster's location and all
+        sub-locations (via getAllSubLocationIds). Characters are
+        matched by current location.
+      - generateDisaster is PURE (does not persist, does not apply
+        effects). triggerPlague / triggerFamine / triggerDisaster call
+        generate → record → effects → commit.
+      - applyDisasterEffects orchestrates:
+          1. Settlement prosperity loss (modifySettlementProsperity).
+          2. Settlement crime increase (modifySettlementCrimeRate).
+          3. Character deaths (_getCharactersAtLocation + _killVictims).
+          4. Structural damage (DisasterDamage.applyStructuralDamage
+             with demolishHouseholds: true).
+        Steps 1, 2, and 3 are best-effort: exceptions are logged, the
+        command proceeds. Step 4 is called if DisasterDamage is present;
+        failures there are logged, the command proceeds.
+      - simulateRandomDisaster picks a populated location by
+        population-weighted selection, then calls triggerDisaster with
+        a random type and applyEffects: true.
+
+
+--------------------------------------------------------------------------------
+2.6 VIEW MODELS — disaster-view-models.js
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-view-models.js
+    Owns: window.DisasterViewModels.
+
+    Exports:
+      Formatters: formatYear, formatNumber, formatSeverity,
+                  formatSeverityBand, severityBandColorToken,
+                  damageCategoryLabel, damageCategoryColorToken
+      Icon name:  disasterIconName (currently CIRCLE_DOT for every type)
+      Disaster:   toDisasterListItem, toDisasterListItems,
+                  toDisasterDetailsViewModel,
+                  toStructuralDamageViewModel
+      Destruction: toDestructionRow, toDestructionRows
+      Statistics: toDisasterStatsViewModel, toSeverityStatsViewModel,
+                  toRiskViewModel, toDestructionStatsViewModel
+      Modal:      toCreateDisasterModalViewModel
+
+    Load-time dependencies:
+      window.DisasterConstants           — HARD
+
+    Call-time dependencies: NONE.
+
+    Consumed by:
+      [load] disaster-ui-stats.js        (HARD — many)
+      [load] modals-disaster.js          (HARD — many)
+      [load] disaster-bootstrap.js       (indirect)
+
+    Contracts:
+      - Pure. No DOM. No state. No queries. No commands. Every function
+        takes its input as an argument.
+      - Icon names only, not icons. The UI resolves via _getIcon.
+      - Severity band labels (Minor/Moderate/Severe/Catastrophic) come
+        from this module's formatSeverityBand. The thresholds live in
+        DisasterConstants.classifySeverity.
+      - Color tokens are named CSS variables (success, accent, warn,
+        danger, dim). The UI resolves var(--token).
+      - toCreateDisasterModalViewModel takes currentYear explicitly;
+        this module never calls getCurrentYearSafe.
+
+
+--------------------------------------------------------------------------------
+2.7 UI STATS — disaster-ui-stats.js
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-ui-stats.js
+    Owns: window.DisasterStatsUI.
+
+    Exports:
+      renderStatsPanel(containerOrId, locationId)
+      renderDisasterList(containerOrId, disasters, options)
+      renderDisasterChart(containerOrId, data, type)
+      renderRiskIndicator(containerOrId, locationId)
+      renderDestructionStats(containerOrId, locationId)
+      renderDestroyedItems(containerOrId, disasterId, category?)
+      refreshAll(locationId)
+
+    Load-time dependencies:
+      window.DisasterViewModels         — HARD
+      window.DisasterQueries            — HARD
+      window.DisasterModals             — HARD
+      window._escapeHtml                — HARD
+      window._getIcon                   — HARD
+
+    Call-time dependencies:
+      window.getPlaceName, window.getPlaceById
+                                        — optional; missing → location
+                                          labels degrade to id.
+      document.getElementById           — via _resolveContainer
+
+    Consumed by: any page that renders disaster panels.
+
+    Contracts:
+      - Renderers consume DisasterViewModels shapes; they do not call
+        DisasterQueries directly for presentation data. They call
+        Queries for raw reads and pass the results through VM.
+      - Icon lookups route through _getIcon + VM.disasterIconName. No
+        emoji, no inline Unicode.
+      - No inline severity thresholds, band labels, or damage category
+        labels. All from VM.
+      - No _processingRender guard. Rendering is synchronous.
+      - Every render function catches its own exceptions, logs them,
+        and returns false. Silent failure is prohibited.
+      - refreshAll uses DOM discovery by class (.disaster-stats-panel,
+        .disaster-list, .disaster-risk-indicator,
+        .destruction-stats-panel). Callers that mount dynamically should
+        consider a render registry, but current callers locate by id.
+
+
+--------------------------------------------------------------------------------
+2.8 MODALS — modals-disaster.js
+--------------------------------------------------------------------------------
+
+  js/core/disaster/modals-disaster.js
+    Owns: window.DisasterModals.
+
+    Exports:
+      openCreateDisasterModal(options?)
+      openDisasterDetailsModal(disasterId)
+      openDestroyedItemsModal(disasterId)
+      openDisasterStatsModal(locationId?)
+
+    Load-time dependencies:
+      window.DisasterConstants          — HARD
+      window.DisasterCommands           — HARD
+      window.DisasterQueries            — HARD
+      window.DisasterViewModels         — HARD
+      window.openModal                  — HARD
+      window.closeTopModal              — HARD
+      window._escapeHtml                — HARD
+      window._getIcon                   — HARD
+      window._showToast                 — HARD
+      window.getFilteredLocationOptions — HARD
+      window.getCurrentYearSafe         — HARD
+      window.getPlaceById               — HARD
+
+    Call-time dependencies: NONE beyond the load-time guards.
+
+    Consumed by:
+      [load] disaster-ui-stats.js       (HARD — three methods used by
+                                          _attachDisasterListHandlers /
+                                          _openDestructionModal)
+      [load] disaster-bootstrap.js      (indirect — not verified)
+
+    Contracts:
+      - Modals gather input, call commands, render view models.
+      - Modals persist ONCE per modal action via _commitAndPersist,
+        which calls DisasterCommands.persist and toasts on failure.
+      - Modals do NOT mutate disaster records directly.
+      - No inline category labels (VM.damageCategoryLabel is the
+        source). Modals use _escape on displayed data.
+      - Each modal's onConfirm signature is
+        (root) => boolean. Returning false keeps the modal open.
+
+
+--------------------------------------------------------------------------------
+2.9 BOOTSTRAP — disaster-bootstrap.js
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-bootstrap.js
+    Owns: window.DisasterBootstrap and window.Disaster.
+
+    Exports:
+      DisasterBootstrap.init(), DisasterBootstrap.reinit()
+      window.Disaster — consolidated namespace
+        { constants, state, queries, commands, damage }
+
+    Load-time dependencies: NONE — verification runs at init().
+
+    Verified at init (throws on missing):
+
+      Globals (HARD):
+        generateId, getCurrentYearSafe, markDataDirty, saveMasterData,
+        logEvent, killCharacter, chance, randomInt, pickRandom,
+        pickWeighted, getCharacterById, getCharacters, getPlaceById,
+        getPlaces, getLocationPopulationCount, getAllSubLocationIds,
+        getCurrentLocation.
+
+      Globals (warn if missing):
+        invalidateAccessorCaches — warns once; commands degrade to
+                                   not-invalidating.
+
+      Disaster modules (HARD):
+        DisasterConstants, DisasterState, DisasterQueries,
+        DisasterCommands.
+        DisasterDamage — optional; verified if present.
+        Spot-checked methods:
+          DisasterState.getDisaster, getAllDisasters,
+          getDisastersByLocation, addDisaster, updateDisaster,
+          deleteDisaster, subscribe
+          DisasterQueries.getDisaster, getDisasterStats,
+          getDisasterSeverityStats, getLocationDisasterRisk,
+          getDestructionStatistics
+          DisasterCommands.generateDisaster, applyDisasterEffects,
+          triggerDisaster, triggerPlague, triggerFamine,
+          simulateRandomDisaster
+
+    Optional cross-domain verification (warn-once if module missing;
+      hard-throw if module present but method missing):
+      SettlementFeatureCommands.demolishFeature
+      SettlementQueries.getSettlementData
+      EducationCommands.demolishInstitution
+      IndustryCommands.demolishEnterprise
+      HouseholdCommands.demolishHousehold
+      ResidenceSystem.demolishResidence
+
+    Canonical shape verification:
+      masterData.data.disasters must be an array or absent.
+
+    Hydration:
+      DisasterState.hydrateFromMasterData(true) if available.
+      DisasterState._initialize() otherwise.
+      Throws if neither is present.
+
+    Integrity:
+      DisasterState.validateIntegrity() if available. Throws from
+      validateIntegrity are caught and logged (warn-only policy).
+
+    Consumed by: the application bootstrap (auto-init at load if
+      masterData exists; explicit init() otherwise).
+
+    Contracts:
+      - init() is idempotent: returns { success: true,
+        alreadyInitialized: true } on second call.
+      - Optional cross-domain module present-but-broken is a HARD
+        failure. Absent-entirely is a warn. This mirrors the
+        damage coordinator's runtime policy.
+      - Auto-init at load wraps init() in try/catch so a broken
+        dependency surfaces as a console.error, not an uncaught
+        load-time exception. Explicit init() still throws.
+      - The bootstrap does NOT listen for masterDataUpdated. Callers
+        that reload masterData must call reinit() explicitly.
+        (The household and industry bootstraps DO listen; the disaster
+        bootstrap does not. See HAZARDS §8.)
+
+
+================================================================================
+PART 3 — THE DISASTER → OTHER-DOMAIN DAMAGE CONTRACT
+================================================================================
+
+The disaster domain owns exactly ONE canonical collection: the
+masterData.data.disasters array. Every other interaction with the world
+is through another domain's public command or query surface.
+
+THE FIVE DAMAGE CATEGORIES
+--------------------------
+
+  Category        Owning domain        Read via                        Write via
+  ---------------------------------------------------------------------------
+  features        Settlement           SettlementQueries              SettlementFeatureCommands
+                                       .getSettlementData +           .demolishFeature
+                                       SettlementFeatureQueries
+                                       .getFeatureById
+  schools         Education            EducationState                 EducationCommands
+                                       .getInstitutionsByLocation     .demolishInstitution
+  enterprises     Industry             IndustryState                  IndustryCommands
+                                       .getEnterprisesByLocation      .demolishEnterprise
+  residences      Residence            ResidenceSystem                ResidenceSystem
+                                       .getResidencesByLocation       .demolishResidence
+  households      Household            HouseholdState                 HouseholdCommands
+                                       .getHouseholdsByLocation       .demolishHousehold
+
+Every destruction is that owning domain's OWN transaction. The disaster
+domain does not commit those transactions; it calls each owning domain's
+command, which owns its own persistence boundary (or, in the industry /
+household case, its own dirty-marking, with the caller handling the
+save — see CROSS-DOMAIN PERSISTENCE below).
+
+DAMAGE SELECTION
+----------------
+
+  DisasterDamage._selectItemsToDestroy applies:
+
+    adjustedChance =
+      (severity / 100) * DAMAGE_CHANCE.maxBaseChance
+      * DISASTER_TYPE_DAMAGE_MULTIPLIERS[disasterId]
+      * DAMAGE_SYSTEM_MULTIPLIERS[category]
+
+  clamped to DAMAGE_CHANCE.maxAdjustedChance.
+
+  Each item in the category is independently rolled against
+  adjustedChance.
+
+  IMPORTANT: this uses Math.random() directly. There is no
+  caller-supplied RNG. This is the only Math.random call in the
+  disaster subsystem. See HAZARDS §3.
+
+HOUSEHOLD PROTECTION
+--------------------
+
+  The household destroyer refuses to destroy "protected" households:
+    hasMembers && hasWealth (>= 20) && hasResidence.
+
+  Households that are already status === 'destroyed' are skipped.
+  The others are eligible.
+
+  Household destruction is OFF by default (demolishHouseholds option
+  defaults to false in applyStructuralDamage). DisasterCommands.
+  applyDisasterEffects explicitly passes demolishHouseholds: true.
+
+CROSS-DOMAIN PERSISTENCE
+------------------------
+
+  The disaster domain does NOT save on behalf of another domain.
+  Each destruction goes through the owning domain's command:
+
+    SettlementFeatureCommands.demolishFeature    -> its own dirty-flag;
+                                                    the caller flushes.
+    EducationCommands.demolishInstitution         -> its own dirty-flag.
+    IndustryCommands.demolishEnterprise           -> its own dirty-flag.
+    HouseholdCommands.demolishHousehold           -> its own dirty-flag.
+    ResidenceSystem.demolishResidence             -> its own dirty-flag.
+
+  DisasterCommands.persist (via saveMasterData) flushes EVERYTHING at
+  once, because saveMasterData writes the whole masterData envelope.
+
+  The consequence: calling DisasterCommands.persist() after
+  applyDisasterEffects saves the disaster record AND every cross-domain
+  change those commands made. This is intentional. Do NOT additionally
+  call another domain's persist() — that would produce a redundant
+  second save with nothing new to write.
+
+THE COMMIT TAIL
+---------------
+
+  DisasterCommands._commit:
+    1. DisasterState.hydrateFromMasterData(true) — rebuild indexes.
+    2. markDataDirty() — flag for next save.
+    3. DisasterState.publish(eventName, payload) — in-process
+       subscribers.
+    4. dispatchEvent(CustomEvent) — cross-domain consumers.
+
+  DisasterState's own mutation primitives (addDisaster, updateDisaster,
+  deleteDisaster) call markDataDirty but NOT publish, dispatch, or
+  hydrate. The commit is the command's job.
+
+WHAT DISASTER DOES NOT WRITE
+----------------------------
+
+  - character.deathYear, character.isDeceased, or any character field.
+    Character deaths go through killCharacter, which is CharacterCommands
+    territory.
+  - settlement.prosperity or settlement.crimeRate directly. These go
+    through modifySettlementProsperity / modifySettlementCrimeRate.
+  - household.status, household.members, household.residenceId, or any
+    household field directly. These go through HouseholdCommands.
+  - enterprise.status or enterprise.ownerType directly. These go
+    through IndustryCommands.demolishEnterprise.
+  - residence.isDemolished, residence.status, or any residence field
+    directly. These go through ResidenceSystem.demolishResidence.
+  - education institution records directly. These go through
+    EducationCommands.demolishInstitution.
+
+WHAT DISASTER DOES NOT READ DIRECTLY
+------------------------------------
+
+  All reads go through the owning domain's public query/state surface,
+  never through window.masterData.data.<domain>. The one exception is
+  DisasterState's own read of masterData.data.disasters (which it
+  owns).
+
+  Exception noted: DisasterState.hydrateFromMasterData reads
+  masterData.data.disasters directly (canonical). This is correct —
+  DisasterState owns that array.
+
+
+================================================================================
+PART 4 — LOAD ORDER
+================================================================================
+
+Derived from:
+  (a) module-level guard blocks;
+  (b) call-time window.X lookups in code;
+  (c) disaster-bootstrap's _verifyGlobals / _verifyDisasterModules /
+      _verifyOptionalCrossDomain / _verifyCanonical lists.
+
+The disaster subsystem MUST load AFTER every cross-domain prerequisite
+it verifies (see PART 2.9). The bootstrap's HARD guards throw if any
+prerequisite is missing.
+
+--------------------------------------------------------------------------------
+GROUP C1 — CORE CONSTANTS (leaf)
+--------------------------------------------------------------------------------
+
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+
+  Notes:
+    - Order within this block is unimportant.
+    - No disaster file reads these directly.
+
+--------------------------------------------------------------------------------
+GROUP C2 — CORE UTILITIES (leaf)
+--------------------------------------------------------------------------------
+
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  Notes:
+    - formatting.js: escapeHtml required at load by
+      modals-disaster.js (_escapeHtml) and disaster-ui-stats.js
+      (_escapeHtml).
+    - icons.js: Icons used at call time by modals-disaster.js and
+      disaster-ui-stats.js (_getIcon).
+    - ids.js: generateId required at load by disaster-state.js.
+    - randomness.js: chance, randomInt, pickRandom, pickWeighted
+      required at load by disaster-commands.js.
+
+--------------------------------------------------------------------------------
+GROUP C3 — CORE TIME
+--------------------------------------------------------------------------------
+
+  js/core/time.js
+
+  Notes:
+    - getCurrentYearSafe required at load by disaster-state.js,
+      disaster-commands.js, modals-disaster.js, and
+      disaster-bootstrap.js.
+    - isValidYear, calculateAge used at call time.
+
+--------------------------------------------------------------------------------
+GROUP C4 — CORE STORAGE
+--------------------------------------------------------------------------------
+
+  js/core/storage-schema.js
+    <- AFTER: js/core/time.js
+
+  js/core/storage.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/storage-schema.js
+
+  initializeStorage()               (function call)
+    <- AFTER: js/core/storage.js
+
+  js/core/accessors.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: initializeStorage()
+
+  Notes:
+    - storage.js provides saveMasterData and markDataDirty.
+    - accessors.js provides getCharacterById, getCharacters,
+      getPlaceById, getPlaces.
+    - initializeStorage() MUST run before any disaster file's first
+      hydrate.
+
+--------------------------------------------------------------------------------
+GROUP C5 — CORE WORLD, EVENT LOGGER, UI PRIMITIVES
+--------------------------------------------------------------------------------
+
+  js/core/world.js
+    <- AFTER: js/core/accessors.js
+    <- AFTER: js/core/time.js
+
+  js/events/eventLogger.js
+    <- AFTER: (no dependencies)
+
+  js/core/ui.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+
+  js/core/modals-core.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+
+  js/selectors/locationDropdown.js
+    <- AFTER: js/core/accessors.js
+    <- AFTER: js/core/world.js
+
+  Notes:
+    - world.js provides getCurrentLocation (used by
+      disaster-commands.js in _getCharactersAtLocation),
+      getAllSubLocationIds (requires getPlaces from accessors and
+      walks the hierarchy), and getLocationPopulationCount (required
+      global).
+    - eventLogger.js provides logEvent.
+    - ui.js provides _showToast (HARD load-time guard of
+      modals-disaster.js).
+    - modals-core.js provides openModal, closeTopModal.
+    - locationDropdown.js provides getFilteredLocationOptions (HARD
+      load-time guard of modals-disaster.js).
+
+--------------------------------------------------------------------------------
+GROUP C6 — CHARACTER PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/character/character-state.js
+  js/character/character-commands.js
+    <- AFTER: js/character/character-state.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/ids.js
+
+  js/character/character-queries.js
+  js/character/character-lifecycle.js
+    <- AFTER: js/character/character-state.js
+    <- AFTER: js/character/character-commands.js
+    <- AFTER: js/character/mortality-rules.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/randomness.js
+
+  Notes:
+    - character-lifecycle.js provides window.killCharacter (the
+      canonical death path). HARD load-time guard of
+      disaster-commands.js and HARD verification target of
+      disaster-bootstrap.js.
+    - The death signature is killCharacter(characterId, deathData) OR
+      killCharacter(character, year, reason, options). disaster-
+      commands.js uses the (char, year, disasterType, options) form.
+      See HAZARDS §5.
+
+--------------------------------------------------------------------------------
+GROUP C7 — SETTLEMENT PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/settlement/settlement-definitions.js
+  js/settlement/settlement-state.js
+  js/settlement/settlement-queries.js
+  js/settlement/settlement-feature-queries.js
+  js/settlement/settlement-feature-commands.js
+
+  Notes:
+    - SettlementQueries.getSettlementData is a HARD load-time guard of
+      disaster-commands.js and HARD verification target of
+      disaster-bootstrap.js.
+    - SettlementFeatureCommands.demolishFeature is a HARD load-time
+      guard of disaster-commands.js.
+    - SettlementFeatureQueries.getFeatureById is a CALL-TIME
+      dependency of disaster-damage.js (_destroySettlementFeatures
+      checks for its presence).
+    - modifySettlementProsperity and modifySettlementCrimeRate are
+      HARD load-time guards of disaster-commands.js. Their owning
+      module is not verified by the disaster bootstrap; they are
+      assumed to be the settlement prosperity/crime commands already
+      loaded in the settlement block.
+
+--------------------------------------------------------------------------------
+GROUP C8 — EDUCATION, INDUSTRY, HOUSEHOLD, RESIDENCE PREREQUISITES
+    (OPTIONAL at load, verified at bootstrap when present)
+--------------------------------------------------------------------------------
+
+  js/systems/education/education-state.js
+  js/systems/education/education-commands.js
+
+  js/core/industry/industry-state.js
+  js/core/industry/industry-commands.js
+
+  js/households/household-state.js
+  js/households/household-commands.js
+
+  js/households/residence-system.js
+
+  Notes:
+    - EducationState.getInstitutionsByLocation and
+      EducationCommands.demolishInstitution are used by
+      disaster-damage.js at call time. Verified by the bootstrap when
+      the education domain is present.
+    - IndustryState.getEnterprisesByLocation and
+      IndustryCommands.demolishEnterprise are used by disaster-damage
+      at call time. Same verification pattern.
+    - HouseholdState.getHouseholdsByLocation and
+      HouseholdCommands.demolishHousehold are used by disaster-damage
+      at call time. Same verification pattern.
+    - ResidenceSystem.getResidencesByLocation and
+      ResidenceSystem.demolishResidence are used by disaster-damage
+      at call time. Same verification pattern.
+    - All four are OPTIONAL. Missing any one causes that damage
+      category to be skipped at runtime. Present-but-incomplete is a
+      HARD failure at bootstrap time.
+
+--------------------------------------------------------------------------------
+GROUP D1 — DISASTER CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-constants.js
+
+  Notes:
+    - Load FIRST in the disaster block.
+    - Load-time dependency of disaster-state.js,
+      disaster-queries.js, disaster-damage.js, disaster-commands.js,
+      disaster-view-models.js, modals-disaster.js,
+      disaster-bootstrap.js (indirect).
+
+--------------------------------------------------------------------------------
+GROUP D2 — DISASTER STATE
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-state.js
+    <- AFTER: js/core/disaster/disaster-constants.js
+    <- AFTER: js/core/ids.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: js/core/time.js
+
+  Notes:
+    - Load-time dependency of disaster-queries.js,
+      disaster-damage.js, disaster-commands.js.
+    - Hydration happens in disaster-bootstrap.init() (or via the state's
+      own lazy _initialize on first read).
+
+--------------------------------------------------------------------------------
+GROUP D3 — DISASTER QUERIES
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-queries.js
+    <- AFTER: js/core/disaster/disaster-constants.js
+    <- AFTER: js/core/disaster/disaster-state.js
+
+  Notes:
+    - Load-time dependency of disaster-ui-stats.js,
+      modals-disaster.js.
+    - getPlaceName / getPlaceById are optional call-time; missing them
+      degrades location labels but does not fail.
+
+--------------------------------------------------------------------------------
+GROUP D4 — DISASTER DAMAGE
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-damage.js
+    <- AFTER: js/core/disaster/disaster-constants.js
+    <- AFTER: js/core/disaster/disaster-state.js
+
+  Notes:
+    - Load-time dependency of disaster-commands.js.
+    - The cross-domain reads (SettlementQueries, EducationState,
+      IndustryState, HouseholdState, ResidenceSystem) are checked at
+      CALL time via _isLoaded* helpers. Loading disaster-damage.js
+      before any cross-domain module is SAFE; applyStructuralDamage
+      simply skips the missing categories.
+    - Optional cross-domain commands (demolishFeature,
+      demolishInstitution, demolishEnterprise, demolishHousehold,
+      demolishResidence) are called at call time within the same
+      _isLoaded* checks.
+
+--------------------------------------------------------------------------------
+GROUP D5 — DISASTER COMMANDS
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-commands.js
+    <- AFTER: js/core/disaster/disaster-constants.js
+    <- AFTER: js/core/disaster/disaster-state.js
+    <- AFTER: js/core/disaster/disaster-damage.js
+    <- AFTER: js/core/ids.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/accessors.js
+    <- AFTER: js/core/world.js
+    <- AFTER: js/core/randomness.js
+    <- AFTER: js/events/eventLogger.js
+    <- AFTER: js/character/character-lifecycle.js
+    <- AFTER: js/settlement/settlement-queries.js
+    <- AFTER: js/settlement/settlement-feature-commands.js
+    <- AFTER: modifySettlementProsperity provider
+        (settlement prosperity commands)
+    <- AFTER: modifySettlementCrimeRate provider
+        (settlement crime commands)
+
+  Notes:
+    - The five cross-domain commands that MUST be present at load
+      (SettlementQueries.getSettlementData,
+      SettlementFeatureCommands.demolishFeature,
+      modifySettlementProsperity, modifySettlementCrimeRate,
+      killCharacter) are NOT the same set as the optional damage
+      commands. Settlement is REQUIRED for DisasterCommands; the other
+      three damage systems (Education, Industry, Household, Residence)
+      are OPTIONAL (checked by DisasterDamage at call time).
+    - This asymmetry is deliberate: the settlement prosperity/crime
+      effects are the only structural cross-domain mutations that
+      DisasterCommands itself requires. Structural damage is delegated
+      to DisasterDamage, which tolerates missing systems.
+
+--------------------------------------------------------------------------------
+GROUP D6 — DISASTER VIEW MODELS
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-view-models.js
+    <- AFTER: js/core/disaster/disaster-constants.js
+
+  Notes:
+    - Load-time dependency of disaster-ui-stats.js,
+      modals-disaster.js.
+    - No other load-time dependencies.
+
+--------------------------------------------------------------------------------
+GROUP D7 — DISASTER MODALS
+--------------------------------------------------------------------------------
+
+  js/core/disaster/modals-disaster.js
+    <- AFTER: js/core/disaster/disaster-constants.js
+    <- AFTER: js/core/disaster/disaster-commands.js
+    <- AFTER: js/core/disaster/disaster-queries.js
+    <- AFTER: js/core/disaster/disaster-view-models.js
+    <- AFTER: js/core/modals-core.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+    <- AFTER: js/core/ui.js
+    <- AFTER: js/selectors/locationDropdown.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/accessors.js
+
+--------------------------------------------------------------------------------
+GROUP D8 — DISASTER UI STATS
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-ui-stats.js
+    <- AFTER: js/core/disaster/disaster-view-models.js
+    <- AFTER: js/core/disaster/disaster-queries.js
+    <- AFTER: js/core/disaster/modals-disaster.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+
+--------------------------------------------------------------------------------
+GROUP D9 — DISASTER BOOTSTRAP
+--------------------------------------------------------------------------------
+
+  js/core/disaster/disaster-bootstrap.js
+    <- AFTER: js/core/disaster/disaster-constants.js
+    <- AFTER: js/core/disaster/disaster-state.js
+    <- AFTER: js/core/disaster/disaster-queries.js
+    <- AFTER: js/core/disaster/disaster-damage.js       (optional; verified
+                                                          when present)
+    <- AFTER: js/core/disaster/disaster-commands.js
+    <- AFTER: js/core/ids.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/accessors.js
+    <- AFTER: js/core/world.js
+    <- AFTER: js/core/randomness.js
+    <- AFTER: js/events/eventLogger.js
+    <- AFTER: js/character/character-lifecycle.js
+    <- AFTER: js/settlement/settlement-queries.js
+    <- AFTER: js/settlement/settlement-feature-commands.js
+    <- AFTER: modifySettlementProsperity provider
+    <- AFTER: modifySettlementCrimeRate provider
+
+  Auto-init: if masterData.data exists at load time, init() runs
+  inside a try/catch. The loader calls init() explicitly otherwise.
+
+  Idempotent: init() returns { success: true, alreadyInitialized: true }
+  on subsequent calls.
+
+--------------------------------------------------------------------------------
+GROUP D10 — APPLICATION BOOTSTRAP (function calls)
+--------------------------------------------------------------------------------
+
+  window.DisasterBootstrap.init()           (if not auto-invoked)
+  window.DisasterBootstrap.reinit()         (after masterData reload)
+
+
+================================================================================
+PART 5 — FLAT LOAD SEQUENCE
+================================================================================
+
+  -- Group C1: core constants --
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+
+  -- Group C2: core utilities --
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  -- Group C3: core time --
+  js/core/time.js
+
+  -- Group C4: core storage --
+  js/core/storage-schema.js
+  js/core/storage.js
+  initializeStorage()                          (function call)
+  js/core/accessors.js
+
+  -- Group C5: core world, event logger, UI primitives --
+  js/core/world.js
+  js/events/eventLogger.js
+  js/core/ui.js
+  js/core/modals-core.js
+  js/selectors/locationDropdown.js
+
+  -- Group C6: character prerequisites --
+  js/character/character-state.js
+  js/character/character-commands.js
+  js/character/character-queries.js
+  js/character/character-lifecycle.js
+
+  -- Group C7: settlement prerequisites --
+  js/settlement/settlement-definitions.js
+  js/settlement/settlement-state.js
+  js/settlement/settlement-queries.js
+  js/settlement/settlement-feature-queries.js
+  js/settlement/settlement-feature-commands.js
+  ...modifySettlementProsperity / modifySettlementCrimeRate providers...
+
+  -- Group C8: optional cross-domain prerequisites --
+  js/systems/education/education-state.js
+  js/systems/education/education-commands.js
+  js/core/industry/industry-state.js
+  js/core/industry/industry-commands.js
+  js/households/household-state.js
+  js/households/household-commands.js
+  js/households/residence-system.js
+
+  -- Group D1: disaster constants --
+  js/core/disaster/disaster-constants.js
+
+  -- Group D2: disaster state --
+  js/core/disaster/disaster-state.js
+
+  -- Group D3: disaster queries --
+  js/core/disaster/disaster-queries.js
+
+  -- Group D4: disaster damage --
+  js/core/disaster/disaster-damage.js
+
+  -- Group D5: disaster commands --
+  js/core/disaster/disaster-commands.js
+
+  -- Group D6: disaster view models --
+  js/core/disaster/disaster-view-models.js
+
+  -- Group D7: disaster modals --
+  js/core/disaster/modals-disaster.js
+
+  -- Group D8: disaster UI stats --
+  js/core/disaster/disaster-ui-stats.js
+
+  -- Group D9: disaster bootstrap --
+  js/core/disaster/disaster-bootstrap.js
+
+  -- Application bootstrap (function calls) --
+  window.DisasterBootstrap.init()              (if not auto-invoked)
+  window.DisasterBootstrap.reinit()            (after masterData reload)
+
+
+================================================================================
+PART 6 — LOAD-ORDER INVARIANTS
+================================================================================
+
+Each invariant names the failure mode it prevents.
+
+ 1.  disaster-constants.js before disaster-state.js.
+     Failure without it: disaster-state.js throws at load
+     ("disaster-state.js requires DisasterConstants").
+
+ 2.  disaster-constants.js before disaster-queries.js.
+     Failure without it: disaster-queries.js throws at load.
+
+ 3.  disaster-constants.js before disaster-damage.js.
+     Failure without it: disaster-damage.js throws at load naming the
+     missing sub-catalog (CODES, DAMAGE_CHANCE, one of the multiplier
+     catalogs, or DAMAGE_ITEM_VALUES).
+
+ 4.  disaster-constants.js before disaster-commands.js.
+     Failure without it: disaster-commands.js throws at load
+     ("disaster-commands.js requires DisasterConstants").
+
+ 5.  disaster-constants.js before disaster-view-models.js.
+     Failure without it: disaster-view-models.js throws at load.
+
+ 6.  disaster-constants.js before modals-disaster.js.
+     Failure without it: modals-disaster.js throws at load.
+
+ 7.  disaster-state.js before disaster-queries.js, disaster-damage.js,
+     disaster-commands.js.
+     Failure without it: each throws at load naming the missing State
+     namespace.
+
+ 8.  disaster-damage.js before disaster-commands.js.
+     Failure without it: disaster-commands.js throws at load
+     ("disaster-commands.js requires DisasterDamage").
+
+ 9.  disaster-queries.js before disaster-ui-stats.js and
+     modals-disaster.js.
+     Failure without it: each throws at load.
+
+10.  disaster-commands.js before modals-disaster.js.
+     Failure without it: modals-disaster.js throws at load.
+
+11.  disaster-view-models.js before disaster-ui-stats.js and
+     modals-disaster.js.
+     Failure without it: each throws at load.
+
+12.  disaster-modals.js before disaster-ui-stats.js.
+     Failure without it: disaster-ui-stats.js throws at load
+     ("disaster-ui-stats.js requires DisasterModals").
+
+13.  js/core/formatting.js's _escapeHtml before disaster-ui-stats.js
+     and modals-disaster.js.
+     Failure without it: each throws at load.
+
+14.  js/core/icons.js's _getIcon before disaster-ui-stats.js and
+     modals-disaster.js.
+     Failure without it: each throws at load.
+
+15.  js/core/ui.js's _showToast before modals-disaster.js.
+     Failure without it: modals-disaster.js throws at load.
+
+16.  js/core/modals-core.js's openModal and closeTopModal before
+     modals-disaster.js.
+     Failure without either: modals-disaster.js throws at load.
+
+17.  js/selectors/locationDropdown.js's getFilteredLocationOptions
+     before modals-disaster.js.
+     Failure without it: modals-disaster.js throws at load.
+
+18.  js/core/time.js's getCurrentYearSafe before disaster-state.js,
+     disaster-commands.js, modals-disaster.js, disaster-bootstrap.js.
+     Failure without it: each throws at load.
+
+19.  js/core/ids.js's generateId before disaster-state.js and
+     disaster-commands.js.
+     Failure without it: each throws at load.
+
+20.  js/core/storage.js's markDataDirty before disaster-state.js and
+     disaster-commands.js.
+     Failure without it: each throws at load.
+
+21.  js/core/storage.js's saveMasterData before disaster-commands.js
+     (indirect via persist()) and disaster-bootstrap.js (verification).
+     Failure without it: disaster-commands.js does not throw at load
+     (it checks at persist time via typeof); disaster-bootstrap.js
+     throws at init via _requireFunction.
+
+22.  js/core/accessors.js's getCharacterById, getCharacters,
+     getPlaceById, getPlaces before disaster-commands.js.
+     Failure without any: disaster-commands.js throws at load naming
+     the missing accessor.
+
+23.  js/core/world.js's getCurrentLocation, getAllSubLocationIds,
+     getLocationPopulationCount before disaster-commands.js.
+     Failure without any: disaster-commands.js throws at load.
+
+24.  js/core/randomness.js's chance, randomInt, pickRandom,
+     pickWeighted before disaster-commands.js.
+     Failure without any: disaster-commands.js throws at load.
+
+25.  js/events/eventLogger.js's logEvent before disaster-commands.js.
+     Failure without it: disaster-commands.js throws at load.
+
+26.  js/character/character-lifecycle.js's killCharacter before
+     disaster-commands.js.
+     Failure without it: disaster-commands.js throws at load.
+
+27.  js/settlement/settlement-queries.js's getSettlementData before
+     disaster-commands.js.
+     Failure without it: disaster-commands.js throws at load.
+
+28.  js/settlement/settlement-feature-commands.js's demolishFeature
+     before disaster-commands.js.
+     Failure without it: disaster-commands.js throws at load.
+
+29.  modifySettlementProsperity and modifySettlementCrimeRate before
+     disaster-commands.js.
+     Failure without either: disaster-commands.js throws at load.
+
+30.  Every disaster module (D1..D5), every core prerequisite (C1..C5),
+     character (C6), settlement (C7) file, and every optional
+     cross-domain module (C8) PRESENT, before
+     DisasterBootstrap.init().
+     Failure without any required module: init() throws at _require /
+     _requireFunction / _requireMethod.
+     Failure without any OPTIONAL cross-domain module: warn-only at
+     init; the runtime path in DisasterDamage already skips that
+     category.
+     Failure with an optional module present but missing the specific
+     method: init() throws via _verifyOptionalDomain /
+     _verifyOptionalDomain's _requireMethod.
+
+31.  masterData.data must exist before DisasterBootstrap.init().
+     Failure without it: init() throws
+     "disaster-bootstrap: masterData.data required".
+
+32.  masterData.data.disasters, if present, MUST be an array.
+     Failure otherwise: init() throws
+     "disaster-bootstrap: masterData.data.disasters must be an array".
+
+
+================================================================================
+PART 7 — KNOWN HAZARDS
+================================================================================
+
+  1.  DISASTER-DOC.TXT IS TRUNCATED IN THE SUPPLIED BATCH.
+      The supplied narrative doc ends at §2 "Load order:" with no
+      further content. This document is derived from the code, not from
+      the (missing) narrative sections. Update the narrative doc before
+      citing it as authoritative.
+
+  2.  THE BOOTSTRAP DOES NOT LISTEN FOR masterDataUpdated.
+      Every other subsystem bootstrap (household, industry) registers
+      a masterDataUpdated listener to re-hydrate. disaster-bootstrap.js
+      does NOT. A caller that replaces masterData out-of-band must call
+      DisasterBootstrap.reinit() explicitly. Failing to do so leaves
+      DisasterState's indexes pointing at the old (pre-reload) records
+      until the next mutation forces a hydrate. This is documented as a
+      known gap; the fix is a one-line addEventListener in the
+      bootstrap.
+
+  3.  DISASTER-DAMAGE.JS IS THE ONLY FILE THAT CALLS Math.random.
+      _selectItemsToDestroy uses Math.random() directly. Every other
+      disaster file routes randomness through window.chance /
+      randomInt / pickRandom / pickWeighted (which respect the seeded
+      RNG). The consequence: seeded-simulation reproducibility is
+      BROKEN for damage selection. A future revision should accept a
+      caller-supplied RNG or route through window.random.
+
+  4.  DOUBLE-WRITE OF STRUCTURAL DAMAGE.
+      DisasterDamage.applyStructuralDamage ends with _saveDamageRecord,
+      which calls State.updateDisaster with the structuralDamage
+      payload. DisasterCommands.applyDisasterEffects ALSO calls
+      State.updateDisaster with the same payload after the damage
+      coordinator returns. The second write is redundant. It currently
+      succeeds harmlessly (both writes carry the same data). A future
+      revision should remove one of them; the redundant write is a
+      maintenance trap if the two ever diverge.
+
+  5.  killCharacter SIGNATURE DIVERGENCE.
+      disaster-commands.js calls:
+        window.killCharacter(char, year, disasterType, { disasterId,
+        disasterType });
+      crime-commands.js (per crime docs) calls killCharacter with a
+      two-argument signature killCharacter(characterId, deathData).
+      household-doc.txt's maternal-death path routes through
+      CharacterLifecycle.killCharacter.
+      The character-lifecycle API must accept BOTH forms for the
+      disaster path to work AND the crime path to work. Confirm the
+      deployed character-lifecycle.js handles the 4-argument form;
+      otherwise disaster-commands.js's character-death effect silently
+      fails (the failure is logged to console.error from
+      _killVictims). See HAZARDS §7 in the character doc.
+
+  6.  DISASTERCOMMANDS DOES NOT VERIFY ALL ITS CROSS-DOMAIN
+      DEPENDENCIES ITSELF.
+      The load-time verification covers only the direct requires
+      (settlement, character, randomness, time, storage). The
+      Education / Industry / Household / Residence damage commands are
+      verified by DisasterDamage through its _isLoaded* checks, which
+      are CALL-TIME. The bootstrap verifies them at INIT time. A
+      reduced test harness that loads disaster-commands.js in
+      isolation and calls triggerDisaster would:
+        - pass load
+        - pass generateDisaster, addDisaster
+        - pass settlement effects (they're load-required)
+        - pass character deaths (killCharacter is load-required)
+        - fail structural damage silently (skipped by _isLoaded*
+          checks)
+      This is by design (matching the "systems that are not loaded are
+      skipped" policy), but callers that need to know whether damage
+      was applied must check the resulting destructionList, not assume
+      the damage coordinator's return value indicates "all applied".
+
+  7.  DisasterCommands.persist CALLS invalidateAccessorCaches.
+      This is correct: an accessor for disasters doesn't exist, but
+      the cross-domain effects (character deaths, settlement changes,
+      household demolitions, residence demolitions) have changed the
+      collections those accessors DO index. The invalidation clears
+      the character / household / place caches. Failing to call it
+      would leave getCharacterById, getHouseholdById, and getPlaceById
+      returning stale records after a disaster.
+
+  8.  SIMULATE-RANDOM-DISASTER CHANCE MECHANISM.
+      simulateRandomDisaster uses window.chance(chanceRate) for the
+      "does a disaster happen this year" roll, then pickWeighted over
+      populated locations, then triggerDisaster with disasterType: null.
+      Inside triggerDisaster → generateDisaster, the TYPE selection
+      uses pickWeighted over the disaster types with a location
+      modifier. The two weighted selections are INDEPENDENT.
+      Each consumes the seeded RNG (chance, pickWeighted), so the
+      overall system is reproducible IF damage selection is also
+      reproducible. See HAZARDS §3.
+
+  9.  STRUCTURAL DAMAGE ON NON-HOUSEHOLD LOCATIONS.
+      The household destroyer skips "protected" households (has
+      members, has wealth >= 20, has residence). A wealthy household
+      with a residence is IMMUNE to disaster destruction. This is
+      intentional game policy, not a bug; but it is non-obvious from
+      the API surface. Callers that expect all households in a location
+      to be destroyed will be surprised.
+
+ 10.  RESIDENCE-DEMOLISH CASCADES HOUSEHOLD DISASSOCIATION.
+      ResidenceSystem.demolishResidence disassociates every household
+      occupying any unit (calls HouseholdCommands.disassociateFromResidence).
+      Because the disaster damage coordinator calls demolishResidence,
+      every disaster that destroys a residence ALSO clears the
+      residence.reverse index on any household living in it. A caller
+      that inspects households after applyStructuralDamage sees the
+      pre-demolition household shape (with residenceId cleared) unless
+      it separately checks residence.isDemolished. Do not assume a
+      household's state reflects its residence's state at any point
+      during the damage pass.
+
+ 11.  DESTROYED-ITEM RECORDS CARRY THE OWNING DOMAIN'S ID ONLY.
+      Each entry in structuralDamage.destructionList carries an `id`
+      (the destroyed entity's id), a `name`, a `type`
+      (settlement_feature / school / enterprise / residence / household),
+      a `demolished: true`, a `year`, plus a few domain-specific
+      extras (category, residenceType, unitsDemolished, membersRemoved).
+      There is no link BACK to the destroyed entity's history; the
+      owning domain's records are the source of truth. A caller that
+      needs details of a destroyed enterprise must query the industry
+      domain's tombstone (enterprise.status === 'demolished',
+      enterprise.demolishedRecord).
+
+ 12.  DUPLICATE IDs ARE A HARD FAILURE.
+      DisasterState.hydrateFromMasterData throws on duplicate ids.
+      A corrupted masterData.data.disasters array is NOT silently
+      repaired; it must be fixed before the domain can load. The
+      bootstrap's _verifyCanonical checks shape (array-ness) only; the
+      duplicate check happens at hydration, which bootstrap calls.
+
+ 13.  THE BOOTSTRAP VERIFIES DisasterState._initialize AS A FALLBACK.
+      If DisasterState has neither hydrateFromMasterData nor
+      _initialize, bootstrap throws. The current DisasterState exposes
+      both (hydrateFromMasterData is the canonical; _initialize is the
+      legacy alias used by callers that predate the refactor). Do not
+      remove _initialize without updating the bootstrap's fallback
+      logic.
+
+ 14.  DAMAGE COORDINATOR CALLS State.updateDisaster.
+      DisasterDamage is documented as a coordinator, not a command.
+      But it calls State.updateDisaster via _saveDamageRecord after
+      applying damage. This is a WRITE from a coordinator. The
+      disaster record's structuralDamage is set ONCE by
+      applyStructuralDamage's internal _saveDamageRecord, then SET
+      AGAIN by DisasterCommands.applyDisasterEffects. See HAZARDS §4.
+
+ 15.  THE UI-STATS RENDERERS SCAN FOR CONTAINERS BY CLASS.
+      refreshAll uses document.querySelectorAll('.disaster-stats-panel'
+      etc.) to find containers. If a caller dynamically mounts a
+      disaster panel with a different class name, refreshAll will not
+      find it. The current design assumes the modal files (or the
+      disaster UI host page) apply the expected class names. A future
+      revision could switch to a render registry, matching the
+      pattern used in crime-ui-stats.
+
+ 16.  THE BOOTSTRAP DOES NOT VERIFY DisasterViewModels.
+      DisasterViewModels is a dependency of modals-disaster.js and
+      disaster-ui-stats.js, both of which verify it at load. The
+      bootstrap does not add it to _verifyDisasterModules, so a
+      missing DisasterViewModels is caught only when the modal or UI
+      file tries to load. The bootstrap's current surface is:
+      DisasterConstants, DisasterState, DisasterQueries,
+      DisasterCommands (plus optional DisasterDamage). Adding
+      DisasterViewModels to _verifyDisasterModules is a harmless
+      hardening.
+
+ 17.  THE BOOTSTRAP DOES NOT VERIFY modals-disaster.js OR
+      disaster-ui-stats.js.
+      Both are OPTIONAL UI layers. The bootstrap's surface stops at
+      the domain (commands + queries + state + constants + optional
+      damage). A missing modals-disaster.js produces a runtime
+      missing-global error when a button tries to open a modal. This
+      matches the pattern in household-bootstrap.js (which verifies
+      HouseholdModals only when present). Adding a warn-once for the
+      modal surface is a future improvement.
+
+ 18.  THE STATE'S HYDRATE THROWS ON DUPLICATE IDs.
+      The bootstrap catches this via try/catch? NO — the bootstrap
+      calls _hydrate() OUTSIDE the try/catch that wraps _runIntegrityCheck.
+      A duplicate-id corruption therefore fails init() with a hard
+      throw, which is the intended behavior. Do not wrap _hydrate in
+      a swallow; the throw is the point.
+
+ 19.  THE DAMAGE COORDINATOR COMMITS THE DISASTER RECORD'S DAMAGE
+      FIELD, NOT THE DISASTER RECORD AS A WHOLE.
+      The coordinator's State.updateDisaster call only writes
+      structuralDamage (and the aligned convenience mirrors). The
+      disaster's other fields (deaths, description, etc.) are written
+      by DisasterState.addDisaster (initial write) or by
+      DisasterCommands's own State.updateDisaster (via
+      applyDisasterEffects' callback for the aggregate report). There
+      is no single write that produces the final disaster record;
+      callers must inspect the aggregate across both writes.
+
+ 20.  THE COMMANDS' VICTIM COLLECTION USES displayName MATCHING.
+      _getCharactersAtLocation builds a displayName → locationId map
+      from getPlaces(), then matches each character's
+      getCurrentLocation result (which returns a display name, not an
+      id) against that map. A character whose location's displayName
+      has changed since the character record was written (rare, but
+      possible if a place is renamed) will not match. A character at
+      a sub-location is included only if the sub-location's
+      displayName maps to an id in getAllSubLocationIds. This is the
+      current contract; migrating getCurrentLocation to return an id
+      would remove the displayName-matching fragility.
+
+ 21.  THE LOCATION-MODIFIER CLAMP.
+      getDisasterLocationModifier multiplies modifiers for every
+      matching terrain, then clamps to [0.5, 3.0]. A location whose
+      name matches both "coastal" and "island" (e.g. a harbor on an
+      island named "Port Isle") gets 2.0 × 1.8 = 3.6 → clamped to 3.0.
+      A location matching three terrains with modifiers >= 1.5 hits
+      the cap quickly. The cap is intentional; a future revision that
+      removes it must add a different bound (e.g. geometric mean) to
+      prevent runaway.
+
+ 22.  THE DISASTER TYPE DISTRIBUTION IS WEIGHTED BY DISASTER_TYPES'
+      WEIGHT FIELD * locationModifier.
+      generateDisaster's weightedTypes array multiplies weight by the
+      location modifier (a decimal). The pickWeighted call consumes
+      those weights. A location whose modifiers produce fractional
+      weights (e.g. 25 * 0.7 = 17.5) is fine — pickWeighted handles
+      non-integer weights. A location whose modifiers produce zero
+      weight for all types is impossible (base weights are positive,
+      modifier is clamped to >= 0.5), so pickWeighted is never called
+      with an all-zero array.
+
+ 23.  THE COMMANDS' SPOT-CHECK OF THE DAMAGE COORDINATOR.
+      disaster-commands.js verifies at load that window.DisasterDamage
+      exists and is truthy. It does NOT verify that
+      applyStructuralDamage is a function (the bootstrap does that if
+      DisasterDamage is present). At RUNTIME, disaster-commands.js
+      checks typeof window.DisasterDamage.applyStructuralDamage ===
+      'function' before calling it, so a partial
+      DisasterDamage (loaded but missing applyStructuralDamage) would
+      cause structural damage to be silently skipped. The bootstrap
+      catches this case at init, but only when the bootstrap actually
+      runs. If a caller loads disaster-commands.js without ever calling
+      DisasterBootstrap.init(), the missing-method case is a runtime
+      no-op, not a load-time throw.
+
+ 24.  THE MODAL PERSISTENCE MODEL IS SINGLE-SHOT.
+      modals-disaster.js's _commitAndPersist calls
+      DisasterCommands.persist once per modal action and toasts a
+      warning if persist fails but leaves the modal closed (the modal's
+      onConfirm already returned true after the command succeeded).
+      Retrying requires the user to re-open the modal and re-enter.
+      This matches the pattern the disaster doc describes for its
+      persistence model, but it diverges from the retry-idempotency
+      pattern used in modals-household.js. Do not assume persistent
+      retry is available in the disaster modal flow.
+
+ 25.  modals-disaster.js DOES NOT DEDUPLICATE THE OUT-OF-BAND
+      State.updateDisaster.
+      If a caller runs applyDisasterEffects a second time on the same
+      disaster (re-application), State.updateDisaster is called again
+      with the new aggregate. The damage coordinator's
+      _saveDamageRecord also runs again. Two writes per application.
+      Callers must not re-apply unless they expect the aggregate to
+      reflect the second damage pass. The design is single-shot; the
+      code does not prevent double-application.
+
+ 26.  disaster-ui-stats.js DOES NOT DELEGATE TO _processingRender
+      GUARD.
+      This is by design. But a component that renders in a tight loop
+      against a shared container can produce flicker. The current
+      refreshAll scans DOM and re-renders each panel; if the underlying
+      queries are expensive (getGlobalDestructionStatistics iterates
+      every disaster), the refresh can be slow. Consider debouncing
+      refreshAll at the call site.
+
+ 27.  modals-disaster.js's _detailGrid USES A SINGLE HELPER THAT
+      ESCAPES ITS VALUE.
+      _detail('Label', _escape(value)) — the VALUE is escaped by the
+      caller, and _detail escapes only the label. A caller that passes
+      raw HTML as the value (intentional markup) will see it rendered;
+      a caller that passes user data without _escape will inject HTML.
+      The current call sites all _escape the value; a future addition
+      must not forget.
+
+ 28.  THE DAMAGE REPORT'S `errors` ARRAY DISTINGUISHES FAILURES FROM
+      SKIPS.
+      A skipped category (owning system not loaded) is NOT in `errors`;
+      it's implicitly represented by the empty destruction list. A
+      failed destruction IS in `errors` with the system name and the
+      specific item. A caller that wants to know "was this category
+      attempted" must check the owning domain's presence directly (or
+      compare destruction list length to the location's category size).
+      The design is intentional (errors must mean errors), but the
+      absence of an attempted/skipped flag means the caller cannot
+      distinguish "nothing to destroy" from "damage coordinator not
+      loaded" from the report alone.
+
+
+================================================================================
+PART 8 — SUMMARY
+================================================================================
+
+The disaster subsystem is a self-contained domain with exactly one
+canonical collection (masterData.data.disasters). Every interaction with
+the world outside its own collection is through another domain's public
+command or query surface.
+
+The load-bearing contracts are:
+
+  1. Constants are frozen and never re-derived elsewhere.
+  2. DisasterState is the single writer of the canonical collection.
+  3. DisasterCommands is the single public command boundary.
+  4. DisasterDamage is a coordinator, not a command; it calls each
+     owning domain's command.
+  5. DisasterBootstrap verifies the module set at init time and treats
+     a present-but-broken optional cross-domain module as a hard
+     failure (absent-entirely is a warn).
+  6. Persistence flows through DisasterCommands.persist once per
+     logical operation. saveMasterData writes the whole envelope, so
+     it flushes every cross-domain change the disaster applied.
+
+Load order is dictated by:
+  - core prerequisites (constants, formatting, icons, ids, time,
+    storage, accessors, world, randomness, eventLogger, ui,
+    modals-core, locationDropdown);
+  - character / settlement prerequisites (both HARD);
+  - optional cross-domain prerequisites (education, industry,
+    household, residence) — present-but-complete or absent;
+  - the disaster files in the strict order
+    constants → state → queries → damage → commands → view-models →
+    modals → ui-stats → bootstrap;
+  - application-level DisasterBootstrap.init() (or auto-init if
+    masterData is already present).
+
+Do not reorder the disaster files. The invariants in PART 6 are load-
+bearing; failure modes range from a clean load-time throw (module
+missing) to silent damage skip (optional cross-domain module missing at
+runtime) to a hard hydration failure (corrupted canonical data).
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
