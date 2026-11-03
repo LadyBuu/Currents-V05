@@ -10,22 +10,22 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap" rel="stylesheet">
-    
+
     <!-- SHARED (external) -->
     <link rel="stylesheet" href="css/themes.css">
     <link rel="stylesheet" href="css/common.css">
 
     <style>
         /* ============================================================
-           GOVERNMENT MANAGER — INLINE (was css/gov-manager.css)
-           + Layout shell
-           + Theme toggle
-           + Mobile tweaks
+           GOVERNMENT MANAGER — INLINE STYLES
+           (replaces css/gov-manager.css; no external link)
            ============================================================ */
 
-        /* ---- App shell (was in gov-manager.css §0) ---- */
+        /* ---- App shell ---- */
         html, body { height: 100%; margin: 0; overflow: hidden; }
         body { display: flex; flex-direction: column; }
+
+        .topbar { position: relative; z-index: 100; flex-shrink: 0; }
 
         .world-app {
             display: flex;
@@ -42,6 +42,28 @@
             overflow: hidden;
             background: var(--bg2);
             border-right: 1px solid var(--border);
+        }
+
+        .sidebar-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg3);
+        }
+
+        .sidebar-header h3 {
+            margin: 0;
+            font-family: var(--f-display);
+            font-size: 0.65rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--accent);
+        }
+
+        .place-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+            min-height: 0;
         }
 
         .main-panel {
@@ -61,7 +83,7 @@
             padding: 16px;
         }
 
-        /* ---- Topbar buttons (was .tb-btn in gov-manager.css) ---- */
+        /* ---- Topbar buttons ---- */
         .tb-btn {
             display: inline-flex;
             align-items: center;
@@ -81,14 +103,14 @@
         .tb-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
         .tb-btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
 
-        /* ---- Theme toggle dropdown (was missing) ---- */
+        /* ---- Theme toggle dropdown ---- */
         .theme-toggle { position: relative; display: inline-flex; }
         .theme-toggle__btn { gap: 6px; }
         .theme-toggle__menu {
             position: absolute;
             top: calc(100% + 4px);
             right: 0;
-            z-index: 200;
+            z-index: 9999;
             min-width: 160px;
             max-height: 60vh;
             padding: 4px;
@@ -122,9 +144,10 @@
             outline: none;
         }
 
-        /* ---- Panel / sub-tab strip (was in gov-manager.css §2, §3) ---- */
-        .panel-tabs { display: none !important; } /* hidden — sub-tabs are the real nav */
+        /* ---- Panel-tabs hidden (sub-tabs are the real nav) ---- */
+        .panel-tabs { display: none !important; }
 
+        /* ---- Government sub-tab strip ---- */
         .gov-subtabs {
             position: sticky;
             top: 0;
@@ -164,7 +187,151 @@
         .gov-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
         .gov-subpanel { min-height: 200px; }
 
-        /* ---- Toast fixes ---- */
+        /* ---- Inside sub-panel: details / departments / etc ---- */
+        .gov-details-container, .dept-tab-container, .law-tab-container, .eco-details-container { padding: 4px; }
+
+        .gov-details-header, .dept-tab-header, .law-tab-header, .eco-details-header {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 14px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+        .gov-details-header h3, .dept-tab-header h3, .law-tab-header h3, .eco-details-header h3 {
+            margin: 0;
+            font-size: 0.85rem;
+            color: var(--accent);
+            font-family: var(--f-display);
+        }
+
+        /* Buttons inside sub-panels */
+        .gov-btn, .dept-btn, .law-btn, .eco-btn, .gh-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 5px 12px;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.65rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+        }
+        .gov-btn:hover, .dept-btn:hover, .law-btn:hover, .eco-btn:hover, .gh-btn:hover {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+        .gov-btn.primary, .dept-btn-add, .law-btn-add, .gh-btn-add {
+            background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
+        }
+        .gov-btn.primary:hover, .dept-btn-add:hover, .law-btn-add:hover, .gh-btn-add:hover {
+            background: var(--accent-dark); border-color: var(--accent-dark);
+        }
+        .dept-btn-delete, .law-btn-delete, .gh-btn-end {
+            color: var(--danger-lt);
+            border-color: var(--danger-lt);
+        }
+        .dept-btn-delete:hover, .law-btn-delete:hover, .gh-btn-end:hover {
+            background: var(--danger-soft); border-color: var(--danger);
+            color: var(--danger-lt);
+        }
+        .dept-btn-small { padding: 2px 8px; font-size: 0.55rem; }
+
+        /* Form primitives inside sub-panels */
+        .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+        .form-group label {
+            font-size: 0.7rem;
+            color: var(--accent);
+            font-family: var(--f-display);
+            letter-spacing: 0.04em;
+        }
+        .form-control {
+            width: 100%;
+            padding: 6px 10px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.7rem;
+            box-sizing: border-box;
+        }
+        .form-control:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px var(--accent-soft);
+        }
+
+        /* Card primitives used by departments / details / history */
+        .dept-card, .eco-stat-card, .gh-leader-card, .gh-official-card {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 14px;
+            margin-bottom: 8px;
+        }
+        .dept-header, .eco-details-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-light);
+            margin-bottom: 8px;
+        }
+        .dept-name, .eco-stat-value, .gh-leader-name, .gh-official-name {
+            font-weight: 600;
+            color: var(--accent);
+            font-family: var(--f-display);
+        }
+
+        /* Stats blocks */
+        .dept-stats, .law-stats-summary, .gh-stats-summary {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            padding: 8px 0;
+        }
+        .dept-stat, .law-stat, .gh-stat {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 90px;
+        }
+        .dept-stat-label, .law-stat-label, .gh-stat-label {
+            font-size: 0.55rem;
+            color: var(--dim);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-family: var(--f-display);
+        }
+        .dept-stat-value, .law-stat-value, .gh-stat-value {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text);
+            font-family: var(--f-mono);
+        }
+
+        /* Empty states */
+        .dept-empty, .law-empty, .gh-empty, .gov-details-empty, .eco-details-empty, .gh-details-empty {
+            padding: 30px 20px;
+            text-align: center;
+            color: var(--dim);
+            font-size: 0.75rem;
+            background: var(--bg2);
+            border: 1px dashed var(--border);
+            border-radius: var(--radius);
+        }
+
+        /* ---- Toast / icons fix ---- */
         .toast-message { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         .toast-message svg { flex-shrink: 0; }
         .icon-svg { display: inline-block; width: 1em; height: 1em; vertical-align: middle; fill: currentColor; }
@@ -174,18 +341,11 @@
         .modal-container { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
         .btn:hover { box-shadow: none !important; }
 
-        /* ---- Sidebar title, mobile overlay ---- */
-        .sidebar-header h3 {
-            margin: 0;
-            font-family: var(--f-display);
-            font-size: 0.65rem;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            color: var(--accent);
-        }
+        /* ---- Sidebar overlay ---- */
         .sidebar-overlay { display: none; }
         .sidebar-overlay.active { display: block; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 999; }
 
+        /* ---- Mobile layout ---- */
         @media (max-width: 768px) {
             .world-app { flex-direction: column; }
             .locations-sidebar {
@@ -214,10 +374,10 @@
     </button>
     <div class="title" id="govManagerTitle"></div>
     <div class="spacer"></div>
-    <button id="addDeptBtn" class="tb-btn primary"></button>
-    <button id="importBtn" class="tb-btn"></button>
-    <button id="exportBtn" class="tb-btn primary"></button>
-    <button id="refreshBtn" class="tb-btn"></button>
+    <button id="addGovBtn" class="tb-btn primary" type="button"></button>
+    <button id="importBtn" class="tb-btn" type="button"></button>
+    <button id="exportBtn" class="tb-btn primary" type="button"></button>
+    <button id="refreshBtn" class="tb-btn" type="button"></button>
 
     <div class="theme-toggle" role="group" aria-label="Theme">
         <button class="tb-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
@@ -241,6 +401,10 @@
         </div>
     </div>
 </div>
+
+<!-- ============================================================
+     LOAD ORDER
+     ============================================================ -->
 
 <!-- 1. Core Constants -->
 <script src="js/core/constants/constants.js"></script>
@@ -400,7 +564,7 @@
 <script src="js/settlement/settlement-view-models.js"></script>
 <script src="js/settlement/settlement-ui-state.js"></script>
 
-<!-- 18a. Selectors (MOVED UP — required by modals-industry.js) -->
+<!-- 18a. Selectors (before industry — industry modals require openCharacterSelector) -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
 <script>
@@ -454,7 +618,9 @@
 <script src="js/tabs/government-civil-laws-tab.js"></script>
 <script src="js/tabs/government-economy-tab.js"></script>
 
-<!-- SUB-TAB HOST -->
+<!-- ============================================================
+     SUB-TAB HOST
+     ============================================================ -->
 <script>
     (function () {
         'use strict';
@@ -520,8 +686,8 @@
         if (title) title.innerHTML = iconWithText(getIcon('CROWN'), ' GOVERNMENT MANAGER');
         var sidebarTitle = document.getElementById('sidebarTitle');
         if (sidebarTitle) sidebarTitle.innerHTML = iconWithText(getIcon('LOCATION'), ' GOVERNMENTS');
-        var addDeptBtn = document.getElementById('addDeptBtn');
-        if (addDeptBtn) addDeptBtn.innerHTML = iconWithText(getIcon('PLUS'), ' Department');
+        var addBtn = document.getElementById('addGovBtn');
+        if (addBtn) addBtn.innerHTML = iconWithText(getIcon('PLUS'), ' Government');
         var importBtn = document.getElementById('importBtn');
         if (importBtn) importBtn.innerHTML = iconWithText(getIcon('ARROW_RIGHT'), ' Import');
         var exportBtn = document.getElementById('exportBtn');
@@ -541,20 +707,28 @@
             try {
                 window.LocationUI.renderLocationList('placeList', {
                     selectedId: currentPlaceId,
-                    onSelect: function(place) {
-                        if (place && place.id) { currentPlaceId = place.id; renderGovernmentTab(); if (window.innerWidth <= 768) closeSidebar(); }
+                    onSelect: function(placeOrId) {
+                        // Accept both a place object and a raw id — different
+                        // LocationUI versions pass different shapes.
+                        var id = (typeof placeOrId === 'string') ? placeOrId
+                               : (placeOrId && placeOrId.id ? placeOrId.id : null);
+                        if (!id) return;
+                        currentPlaceId = id;
+                        renderGovernmentTab();
+                        if (window.innerWidth <= 768) closeSidebar();
                     }
                 });
                 return;
             } catch (e) { console.error(e); }
         }
+        // Fallback: read places and build a flat list.
         var places = getPlaces();
         if (places && places.length > 0) {
             var html = '<div class="place-tree">';
             for (var i = 0; i < places.length; i++) {
                 var p = places[i];
-                var isSelected = (p.id === currentPlaceId);
-                html += '<div class="place-item' + (isSelected ? ' selected' : '') + '" data-place-id="' + p.id + '" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border);' + (isSelected ? 'background:var(--accent-dim);' : '') + '"><span>' + (p.displayName || p.name || 'Unknown') + '</span></div>';
+                var sel = (p.id === currentPlaceId);
+                html += '<div class="place-item' + (sel ? ' selected' : '') + '" data-place-id="' + p.id + '" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border);' + (sel ? 'background:var(--accent-dim);' : '') + '"><span>' + (p.displayName || p.name || 'Unknown') + '</span></div>';
             }
             html += '</div>';
             container.innerHTML = html;
@@ -567,7 +741,9 @@
                     });
                 })(items[j]);
             }
-        } else { container.innerHTML = '<div class="empty-state">No governments found</div>'; }
+        } else {
+            container.innerHTML = '<div class="empty-state">No governments found</div>';
+        }
     }
 
     function closeSidebar() { var s = document.getElementById('locationsSidebar'); var o = document.getElementById('sidebarOverlay'); if (s) s.classList.remove('visible'); if (o) o.classList.remove('active'); }
@@ -589,18 +765,44 @@
     }
 
     function setupTopBarActions() {
-        document.getElementById('addDeptBtn').onclick = function() {
+        document.getElementById('addGovBtn').onclick = function() {
             var lid = currentPlaceId || (getPlaces()[0] || {}).id;
             if (!lid) { showToast('No government selected', 'warning'); return; }
-            if (typeof window.openCreateGovernmentDepartmentModal === 'function') { window.openCreateGovernmentDepartmentModal(lid, renderGovernmentTab); }
-        };
-        document.getElementById('importBtn').onclick = function() {
-            if (typeof window.importData === 'function') {
-                Promise.resolve(window.importData()).then(function() { setTimeout(function() { setupLocationTree(); renderGovernmentTab(); showToast('Import successful', 'success'); }, 200); }).catch(function(err) { showToast('Import failed', 'error'); });
+            if (typeof window.openCreateGovernmentDepartmentModal === 'function') {
+                window.openCreateGovernmentDepartmentModal(lid, renderGovernmentTab);
+            } else {
+                showToast('Create Department modal not loaded', 'error');
             }
         };
-        document.getElementById('exportBtn').onclick = function() { if (typeof window.exportData === 'function') { window.exportData(); showToast('Export started', 'success'); } };
-        document.getElementById('refreshBtn').onclick = function() { if (typeof window.loadMasterData === 'function') window.loadMasterData(); setTimeout(function() { setupLocationTree(); renderGovernmentTab(); showToast('Refreshed', 'success'); }, 100); };
+        document.getElementById('importBtn').onclick = function() {
+            if (typeof window.importData !== 'function') { showToast('Import not available', 'error'); return; }
+            window.importData()
+                .then(function() {
+                    // Resolve only after FileReader + save complete.
+                    if (window.GovernmentBootstrap && window.GovernmentBootstrap.reinit) {
+                        try { window.GovernmentBootstrap.reinit(); } catch (e) { /* ignore */ }
+                    }
+                    setupLocationTree();
+                    renderGovernmentTab();
+                    showToast('Import successful', 'success');
+                })
+                .catch(function(err) {
+                    showToast('Import failed: ' + (err && err.message ? err.message : 'unknown'), 'error');
+                });
+        };
+        document.getElementById('exportBtn').onclick = function() {
+            if (typeof window.exportData !== 'function') { showToast('Export not available', 'error'); return; }
+            try {
+                window.exportData();
+                showToast('Export started', 'success');
+            } catch (e) {
+                showToast('Export failed: ' + (e.message || 'unknown'), 'error');
+            }
+        };
+        document.getElementById('refreshBtn').onclick = function() {
+            if (typeof window.loadMasterData === 'function') window.loadMasterData();
+            setTimeout(function() { setupLocationTree(); renderGovernmentTab(); showToast('Refreshed', 'success'); }, 100);
+        };
     }
 
     function init() {
@@ -608,7 +810,13 @@
         setupUIText();
         if (typeof window.loadMasterData === 'function') window.loadMasterData();
         if (window.GovernmentBootstrap) window.GovernmentBootstrap.init();
-        setTimeout(function() { setupLocationTree(); setupTopBarActions(); renderGovernmentTab(); document.getElementById('menuToggle').addEventListener('click', toggleSidebar); document.getElementById('sidebarOverlay').addEventListener('click', closeSidebar); }, 150);
+        setTimeout(function() {
+            setupLocationTree();
+            setupTopBarActions();
+            renderGovernmentTab();
+            document.getElementById('menuToggle').addEventListener('click', toggleSidebar);
+            document.getElementById('sidebarOverlay').addEventListener('click', closeSidebar);
+        }, 150);
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
@@ -617,16 +825,34 @@
 <script>
 (function () {
     'use strict';
-    var themeBtn = document.getElementById('themeBtn'); var themeMenu = document.getElementById('themeMenu'); var themeName = document.getElementById('themeName');
-    var switcher = window.ThemeSwitcher; if (!switcher) return;
+    var themeBtn = document.getElementById('themeBtn');
+    var themeMenu = document.getElementById('themeMenu');
+    var themeName = document.getElementById('themeName');
+    var switcher = window.ThemeSwitcher;
+    if (!switcher) return;
     function updateLabel(id) { var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' '); if (themeName) themeName.textContent = label; }
-    function buildMenu() { var html = ''; for (var i = 0; i < switcher.themes.length; i++) { var id = switcher.themes[i]; var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' '); html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' + id + '">' + label + '</button></li>'; } if (themeMenu) themeMenu.innerHTML = html; }
+    function buildMenu() {
+        var html = '';
+        for (var i = 0; i < switcher.themes.length; i++) {
+            var id = switcher.themes[i];
+            var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+            html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' + id + '">' + label + '</button></li>';
+        }
+        if (themeMenu) themeMenu.innerHTML = html;
+    }
     function openMenu() { if (themeMenu) { themeMenu.hidden = false; themeBtn.setAttribute('aria-expanded', 'true'); } }
     function closeMenu() { if (themeMenu) { themeMenu.hidden = true; themeBtn.setAttribute('aria-expanded', 'false'); } }
-    if (themeBtn) { themeBtn.addEventListener('click', function (e) { e.stopPropagation(); if (themeMenu.hidden) openMenu(); else closeMenu(); }); }
-    if (themeMenu) { themeMenu.addEventListener('click', function (e) { var btn = e.target.closest('[data-theme-id]'); if (!btn) return; var id = btn.getAttribute('data-theme-id'); switcher.apply(id); updateLabel(id); closeMenu(); }); }
-    document.addEventListener('click', function (e) { if (themeMenu && !themeMenu.hidden) { if (themeMenu.contains(e.target)) return; if (e.target === themeBtn) return; closeMenu(); } });
-    buildMenu(); var saved = switcher.getSaved(); if (saved) updateLabel(saved);
+    if (themeBtn) themeBtn.addEventListener('click', function (e) { e.stopPropagation(); if (themeMenu.hidden) openMenu(); else closeMenu(); });
+    if (themeMenu) themeMenu.addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-theme-id]'); if (!btn) return;
+        var id = btn.getAttribute('data-theme-id'); switcher.apply(id); updateLabel(id); closeMenu();
+    });
+    document.addEventListener('click', function (e) {
+        if (themeMenu && !themeMenu.hidden) { if (themeMenu.contains(e.target)) return; if (e.target === themeBtn) return; closeMenu(); }
+    });
+    buildMenu();
+    var saved = switcher.getSaved();
+    if (saved) updateLabel(saved);
 })();
 </script>
 
