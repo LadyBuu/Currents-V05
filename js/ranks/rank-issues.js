@@ -3,7 +3,7 @@
  * STILL WATERS - RANK ISSUES (rank-issues.js)
  * =============================================================================
  *
- * LOCATION: js/core/rank/rank-issues.js
+ * LOCATION: js/ranks/rank-issues.js
  *
  * Detects rank configuration problems and produces auto-fix closures.
  *
