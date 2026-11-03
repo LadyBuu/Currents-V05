@@ -607,7 +607,6 @@
 
     // Verify every card target resolves. A typo in a manager filename
     // shows up as a console warning instead of a silent dead click.
-    // HEAD requests are cheap and same-origin only.
     function verifyCardTargets() {
         var cards = document.querySelectorAll('.tool-card[href]');
         var seen = Object.create(null);
