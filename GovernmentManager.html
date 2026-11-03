@@ -163,10 +163,10 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- CANONICAL LOAD ORDER - ALL FILES REQUIRED FOR GOVERNMENT     -->
+<!-- CANONICAL LOAD ORDER                                         -->
 <!-- ============================================================ -->
 
-<!-- Core Constants -->
+<!-- 1. Core Constants -->
 <script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
 <script src="js/core/constants/character-constants.js"></script>
@@ -174,14 +174,14 @@
 <script src="js/core/constants/location-constants.js"></script>
 <script src="js/core/constants/relationship-constants.js"></script>
 
-<!-- Core Utilities -->
+<!-- 2. Core Utilities -->
 <script src="js/core/formatting.js"></script>
 <script src="js/core/icons.js"></script>
 <script src="js/core/collections.js"></script>
 <script src="js/core/ids.js"></script>
 <script src="js/core/randomness.js"></script>
 
-<!-- Core Time & Storage -->
+<!-- 3. Core Time & Storage -->
 <script src="js/core/time.js"></script>
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
@@ -190,12 +190,12 @@
 </script>
 <script src="js/core/accessors.js"></script>
 
-<!-- Core Validation & World -->
+<!-- 4. Core Validation & World -->
 <script src="js/core/validation.js"></script>
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
 
-<!-- Core UI -->
+<!-- 5. Core UI -->
 <script src="js/core/ui.js"></script>
 <script src="js/core/ui-state.js"></script>
 <script src="js/core/modals-core.js"></script>
@@ -203,24 +203,28 @@
 <script src="js/core/collapsible.js"></script>
 <script src="js/core/exportUtils.js"></script>
 
-<!-- Feature State Modules (MUST LOAD BEFORE state.js) -->
+<!-- 6. Skill Taxonomy (MUST be before role-constants) -->
+<script src="js/roles/skill-utils.js"></script>
+
+<!-- 7. Feature State Modules (Must load before state.js) -->
 <script src="js/character/character-state.js"></script>
 <script src="js/character/family-state.js"></script>
 <script src="js/households/household-state.js"></script>
 <script src="js/location/location-ui-state.js"></script>
 <script src="js/roles/role-state.js"></script>
 <script src="js/ranks/rank-state.js"></script>
-<script src="js/names/name-state.js"></script>
+<script src="js/names/names-state.js"></script> <!-- FIXED: plural per your rename -->
 <script src="js/core/census-state.js"></script>
 <script src="js/core/matchmaker-state.js"></script>
 <script src="js/core/misc-state.js"></script>
 
-<!-- State.js -->
+<!-- 8. State.js -->
 <script src="js/core/state.js"></script>
 
-<!-- Character Domain -->
+<!-- 9. Character Domain -->
 <script src="js/character/character-factory.js"></script>
 <script src="js/character/character-creation-commands.js"></script>
+<script src="js/character/character-deletion-commands.js"></script> <!-- FIXED: required by modals-character.js -->
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
 <script src="js/character/family-rules.js"></script>
@@ -233,7 +237,7 @@
 <script src="js/character/modals-character.js"></script>
 <script src="js/character/modals-death.js"></script>
 
-<!-- Location Domain -->
+<!-- 10. Location Domain -->
 <script src="js/location/location-state.js"></script>
 <script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-commands.js"></script>
@@ -247,8 +251,7 @@
 <script src="js/location/modals-moves.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
-<!-- Skill / Ranks / Roles / Names -->
-<script src="js/roles/skill-utils.js"></script>
+<!-- 11. Ranks -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
 <script src="js/ranks/rank-queries.js"></script>
@@ -259,22 +262,24 @@
 <script src="js/ranks/modals-rank.js"></script>
 <script src="js/ranks/rank-bootstrap.js"></script>
 
-<script src="js/roles/role-constants.js"></script>
+<!-- 12. Roles -->
+<script src="js/roles/role-constants.js"></script> <!-- Now skill-utils is loaded earlier -->
 <script src="js/roles/role-queries.js"></script>
 <script src="js/roles/role-commands.js"></script>
 <script src="js/roles/modals-roles.js"></script>
 
+<!-- 13. Names -->
 <script src="js/names/name-queries.js"></script>
 <script src="js/names/name-rules.js"></script>
 <script src="js/names/name-commands.js"></script>
 
-<!-- Households -->
+<!-- 14. Households -->
 <script src="js/households/household-constants.js"></script>
 <script src="js/households/household-rules.js"></script>
 <script src="js/households/household-queries.js"></script>
 <script src="js/households/household-commands.js"></script>
 
-<!-- Settlement -->
+<!-- 15. Settlement -->
 <script src="js/settlement/settlement-fiscal-definitions.js"></script>
 <script src="js/settlement/settlement-government-definitions.js"></script>
 <script src="js/settlement/settlement-rank-definitions.js"></script>
@@ -319,7 +324,7 @@
 <script src="js/settlement/settlement-view-models.js"></script>
 <script src="js/settlement/settlement-ui-state.js"></script>
 
-<!-- Government Subsystem -->
+<!-- 16. Government Subsystem -->
 <script src="js/government/government-constants.js"></script>
 <script src="js/government/government-state.js"></script>
 <script src="js/government/government-rules.js"></script>
@@ -336,7 +341,7 @@
 <script src="js/government/modals-government-assign.js"></script>
 <script src="js/government/modals-government-economy.js"></script>
 
-<!-- Selectors (after character-queries) -->
+<!-- 17. Selectors -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
 <script>
@@ -350,7 +355,7 @@
 <script src="js/selectors/modals-char-selector.js"></script>
 <script src="js/selectors/modals-household-selector.js"></script>
 
-<!-- Government Tabs -->
+<!-- 18. Government Tabs -->
 <script src="js/tabs/government-details-tab.js"></script>
 <script src="js/tabs/government-departments-tab.js"></script>
 <script src="js/tabs/government-history-tab.js"></script>
