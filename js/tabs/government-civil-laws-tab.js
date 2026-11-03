@@ -1,104 +1,116 @@
 // js/tabs/government-civil-laws-tab.js
 /**
  * =============================================================================
- * CIVIL LAWS TAB (js/tabs/government-civil-laws-tab.js)
+ * GOVERNMENT CIVIL LAWS TAB
  * =============================================================================
+ *
+ * LOCATION: js/tabs/government-civil-laws-tab.js
  *
  * PURPOSE:
- *   Modular tab for viewing and managing civil laws for a location.
+ *   Render the settlement's civil laws, and manage them through the
+ *   canonical SettlementLawCommands.
  *
- * =============================================================================
- * SETTLEMENT INTEGRATION STATUS — READ THIS
- * =============================================================================
+ * ARCHITECTURE:
+ *   This tab is a THIN SHELL. It does not define its own enums, does not
+ *   write settlement data directly, and does not reimplement any law
+ *   validation.
  *
- * This tab is a PREVIEW. It writes laws to settlementData.civilLaws, and
- * nothing else in the tree reads that field. Until the settlement domain
- * is wired, laws created here do not affect crime, religion, settlement
- * law, or any other system.
+ *   - Reads      → SettlementLawQueries  (getCivilLaws, getCivilLawStatistics)
+ *   - Enums      → SettlementLawDefinitions (LAW_TYPES, LAW_DOMAINS, LAW_SEVERITIES)
+ *   - Validation → SettlementLawRules     (called indirectly by the command)
+ *   - Writes     → SettlementLawCommands  (addCivilLaw, updateCivilLaw, removeCivilLaw)
  *
- * What's missing on the settlement side (all of it user-facing, none of
- * it hidden):
+ *   The tab does not call saveMasterData. The command's commit tail does.
+ *   The tab does not call SettlementState._updateSettlementData. That method
+ *   does not exist on the canonical State surface.
  *
- *   1. A canonical write command.
- *      SettlementLawCommands.addCivilLaw(locationId, lawData) does not
- *      exist in this build. The tab falls back to
- *      SettlementState._updateSettlementData(locationId, { civilLaws })
- *      — a PRIVATE method. If that method does not exist either, every
- *      write fails with a visible toast, and the integration-status
- *      panel says so.
+ * LAW SCHEMA (canonical, from SettlementLawRules.validateNewLaw):
+ *   {
+ *     name          string   required, trimmed, non-empty
+ *     description   string   optional
+ *     type          string   required, id from LAW_TYPES
+ *     domain        string   required, id from LAW_DOMAINS
+ *     severity      string   required, id from LAW_SEVERITIES
+ *     crimeMapping  {
+ *       crimeType   string|null
+ *       punishment  string|null
+ *       isEnforced  boolean
+ *       notes       string
+ *     }
+ *     notes         string   optional
+ *     createdYear   number   set by the command
+ *     updatedYear   number   set by the command
+ *     id            string   set by the command
+ *   }
  *
- *   2. A canonical read query.
- *      SettlementLawQueries.getCivilLaws(locationId) does not exist.
- *      The tab reads data.civilLaws off the raw settlement record
- *      returned by getSettlementData.
+ *   The tab does NOT expose `category`, `jurisdiction`, `punishmentType`,
+ *   `punishmentAmount`, `exceptions`, `isActive`, `enactedYear`,
+ *   `amendedYear`. Those fields are not part of the canonical schema. The
+ *   old form fields for them are gone; the old render paths for them are
+ *   gone.
  *
- *   3. Consumers.
- *      Crime, religion, and settlement never consult civilLaws. A law
- *      saying "theft is punished by death" has no effect today. It is
- *      stored; it is not enforced.
+ * SEVERITY COLOR:
+ *   Severity colors come from SettlementLawDefinitions.LAW_SEVERITIES[i].color.
+ *   The tab renders the color as a data attribute; CSS uses it. No
+ *   hardcoded color literals. No local severity-to-color map.
  *
- *   4. Canonical enum source.
- *      The tab defines its own PUNISHMENT_TYPES / LAW_CATEGORIES /
- *      SEVERITY_LEVELS, which do not match SettlementLawDefinitions.*.
+ * MISSING DATA:
+ *   - No settlement record  → whole tab renders an empty state; Add is
+ *                             still allowed? No — no settlement means no
+ *                             locationId context. The tab does not offer
+ *                             Add when there is no settlement record.
+ *   - Settlement, no laws   → "No laws yet" empty state with Add button
+ *   - Statistics null       → stats strip renders zeros
  *
- * What IS wired in this revision:
- *
- *   - Modal API uses titleHtml / contentHtml (key translation).
- *   - Every onConfirm / onMount reads inputs via root.querySelector.
- *   - Every write inspects the _updateSettlementData return value; a
- *     failed write shows a toast and keeps the modal open.
- *   - saveMasterData() and invalidateAccessorCaches() run once per
- *     successful write.
- *   - Banner + integration status panel render on every view.
- *   - All inline style="" attributes removed; every visual is a class
- *     from gov-manager.css, driven by themes.css tokens. Colours are
- *     theme-aware; nothing is hardcoded.
- *
- * =============================================================================
- * DEPENDENCIES (checked at load time):
- *   - accessors.js   (getPlaceById)
- *   - formatting.js  (escapeHtml)
- *   - icons.js       (Icons)
- *   - ui.js          (showToast)
- *   - modals-core.js (openModal, confirmDialog)
- *   - time.js        (getCurrentYear)
- *
- * DEPENDENCIES (checked at call time, integration-status panel reports
- * presence or absence):
- *   - SettlementState (window.SettlementState._updateSettlementData)
- *   - window.getSettlementData / window.getOrCreateSettlementData
+ * LOAD ORDER (must be satisfied when this file loads):
+ *   - settlement-law-queries.js
+ *   - settlement-law-commands.js
+ *   - settlement-law-definitions.js
+ *   - settlement-queries.js    (hasSettlement check)
+ *   - location-queries.js      (getPlaceSummary)
+ *   - modals-core.js           (openModal, closeTopModal, confirmDialog)
+ *   - ui.js                    (showToast)
+ *   - formatting.js            (escapeHtml)
+ *   - icons.js                 (Icons)
  *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
     // 1. LOAD-TIME DEPENDENCY CHECKS
     // =========================================================================
 
-    if (typeof window.escapeHtml !== 'function') {
+    if (!window.SettlementLawQueries) {
         throw new Error(
-            'government-civil-laws-tab.js: formatting.js (escapeHtml) ' +
-            'must load first.'
+            'government-civil-laws-tab.js: settlement-law-queries.js must load first.'
         );
     }
-    if (!window.Icons || typeof window.Icons !== 'object') {
+    if (!window.SettlementLawCommands) {
         throw new Error(
-            'government-civil-laws-tab.js: icons.js must load first.'
+            'government-civil-laws-tab.js: settlement-law-commands.js must load first.'
+        );
+    }
+    if (!window.SettlementLawDefinitions) {
+        throw new Error(
+            'government-civil-laws-tab.js: settlement-law-definitions.js must load first.'
+        );
+    }
+    if (!window.SettlementQueries) {
+        throw new Error(
+            'government-civil-laws-tab.js: settlement-queries.js must load first.'
+        );
+    }
+    if (!window.LocationQueries) {
+        throw new Error(
+            'government-civil-laws-tab.js: location-queries.js must load first.'
         );
     }
     if (typeof window.openModal !== 'function') {
         throw new Error(
-            'government-civil-laws-tab.js: modals-core.js must load first ' +
-            '(openModal missing).'
-        );
-    }
-    if (typeof window.getCurrentYear !== 'function') {
-        throw new Error(
-            'government-civil-laws-tab.js: time.js (getCurrentYear) must ' +
-            'load first.'
+            'government-civil-laws-tab.js: modals-core.js (openModal) must load first.'
         );
     }
 
@@ -106,470 +118,374 @@
     // 2. DEPENDENCY WRAPPERS
     // =========================================================================
 
-    var CIVIL_LAWS_FIELD = 'civilLaws';
+    var SLQ = window.SettlementLawQueries;
+    var SLC = window.SettlementLawCommands;
+    var SLD = window.SettlementLawDefinitions;
+    var SQ = window.SettlementQueries;
+    var LQ = window.LocationQueries;
 
-    function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function'
-            ? window.getPlaceById(id)
-            : null;
-    }
-
-    function _escapeHtml(value) {
-        return window.escapeHtml(value);
-    }
-
-    function _escapeNumber(n) {
-        return window.escapeHtml(
-            typeof n === 'number' && isFinite(n) ? String(n) : '0'
-        );
+    function _escapeHtml(str) {
+        if (typeof window.escapeHtml === 'function') {
+            return window.escapeHtml(str);
+        }
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function _getIcon(name) {
-        var svg = window.Icons[name];
-        return typeof svg === 'string' ? svg : '';
+        if (typeof window._getIcon === 'function') return window._getIcon(name);
+        return window.Icons && typeof window.Icons[name] === 'string'
+            ? window.Icons[name]
+            : '';
     }
 
-    function _showToast(message, type) {
+    function _iconSpan(name) {
+        var i = _getIcon(name);
+        return i
+            ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;">' + i + '</span>'
+            : '';
+    }
+
+    function _toast(message, type) {
         if (typeof window.showToast === 'function') {
             window.showToast(message, type || 'info');
+        } else if (typeof window._showToast === 'function') {
+            window._showToast(message, type || 'info');
         }
     }
 
-    function _confirmDialog(message, title, onConfirm) {
+    function _confirm(message, title, onConfirm) {
         if (typeof window.confirmDialog === 'function') {
             window.confirmDialog(message, title, onConfirm);
+        } else {
+            _toast('confirmDialog unavailable', 'error');
         }
+    }
+
+    function _closeTopModal() {
+        if (typeof window.closeTopModal === 'function') window.closeTopModal();
     }
 
     function _openModal(opts) {
-        var forwarded = {};
-        for (var k in opts) {
-            if (Object.prototype.hasOwnProperty.call(opts, k)) {
-                forwarded[k] = opts[k];
-            }
-        }
-        if (forwarded.titleHtml === undefined && forwarded.title !== undefined) {
-            forwarded.titleHtml = forwarded.title;
-        }
-        if (forwarded.contentHtml === undefined && forwarded.content !== undefined) {
-            forwarded.contentHtml = forwarded.content;
-        }
-        return window.openModal(forwarded);
+        return window.openModal(opts);
     }
 
-    function _getCurrentYear() {
-        return window.getCurrentYear();
-    }
-
-    function _generateId(prefix) {
-        if (typeof window.generateId === 'function') {
-            return window.generateId(prefix);
-        }
-        return prefix + '_' + Date.now() + '_' +
-            Math.random().toString(36).slice(2, 8);
+    function _placeSummary(locationId) {
+        if (!locationId) return null;
+        return LQ.getPlaceSummary(locationId);
     }
 
     // =========================================================================
-    // 3. SETTLEMENT INTEGRATION DETECTION
+    // 3. DEFINITION LOOKUPS
     // =========================================================================
+    //
+    // Every enum value the tab renders comes from SettlementLawDefinitions.
+    // These helpers resolve an id to its definition object, and return
+    // null for an unknown id (which renders as the raw id, so a bad
+    // record is visible but does not crash).
 
-    function _detectSettlementState() {
-        if (typeof window.SettlementState === 'undefined'
-            || window.SettlementState === null) {
-            return { ok: false, reason: 'window.SettlementState is not loaded.' };
-        }
-        if (typeof window.SettlementState._updateSettlementData !== 'function') {
-            return {
-                ok: false,
-                reason: 'SettlementState._updateSettlementData (private) is ' +
-                    'not available. Writes will fail.'
-            };
-        }
-        return { ok: true, reason: 'Available.' };
-    }
-
-    function _detectSettlementReadAccessor() {
-        if (typeof window.getSettlementData === 'function') {
-            return { ok: true, reason: 'window.getSettlementData is available.' };
-        }
-        if (typeof window.getOrCreateSettlementData === 'function') {
-            return {
-                ok: true,
-                reason: 'window.getOrCreateSettlementData is available ' +
-                    '(fallback).'
-            };
-        }
-        return {
-            ok: false,
-            reason: 'Neither window.getSettlementData nor ' +
-                'window.getOrCreateSettlementData is loaded. Reads will fail.'
-        };
-    }
-
-    function _detectSettlementLawCommands() {
-        if (typeof window.SettlementLawCommands === 'undefined'
-            || window.SettlementLawCommands === null) {
-            return {
-                ok: false,
-                reason: 'SettlementLawCommands is not loaded. This tab ' +
-                    'falls back to the private settlement write path.'
-            };
-        }
-        return { ok: true, reason: 'Available. (Not yet used by this tab.)' };
-    }
-
-    function _getIntegrationStatus() {
-        return {
-            settlementState: _detectSettlementState(),
-            readAccessor: _detectSettlementReadAccessor(),
-            lawCommands: _detectSettlementLawCommands()
-        };
-    }
-
-    // =========================================================================
-    // 4. LAW DATA (via settlement record)
-    // =========================================================================
-
-    function _getSettlementData(locationId) {
-        if (typeof window.getSettlementData === 'function') {
-            return window.getSettlementData(locationId);
-        }
-        if (typeof window.getOrCreateSettlementData === 'function') {
-            return window.getOrCreateSettlementData(locationId);
+    function _findDefinition(list, id) {
+        if (!id) return null;
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].id === id) return list[i];
         }
         return null;
     }
 
-    function _writeSettlementData(locationId, updates) {
-        if (typeof window.SettlementState === 'undefined'
-            || window.SettlementState === null
-            || typeof window.SettlementState._updateSettlementData !== 'function') {
-            return { success: false, reason: 'settlement-write-unavailable' };
-        }
-        try {
-            var result = window.SettlementState._updateSettlementData(
-                locationId, updates
-            );
-            if (result === null || result === undefined) {
-                return {
-                    success: false,
-                    reason: '_updateSettlementData returned ' +
-                        (result === null ? 'null' : 'undefined')
-                };
-            }
-            return { success: true };
-        } catch (e) {
-            return {
-                success: false,
-                reason: (e && e.message) ? e.message : 'update threw'
-            };
-        }
+    function _lawTypeDef(typeId) {
+        return _findDefinition(SLD.LAW_TYPES, typeId);
     }
 
-    function _readLaws(locationId) {
-        var data = _getSettlementData(locationId);
-        if (!data) return { ok: false, reason: 'no-settlement-data', laws: [] };
-        var laws = Array.isArray(data[CIVIL_LAWS_FIELD])
-            ? data[CIVIL_LAWS_FIELD]
-            : [];
-        return { ok: true, laws: laws };
+    function _lawDomainDef(domainId) {
+        return _findDefinition(SLD.LAW_DOMAINS, domainId);
     }
 
-    function _saveLaws(locationId, laws) {
-        var updates = {};
-        updates[CIVIL_LAWS_FIELD] = laws;
-        return _writeSettlementData(locationId, updates);
+    function _lawSeverityDef(severityId) {
+        return _findDefinition(SLD.LAW_SEVERITIES, severityId);
     }
 
-    function _findLaw(locationId, lawId) {
-        var result = _readLaws(locationId);
-        if (!result.ok) return null;
-        for (var i = 0; i < result.laws.length; i++) {
-            if (result.laws[i].id === lawId) return result.laws[i];
-        }
-        return null;
+    function _lawTypeName(typeId) {
+        var def = _lawTypeDef(typeId);
+        return def ? def.name : (typeId || '');
     }
 
-    function _addLaw(locationId, lawData) {
-        var read = _readLaws(locationId);
-        if (!read.ok) {
-            return { success: false, reason: 'cannot-read-laws' };
-        }
-        var laws = read.laws.slice();
-        var newLaw = {
-            id: _generateId('law'),
-            name: lawData.name.trim(),
-            description: lawData.description || '',
-            category: lawData.category || 'civil',
-            severity: lawData.severity || 'medium',
-            punishment: lawData.punishment || '',
-            punishmentType: lawData.punishmentType || 'fine',
-            punishmentAmount: lawData.punishmentAmount || 0,
-            isActive: lawData.isActive !== false,
-            enactedYear: _getCurrentYear(),
-            amendedYear: null,
-            jurisdiction: lawData.jurisdiction || 'local',
-            exceptions: lawData.exceptions || '',
-            notes: lawData.notes || ''
-        };
-        laws.push(newLaw);
-
-        var write = _saveLaws(locationId, laws);
-        if (!write.success) {
-            return { success: false, reason: write.reason };
-        }
-
-        _persistAndInvalidate();
-
-        return { success: true, law: newLaw };
+    function _lawDomainName(domainId) {
+        var def = _lawDomainDef(domainId);
+        return def ? def.name : (domainId || '');
     }
 
-    function _updateLaw(locationId, lawId, updates) {
-        var read = _readLaws(locationId);
-        if (!read.ok) {
-            return { success: false, reason: 'cannot-read-laws' };
-        }
-        var laws = read.laws.slice();
-        var found = false;
-        for (var i = 0; i < laws.length; i++) {
-            if (laws[i].id !== lawId) continue;
-            found = true;
-            var l = laws[i];
-            if (updates.name !== undefined) l.name = updates.name.trim();
-            if (updates.description !== undefined) l.description = updates.description;
-            if (updates.category !== undefined) l.category = updates.category;
-            if (updates.severity !== undefined) l.severity = updates.severity;
-            if (updates.punishment !== undefined) l.punishment = updates.punishment;
-            if (updates.punishmentType !== undefined) l.punishmentType = updates.punishmentType;
-            if (updates.punishmentAmount !== undefined) l.punishmentAmount = updates.punishmentAmount;
-            if (updates.isActive !== undefined) l.isActive = updates.isActive;
-            if (updates.jurisdiction !== undefined) l.jurisdiction = updates.jurisdiction;
-            if (updates.exceptions !== undefined) l.exceptions = updates.exceptions;
-            if (updates.notes !== undefined) l.notes = updates.notes;
-            l.amendedYear = _getCurrentYear();
-            break;
-        }
-        if (!found) {
-            return { success: false, reason: 'law-not-found' };
-        }
-
-        var write = _saveLaws(locationId, laws);
-        if (!write.success) {
-            return { success: false, reason: write.reason };
-        }
-
-        _persistAndInvalidate();
-
-        return { success: true, law: _findLaw(locationId, lawId) };
+    function _lawSeverityName(severityId) {
+        var def = _lawSeverityDef(severityId);
+        return def ? def.name : (severityId || '');
     }
 
-    function _deleteLaw(locationId, lawId) {
-        var read = _readLaws(locationId);
-        if (!read.ok) {
-            return { success: false, reason: 'cannot-read-laws' };
-        }
-        var filtered = [];
-        for (var i = 0; i < read.laws.length; i++) {
-            if (read.laws[i].id !== lawId) filtered.push(read.laws[i]);
-        }
-
-        var write = _saveLaws(locationId, filtered);
-        if (!write.success) {
-            return { success: false, reason: write.reason };
-        }
-
-        _persistAndInvalidate();
-
-        return { success: true };
-    }
-
-    function _persistAndInvalidate() {
-        if (typeof window.saveMasterData === 'function') {
-            try { window.saveMasterData(); } catch (e) { /* ignore */ }
-        }
-        if (typeof window.invalidateAccessorCaches === 'function') {
-            try { window.invalidateAccessorCaches(); } catch (e) { /* ignore */ }
-        }
+    function _lawSeverityColor(severityId) {
+        var def = _lawSeverityDef(severityId);
+        return def ? def.color : 'var(--tmut)';
     }
 
     // =========================================================================
-    // 5. ENUMS (LOCAL, NOT SETTLEMENT-CANONICAL — see header)
+    // 4. DATA LOADERS
     // =========================================================================
 
-    var PUNISHMENT_TYPES = {
-        fine:             { label: 'Fine',             icon: 'COIN' },
-        imprisonment:     { label: 'Imprisonment',     icon: 'LOCK' },
-        exile:            { label: 'Exile',            icon: 'FLAG' },
-        execution:        { label: 'Execution',        icon: 'SWORD' },
-        mutilation:       { label: 'Mutilation',       icon: 'WARNING' },
-        flogging:         { label: 'Flogging',         icon: 'WARNING' },
-        publicShaming:    { label: 'Public Shaming',   icon: 'WARNING' },
-        communityService: { label: 'Community Service', icon: 'PERSON' },
-        compensation:     { label: 'Compensation',     icon: 'COIN' },
-        demotion:         { label: 'Demotion',         icon: 'CROWN' },
-        warning:          { label: 'Warning',          icon: 'WARNING' },
-        houseArrest:      { label: 'House Arrest',     icon: 'HOME' },
-        slavery:          { label: 'Enslavement',      icon: 'LOCK' }
-    };
-
-    var LAW_CATEGORIES = {
-        civil:          { label: 'Civil',          icon: 'SHIELD' },
-        criminal:       { label: 'Criminal',       icon: 'SWORD' },
-        commercial:     { label: 'Commercial',     icon: 'COIN' },
-        property:       { label: 'Property',       icon: 'HOME' },
-        family:         { label: 'Family',         icon: 'HEART' },
-        religious:      { label: 'Religious',      icon: 'STAR_4' },
-        administrative: { label: 'Administrative', icon: 'GEAR' },
-        constitutional: { label: 'Constitutional', icon: 'CROWN' },
-        military:       { label: 'Military',       icon: 'SHIELD' },
-        labor:          { label: 'Labor',          icon: 'PERSON' }
-    };
-
-    var SEVERITY_LEVELS = {
-        minor:   { label: 'Minor',   className: 'is-minor' },
-        medium:  { label: 'Medium',  className: 'is-medium' },
-        major:   { label: 'Major',   className: 'is-major' },
-        severe:  { label: 'Severe',  className: 'is-severe' },
-        capital: { label: 'Capital', className: 'is-capital' }
-    };
-
-    // =========================================================================
-    // 6. RENDER
-    // =========================================================================
-
-    function _renderIntegrationBanner() {
-        return (
-            '<div class="gov-integration-banner" role="note">' +
-                '<strong>Preview only — not wired to the settlement domain.</strong> ' +
-                'Laws created here are stored in <code>settlementData.civilLaws</code> ' +
-                'and nothing else in the game reads them. Crime, religion, ' +
-                'settlement law, and every other system ignore these laws. ' +
-                'The editor is functional so you can build your data model; ' +
-                'the enforcement and cross-domain integration are not yet in place.' +
-            '</div>'
-        );
+    /**
+     * Returns the law array for a location. Returns null when no
+     * settlement record exists. Returns [] when the settlement exists
+     * but has no laws. The two are distinguished for the empty-state
+     * copy.
+     */
+    function _loadLaws(locationId) {
+        if (!locationId) return null;
+        return SLQ.getCivilLaws(locationId);
     }
 
-    function _renderIntegrationStatus(status) {
-        function line(label, entry) {
-            var glyphClass = entry.ok
-                ? 'gov-integration-glyph is-ok'
-                : 'gov-integration-glyph is-missing';
-            var glyph = entry.ok ? '✓' : '✗';
-            return (
-                '<div class="gov-integration-line">' +
-                    '<span class="' + glyphClass + '">' + glyph + '</span>' +
-                    '<span class="gov-integration-label">' +
-                        _escapeHtml(label) + '</span>' +
-                    '<span class="gov-integration-value">' +
-                        _escapeHtml(entry.reason) + '</span>' +
-                '</div>'
-            );
-        }
+    /**
+     * Returns the civil-law statistics for a location, or null when no
+     * settlement record exists.
+     */
+    function _loadStats(locationId) {
+        if (!locationId) return null;
+        return SLQ.getCivilLawStatistics(locationId);
+    }
+
+    // =========================================================================
+    // 5. HTML BUILDERS
+    // =========================================================================
+
+    function _buildHeader(place, canAdd) {
+        var name = place ? (place.displayName || place.name || '') : '';
+        var addIcon = _iconSpan('PLUS');
+        var refreshIcon = _iconSpan('REFRESH');
+
+        var addBtn = canAdd
+            ? '<button type="button" class="law-btn law-btn-add" data-action="add-law">' +
+                addIcon + ' Add Law' +
+              '</button>'
+            : '';
 
         return (
-            '<div class="gov-integration-status">' +
-                '<div class="gov-integration-status-title">' +
-                    'Settlement integration status' +
+            '<div class="law-tab-header">' +
+                '<h3>Civil Laws - ' + _escapeHtml(name) + '</h3>' +
+                '<div class="law-tab-actions">' +
+                    addBtn +
+                    '<button type="button" class="law-btn" data-action="refresh-laws">' +
+                        refreshIcon + ' Refresh' +
+                    '</button>' +
                 '</div>' +
-                line('Settlement write path', status.settlementState) +
-                line('Settlement read path', status.readAccessor) +
-                line('Canonical law command', status.lawCommands) +
             '</div>'
         );
     }
 
+    function _buildStats(stats) {
+        var total = stats ? stats.totalLaws : 0;
+        var enforced = stats ? stats.enforced : 0;
+        var notEnforced = stats ? stats.notEnforced : 0;
+
+        return (
+            '<div class="law-stats-summary">' +
+                '<div class="law-stat">' +
+                    '<span class="law-stat-label">Total Laws</span>' +
+                    '<span class="law-stat-value">' + total + '</span>' +
+                '</div>' +
+                '<div class="law-stat">' +
+                    '<span class="law-stat-label">Enforced</span>' +
+                    '<span class="law-stat-value is-active">' + enforced + '</span>' +
+                '</div>' +
+                '<div class="law-stat">' +
+                    '<span class="law-stat-label">Not Enforced</span>' +
+                    '<span class="law-stat-value is-inactive">' + notEnforced + '</span>' +
+                '</div>' +
+            '</div>'
+        );
+    }
+
+    /**
+     * Renders a single law item.
+     *
+     * Reads only canonical fields: name, description, type, domain,
+     * severity, crimeMapping, notes, createdYear, updatedYear.
+     *
+     * The status pill uses crimeMapping.isEnforced (a boolean field of
+     * the crime mapping), not a fabricated top-level isActive field.
+     * A law with no crime mapping renders as "Not enforced".
+     */
     function _renderLawItem(law) {
-        var severity = SEVERITY_LEVELS[law.severity] || SEVERITY_LEVELS.medium;
-        var category = LAW_CATEGORIES[law.category] || LAW_CATEGORIES.civil;
-        var punishment = PUNISHMENT_TYPES[law.punishmentType] ||
-            PUNISHMENT_TYPES.fine;
+        if (!law || !law.id) return '';
 
-        var punishmentIcon = _getIcon(punishment.icon);
-        var categoryIcon = _getIcon(category.icon);
-        var statusClass = law.isActive ? 'is-active' : 'is-inactive';
-        var statusLabel = law.isActive ? 'Active' : 'Inactive';
+        var typeDef = _lawTypeDef(law.type);
+        var domainDef = _lawDomainDef(law.domain);
+        var severityDef = _lawSeverityDef(law.severity);
+        var severityColor = _lawSeverityColor(law.severity);
 
-        var html = '<div class="law-item" data-law-id="' +
-            _escapeHtml(law.id) + '">';
+        var crime = law.crimeMapping || {};
+        var isEnforced = crime.isEnforced === true;
+        var statusLabel = isEnforced ? 'Enforced' : 'Not enforced';
+        var statusClass = isEnforced ? 'is-active' : 'is-inactive';
 
+        var typeIcon = typeDef && typeDef.icon ? _escapeHtml(typeDef.icon) : '';
+        var typeName = typeDef ? typeDef.name : (law.type || '');
+        var domainName = domainDef ? domainDef.name : (law.domain || '');
+        var severityName = severityDef ? severityDef.name : (law.severity || '');
+
+        var editIcon = _getIcon('EDIT');
+        var deleteIcon = _getIcon('X_HEAVY');
+
+        var html = '<div class="law-item" data-law-id="' + _escapeHtml(law.id) + '">';
+
+        // Header
         html += '<div class="law-header">';
         html += '<div class="law-title">';
-        html += '<span class="law-name">' +
-            _escapeHtml(law.name) + '</span>';
-        html += '<span class="law-status ' + statusClass + '">● ' +
-            statusLabel + '</span>';
+        html += '<span class="law-name">' + _escapeHtml(law.name || '') + '</span>';
+        html += '<span class="law-status ' + statusClass + '">&#9679; ' +
+            _escapeHtml(statusLabel) + '</span>';
         html += '</div>';
         html += '<div class="law-actions">';
         html += '<button type="button" class="law-btn law-btn-edit" ' +
-            'data-action="edit-law" data-law-id="' +
-            _escapeHtml(law.id) + '">' + _getIcon('EDIT') + '</button>';
+            'data-action="edit-law" data-law-id="' + _escapeHtml(law.id) + '">' +
+            editIcon + '</button>';
         html += '<button type="button" class="law-btn law-btn-delete" ' +
-            'data-action="delete-law" data-law-id="' +
-            _escapeHtml(law.id) + '">' + _getIcon('X_HEAVY') + '</button>';
+            'data-action="delete-law" data-law-id="' + _escapeHtml(law.id) + '">' +
+            deleteIcon + '</button>';
         html += '</div>';
         html += '</div>';
 
+        // Body
         html += '<div class="law-details">';
+
+        // Meta row: type, domain, severity
         html += '<div class="law-meta">';
-        html += '<span class="law-category">' + categoryIcon + ' ' +
-            _escapeHtml(category.label) + '</span>';
-        html += '<span class="law-severity ' + severity.className + '">' +
-            _escapeHtml(severity.label) + '</span>';
-        html += '<span class="law-jurisdiction">' +
-            _escapeHtml(law.jurisdiction || 'Local') + '</span>';
+        if (typeName) {
+            html += '<span class="law-category">' +
+                (typeIcon ? typeIcon + ' ' : '') +
+                _escapeHtml(typeName) + '</span>';
+        }
+        if (domainName) {
+            html += '<span class="law-domain">' +
+                _escapeHtml(domainName) + '</span>';
+        }
+        if (severityName) {
+            html += '<span class="law-severity" ' +
+                'style="color: ' + _escapeHtml(severityColor) + ';">' +
+                _escapeHtml(severityName) + '</span>';
+        }
         html += '</div>';
 
+        // Description
         if (law.description) {
             html += '<div class="law-description">' +
                 _escapeHtml(law.description) + '</div>';
         }
 
-        html += '<div class="law-punishment">';
-        html += '<span class="law-punishment-label">Punishment:</span>';
-        html += '<span class="law-punishment-type">' + punishmentIcon + ' ' +
-            _escapeHtml(punishment.label) + '</span>';
-        if (typeof law.punishmentAmount === 'number' &&
-            law.punishmentAmount > 0) {
-            html += '<span class="law-punishment-amount">' +
-                _escapeHtml(law.punishmentAmount.toLocaleString()) +
-                ' gold</span>';
-        }
-        if (law.punishment) {
+        // Punishment (from crimeMapping)
+        if (crime.punishment) {
+            html += '<div class="law-punishment">';
+            html += '<span class="law-punishment-label">Punishment:</span> ';
             html += '<span class="law-punishment-desc">' +
-                _escapeHtml(law.punishment) + '</span>';
-        }
-        html += '</div>';
-
-        if (law.exceptions) {
-            html += '<div class="law-exceptions">';
-            html += '<span class="law-exceptions-label">Exceptions:</span>';
-            html += '<span class="law-exceptions-text">' +
-                _escapeHtml(law.exceptions) + '</span>';
+                _escapeHtml(crime.punishment) + '</span>';
             html += '</div>';
         }
 
+        // Crime type (from crimeMapping)
+        if (crime.crimeType) {
+            html += '<div class="law-crime-type">';
+            html += '<span class="law-crime-label">Crime type:</span> ';
+            html += '<span class="law-crime-value">' +
+                _escapeHtml(crime.crimeType) + '</span>';
+            html += '</div>';
+        }
+
+        // Crime notes (from crimeMapping)
+        if (crime.notes) {
+            html += '<div class="law-notes">' +
+                _escapeHtml(crime.notes) + '</div>';
+        }
+
+        // General notes
         if (law.notes) {
             html += '<div class="law-notes">' +
                 _escapeHtml(law.notes) + '</div>';
         }
 
+        // Timestamps
         html += '<div class="law-meta-info">';
-        html += '<span>Enacted: ' +
-            _escapeNumber(law.enactedYear) + '</span>';
-        if (law.amendedYear) {
-            html += ' <span>Amended: ' +
-                _escapeNumber(law.amendedYear) + '</span>';
+        if (typeof law.createdYear === 'number') {
+            html += '<span>Enacted: ' + law.createdYear + '</span>';
+        }
+        if (typeof law.updatedYear === 'number' && law.updatedYear !== law.createdYear) {
+            html += ' <span>Amended: ' + law.updatedYear + '</span>';
         }
         html += '</div>';
 
-        html += '</div>';
-        html += '</div>';
+        html += '</div>'; // .law-details
+        html += '</div>'; // .law-item
 
         return html;
     }
 
-    function _renderEmptyState(message) {
+    function _buildLawList(laws) {
+        if (!Array.isArray(laws) || laws.length === 0) {
+            return (
+                '<div class="law-empty">' +
+                    '<p>No civil laws established for this location.</p>' +
+                    '<button type="button" class="law-btn law-btn-add" data-action="add-law">' +
+                        _iconSpan('PLUS') + ' Create First Law' +
+                    '</button>' +
+                '</div>'
+            );
+        }
+
+        // Enforced laws first, then by name.
+        var enforced = [];
+        var notEnforced = [];
+        for (var i = 0; i < laws.length; i++) {
+            var law = laws[i];
+            if (!law || !law.id) continue;
+            var isEnf = law.crimeMapping && law.crimeMapping.isEnforced === true;
+            (isEnf ? enforced : notEnforced).push(law);
+        }
+
+        enforced.sort(function (a, b) {
+            return (a.name || '').localeCompare(b.name || '');
+        });
+        notEnforced.sort(function (a, b) {
+            return (a.name || '').localeCompare(b.name || '');
+        });
+
+        var html = '';
+
+        if (enforced.length > 0) {
+            html += '<div class="law-section">';
+            html += '<div class="law-section-header">Enforced Laws (' +
+                enforced.length + ')</div>';
+            html += '<div class="law-list">';
+            for (var e = 0; e < enforced.length; e++) {
+                html += _renderLawItem(enforced[e]);
+            }
+            html += '</div>';
+            html += '</div>';
+        }
+
+        if (notEnforced.length > 0) {
+            html += '<div class="law-section">';
+            html += '<div class="law-section-header">Not Enforced (' +
+                notEnforced.length + ')</div>';
+            html += '<div class="law-list">';
+            for (var n = 0; n < notEnforced.length; n++) {
+                html += _renderLawItem(notEnforced[n]);
+            }
+            html += '</div>';
+            html += '</div>';
+        }
+
+        return html;
+    }
+
+    function _buildEmptyState(message) {
         return (
             '<div class="law-empty">' +
                 '<p>' + _escapeHtml(message) + '</p>' +
@@ -577,255 +493,271 @@
         );
     }
 
-    function _renderLawsTabBody(place) {
+    function _buildShell(place, laws, stats) {
         if (!place) {
-            return _renderEmptyState(
-                'Select a location to view civil laws.'
-            );
+            return '<div class="law-tab-container">' +
+                _buildEmptyState('Select a location to view civil laws.') +
+                '</div>';
         }
 
-        var read = _readLaws(place.id);
-        var status = _getIntegrationStatus();
+        // laws === null means no settlement record exists.
+        var hasSettlement = laws !== null;
+        var lawArray = hasSettlement ? (laws || []) : [];
+
+        var canAdd = hasSettlement;
 
         var html = '<div class="law-tab-container" ' +
-            'data-location-id="' + _escapeHtml(place.id) + '">';
+            'data-location-id="' + _escapeHtml(place.id || '') + '">';
 
-        // Header
-        html += '<div class="law-tab-header">';
-        html += '<h3>Civil Laws - ' +
-            _escapeHtml(place.displayName || place.name) + '</h3>';
-        html += '<div class="law-tab-actions">';
-        html += '<button type="button" class="law-btn law-btn-add" ' +
-            'data-action="add-law">' +
-            _getIcon('PLUS') + ' Add Law' +
-            '</button>';
-        html += '<button type="button" class="law-btn" ' +
-            'data-action="refresh-laws">' +
-            _getIcon('REFRESH') + ' Refresh' +
-            '</button>';
-        html += '</div>';
-        html += '</div>';
+        html += _buildHeader(place, canAdd);
 
-        // Loud caveat
-        html += _renderIntegrationBanner();
-        html += _renderIntegrationStatus(status);
-
-        // If the read path is broken, we cannot show laws. Show why.
-        if (!read.ok) {
-            html += _renderEmptyState(
-                'Settlement data is unavailable for this location. ' +
-                'Civil laws cannot be loaded or saved here. ' +
-                'See the integration status above.'
+        if (!hasSettlement) {
+            html += _buildEmptyState(
+                'No settlement record exists for this location. ' +
+                'Civil laws cannot be viewed or added here.'
             );
             html += '</div>';
             return html;
         }
 
-        var laws = read.laws;
-        var activeLaws = laws.filter(function(l) { return l.isActive; });
-        var inactiveLaws = laws.filter(function(l) { return !l.isActive; });
-
-        // Stats
-        html += '<div class="law-stats-summary">';
-        html += '<div class="law-stat">' +
-            '<span class="law-stat-label">Total Laws</span>' +
-            '<span class="law-stat-value">' + laws.length + '</span>' +
-            '</div>';
-        html += '<div class="law-stat">' +
-            '<span class="law-stat-label">Active</span>' +
-            '<span class="law-stat-value is-active">' +
-            activeLaws.length + '</span>' +
-            '</div>';
-        html += '<div class="law-stat">' +
-            '<span class="law-stat-label">Inactive</span>' +
-            '<span class="law-stat-value is-inactive">' +
-            inactiveLaws.length + '</span>' +
-            '</div>';
-        html += '</div>';
-
-        // List
-        if (laws.length === 0) {
-            html += '<div class="law-empty">';
-            html += '<p>No civil laws established for this location.</p>';
-            html += '<button type="button" class="law-btn law-btn-add" ' +
-                'data-action="add-law">' +
-                _getIcon('PLUS') + ' Create First Law' +
-                '</button>';
-            html += '</div>';
-        } else {
-            if (activeLaws.length > 0) {
-                html += '<div class="law-section">';
-                html += '<div class="law-section-header">Active Laws</div>';
-                html += '<div class="law-list">';
-                for (var a = 0; a < activeLaws.length; a++) {
-                    html += _renderLawItem(activeLaws[a]);
-                }
-                html += '</div>';
-                html += '</div>';
-            }
-
-            if (inactiveLaws.length > 0) {
-                html += '<div class="law-section law-section-inactive">';
-                html += '<div class="law-section-header law-section-toggle" ' +
-                    'data-toggle="inactive-laws">';
-                html += '<span>Inactive Laws (' + inactiveLaws.length + ')</span>';
-                html += '<span class="law-toggle-icon">' +
-                    _getIcon('TRIANGLE_RIGHT') + '</span>';
-                html += '</div>';
-                html += '<div class="law-section-body is-collapsed">';
-                html += '<div class="law-list">';
-                for (var i = 0; i < inactiveLaws.length; i++) {
-                    html += _renderLawItem(inactiveLaws[i]);
-                }
-                html += '</div>';
-                html += '</div>';
-                html += '</div>';
-            }
-        }
+        html += _buildStats(stats);
+        html += _buildLawList(lawArray);
 
         html += '</div>';
         return html;
     }
 
     // =========================================================================
-    // 7. LAW FORM (shared between add and edit modals)
+    // 6. RENDER
+    // =========================================================================
+
+    function renderLawsTab(containerId, locationId) {
+        var container = document.getElementById(containerId);
+        if (!container) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn('Civil laws tab container not found:', containerId);
+            }
+            return;
+        }
+
+        var place = locationId ? _placeSummary(locationId) : null;
+        var laws = locationId ? _loadLaws(locationId) : null;
+        var stats = locationId ? _loadStats(locationId) : null;
+
+        container.innerHTML = _buildShell(place, laws, stats);
+        container.dataset.locationId = locationId || '';
+
+        _bindActions(container, containerId, locationId);
+    }
+
+    // =========================================================================
+    // 7. ACTION BINDING
+    // =========================================================================
+
+    function _bindActions(container, containerId, locationId) {
+        if (container._govLawsBound) return;
+        container._govLawsBound = true;
+
+        function refresh() {
+            try {
+                renderLawsTab(containerId, locationId);
+            } catch (err) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('government-civil-laws-tab: refresh failed', err);
+                }
+                _toast('Laws refresh failed; see console.', 'error');
+            }
+        }
+
+        container.addEventListener('click', function (event) {
+            var target = event.target.closest('[data-action]');
+            if (!target) return;
+            if (!container.contains(target)) return;
+
+            var action = target.getAttribute('data-action');
+
+            if (action === 'add-law') {
+                event.preventDefault();
+                _openAddLawModal(locationId, refresh);
+                return;
+            }
+
+            if (action === 'refresh-laws') {
+                event.preventDefault();
+                refresh();
+                _toast('Laws refreshed', 'info');
+                return;
+            }
+
+            if (action === 'edit-law') {
+                event.preventDefault();
+                var editId = target.getAttribute('data-law-id');
+                if (!editId) return;
+                _openEditLawModal(locationId, editId, refresh);
+                return;
+            }
+
+            if (action === 'delete-law') {
+                event.preventDefault();
+                var delId = target.getAttribute('data-law-id');
+                if (!delId) return;
+                var law = SLQ.getCivilLaw(locationId, delId);
+                if (!law) {
+                    _toast('Law not found', 'error');
+                    return;
+                }
+                _confirm(
+                    'Delete the law "' + (law.name || '') + '"? ' +
+                    'This cannot be undone.',
+                    'Delete Law',
+                    function () {
+                        var outcome = _deleteLaw(locationId, delId);
+                        if (outcome.success) {
+                            _toast('Law deleted', 'info');
+                            refresh();
+                        } else {
+                            _toast('Delete failed: ' + outcome.reason, 'error');
+                        }
+                    }
+                );
+                return;
+            }
+        });
+    }
+
+    // =========================================================================
+    // 8. FORM BUILDER (shared between add and edit)
     // =========================================================================
 
     function _buildLawFormContent(existingLaw) {
         var law = existingLaw || {};
+        var crime = law.crimeMapping || {};
 
-        var catOptions = '';
-        for (var catKey in LAW_CATEGORIES) {
-            if (!Object.prototype.hasOwnProperty.call(LAW_CATEGORIES, catKey)) {
-                continue;
-            }
-            var sel = (catKey === (law.category || 'civil')) ? ' selected' : '';
-            catOptions += '<option value="' + _escapeHtml(catKey) + '"' +
-                sel + '>' + _escapeHtml(LAW_CATEGORIES[catKey].label) +
-                '</option>';
+        // Type options
+        var typeOptions = '';
+        for (var t = 0; t < SLD.LAW_TYPES.length; t++) {
+            var type = SLD.LAW_TYPES[t];
+            var typeSelected = type.id === (law.type || 'law') ? ' selected' : '';
+            typeOptions += '<option value="' + _escapeHtml(type.id) + '"' +
+                typeSelected + '>' + _escapeHtml(type.name) + '</option>';
         }
 
-        var sevOptions = '';
-        for (var sevKey in SEVERITY_LEVELS) {
-            if (!Object.prototype.hasOwnProperty.call(SEVERITY_LEVELS, sevKey)) {
-                continue;
-            }
-            var sel2 = (sevKey === (law.severity || 'medium')) ? ' selected' : '';
-            sevOptions += '<option value="' + _escapeHtml(sevKey) + '"' +
-                sel2 + '>' + _escapeHtml(SEVERITY_LEVELS[sevKey].label) +
-                '</option>';
+        // Domain options
+        var domainOptions = '';
+        for (var d = 0; d < SLD.LAW_DOMAINS.length; d++) {
+            var domain = SLD.LAW_DOMAINS[d];
+            var domainSelected = domain.id === (law.domain || 'social') ? ' selected' : '';
+            domainOptions += '<option value="' + _escapeHtml(domain.id) + '"' +
+                domainSelected + '>' + _escapeHtml(domain.name) + '</option>';
         }
 
-        var punOptions = '';
-        for (var punKey in PUNISHMENT_TYPES) {
-            if (!Object.prototype.hasOwnProperty.call(PUNISHMENT_TYPES, punKey)) {
-                continue;
-            }
-            var sel3 = (punKey === (law.punishmentType || 'fine'))
-                ? ' selected'
-                : '';
-            punOptions += '<option value="' + _escapeHtml(punKey) + '"' +
-                sel3 + '>' + _escapeHtml(PUNISHMENT_TYPES[punKey].label) +
-                '</option>';
+        // Severity options
+        var severityOptions = '';
+        for (var s = 0; s < SLD.LAW_SEVERITIES.length; s++) {
+            var severity = SLD.LAW_SEVERITIES[s];
+            var severitySelected = severity.id === (law.severity || 'minor') ? ' selected' : '';
+            severityOptions += '<option value="' + _escapeHtml(severity.id) + '"' +
+                severitySelected + '>' + _escapeHtml(severity.name) + '</option>';
         }
 
         var html = '<div class="law-edit-form">';
 
-        html += '<div class="form-group">';
-        html += '<label for="law-name-input">Law Name *</label>';
-        html += '<input type="text" id="law-name-input" class="form-control" ' +
-            'value="' + _escapeHtml(law.name || '') + '" ' +
-            'placeholder="e.g., Theft Act 1250">';
-        html += '</div>';
+        // Name
+        html += '<div class="form-group">' +
+            '<label for="law-name-input">Law Name *</label>' +
+            '<input type="text" id="law-name-input" class="form-control" ' +
+                'value="' + _escapeHtml(law.name || '') + '" ' +
+                'placeholder="e.g., Theft Act of 1250">' +
+            '</div>';
 
-        html += '<div class="form-group">';
-        html += '<label for="law-desc-input">Description</label>';
-        html += '<textarea id="law-desc-input" class="form-control" rows="3" ' +
-            'placeholder="Detailed description of the law">' +
-            _escapeHtml(law.description || '') + '</textarea>';
-        html += '</div>';
+        // Description
+        html += '<div class="form-group">' +
+            '<label for="law-description-input">Description</label>' +
+            '<textarea id="law-description-input" class="form-control" rows="2" ' +
+                'placeholder="What does this law declare?">' +
+                _escapeHtml(law.description || '') + '</textarea>' +
+            '</div>';
 
+        // Type / domain / severity row
         html += '<div class="form-row">';
-        html += '<div class="form-group">';
-        html += '<label for="law-category-select">Category</label>';
-        html += '<select id="law-category-select" class="form-control">' +
-            catOptions + '</select>';
-        html += '</div>';
-        html += '<div class="form-group">';
-        html += '<label for="law-severity-select">Severity</label>';
-        html += '<select id="law-severity-select" class="form-control">' +
-            sevOptions + '</select>';
-        html += '</div>';
-        html += '</div>';
-
-        html += '<div class="form-group">';
-        html += '<label for="law-jurisdiction-input">Jurisdiction</label>';
-        html += '<input type="text" id="law-jurisdiction-input" ' +
-            'class="form-control" ' +
-            'value="' + _escapeHtml(law.jurisdiction || 'Local') + '" ' +
-            'placeholder="e.g., Local, Regional, Kingdom-wide">';
+        html += '<div class="form-group">' +
+            '<label for="law-type-input">Type *</label>' +
+            '<select id="law-type-input" class="form-control">' +
+                typeOptions + '</select>' +
+            '</div>';
+        html += '<div class="form-group">' +
+            '<label for="law-domain-input">Domain *</label>' +
+            '<select id="law-domain-input" class="form-control">' +
+                domainOptions + '</select>' +
+            '</div>';
+        html += '<div class="form-group">' +
+            '<label for="law-severity-input">Severity *</label>' +
+            '<select id="law-severity-input" class="form-control">' +
+                severityOptions + '</select>' +
+            '</div>';
         html += '</div>';
 
-        html += '<div class="form-group">';
-        html += '<label>Punishment</label>';
-        html += '<div class="form-row">';
-        html += '<div class="form-group is-grow">';
-        html += '<select id="law-punishment-type" class="form-control">' +
-            punOptions + '</select>';
-        html += '</div>';
-        html += '<div class="form-group is-shrink">';
-        html += '<input type="number" id="law-punishment-amount" ' +
-            'class="form-control" min="0" ' +
-            'value="' + _escapeNumber(law.punishmentAmount || 0) + '" ' +
-            'placeholder="Amount">';
-        html += '</div>';
-        html += '</div>';
-        html += '<textarea id="law-punishment-desc" class="form-control" ' +
-            'rows="2" ' +
-            'placeholder="Detailed punishment description">' +
-            _escapeHtml(law.punishment || '') + '</textarea>';
-        html += '</div>';
+        // Crime mapping
+        html += '<fieldset class="form-fieldset">' +
+            '<legend>Crime Mapping (optional)</legend>' +
+            '<div class="form-group">' +
+                '<label for="law-crime-type-input">Crime Type</label>' +
+                '<input type="text" id="law-crime-type-input" class="form-control" ' +
+                    'value="' + _escapeHtml(crime.crimeType || '') + '" ' +
+                    'placeholder="e.g., theft, assault, heresy">' +
+            '</div>' +
+            '<div class="form-group">' +
+                '<label for="law-punishment-input">Punishment</label>' +
+                '<input type="text" id="law-punishment-input" class="form-control" ' +
+                    'value="' + _escapeHtml(crime.punishment || '') + '" ' +
+                    'placeholder="e.g., 20 lashes, 50 gold fine, exile">' +
+            '</div>' +
+            '<div class="form-group">' +
+                '<label class="law-checkbox-label">' +
+                    '<input type="checkbox" id="law-enforced-input"' +
+                    (crime.isEnforced === true ? ' checked' : '') + '> ' +
+                    'Crime mapping is enforced' +
+                '</label>' +
+            '</div>' +
+            '<div class="form-group">' +
+                '<label for="law-crime-notes-input">Crime Notes</label>' +
+                '<textarea id="law-crime-notes-input" class="form-control" rows="2">' +
+                    _escapeHtml(crime.notes || '') + '</textarea>' +
+            '</div>' +
+            '</fieldset>';
 
-        html += '<div class="form-group">';
-        html += '<label for="law-exceptions-input">Exceptions (optional)</label>';
-        html += '<textarea id="law-exceptions-input" class="form-control" ' +
-            'rows="2" placeholder="Who or what is exempt from this law?">' +
-            _escapeHtml(law.exceptions || '') + '</textarea>';
-        html += '</div>';
-
-        html += '<div class="form-group">';
-        html += '<label for="law-notes-input">Notes</label>';
-        html += '<textarea id="law-notes-input" class="form-control" ' +
-            'rows="2" placeholder="Additional notes">' +
-            _escapeHtml(law.notes || '') + '</textarea>';
-        html += '</div>';
-
-        html += '<div class="form-group">';
-        html += '<label class="law-checkbox-label">';
-        html += '<input type="checkbox" id="law-active-input" ' +
-            (law.isActive !== false ? 'checked' : '') + '> ';
-        html += 'Law is active and enforceable';
-        html += '</label>';
-        html += '</div>';
+        // Notes
+        html += '<div class="form-group">' +
+            '<label for="law-notes-input">Notes</label>' +
+            '<textarea id="law-notes-input" class="form-control" rows="2">' +
+                _escapeHtml(law.notes || '') + '</textarea>' +
+            '</div>';
 
         html += '</div>';
         return html;
     }
 
+    /**
+     * Reads the form values from a modal root. Returns null if a
+     * required field is missing or empty; the caller decides whether to
+     * surface a toast.
+     *
+     * Every field collected here is a canonical SettlementLawRules
+     * input. Fields that are not part of the schema are not collected.
+     */
     function _collectLawFormData(root) {
         var nameEl = root.querySelector('#law-name-input');
-        var descEl = root.querySelector('#law-desc-input');
-        var categoryEl = root.querySelector('#law-category-select');
-        var severityEl = root.querySelector('#law-severity-select');
-        var jurisdictionEl = root.querySelector('#law-jurisdiction-input');
-        var punishmentTypeEl = root.querySelector('#law-punishment-type');
-        var punishmentAmountEl = root.querySelector('#law-punishment-amount');
-        var punishmentDescEl = root.querySelector('#law-punishment-desc');
-        var exceptionsEl = root.querySelector('#law-exceptions-input');
+        var descEl = root.querySelector('#law-description-input');
+        var typeEl = root.querySelector('#law-type-input');
+        var domainEl = root.querySelector('#law-domain-input');
+        var severityEl = root.querySelector('#law-severity-input');
+        var crimeTypeEl = root.querySelector('#law-crime-type-input');
+        var punishmentEl = root.querySelector('#law-punishment-input');
+        var enforcedEl = root.querySelector('#law-enforced-input');
+        var crimeNotesEl = root.querySelector('#law-crime-notes-input');
         var notesEl = root.querySelector('#law-notes-input');
-        var activeEl = root.querySelector('#law-active-input');
 
-        if (!nameEl) return null;
+        if (!nameEl || !typeEl || !domainEl || !severityEl) return null;
 
         var name = nameEl.value.trim();
         if (!name) return null;
@@ -833,74 +765,130 @@
         return {
             name: name,
             description: descEl ? descEl.value.trim() : '',
-            category: categoryEl ? categoryEl.value : 'civil',
-            severity: severityEl ? severityEl.value : 'medium',
-            jurisdiction: jurisdictionEl
-                ? (jurisdictionEl.value.trim() || 'Local')
-                : 'Local',
-            punishmentType: punishmentTypeEl
-                ? punishmentTypeEl.value
-                : 'fine',
-            punishmentAmount: punishmentAmountEl
-                ? (parseInt(punishmentAmountEl.value, 10) || 0)
-                : 0,
-            punishment: punishmentDescEl ? punishmentDescEl.value.trim() : '',
-            exceptions: exceptionsEl ? exceptionsEl.value.trim() : '',
-            notes: notesEl ? notesEl.value.trim() : '',
-            isActive: activeEl ? activeEl.checked === true : true
+            type: typeEl.value,
+            domain: domainEl.value,
+            severity: severityEl.value,
+            crimeMapping: {
+                crimeType: crimeTypeEl ? (crimeTypeEl.value.trim() || null) : null,
+                punishment: punishmentEl ? (punishmentEl.value.trim() || null) : null,
+                isEnforced: enforcedEl ? enforcedEl.checked === true : false,
+                notes: crimeNotesEl ? crimeNotesEl.value.trim() : ''
+            },
+            notes: notesEl ? notesEl.value.trim() : ''
         };
     }
 
     // =========================================================================
-    // 8. MODALS
+    // 9. COMMAND WRAPPERS
+    // =========================================================================
+    //
+    // Each wrapper:
+    //   - calls the canonical SettlementLawCommands method
+    //   - returns { success: true } on success
+    //   - returns { success: false, reason } on failure or throw
+    //
+    // The throw case is important: SettlementCommandCommit.commit throws
+    // when persist fails. The wrapper catches that throw, converts it
+    // to a structured result, and the modal reports it as a save failure
+    // without leaving the modal half-broken.
+
+    function _addLaw(locationId, lawData) {
+        try {
+            var result = SLC.addCivilLaw(locationId, lawData);
+            if (!result || !result.success) {
+                return {
+                    success: false,
+                    reason: (result && result.code) ? result.code : 'unknown'
+                };
+            }
+            return { success: true, law: result.law };
+        } catch (err) {
+            return {
+                success: false,
+                reason: (err && err.message) ? err.message : 'save threw'
+            };
+        }
+    }
+
+    function _updateLaw(locationId, lawId, updates) {
+        try {
+            var result = SLC.updateCivilLaw(locationId, lawId, updates);
+            if (!result || !result.success) {
+                return {
+                    success: false,
+                    reason: (result && result.code) ? result.code : 'unknown'
+                };
+            }
+            return { success: true, law: result.law };
+        } catch (err) {
+            return {
+                success: false,
+                reason: (err && err.message) ? err.message : 'save threw'
+            };
+        }
+    }
+
+    function _deleteLaw(locationId, lawId) {
+        try {
+            var result = SLC.removeCivilLaw(locationId, lawId);
+            if (!result || !result.success) {
+                return {
+                    success: false,
+                    reason: (result && result.code) ? result.code : 'unknown'
+                };
+            }
+            return { success: true };
+        } catch (err) {
+            return {
+                success: false,
+                reason: (err && err.message) ? err.message : 'delete threw'
+            };
+        }
+    }
+
+    // =========================================================================
+    // 10. MODALS
     // =========================================================================
 
     function _openAddLawModal(locationId, onComplete) {
-        var place = _getPlaceById(locationId);
-        if (!place) {
-            _showToast('Location not found', 'error');
+        if (!locationId) {
+            _toast('No location selected', 'warning');
             return;
         }
 
-        var status = _detectSettlementState();
-        if (!status.ok) {
-            _showToast(
-                'Settlement write path unavailable. ' +
-                'Laws cannot be saved on this build. See the ' +
-                'integration status panel.',
+        var settlement = SQ.getSettlementData(locationId);
+        if (!settlement) {
+            _toast(
+                'No settlement record exists for this location. ' +
+                'A settlement must exist before civil laws can be added.',
                 'error'
             );
             return;
         }
 
+        var place = _placeSummary(locationId);
+        var placeName = place ? (place.displayName || place.name || '') : '';
+
         _openModal({
-            title: 'Create New Law in ' +
-                (place.displayName || place.name),
-            content: _buildLawFormContent(null),
+            titleHtml: 'Add Civil Law - ' + _escapeHtml(placeName),
+            contentHtml: _buildLawFormContent(null),
             confirmText: 'Create Law',
             cancelText: 'Cancel',
-            onConfirm: function(root) {
+            size: 'large',
+            onConfirm: function (root) {
                 var lawData = _collectLawFormData(root);
                 if (!lawData) {
-                    _showToast('Law name is required', 'error');
+                    _toast('Law name is required', 'error');
                     return false;
                 }
 
-                var result = _addLaw(locationId, lawData);
-                if (!result.success) {
-                    _showToast(
-                        'Failed to save law: ' +
-                        (result.reason || 'unknown'),
-                        'error'
-                    );
+                var outcome = _addLaw(locationId, lawData);
+                if (!outcome.success) {
+                    _toast('Failed to save law: ' + outcome.reason, 'error');
                     return false;
                 }
 
-                _showToast(
-                    'Law "' + lawData.name + '" created. ' +
-                    'It is stored locally but not wired to any other system.',
-                    'warning'
-                );
+                _toast('Law "' + lawData.name + '" created', 'success');
                 if (typeof onComplete === 'function') onComplete();
                 return true;
             }
@@ -908,51 +896,40 @@
     }
 
     function _openEditLawModal(locationId, lawId, onComplete) {
-        var place = _getPlaceById(locationId);
-        if (!place) {
-            _showToast('Location not found', 'error');
+        if (!locationId || !lawId) {
+            _toast('Missing law or location id', 'error');
             return;
         }
 
-        var law = _findLaw(locationId, lawId);
+        var law = SLQ.getCivilLaw(locationId, lawId);
         if (!law) {
-            _showToast('Law not found', 'error');
+            _toast('Law not found', 'error');
             return;
         }
 
-        var status = _detectSettlementState();
-        if (!status.ok) {
-            _showToast(
-                'Settlement write path unavailable. ' +
-                'Edits cannot be saved on this build.',
-                'error'
-            );
-            return;
-        }
+        var place = _placeSummary(locationId);
+        var placeName = place ? (place.displayName || place.name || '') : '';
 
         _openModal({
-            title: 'Edit Law: ' + law.name,
-            content: _buildLawFormContent(law),
+            titleHtml: 'Edit Law: ' + _escapeHtml(law.name || ''),
+            contentHtml: _buildLawFormContent(law),
             confirmText: 'Save Changes',
             cancelText: 'Cancel',
-            onConfirm: function(root) {
-                var lawData = _collectLawFormData(root);
-                if (!lawData) {
-                    _showToast('Law name is required', 'error');
+            size: 'large',
+            onConfirm: function (root) {
+                var updates = _collectLawFormData(root);
+                if (!updates) {
+                    _toast('Law name is required', 'error');
                     return false;
                 }
 
-                var result = _updateLaw(locationId, lawId, lawData);
-                if (!result.success) {
-                    _showToast(
-                        'Failed to update law: ' +
-                        (result.reason || 'unknown'),
-                        'error'
-                    );
+                var outcome = _updateLaw(locationId, lawId, updates);
+                if (!outcome.success) {
+                    _toast('Failed to update law: ' + outcome.reason, 'error');
                     return false;
                 }
 
-                _showToast('Law updated (local only)', 'info');
+                _toast('Law updated', 'success');
                 if (typeof onComplete === 'function') onComplete();
                 return true;
             }
@@ -960,143 +937,59 @@
     }
 
     // =========================================================================
-    // 9. MAIN RENDER
+    // 11. REFRESH HELPER (public)
     // =========================================================================
-
-    function renderLawsTab(containerId, locationId) {
-        var container = document.getElementById(containerId);
-        if (!container) {
-            console.warn('Civil laws tab container not found:', containerId);
-            return;
-        }
-
-        var place = locationId ? _getPlaceById(locationId) : null;
-        container.innerHTML = _renderLawsTabBody(place);
-        container.dataset.locationId = locationId || '';
-
-        if (!container._lawTabBound) {
-            container._lawTabBound = true;
-
-            container.addEventListener('click', function(e) {
-                var target = e.target.closest('[data-action]');
-                if (!target) return;
-
-                var action = target.dataset.action;
-                var currentLocationId = container.dataset.locationId;
-                var refresh = function() {
-                    renderLawsTab(containerId, currentLocationId);
-                };
-
-                switch (action) {
-                    case 'add-law':
-                        if (currentLocationId) {
-                            _openAddLawModal(currentLocationId, refresh);
-                        } else {
-                            _showToast('No location selected', 'warning');
-                        }
-                        break;
-
-                    case 'refresh-laws':
-                        if (currentLocationId) {
-                            renderLawsTab(containerId, currentLocationId);
-                            _showToast('Laws refreshed', 'info');
-                        }
-                        break;
-
-                    case 'edit-law':
-                        var lawIdEdit = target.dataset.lawId;
-                        if (lawIdEdit && currentLocationId) {
-                            _openEditLawModal(
-                                currentLocationId, lawIdEdit, refresh
-                            );
-                        }
-                        break;
-
-                    case 'delete-law':
-                        var lawIdDel = target.dataset.lawId;
-                        if (lawIdDel && currentLocationId) {
-                            var law = _findLaw(currentLocationId, lawIdDel);
-                            if (!law) break;
-                            _confirmDialog(
-                                'Delete the law "' + law.name + '"? ' +
-                                'This cannot be undone.',
-                                'Delete Law',
-                                function() {
-                                    var result = _deleteLaw(
-                                        currentLocationId, lawIdDel
-                                    );
-                                    if (!result.success) {
-                                        _showToast(
-                                            'Failed to delete law: ' +
-                                            (result.reason || 'unknown'),
-                                            'error'
-                                        );
-                                        return;
-                                    }
-                                    _showToast('Law deleted (local only)', 'info');
-                                    refresh();
-                                }
-                            );
-                        }
-                        break;
-                }
-            });
-
-            container.addEventListener('click', function(e) {
-                var toggle = e.target.closest('[data-toggle="inactive-laws"]');
-                if (!toggle) return;
-                var body = toggle.nextElementSibling;
-                if (!body) return;
-                var collapsed = body.classList.toggle('is-collapsed');
-                var icon = toggle.querySelector('.law-toggle-icon');
-                if (icon) {
-                    icon.innerHTML = collapsed
-                        ? _getIcon('TRIANGLE_RIGHT')
-                        : _getIcon('TRIANGLE_DOWN');
-                }
-            });
-        }
-    }
 
     function refreshLawsTab(locationId, containerId) {
         var id = containerId || 'laws-tab';
         var container = document.getElementById(id);
         if (!container) {
             var candidates = document.querySelectorAll(
-                '.law-tab-container, #laws-tab'
+                '.law-tab-container, #laws-tab, [data-tab-content]'
             );
             if (candidates.length === 0) return;
             container = candidates[0];
-            id = container.id || id;
+            var cur = container;
+            while (cur && !cur.id && cur.parentElement) cur = cur.parentElement;
+            id = cur && cur.id ? cur.id : id;
         }
         renderLawsTab(id, locationId);
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.LawsTab = {
         render: renderLawsTab,
         refresh: refreshLawsTab,
-        getLaws: function(locationId) {
-            var r = _readLaws(locationId);
-            return r.ok ? r.laws : [];
+        // Data accessors, exposed for tests and future callers that
+        // want the same shape the tab uses.
+        getLaws: function (locationId) {
+            return _loadLaws(locationId);
         },
-        addLaw: _addLaw,
-        updateLaw: _updateLaw,
-        deleteLaw: _deleteLaw,
-        getLawById: _findLaw,
-        getIntegrationStatus: _getIntegrationStatus,
-        PUNISHMENT_TYPES: PUNISHMENT_TYPES,
-        LAW_CATEGORIES: LAW_CATEGORIES,
-        SEVERITY_LEVELS: SEVERITY_LEVELS,
-        _renderLawItem: _renderLawItem,
+        getStats: function (locationId) {
+            return _loadStats(locationId);
+        },
+        // Definition lookups (thin wrappers, exposed for consistency
+        // with the other tabs).
+        lawTypeName: _lawTypeName,
+        lawDomainName: _lawDomainName,
+        lawSeverityName: _lawSeverityName,
+        lawSeverityColor: _lawSeverityColor,
+        // Form accessors, exposed for tests.
+        _buildLawFormContent: _buildLawFormContent,
+        _collectLawFormData: _collectLawFormData,
         _openAddLawModal: _openAddLawModal,
-        _openEditLawModal: _openEditLawModal
+        _openEditLawModal: _openEditLawModal,
+        // Rendering helpers, exposed for tests.
+        _renderLawItem: _renderLawItem
     };
 
     window.renderLawsTab = renderLawsTab;
     window.refreshLawsTab = refreshLawsTab;
 
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.LawsTab;
+    }
 })();
