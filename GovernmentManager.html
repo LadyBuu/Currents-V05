@@ -130,14 +130,14 @@
 <!-- 6. Skill Taxonomy -->
 <script src="js/roles/skill-utils.js"></script>
 
-<!-- 7. Role Constants (must load BEFORE role-state) -->
+<!-- 7. Role Constants (before role-state) -->
 <script src="js/roles/role-constants.js"></script>
 
-<!-- 8. Rank Dependencies (must load BEFORE rank-state) -->
+<!-- 8. Rank Dependencies (before rank-state) -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
 
-<!-- 9. Name Dependencies (must load BEFORE names-state) -->
+<!-- 9. Name Dependencies (before names-state) -->
 <script src="js/names/name-queries.js"></script>
 <script src="js/names/name-rules.js"></script>
 
@@ -156,7 +156,7 @@
 <!-- 11. State.js -->
 <script src="js/core/state.js"></script>
 
-<!-- 12. Character Domain (CRITICAL: must load BEFORE ranks/roles/names chains) -->
+<!-- 12. Character Domain (MUST load before ranks/roles/names chains) -->
 <script src="js/character/character-factory.js"></script>
 <script src="js/character/character-creation-commands.js"></script>
 <script src="js/character/character-deletion-commands.js"></script>
@@ -248,6 +248,24 @@
 <script src="js/settlement/settlement-view-models.js"></script>
 <script src="js/settlement/settlement-ui-state.js"></script>
 
+<!-- 18b. Industry Chain (required by government-queries.js) -->
+<script src="js/industry/industry-constants.js"></script>
+<script src="js/industry/industry-economics.js"></script>
+<script src="js/industry/industry-type-defaults.js"></script>
+<script src="js/industry/industry-rules.js"></script>
+<script src="js/industry/industry-state.js"></script>
+<script src="js/industry/industry-type-init.js"></script>
+<script src="js/industry/industry-types.js"></script>
+<script src="js/industry/industry-migration.js"></script>
+<script src="js/industry/industry-type-commands.js"></script>
+<script src="js/industry/industry-commands.js"></script>
+<script src="js/industry/industry-queries.js"></script>
+<script src="js/industry/industry-processor.js"></script>
+<script src="js/industry/industry-view-models.js"></script>
+<script src="js/industry/industry-ui-list.js"></script>
+<script src="js/industry/modals-industry.js"></script>
+<script src="js/industry/industry-bootstrap.js"></script>
+
 <!-- 19. Government Subsystem -->
 <script src="js/government/government-constants.js"></script>
 <script src="js/government/government-state.js"></script>
@@ -284,7 +302,9 @@
 <script src="js/tabs/government-civil-laws-tab.js"></script>
 <script src="js/tabs/government-economy-tab.js"></script>
 
-<!-- SUB-TAB HOST -->
+<!-- ============================================================ -->
+<!-- SUB-TAB HOST & ORCHESTRATOR                                  -->
+<!-- ============================================================ -->
 <script>
     (function () {
         'use strict';
