@@ -1,455 +1,318 @@
-/* ============================================================================
-   LOCATION MANAGER — SPECIFIC STYLES
-   ============================================================================
+/* ================================================================
+   LOCATION MANAGER · EXTERNAL CSS
+   ================================================================
    File: css/location.css
-   Dependencies: css/themes.css (all tokens), css/common.css (structure)
+   Dependencies: themes.css, common.css, gov-manager.css
+   ================================================================ */
 
-   SCOPE
-     Only styles emitted by LocationManager.html's tab renderers.
-     Every color value is a token from themes.css.
-   ============================================================================ */
+/* ----------------------------------------------------------------
+   1. LAYOUT (Shared with Government Manager)
+   ---------------------------------------------------------------- */
 
-
-/* ============================================================================
-   1. DETAIL CARD
-   ============================================================================ */
-
-.location-detail {
-    max-width: 860px;
-    margin: 0 auto;
+/* Ensure the app uses the full height and handles overflow */
+.world-app {
+    display: flex;
+    height: calc(100vh - var(--topbar-height, 48px));
+    overflow: hidden;
+    background: var(--bg);
 }
 
-.location-detail__card {
+/* Sidebar */
+.locations-sidebar {
+    width: 280px;
+    min-width: 280px;
+    max-width: 280px;
     background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: calc(var(--radius) * 2);
-    padding: 20px 24px;
-    margin-bottom: 16px;
-    color: var(--text);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 10;
+    transition: transform 0.3s ease;
 }
 
-.location-detail__title {
-    font-family: var(--f-display);
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: var(--accent-light);
-    margin: 0 0 4px;
-}
-
-.location-detail__subtitle {
-    font-size: 0.7rem;
-    color: var(--dim);
-    margin-bottom: 16px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-}
-
-.location-detail__grid {
-    display: grid;
-    grid-template-columns: 160px 1fr;
-    gap: 8px 24px;
-    font-size: 0.75rem;
-}
-
-.location-detail__label {
-    color: var(--dim);
-    font-weight: 500;
-}
-
-.location-detail__value {
-    color: var(--text);
-    overflow-wrap: anywhere;
-    font-variant-numeric: tabular-nums;
-}
-
-.location-detail__breadcrumb {
-    font-size: 0.65rem;
-    color: var(--tmut);
-    border-top: 1px solid var(--border);
-    padding-top: 12px;
-    margin-top: 16px;
-    font-style: italic;
-}
-
-.location-detail__notes {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: calc(var(--radius) * 2);
-    padding: 16px 20px;
-    color: var(--text);
-}
-
-.location-detail__notes-label {
-    font-size: 0.6rem;
-    color: var(--dim);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-bottom: 6px;
-}
-
-.location-detail__notes p {
-    font-size: 0.75rem;
-    line-height: 1.6;
-    white-space: pre-wrap;
-}
-
-
-/* ============================================================================
-   2. HIERARCHY
-   ============================================================================ */
-
-.location-hierarchy {
-    margin-bottom: 24px;
-    max-width: 860px;
-}
-
-.location-hierarchy__title {
-    font-family: var(--f-display);
-    font-size: 0.75rem;
-    color: var(--accent-light);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-bottom: 8px;
+.locations-sidebar .sidebar-header {
+    padding: 12px 16px;
     border-bottom: 1px solid var(--border);
-    padding-bottom: 6px;
+    background: var(--bg3);
 }
 
-.location-hierarchy__list {
-    list-style: none;
-    padding: 0;
+.locations-sidebar .sidebar-header h3 {
     margin: 0;
+    font-family: var(--f-display);
+    font-size: 0.65rem;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+.locations-sidebar .place-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    min-height: 0;
+}
+
+/* Main Panel */
+.main-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* Content Area */
+.tab-content-wrapper {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    background: var(--bg);
+    min-width: 0;
+}
+
+/* ----------------------------------------------------------------
+   2. LOCATION TREE (Sidebar)
+   ---------------------------------------------------------------- */
+
+.location-tree {
     display: flex;
     flex-direction: column;
     gap: 2px;
 }
 
-.location-hierarchy__item {
+.location-tree-node {
+    display: flex;
+    flex-direction: column;
+}
+
+.location-tree-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 0.75rem;
+    color: var(--text);
+    transition: background 0.15s ease, border-color 0.15s ease;
+    border-left: 3px solid transparent;
+}
+
+.location-tree-item:hover {
+    background: var(--bg3);
+}
+
+.location-tree-item.is-selected {
+    background: var(--accent-dim);
+    border-left-color: var(--accent);
+    font-weight: 600;
+}
+
+.location-tree-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: var(--dim);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.location-tree-toggle:hover {
+    color: var(--accent);
+}
+
+.location-tree-toggle.is-leaf {
+    opacity: 0.3;
+    cursor: default;
+}
+
+.location-tree-toggle-icon svg {
+    width: 12px;
+    height: 12px;
+    fill: currentColor;
+}
+
+.location-tree-name {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.location-tree-children {
+    display: none;
+    padding-left: 16px;
+    border-left: 1px solid var(--border-light);
+    margin-left: 8px;
+}
+
+.location-tree-children.is-expanded {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+/* ----------------------------------------------------------------
+   3. HIERARCHY TAB
+   ---------------------------------------------------------------- */
+
+.hierarchy-path {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 16px;
+}
+
+.hierarchy-node {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     padding: 6px 12px;
     background: var(--bg2);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     font-size: 0.75rem;
-    color: var(--text);
 }
 
-.location-hierarchy__item--current {
+.hierarchy-node.is-self {
     background: var(--accent-dim);
     border-color: var(--accent);
-    color: var(--accent-light);
     font-weight: 600;
+    color: var(--accent-light);
 }
 
-.location-hierarchy__depth {
-    display: inline-block;
-    min-width: 22px;
+.hierarchy-indent {
     color: var(--dim);
     font-family: var(--f-mono);
-    font-size: 0.65rem;
-}
-
-
-/* ============================================================================
-   3. MOVES
-   ============================================================================ */
-
-.location-moves {
-    max-width: 860px;
-}
-
-.location-moves__title {
-    font-family: var(--f-display);
-    font-size: 0.75rem;
-    color: var(--accent-light);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-bottom: 8px;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 6px;
-}
-
-.location-moves__list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.location-moves__item {
-    padding: 6px 12px;
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    font-size: 0.75rem;
-    color: var(--text);
-}
-
-
-/* ============================================================================
-   4. LEADERSHIP
-   ============================================================================ */
-
-.location-leadership {
-    max-width: 860px;
-}
-
-.location-leadership__current {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
-    border-radius: var(--radius);
-    padding: 14px 18px;
-    margin-bottom: 20px;
-}
-
-.location-leadership__title {
-    font-family: var(--f-display);
     font-size: 0.7rem;
-    color: var(--accent-light);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin: 0 0 8px;
+    white-space: pre;
 }
 
-.location-leadership__current .location-leadership__title {
-    margin-top: 0;
-}
-
-.location-leadership__name {
-    font-family: var(--f-display);
-    font-size: 1.05rem;
-    font-weight: 600;
-    color: var(--fg);
-}
-
-.location-leadership__title-text {
-    font-size: 0.7rem;
-    color: var(--accent);
-    margin-top: 2px;
-}
-
-.location-leadership__meta {
-    font-size: 0.65rem;
+.hierarchy-connector {
     color: var(--dim);
-    margin-top: 4px;
-    font-family: var(--f-mono);
+    opacity: 0.5;
 }
 
-.location-leadership__list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.location-leadership__item {
-    padding: 6px 12px;
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    font-size: 0.75rem;
-    color: var(--text);
-    font-family: var(--f-mono);
-}
-
-
-/* ============================================================================
-   5. SETTINGS
-   ============================================================================ */
-
-.location-settings {
-    max-width: 860px;
-}
-
-.location-settings__title {
-    font-family: var(--f-display);
-    font-size: 1rem;
-    color: var(--accent-light);
-    margin: 0 0 6px;
-}
-
-.location-settings__hint {
-    font-size: 0.7rem;
-    color: var(--dim);
-    margin-bottom: 16px;
-}
-
-.location-settings__grid {
+.descendants-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 8px;
+}
+
+.descendant-card {
     background: var(--bg2);
     border: 1px solid var(--border);
-    border-radius: calc(var(--radius) * 2);
-    padding: 16px 20px;
+    border-radius: var(--radius);
+    padding: 10px;
+    transition: border-color 0.15s ease;
 }
 
-.location-settings__field {
+.descendant-card:hover {
+    border-color: var(--accent);
+}
+
+.descendant-card .name {
     font-size: 0.75rem;
+    font-weight: 600;
     color: var(--text);
-}
-
-.location-settings__field--wide {
-    grid-column: 1 / -1;
-}
-
-.location-settings__field label {
-    display: block;
-    font-size: 0.6rem;
-    color: var(--dim);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
     margin-bottom: 4px;
 }
 
-
-/* ============================================================================
-   6. EMPTY / ERROR STATES
-   ============================================================================ */
-
-.placeholder {
-    color: var(--tmut);
-    text-align: center;
-    padding: 60px 20px;
-    font-size: 0.9rem;
-}
-
-.empty-state {
-    padding: 40px 20px;
-    text-align: center;
+.descendant-card .meta {
+    font-size: 0.55rem;
     color: var(--dim);
-    font-size: 0.85rem;
+    display: flex;
+    justify-content: space-between;
 }
 
-.error-state {
-    padding: 40px 20px;
-    text-align: center;
-    color: var(--danger-lt);
-    font-size: 0.85rem;
-}
+/* ----------------------------------------------------------------
+   4. LEADERSHIP TAB
+   ---------------------------------------------------------------- */
 
-
-/* ============================================================================
-   7. THEME TOGGLE
-   ============================================================================ */
-
-.theme-toggle {
-    position: relative;
-    display: inline-flex;
-}
-
-.theme-toggle__btn {
-    gap: 6px;
-}
-
-.theme-toggle__menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 0;
-    z-index: 200;
-    min-width: 160px;
-    padding: 4px;
-    margin: 0;
-    list-style: none;
-    background: var(--surface);
-    border: 1px solid var(--line);
+.leader-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
     border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    max-height: 60vh;
-    overflow-y: auto;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    border-left: 4px solid var(--accent);
 }
 
-.theme-toggle__menu[hidden] { display: none; }
+.leader-card.past {
+    border-left-color: var(--border);
+    opacity: 0.8;
+}
 
-.theme-toggle__menu button {
-    display: block;
-    width: 100%;
-    padding: 6px 12px;
-    text-align: left;
-    background: transparent;
-    border: none;
+.leader-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.leader-name {
+    font-size: 0.85rem;
+    font-weight: 600;
     color: var(--text);
-    font-family: var(--f-body);
-    font-size: 0.7rem;
-    border-radius: calc(var(--radius) - 2px);
-    cursor: pointer;
-    transition: background-color var(--transition-fast, 0.15s) ease;
 }
 
-.theme-toggle__menu button:hover,
-.theme-toggle__menu button:focus-visible {
-    background: var(--accent-dim);
+.leader-title {
+    font-size: 0.65rem;
     color: var(--accent-light);
-    outline: none;
+    font-style: italic;
 }
 
+.leader-term {
+    font-size: 0.6rem;
+    color: var(--dim);
+    font-family: var(--f-mono);
+}
 
-/* ============================================================================
-   8. RESPONSIVE
-   ============================================================================ */
+/* ----------------------------------------------------------------
+   5. MOBILE RESPONSIVE
+   ---------------------------------------------------------------- */
 
 @media (max-width: 768px) {
-    .location-detail__grid {
-        grid-template-columns: 1fr;
-        gap: 4px 0;
+    .locations-sidebar {
+        position: fixed;
+        top: var(--topbar-height, 48px);
+        left: 0;
+        bottom: 0;
+        transform: translateX(-100%);
+        z-index: 100;
+        box-shadow: 2px 0 10px rgba(0,0,0,0.5);
     }
 
-    .location-detail__label {
-        font-weight: 600;
-        border-bottom: 1px solid var(--border);
-        padding-bottom: 2px;
-        margin-top: 6px;
+    .locations-sidebar.visible {
+        transform: translateX(0);
     }
 
-    .location-detail__value {
-        padding-left: 4px;
-        margin-bottom: 4px;
+    .sidebar-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.6);
+        z-index: 99;
     }
 
-    .location-detail__card {
-        padding: 14px 16px;
-    }
-
-    .location-settings__grid {
-        grid-template-columns: 1fr;
-    }
-}
-
-@media (max-width: 480px) {
-    .location-detail__card {
-        padding: 10px 12px;
-    }
-
-    .location-detail__title {
-        font-size: 1.05rem;
-    }
-
-    .location-hierarchy__item,
-    .location-moves__item,
-    .location-leadership__item {
-        font-size: 0.7rem;
-        padding: 5px 10px;
-    }
-
-    .topbar .btn {
-        padding: 2px 6px;
-        font-size: 0.55rem;
+    .sidebar-overlay.active {
+        display: block;
     }
 }
 
-
-/* ============================================================================
-   9. REDUCED MOTION
-   ============================================================================ */
-
-@media (prefers-reduced-motion: reduce) {
-    .location-hierarchy__item,
-    .location-moves__item,
-    .location-leadership__item,
-    .theme-toggle__menu button {
-        transition: none;
+@media (min-width: 769px) {
+    .sidebar-overlay {
+        display: none !important;
     }
 }
