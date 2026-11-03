@@ -3,7 +3,7 @@
  * STILL WATERS - RANK QUERIES (rank-queries.js)
  * =============================================================================
  *
- * LOCATION: js/core/rank/rank-queries.js
+ * LOCATION: js/ranks/rank-queries.js
  *
  * Read-only projections for the rank domain.
  *
