@@ -108,7 +108,17 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (A4):
+ *   Current revision (A8):
+ *     - getCultureSummary now calls religionQueries.getReligion(id)
+ *       instead of religionQueries.getReligionById(id). The religion
+ *       domain exports getReligion; there is no getReligionById.
+ *       Prior revision would throw "religionQueries.getReligionById is
+ *       not a function" the first time a culture with a non-empty
+ *       religions array was summarized. This is the same wrong name
+ *       that culture-bootstrap.js's _CROSS_DOMAIN array was checking;
+ *       both fixed in the same round.
+ *     - No other behavioral change.
+ *   Previous revision (A4):
  *     - Exposed getCurrentLocationIdForCharacter(character) as a public
  *       function. It is a thin wrapper over the existing private
  *       _resolveCurrentLocationId. Consumers (UI, callers outside this
@@ -656,7 +666,13 @@
         var religions = [];
         if (Array.isArray(culture.religions)) {
             for (var j = 0; j < culture.religions.length; j++) {
-                var religion = religionQueries.getReligionById(culture.religions[j]);
+                // A8 PATCH: getReligion, not getReligionById. The
+                // religion domain exports getReligion; getReligionById
+                // does not exist on ReligionQueries. Prior revision
+                // would throw "religionQueries.getReligionById is not
+                // a function" the first time a culture with a
+                // non-empty religions array was summarized.
+                var religion = religionQueries.getReligion(culture.religions[j]);
                 if (religion) religions.push(religion);
             }
         }
