@@ -77,6 +77,21 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - Added getAllSubLocationIds as a proper exported function and as
+ *       a flat window.getAllSubLocationIds global. Previously the
+ *       function was documented in this module's header and used by
+ *       population counts, but was not exported on window.LocationQueries
+ *       and no flat global existed. Cross-domain consumers
+ *       (disaster-commands.js, crime-commands.js, and any settlement
+ *       walk that enumerates descendants) load-time require the flat
+ *       global; without this export every page that loaded the
+ *       location domain and then a disaster/crime page threw at load.
+ *     - The flat global is installed at the bottom of the IIFE, AFTER
+ *       window.LocationQueries is assigned, and only if no other
+ *       provider has already defined window.getAllSubLocationIds. A
+ *       page-level shim wins if present; otherwise this module is the
+ *       canonical provider.
+ *   Previous revision:
  *     - getPopulationCount, getOwnPopulation, getCurrentLocation,
  *       getCurrentLocationId, getCurrentLocationName, getMoveStatistics
  *       now resolve the character's location through
@@ -91,7 +106,7 @@
  *       that want the raw field should use CharacterQueries directly.
  *     - No public signature change, no public return-shape change.
  *       The fix is internal to the resolution path.
- *   Previous revisions:
+ *   Earlier revisions:
  *     - Initial implementation.
  * =============================================================================
  */
@@ -294,12 +309,27 @@
         return result;
     }
 
+    /**
+     * Returns [locationId, ...every descendant's id].
+     * Includes self.
+     *
+     * Descendants are returned in breadth-first order (direct children
+     * first, then grandchildren, etc.) so callers that iterate the array
+     * see the tree from the root out. Population counts, disaster
+     * casualty sweeps, and crime location walks all rely on this
+     * ordering being stable.
+     *
+     * Returns [] for a missing locationId. Returns [locationId] for a
+     * leaf place.
+     */
     function getAllSubLocationIds(locationId) {
         if (!locationId) return [];
         var result = [locationId];
         var descendants = getPlaceChildren(locationId, true);
         for (var i = 0; i < descendants.length; i++) {
-            result.push(descendants[i].id);
+            if (descendants[i] && descendants[i].id) {
+                result.push(descendants[i].id);
+            }
         }
         return result;
     }
@@ -943,6 +973,26 @@
         getPopulationPerNodeRanking: getPopulationPerNodeRanking,
         getMoveStatistics: getMoveStatistics
     };
+
+    // -------------------------------------------------------------------------
+    // Flat global aliases
+    // -------------------------------------------------------------------------
+    //
+    // Several cross-domain consumers require these functions under their
+    // flat names (not under window.LocationQueries.*):
+    //
+    //   window.getAllSubLocationIds  — disaster-commands.js, crime-commands.js,
+    //                                  and any settlement walk that enumerates
+    //                                  a location's descendants.
+    //
+    // Installed only if not already present, so a page-level shim wins if
+    // one exists. Otherwise this module is the canonical provider for
+    // every page that loads the location domain.
+    if (typeof window.getAllSubLocationIds !== 'function') {
+        window.getAllSubLocationIds = function (locationId) {
+            return window.LocationQueries.getAllSubLocationIds(locationId);
+        };
+    }
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.LocationQueries;
