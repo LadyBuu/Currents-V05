@@ -270,64 +270,58 @@
  *   - settlement-annual-processor.js:  processAllSettlementsAnnual
  *                                      (see SETTLEMENT ANNUAL PROCESSING)
  *
+ * FLAT-GLOBAL ALIASES:
+ *   This module's public functions are exposed on the
+ *   window.CharacterLifecycle namespace AND as flat globals
+ *   (window.killCharacter, window.killCharacterRandomCause,
+ *   window.triggerNaturalDeath, window.triggerAccidentalDeath,
+ *   window.advanceMortality). The flat globals exist because several
+ *   consumers read them directly at load time:
+ *
+ *     - crime-commands.js:189     window.killCharacter
+ *     - crime-bootstrap.js        window.killCharacter
+ *
+ *   The namespace form remains authoritative; the flat globals are
+ *   one-way compatibility aliases. Callers that need the namespace
+ *   (registerDeathHandler, age classification, lifespan estimation)
+ *   continue to use window.CharacterLifecycle.*.
+ *
+ *   Note: createRelationship is NOT exported here. It belongs to the
+ *   relationship domain (RelationshipCommands.createRelationship);
+ *   household-servant.js reads it from that namespace.
+ *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - Flat-global aliases added (window.killCharacter,
+ *       window.killCharacterRandomCause, window.triggerNaturalDeath,
+ *       window.triggerAccidentalDeath, window.advanceMortality) so
+ *       load-time consumers that read those names directly — notably
+ *       crime-commands.js:189 and crime-bootstrap.js — resolve.
+ *       Prior revisions exposed only the CharacterLifecycle namespace,
+ *       which crime-commands.js does not consult. See FLAT-GLOBAL
+ *       ALIASES in the header.
+ *     - No other behavioural change. The namespace export is
+ *       unchanged; the aliases are additive.
+ *   Previous revision:
  *     - Header CROSS-DOMAIN DEATH DISPATCH gains a LEADER-TERM CLEANUP
- *       subsection. Documents that location-commands.js registers
- *       LocationCommands.handleCharacterDeath via registerDeathHandler
- *       at load, that _invokeDeathHandlers fires it alongside every
- *       other registered handler, and that this module does NOT call
- *       LocationCommands.handleCharacterDeath directly (which would
- *       introduce a load-time dependency the character domain does
- *       not need).
+ *       subsection.
  *     - SCOPE and OUT OF SCOPE updated to name the leader-term cleanup
  *       and its owner.
  *     - Header DEATH HANDLER HOOK updated to name location-commands.js
  *       as one of the modules that registers a handler.
- *     - No behavioural change. No code changes. Header documentation
- *       only. The registration path already exists — location-commands.js
- *       now opts into it — and the handler fires through the existing
- *       _invokeDeathHandlers call.
- *   Previous revision:
- *     - advanceMortality now runs the settlement domain's annual
- *       financial effects once per simulated year, via
- *       SettlementAnnualProcessor.processAllSettlementsAnnual({ year }).
- *       The step runs after the character mortality pass for each year,
- *       using the same year that character mortality used. Settlement
- *       failures are collected into result.settlementFailures, logged,
- *       and do NOT abort the character mortality loop.
- *     - result.settlementFailures added to advanceMortality's return
- *       shape. Empty array when no failures occurred, or when the
- *       settlement processor is not loaded.
- *     - The settlement step is optional and area-guarded. When
- *       SettlementAnnualProcessor is absent, the step is skipped. When
- *       it is present but throws, the exception is caught, logged, and
- *       recorded as a single settlement failure.
- *     - Header SETTLEMENT ANNUAL PROCESSING section added, and CLOCK
- *       CONTRACT updated to document the settlement step's year
- *       semantics.
- *     - DEPENDENCIES updated: settlement-annual-processor.js listed
- *       under OPTIONAL.
- *     - No behavioural change to the character-mortality portion of the
- *       loop. Every existing field of the return shape is unchanged
- *       and keeps its existing semantics. `result.deaths`,
- *       `result.skipped`, and `result.finalYear` are unaffected by the
- *       new settlement step.
- *   Previous revision:
- *     - advanceMortality now catches per-character death failures
- *       (markDeceased returning { success: false }) and records them
- *       in result.skipped instead of throwing and aborting the loop.
- *     - _die now returns a structured { ok, reason?, deathResult? }
- *       result instead of throwing. killCharacter wraps the same
- *       primitive and converts a non-ok result into a thrown Error.
- *     - result.skipped added to advanceMortality's return shape.
+ *     - No behavioural change. Header documentation only.
  *   Earlier revisions:
+ *     - advanceMortality now runs the settlement domain's annual
+ *       financial effects once per simulated year via
+ *       SettlementAnnualProcessor.processAllSettlementsAnnual({ year }).
+ *       Settlement failures collected in result.settlementFailures.
+ *     - advanceMortality catches per-character death failures into
+ *       result.skipped instead of throwing.
  *     - registerDeathHandler(fn) added (Phase 3.13).
- *     - randomness.js (window.random) is now a HARD load-time
- *       dependency.
+ *     - randomness.js (window.random) is a HARD load-time dependency.
  * =============================================================================
  */
 
@@ -1452,6 +1446,23 @@
     // populated. Both paths are equivalent; the window global is the
     // one the registration blocks check for.
     window.registerDeathHandler = registerDeathHandler;
+
+    // -------------------------------------------------------------------------
+    // Flat-global aliases.
+    //
+    // Load-time consumers that read these names directly:
+    //   - crime-commands.js:189     window.killCharacter
+    //   - crime-bootstrap.js        window.killCharacter (via _verifyGlobals)
+    //
+    // The CharacterLifecycle namespace remains authoritative; these are
+    // one-way compatibility aliases. See FLAT-GLOBAL ALIASES in the
+    // header.
+    // -------------------------------------------------------------------------
+    window.killCharacter = killCharacter;
+    window.killCharacterRandomCause = killCharacterRandomCause;
+    window.triggerNaturalDeath = triggerNaturalDeath;
+    window.triggerAccidentalDeath = triggerAccidentalDeath;
+    window.advanceMortality = advanceMortality;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.CharacterLifecycle;
