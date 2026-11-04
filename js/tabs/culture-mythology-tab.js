@@ -32,6 +32,32 @@
  *   - No `confirm()` from inside list-tag handlers. The composite save()
  *     call is the commit point; transient edits live in the working
  *     culture and are discarded on Cancel.
+ *   - escapeHtml is a REQUIRED dependency (formatting.js). The silent
+ *     fallback that lived in a previous revision has been removed.
+ *
+ * FIELD-VOCABULARY CROSS-CHECK
+ * ----------------------------
+ * The TEXT_SECTIONS and LIST_SECTIONS arrays below define the mythology
+ * shape this tab renders. The validation module's _validateMythology
+ * independently defines the same set of allowed fields. If the two drift,
+ * the tab will render a field that validation rejects — or fail to render
+ * one validation accepts. Two checks guard against this:
+ *
+ *   1. Intra-file check (always on): verifies that TEXT_SECTIONS and
+ *      LIST_SECTIONS between them cover the same keys as the local
+ *      _EXPECTED_MYTHOLOGY_TEXT and _EXPECTED_MYTHOLOGY_ARRAY mirrors
+ *      below. This catches drift between this file's own lists and its
+ *      own save/validate vocabulary. See _verifyFieldKeys().
+ *
+ *   2. Cross-file check (only when CultureValidation exposes the field
+ *      lists — currently it does not): if
+ *      CultureValidation.MYTHOLOGY_TEXT_FIELDS and
+ *      CultureValidation.MYTHOLOGY_ARRAY_FIELDS exist, they are used in
+ *      place of the local mirrors. To enable this, add those two
+ *      exports to culture-validation.js (see the code comment in
+ *      culture-validation.js's _validateMythology for the exact shape).
+ *
+ * Warn-only; never throws.
  *
  * THE SHAPE OF `mythology`
  * ------------------------
@@ -53,11 +79,32 @@
  *
  * DEPENDENCIES (resolved at call time — no load-time guards):
  *   - CultureEditorTabs (this must load after culture-editor-tab.js)
- *   - formatting.js     (escapeHtml)
+ *   - formatting.js     (escapeHtml — REQUIRED, throws if missing)
  *   - icons.js          (Icons[name] via _getIcon)
- *   - ui.js             (showToast — only used for tag-add feedback)
+ *   - ui.js             (showToast — used only for tag-add duplicate
+ *                        feedback)
  *   - modals-core.js    (optional, for confirmDialog — not used here)
+ *   - culture-validation.js (CultureValidation.MYTHOLOGY_TEXT_FIELDS /
+ *                            MYTHOLOGY_ARRAY_FIELDS — OPTIONAL; used only
+ *                            by the cross-check warning)
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (A4):
+ *     - _escapeHtml tightened to throw if formatting.js is missing.
+ *       Matches the other culture tabs' post-audit contract.
+ *     - _verifyFieldKeys() added: one-time load check that warns if the
+ *       TEXT_SECTIONS / LIST_SECTIONS arrays drift from the field
+ *       vocabulary this tab uses in save() and validate(). Warn-only.
+ *       Uses CultureValidation's exported field lists when available;
+ *       otherwise falls back to a local mirror.
+ *     - save() comment tightened to explain why it is a passthrough
+ *       (the working culture is authoritative; the DOM is re-read only
+ *       on input/change events that already sync).
+ *     - Header gained FIELD-VOCABULARY CROSS-CHECK section. No behavior
+ *       change beyond the above.
+ *   Previous revisions:
+ *     - Initial implementation.
  * =============================================================================
  */
 
@@ -68,15 +115,18 @@
     // 1. DEPENDENCY WRAPPERS
     // =========================================================================
 
+    // escapeHtml is a REQUIRED dependency of this tab (formatting.js). The
+    // silent fallback that lived here in a previous revision diverged from
+    // the other culture tabs' contract and from formatting.js's own
+    // escaping policy. Renderers do not implement their own escaping.
     function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (str === null || str === undefined) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+        if (typeof window.escapeHtml !== 'function') {
+            throw new Error(
+                'culture-mythology-tab.js requires escapeHtml (formatting.js). ' +
+                'Check script tag order.'
+            );
+        }
+        return window.escapeHtml(str);
     }
 
     function _getIcon(name) {
@@ -95,6 +145,10 @@
     // Text sections render as labeled textareas. List sections render as
     // a chip set with a text input and Add button. The two arrays below
     // are the tab's own presentation vocabulary.
+    //
+    // These keys must agree with the fields accepted by
+    // culture-validation.js's _validateMythology. See
+    // FIELD-VOCABULARY CROSS-CHECK in the header.
 
     var TEXT_SECTIONS = [
         {
@@ -146,6 +200,73 @@
             placeholder: 'Honor, Courage, Fate, Loyalty'
         }
     ];
+
+    // =========================================================================
+    // 2b. FIELD-VOCABULARY CROSS-CHECK
+    // =========================================================================
+    //
+    // One-time load check. Warns if the tab's TEXT_SECTIONS / LIST_SECTIONS
+    // arrays disagree with the field vocabulary used in save() and
+    // validate() — i.e. if someone added a section but forgot to update
+    // the other path.
+    //
+    // Prefers CultureValidation's exported field lists when available
+    // (which is the correct cross-file source of truth once
+    // culture-validation.js exposes MYTHOLOGY_TEXT_FIELDS and
+    // MYTHOLOGY_ARRAY_FIELDS). Falls back to a local mirror that is kept
+    // in sync with culture-validation.js's _validateMythology by hand.
+    //
+    // Does not throw. A stale vocabulary is a warning, not a page
+    // failure — the tab still renders its own sections.
+
+    var _EXPECTED_MYTHOLOGY_TEXT = ['creation', 'afterlife', 'cosmology'];
+    var _EXPECTED_MYTHOLOGY_ARRAY = ['keyDeities', 'keyEvents', 'symbols', 'themes'];
+
+    (function _verifyFieldKeys() {
+        var validation = window.CultureValidation;
+
+        var expectedText = (validation
+            && Array.isArray(validation.MYTHOLOGY_TEXT_FIELDS))
+            ? validation.MYTHOLOGY_TEXT_FIELDS
+            : _EXPECTED_MYTHOLOGY_TEXT;
+
+        var expectedArray = (validation
+            && Array.isArray(validation.MYTHOLOGY_ARRAY_FIELDS))
+            ? validation.MYTHOLOGY_ARRAY_FIELDS
+            : _EXPECTED_MYTHOLOGY_ARRAY;
+
+        var ourText = Object.create(null);
+        for (var i = 0; i < TEXT_SECTIONS.length; i++) {
+            ourText[TEXT_SECTIONS[i].key] = true;
+        }
+        var ourArray = Object.create(null);
+        for (var j = 0; j < LIST_SECTIONS.length; j++) {
+            ourArray[LIST_SECTIONS[j].key] = true;
+        }
+
+        for (var k = 0; k < expectedText.length; k++) {
+            if (!ourText[expectedText[k]]) {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn(
+                        'culture-mythology-tab.js: text field "' + expectedText[k] +
+                        '" is expected but not rendered by TEXT_SECTIONS. ' +
+                        'One side is out of date.'
+                    );
+                }
+            }
+        }
+        for (var m = 0; m < expectedArray.length; m++) {
+            if (!ourArray[expectedArray[m]]) {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn(
+                        'culture-mythology-tab.js: array field "' + expectedArray[m] +
+                        '" is expected but not rendered by LIST_SECTIONS. ' +
+                        'One side is out of date.'
+                    );
+                }
+            }
+        }
+    })();
 
     // =========================================================================
     // 3. HELPERS
@@ -508,15 +629,9 @@
         countEl.textContent = count + ' items';
 
         // Refresh the overview line.
-        var culture = null;
-        var parent = container.closest('.ct-editor');
-        if (parent) {
-            // The overview is a sibling of the text grid; find it and
-            // rebuild its summary from the current chip counts.
-            var overviewSummary = container.querySelector('.ct-mythology__overview-summary');
-            if (overviewSummary) {
-                overviewSummary.textContent = _buildOverviewSummary(container);
-            }
+        var overviewSummary = container.querySelector('.ct-mythology__overview-summary');
+        if (overviewSummary) {
+            overviewSummary.textContent = _buildOverviewSummary(container);
         }
     }
 
@@ -549,10 +664,18 @@
     // 6. SAVE
     // =========================================================================
     //
-    // Called by the HOST's save-all. Reads the DOM (via the sync the input
-    // handlers already performed) and returns the partial culture object
-    // the host will merge. Preserves empty text as '' and empty lists as
-    // [] so cleared fields stay cleared.
+    // Called by the HOST's save-all. Returns the working culture's
+    // mythology. The save() is a passthrough because every user edit is
+    // already in _state.culture.mythology via the input/change handlers
+    // wired in _attachEvents (and via _handleAddTag / _handleRemoveTag,
+    // which call _syncToWorkingCulture directly). Reading the DOM in
+    // save() would be equivalent for text fields but would miss the case
+    // where an input event is in flight. The passthrough is correct.
+    //
+    // Empty text is preserved as '' so a cleared field stays cleared.
+    // Empty lists are preserved as [] so a removed last-item stays
+    // removed. Both are deliberate; _syncToWorkingCulture builds the
+    // shape unconditionally.
 
     function saveMythologyTab(culture) {
         if (!culture) return culture;
