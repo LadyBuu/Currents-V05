@@ -23,18 +23,12 @@
         /* ==================================================================
            SETTLEMENT MANAGER — INLINE STYLES
            ==================================================================
-           All color/radius/shadow/font values come from themes.css.
-           Structural layout only. This block replaces:
-             css/settlement.css
-             css/location-list.css
-             css/location-sidebar.css
-             css/selectors.css
-             css/uiList.css
-           and the per-tab inline styles scattered across js/tabs/*.js
-           (which will be removed later, per the plan).
-
-           Every class below mirrors the Location Manager's inline
-           styles so the two pages render identically.
+           Structurally identical to Location Manager. All color/radius/
+           shadow/font values come from themes.css. The only additions
+           here over Location Manager are the settlement-specific
+           sub-tab body classes (.sct-*) that the eleven tab renderers
+           already emit; no styling block inside any tab renderer is
+           required to change.
            ================================================================== */
 
         /* ---- App shell ---- */
@@ -338,8 +332,7 @@
         }
 
         /* ============================================================
-           SUB-TAB STRIP
-           (TabManager renders the strip; these rules style it.)
+           SUB-TAB STRIP — identical to Location Manager
            ============================================================ */
         .manager-subtabs {
             position: sticky;
@@ -424,190 +417,7 @@
             padding-top: 4px;
         }
 
-        /* ============================================================
-           SETTLEMENT TAB SHARED CLASSES
-           (previously in css/settlement.css)
-           ============================================================ */
-        .settlement-card {
-            background: var(--bg2);
-            border-radius: calc(var(--radius) * 2);
-            padding: 16px 20px;
-            border: 1px solid var(--border);
-            margin-bottom: 12px;
-            transition: border-color 0.2s ease;
-        }
-        .settlement-card:hover { border-color: var(--accent); }
-        .settlement-card .title {
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: var(--accent-light);
-            margin-bottom: 4px;
-        }
-        .settlement-card .subtitle {
-            font-size: 0.65rem;
-            color: var(--dim);
-            margin-bottom: 10px;
-        }
-        .settlement-card .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-            gap: 8px;
-            font-size: 0.65rem;
-        }
-        .settlement-card .stats .stat {
-            background: var(--bg);
-            padding: 6px 10px;
-            border-radius: var(--radius);
-            text-align: center;
-        }
-        .settlement-card .stats .stat .label {
-            color: var(--dim);
-            font-size: 0.5rem;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-        }
-        .settlement-card .stats .stat .value {
-            font-weight: 500;
-            color: var(--text);
-            font-size: 0.75rem;
-        }
-
-        .settlement-info-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-            background: var(--bg2);
-            padding: 12px;
-            border-radius: var(--radius);
-            border: 1px solid var(--border);
-        }
-        .settlement-info-grid .info-item { padding: 4px 8px; }
-        .settlement-info-grid .info-item .label {
-            color: var(--dim);
-            font-size: 0.55rem;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-        }
-        .settlement-info-grid .info-item .value {
-            color: var(--text);
-            font-size: 0.7rem;
-            font-weight: 500;
-        }
-
-        .upgrade-info {
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 12px 16px;
-            margin: 8px 0;
-        }
-        .upgrade-info .current-rank { color: var(--accent-light); font-weight: 600; }
-        .upgrade-info .next-rank    { color: var(--success); font-weight: 600; }
-        .upgrade-info .requirement  { color: var(--dim); font-size: 0.65rem; }
-        .upgrade-info .requirement.met   { color: var(--success); }
-        .upgrade-info .requirement.unmet { color: var(--danger-lt); }
-        .upgrade-btn {
-            background: var(--accent);
-            color: var(--accent-fg);
-            border: none;
-            padding: 8px 20px;
-            border-radius: var(--radius);
-            cursor: pointer;
-            font-size: 0.7rem;
-            font-weight: 600;
-            transition: background-color 0.2s ease, box-shadow 0.2s ease;
-        }
-        .upgrade-btn:hover {
-            background: var(--accent-light);
-            box-shadow: var(--glow-md);
-        }
-        .upgrade-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            box-shadow: none;
-        }
-
-        /* Tab-level generic buttons used by overview/economy/etc. */
-        .tab-pane .action-btn,
-        .tab-pane .overview-action-btn,
-        .tab-pane .economy-action-btn,
-        .tab-pane .religion-action-btn,
-        .tab-pane .industry-action-btn,
-        .tab-pane .education-action-btn,
-        .tab-pane .history-action-btn {
-            background: var(--bg3);
-            border: 1px solid var(--border);
-            color: var(--text);
-            padding: 6px 14px;
-            border-radius: var(--radius);
-            cursor: pointer;
-            font-size: 0.6rem;
-            transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
-        }
-        .tab-pane .action-btn:hover,
-        .tab-pane .overview-action-btn:hover,
-        .tab-pane .economy-action-btn:hover,
-        .tab-pane .religion-action-btn:hover,
-        .tab-pane .industry-action-btn:hover,
-        .tab-pane .education-action-btn:hover,
-        .tab-pane .history-action-btn:hover {
-            background: var(--accent-dim);
-            border-color: var(--accent);
-            color: var(--accent-light);
-        }
-
-        /* Crime tab chrome (previously in css/settlement.css §15) */
-        .crime-tab { max-width: 1000px; margin: 0 auto; }
-        .crime-tab__toolbar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            padding: 12px 0 16px;
-            border-bottom: 1px solid var(--border);
-            margin-bottom: 20px;
-        }
-        .crime-tab__toolbar .btn {
-            padding: 6px 14px;
-            font-size: 0.7rem;
-            border-radius: var(--radius);
-            background: var(--bg3);
-            border: 1px solid var(--border);
-            color: var(--text);
-            cursor: pointer;
-            transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-        }
-        .crime-tab__toolbar .btn:hover {
-            background: var(--bg2);
-            border-color: var(--accent);
-            color: var(--accent-light);
-        }
-        .crime-tab__toolbar .btn.primary {
-            background: var(--accent);
-            border-color: var(--accent);
-            color: var(--accent-fg);
-            font-weight: 600;
-        }
-        .crime-tab__toolbar .btn.primary:hover {
-            background: var(--accent-light);
-            color: var(--accent-fg);
-        }
-        .crime-tab__section { margin-bottom: 24px; }
-        .crime-tab__heading {
-            font-family: var(--f-display);
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            color: var(--accent-light);
-            padding-bottom: 6px;
-            border-bottom: 1px solid var(--border);
-            margin-bottom: 12px;
-        }
-
-        /* Value/formatters used across tabs */
-        .value-unknown { color: var(--tmut); font-style: italic; }
-
-        /* ---- Empty / loading ---- */
+        /* ---- Empty / loading (identical to Location Manager) ---- */
         .empty-state {
             padding: 48px 24px;
             text-align: center;
@@ -663,6 +473,7 @@
                 z-index: 1000;
                 transform: translateX(-100%);
                 transition: transform 0.3s ease;
+                box-shadow: none;
             }
             .locations-sidebar.visible { transform: translateX(0); }
             .tab-content-wrapper { padding: 16px; }
@@ -679,16 +490,9 @@
             }
         }
 
-        @media (max-width: 480px) {
-            .settlement-info-grid { grid-template-columns: 1fr; }
-            .crime-tab__toolbar { flex-direction: column; }
-            .crime-tab__toolbar .btn { width: 100%; }
-        }
-
         @media (prefers-reduced-motion: reduce) {
             .manager-subtab,
-            .loading,
-            .settlement-card {
+            .loading {
                 animation: none;
                 transition: none;
             }
@@ -698,7 +502,7 @@
 <body>
 
 <!-- ================================================================== -->
-<!-- TOPBAR — identical structure to Location Manager                    -->
+<!-- TOPBAR                                                              -->
 <!-- ================================================================== -->
 <div class="topbar">
     <button id="menuToggle" class="burger-menu" type="button" aria-label="Toggle menu">
@@ -733,7 +537,7 @@
 </div>
 
 <!-- ================================================================== -->
-<!-- WORLD APP — identical structure to Location Manager                 -->
+<!-- WORLD APP                                                           -->
 <!-- ================================================================== -->
 <div class="world-app">
     <div class="locations-sidebar" id="locationsSidebar">
@@ -752,15 +556,11 @@
 </div>
 
 <!-- ================================================================== -->
-<!-- SCRIPT LOAD ORDER — identical pattern to Location Manager           -->
+<!-- SCRIPT LOAD ORDER                                                   -->
 <!-- ================================================================== -->
 
 <!-- ================================================================
-     BLOCK 1 — THEME BOOTSTRAP (loaded in <head> above)
-     ================================================================ -->
-
-<!-- ================================================================
-     BLOCK 2 — CORE CONSTANTS
+     BLOCK 1 — CORE CONSTANTS
      ================================================================ -->
 <script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
@@ -770,7 +570,7 @@
 <script src="js/core/constants/relationship-constants.js"></script>
 
 <!-- ================================================================
-     BLOCK 3 — CORE UTILITIES
+     BLOCK 2 — CORE UTILITIES
      ================================================================ -->
 <script src="js/core/formatting.js"></script>
 <script src="js/core/icons.js"></script>
@@ -779,12 +579,12 @@
 <script src="js/core/randomness.js"></script>
 
 <!-- ================================================================
-     BLOCK 4 — CORE TIME
+     BLOCK 3 — CORE TIME
      ================================================================ -->
 <script src="js/core/time.js"></script>
 
 <!-- ================================================================
-     BLOCK 5 — CORE STORAGE
+     BLOCK 4 — CORE STORAGE
      ================================================================ -->
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
@@ -798,14 +598,17 @@
 <script src="js/core/accessors.js"></script>
 
 <!-- ================================================================
-     BLOCK 6 — CORE VALIDATION, WORLD, NAMES
+     BLOCK 5 — CORE VALIDATION, WORLD, NAMES
      ================================================================ -->
 <script src="js/core/validation.js"></script>
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
 
 <!-- ================================================================
-     BLOCK 7 — CORE UI PRIMITIVES
+     BLOCK 6 — CORE UI PRIMITIVES
+     (NOTE: js/core/tab-manager.js is NOT loaded. This page uses the
+      same inline sub-tab strip pattern as Location Manager; no tab
+      manager module is required.)
      ================================================================ -->
 <script src="js/core/ui.js"></script>
 <script src="js/core/ui-state.js"></script>
@@ -815,32 +618,32 @@
 <script src="js/core/exportUtils.js"></script>
 
 <!-- ================================================================
-     BLOCK 8 — CORE INTEGRITY & MAINTENANCE
+     BLOCK 7 — CORE INTEGRITY & MAINTENANCE
      ================================================================ -->
 <script src="js/core/simulation-generators.js"></script>
 <script src="js/core/integrity.js"></script>
 <script src="js/core/maintenance.js"></script>
 
 <!-- ================================================================
-     BLOCK 9 — SKILL TAXONOMY
+     BLOCK 8 — SKILL TAXONOMY
      ================================================================ -->
 <script src="js/roles/skill-utils.js"></script>
 
 <!-- ================================================================
-     BLOCK 10 — CHARACTER PURE POLICY
+     BLOCK 9 — CHARACTER PURE POLICY
      ================================================================ -->
 <script src="js/character/family-rules.js"></script>
 <script src="js/character/children-rules.js"></script>
 <script src="js/character/mortality-rules.js"></script>
 
 <!-- ================================================================
-     BLOCK 11 — CHARACTER STATE
+     BLOCK 10 — CHARACTER STATE
      ================================================================ -->
 <script src="js/character/character-state.js"></script>
 <script src="js/character/family-state.js"></script>
 
 <!-- ================================================================
-     BLOCK 12 — CHARACTER COMMANDS & QUERIES
+     BLOCK 11 — CHARACTER COMMANDS & QUERIES
      ================================================================ -->
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
@@ -848,7 +651,7 @@
 <script src="js/character/family-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 13 — CHARACTER FACTORY & CREATION
+     BLOCK 12 — CHARACTER FACTORY & CREATION
      ================================================================ -->
 <script src="js/character/character-factory.js"></script>
 <script src="js/character/character-creation-commands.js"></script>
@@ -857,21 +660,7 @@
 <script src="js/character/mortality-statistics.js"></script>
 
 <!-- ================================================================
-     BLOCK 14 — CHARACTER LIFECYCLE
-     ================================================================ -->
-<script src="js/character/character-lifecycle.js"></script>
-<script>
-    (function () {
-        if (typeof window.killCharacter === 'function') return;
-        if (window.CharacterLifecycle
-            && typeof window.CharacterLifecycle.killCharacter === 'function') {
-            window.killCharacter = window.CharacterLifecycle.killCharacter;
-        }
-    })();
-</script>
-
-<!-- ================================================================
-     BLOCK 15 — ROLES
+     BLOCK 13 — ROLES
      ================================================================ -->
 <script src="js/roles/role-constants.js"></script>
 <script src="js/roles/role-state.js"></script>
@@ -879,7 +668,7 @@
 <script src="js/roles/role-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 16 — RANKS
+     BLOCK 14 — RANKS
      ================================================================ -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
@@ -889,7 +678,7 @@
 <script src="js/ranks/rank-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 17 — NAMES
+     BLOCK 15 — NAMES
      ================================================================ -->
 <script src="js/names/name-queries.js"></script>
 <script src="js/names/name-rules.js"></script>
@@ -897,21 +686,15 @@
 <script src="js/names/name-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 18 — STATE FACADE
+     BLOCK 16 — STATE FACADE
+     (census-state, matchmaker-state, misc-state, core/state.js
+      are NOT required by this page. The settlement manager reads
+      settlement data through SettlementQueries and location data
+      through LocationQueries. js/core/state.js is skipped.)
      ================================================================ -->
-<script src="js/core/state.js"></script>
 
 <!-- ================================================================
-     BLOCK 19 — CENSUS / MATCHMAKER / MISC / HOUSEHOLD STATE / LOCATION UI STATE
-     ================================================================ -->
-<script src="js/core/census-state.js"></script>
-<script src="js/core/matchmaker-state.js"></script>
-<script src="js/core/misc-state.js"></script>
-<script src="js/households/household-state.js"></script>
-<script src="js/location/location-ui-state.js"></script>
-
-<!-- ================================================================
-     BLOCK 20 — RELIGION
+     BLOCK 17 — RELIGION
      ================================================================ -->
 <script src="js/religion/religion-constants.js"></script>
 <script src="js/religion/religion-format.js"></script>
@@ -927,9 +710,7 @@
 <script src="js/religion/religion-ui-state.js"></script>
 
 <!-- ================================================================
-     BLOCK 21 — INDUSTRY
-     (industry-view-models.js + modals-industry.js are required by
-      settlement-industry-tab.js and were previously missing.)
+     BLOCK 18 — INDUSTRY
      ================================================================ -->
 <script src="js/industry/industry-constants.js"></script>
 <script src="js/industry/industry-state.js"></script>
@@ -948,15 +729,39 @@
 <script src="js/industry/modals-industry.js"></script>
 
 <!-- ================================================================
-     BLOCK 22 — HOUSEHOLDS
+     BLOCK 19 — HOUSEHOLDS + RESIDENCE
+     (HouseholdCommands + ResidenceSystem are required by the
+      settlement-residence-tab renderer below.)
      ================================================================ -->
 <script src="js/households/household-constants.js"></script>
 <script src="js/households/household-rules.js"></script>
+<script src="js/households/household-view-models.js"></script>
+<script src="js/households/household-orchestration.js"></script>
+<script src="js/households/household-state.js"></script>
 <script src="js/households/household-queries.js"></script>
 <script src="js/households/household-commands.js"></script>
+<script src="js/households/household-economy.js"></script>
+<script src="js/households/household-assignment.js"></script>
+<script src="js/households/household-servant.js"></script>
+<script src="js/households/residence-system.js"></script>
+<script src="js/households/household-bootstrap.js"></script>
+<script src="js/households/modals-helper.js"></script>
+<script src="js/households/household-ui-list.js"></script>
+<script src="js/households/modals-household.js"></script>
+<script src="js/households/modals-household-economy.js"></script>
+<script src="js/households/modals-household-snapshot.js"></script>
+<script src="js/households/modals-household-staff.js"></script>
+<script src="js/households/modals-residence.js"></script>
+<script src="js/households/modals-residence-owner.js"></script>
+<script src="js/households/modals-residence-rental.js"></script>
+<script src="js/households/modals-residence-staff.js"></script>
+<script src="js/households/modals-assign-staff.js"></script>
+<script src="js/households/modals-residence-history.js"></script>
+<script src="js/households/modals-residence-vacancy.js"></script>
+<script src="js/households/modals-residence-snapshot.js"></script>
 
 <!-- ================================================================
-     BLOCK 23 — LOCATION (core domain)
+     BLOCK 20 — LOCATION (core domain)
      ================================================================ -->
 <script src="js/location/location-state.js"></script>
 <script src="js/location/location-hierarchy.js"></script>
@@ -964,6 +769,7 @@
 <script src="js/location/location-queries.js"></script>
 <script src="js/location/location-movement.js"></script>
 <script src="js/location/location-view-models.js"></script>
+<script src="js/location/location-ui-state.js"></script>
 <script src="js/location/location-ui-list.js"></script>
 <script src="js/location/location-presentation.js"></script>
 <script src="js/location/modals-location-helper.js"></script>
@@ -971,7 +777,7 @@
 <script src="js/location/modals-moves.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
-<!-- PlaceQueries façade (same as Location Manager) -->
+<!-- PlaceQueries façade -->
 <script>
     (function () {
         'use strict';
@@ -992,9 +798,8 @@
 </script>
 
 <!-- ================================================================
-     BLOCK 24 — SETTLEMENT (definitions → rules → state → commit →
+     BLOCK 21 — SETTLEMENT (definitions → rules → state → commit →
      queries → commands → factory → processor → view-models → ui-state)
-     NOTE: settlement-tabs.js is NOT loaded. TabManager replaces it.
      ================================================================ -->
 <script src="js/settlement/settlement-fiscal-definitions.js"></script>
 <script src="js/settlement/settlement-government-definitions.js"></script>
@@ -1041,9 +846,7 @@
 <script src="js/settlement/settlement-ui-state.js"></script>
 
 <!-- ================================================================
-     BLOCK 25 — GOVERNMENT
-     (government-economy.js, government-bootstrap.js,
-      government-view-models.js previously missing.)
+     BLOCK 22 — GOVERNMENT
      ================================================================ -->
 <script src="js/government/government-constants.js"></script>
 <script src="js/government/government-state.js"></script>
@@ -1055,9 +858,7 @@
 <script src="js/government/government-view-models.js"></script>
 
 <!-- ================================================================
-     BLOCK 26 — EDUCATION
-     (education-ui-list.js and modals-education.js previously missing;
-      settlement-education-tab.js requires both.)
+     BLOCK 23 — EDUCATION
      ================================================================ -->
 <script src="js/education/education-constants.js"></script>
 <script src="js/education/education-rules.js"></script>
@@ -1070,7 +871,7 @@
 <script src="js/education/modals-education.js"></script>
 
 <!-- ================================================================
-     BLOCK 27 — CRIME
+     BLOCK 24 — CRIME
      ================================================================ -->
 <script src="js/crime/crime-constants.js"></script>
 <script src="js/crime/crime-state.js"></script>
@@ -1084,7 +885,7 @@
 <script src="js/crime/crime-bootstrap.js"></script>
 
 <!-- ================================================================
-     BLOCK 28 — SELECTORS
+     BLOCK 25 — SELECTORS
      ================================================================ -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
@@ -1103,26 +904,27 @@
 <script src="js/selectors/modals-household-selector.js"></script>
 
 <!-- ================================================================
-     BLOCK 29 — RELIGION MODALS & BOOTSTRAP
+     BLOCK 26 — RELIGION MODALS & BOOTSTRAP
      ================================================================ -->
 <script src="js/religion/modals-religion.js"></script>
 <script src="js/religion/religion-bootstrap.js"></script>
 
 <!-- ================================================================
-     BLOCK 30 — CHARACTER UI MODALS
+     BLOCK 27 — CHARACTER LIFECYCLE (death dispatch)
+     ================================================================ -->
+<script src="js/character/character-lifecycle.js"></script>
+
+<!-- ================================================================
+     BLOCK 28 — CHARACTER UI MODALS
      ================================================================ -->
 <script src="js/character/character-ui-list.js"></script>
 <script src="js/character/modals-character.js"></script>
 <script src="js/character/modals-death.js"></script>
 
 <!-- ================================================================
-     BLOCK 31 — TAB MANAGER (replaces settlement-tabs.js)
-     ================================================================ -->
-<script src="js/core/tab-manager.js"></script>
-
-<!-- ================================================================
-     BLOCK 32 — SETTLEMENT SETTLEMENT UI (modals + ui-list)
-     (settlement-tabs.js REMOVED. ui-list and modals stay.)
+     BLOCK 29 — SETTLEMENT MODALS + UI LIST
+     (settlement-tabs.js is NOT loaded. The inline sub-tab strip
+      replaces it.)
      ================================================================ -->
 <script src="js/settlement/settlement-ui-list.js"></script>
 <script src="js/settlement/modals-settlement-core.js"></script>
@@ -1130,61 +932,12 @@
 <script src="js/settlement/modals-settlement-roles.js"></script>
 
 <!-- ================================================================
-     BLOCK 33 — SETTLEMENT TAB RENDERERS
-     These 10 files call `SettlementTabs.registerTabRenderer(...)`.
-     The shim below maps that API onto TabManager('settlement', ...).
-     When the tab files are later edited to call TabManager.register
-     directly, the shim block can be deleted.
+     BLOCK 30 — SETTLEMENT TAB RENDERERS
+     (eleven files, loaded after their dependencies per load order.txt
+      Blocks 21–29. Each exposes render(containerId, locationId); two
+      of them — crime and residence — expose free functions instead
+      and are wrapped in the sub-tab registry below.)
      ================================================================ -->
-<script>
-    (function () {
-        'use strict';
-
-        // --- SettlementTabs → TabManager shim -------------------------
-        //
-        // Each settlement tab renderer registers with:
-        //     SettlementTabs.registerTabRenderer('overview', fn)
-        // and calls:
-        //     SettlementTabs.requestRender('overview')
-        //     SettlementTabs.activateTab('overview')
-        //     SettlementTabs.renderActiveTab()
-        //
-        // The shim forwards all of these to TabManager with scope
-        // 'settlement'. No other API of SettlementTabs is used by the
-        // tab renderers (verified against all 10 files).
-
-        var SCOPE = 'settlement';
-
-        window.SettlementTabs = {
-            registerTabRenderer: function (tabId, renderer) {
-                window.TabManager.register(SCOPE, tabId, renderer);
-            },
-            requestRender: function (tabId) {
-                window.TabManager.requestRender(SCOPE, tabId);
-            },
-            renderActiveTab: function () {
-                return window.TabManager.renderActive(SCOPE);
-            },
-            activateTab: function (tabId) {
-                return window.TabManager.activate(SCOPE, tabId);
-            },
-            setActiveTabId: function (tabId) {
-                window.TabManager.setActive(SCOPE, tabId);
-            },
-            getActiveTabId: function () {
-                var cfg = window.TabManager.getStatus().scopes[SCOPE];
-                return cfg ? cfg.activeTabId : null;
-            },
-            init: function () {
-                // TabManager.init() is idempotent; calling here mirrors
-                // the previous SettlementTabs.init() call site.
-                window.TabManager.init();
-            }
-        };
-    })();
-</script>
-
-<script src="js/tabs/location-tab.js"></script>
 <script src="js/tabs/settlement-overview-tab.js"></script>
 <script src="js/tabs/settlement-features-tab.js"></script>
 <script src="js/tabs/settlement-economy-tab.js"></script>
@@ -1195,223 +948,335 @@
 <script src="js/tabs/settlement-roles-tab.js"></script>
 <script src="js/tabs/government-details-tab.js"></script>
 <script src="js/tabs/settlement-crime-tab.js"></script>
+<script src="js/tabs/settlement-residence-tab.js"></script>
 
 <!-- ================================================================
-     BLOCK 34 — TAB MANAGER CONFIGURATION + SUB-TAB STRIP HOST
+     BLOCK 31 — SUB-TAB HOST
      ================================================================
-     The 11 settlement tabs are rendered the Location-Manager way:
-     a single `.manager-subtabs` strip at the top of #panelContent,
-     and one `.manager-subpanel` beneath it that holds the active
-     tab's output.
-
-     The strip is regenerated on every activate() so the `active`
-     class always matches TabManager's active tab. Each [data-tab]
-     button in the strip is claimed by TabManager's document click
-     handler (containerRoot = #panelContent).
+     Single registry, single dispatch entry point. Exactly the same
+     shape as Location Manager's Block 25, expanded from five tabs
+     to eleven. Each tab is a plain render(containerId, locationId)
+     function.
      ================================================================ -->
 <script>
-    (function () {
-        'use strict';
+(function () {
+    'use strict';
 
-        // Sub-tab metadata. Order matches the old .panel-tabs order.
-        // Icons are icon-name strings resolved via window.getIcon.
-        var SUBTABS = [
-            { id: 'location',    label: 'Location',    icon: 'LOCATION' },
-            { id: 'overview',    label: 'Overview',    icon: 'BOOK' },
-            { id: 'features',    label: 'Features',    icon: 'GEAR' },
-            { id: 'economy',     label: 'Economy',     icon: 'COIN' },
-            { id: 'religion',    label: 'Religion',    icon: 'CIRCLE_DOT' },
-            { id: 'industry',    label: 'Industry',    icon: 'GEAR' },
-            { id: 'education',   label: 'Education',   icon: 'BOOK' },
-            { id: 'history',     label: 'History',     icon: 'CIRCLE_DOT' },
-            { id: 'roles',       label: 'Roles',       icon: 'PERSON' },
-            { id: 'government',  label: 'Government',  icon: 'HOME' },
-            { id: 'crime',       label: 'Crime',       icon: 'WARNING' }
-        ];
-
-        function _icon(name) {
-            if (typeof window.getIcon === 'function') {
-                try {
-                    var s = window.getIcon(name);
-                    if (typeof s === 'string') return s;
-                } catch (e) { /* ignore */ }
-            }
-            return '';
-        }
-        function _esc(s) {
-            return String(s == null ? '' : s)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        function _buildStrip(activeId) {
-            var html = '<div class="manager-subtabs" role="tablist">';
-            for (var i = 0; i < SUBTABS.length; i++) {
-                var t = SUBTABS[i];
-                var isActive = t.id === activeId;
-                var cls = 'manager-subtab' + (isActive ? ' active' : '');
-                var iconHtml = _icon(t.icon)
-                    ? '<span class="manager-subtab-icon">' + _icon(t.icon) + '</span>'
-                    : '';
-                html +=
-                    '<button type="button" class="' + cls + '" ' +
-                    'data-tab="' + _esc(t.id) + '" ' +
-                    'role="tab" aria-selected="' + (isActive ? 'true' : 'false') + '">' +
-                    iconHtml +
-                    '<span>' + _esc(t.label) + '</span>' +
-                    '</button>';
-            }
-            html += '</div>';
-            return html;
-        }
-
-        // Where the active tab's renderer writes. This element is
-        // created by the sub-tab host that TabManager's resolveContainer
-        // returns. The host lives inside #panelContent.
-        var PANEL_ID = 'tab-settlement-panel';
-
-        function _renderStrip() {
-            var host = document.getElementById('settlement-subtab-host');
-            if (!host) return;
-            var active = null;
-            var status = window.TabManager.getStatus();
-            if (status && status.scopes && status.scopes.settlement) {
-                active = status.scopes.settlement.activeTabId || null;
-            }
-            host.innerHTML = _buildStrip(active);
-        }
-
-        // Ensure the host + panel exist inside #panelContent. Idempotent.
-        function _ensureHost() {
-            var panelContent = document.getElementById('panelContent');
-            if (!panelContent) return null;
-
-            var host = document.getElementById('settlement-subtab-host');
-            if (!host) {
-                host = document.createElement('div');
-                host.id = 'settlement-subtab-host';
-                panelContent.innerHTML = '';
-                panelContent.appendChild(host);
-
-                var panel = document.createElement('div');
-                panel.id = PANEL_ID;
-                panel.className = 'manager-subpanel';
-                panel.setAttribute('role', 'tabpanel');
-                panelContent.appendChild(panel);
-            }
-            return host;
-        }
-
-        function _resolveContainer(tabId) {
-            if (tabId === 'location' || tabId === 'overview' ||
-                tabId === 'features' || tabId === 'economy' ||
-                tabId === 'religion' || tabId === 'industry' ||
-                tabId === 'education' || tabId === 'history' ||
-                tabId === 'roles' || tabId === 'government' ||
-                tabId === 'crime') {
-                return document.getElementById(PANEL_ID);
-            }
-            return document.getElementById(PANEL_ID);
-        }
-
-        function _buildContext() {
-            var ui = window.SettlementUIState;
-            if (!ui || typeof ui.getSelectedLocationId !== 'function') {
-                return null;
-            }
-            var locationId = ui.getSelectedLocationId();
-            if (!locationId) return null;
-
-            var data = null;
-            var viewModel = null;
-            try {
-                if (window.SettlementQueries
-                    && typeof window.SettlementQueries.getSettlementData === 'function') {
-                    data = window.SettlementQueries.getSettlementData(locationId);
+    // ---- Registry -------------------------------------------------
+    //
+    // Each entry exposes render(containerId, locationId).
+    // Where the underlying module exports a free function (crime,
+    // residence), a thin wrapper adapts it. No global registration
+    // protocol, no `SettlementTabs`, no `TabManager`.
+    //
+    // The `requiresSettlement` flag tells _dispatch whether a missing
+    // settlement record is a legitimate UI state (render "no settlement
+    // yet") or not. Every tab that reads SettlementQueries requires
+    // the record; the residences tab does not (a location can have
+    // residences without a settlement record) so it renders regardless.
+    var SUBTABS = [
+        {
+            id: 'overview',
+            label: 'Overview',
+            icon: 'BOOK',
+            requiresSettlement: true,
+            render: function (containerId, locationId) {
+                if (window.SettlementOverviewTab
+                    && typeof window.SettlementOverviewTab.render === 'function') {
+                    window.SettlementOverviewTab.render(containerId, locationId);
                 }
-            } catch (e) { data = null; }
-
-            try {
-                if (window.SettlementViewModels
-                    && typeof window.SettlementViewModels.buildSettlementSummary === 'function') {
-                    viewModel = window.SettlementViewModels.buildSettlementSummary(locationId);
+            }
+        },
+        {
+            id: 'features',
+            label: 'Features',
+            icon: 'GEAR',
+            requiresSettlement: true,
+            render: function (containerId, locationId) {
+                if (window.SettlementFeaturesTab
+                    && typeof window.SettlementFeaturesTab.render === 'function') {
+                    window.SettlementFeaturesTab.render(containerId, locationId);
                 }
-            } catch (e) { viewModel = null; }
-
-            return {
-                locationId: locationId,
-                data: data,
-                viewModel: viewModel
-            };
-        }
-
-        function _getActiveTabId() {
-            var ui = window.SettlementUIState;
-            if (ui && typeof ui.getActiveTabId === 'function') {
-                return ui.getActiveTabId();
             }
-            return 'location';
-        }
-
-        function _setActiveTabId(tabId) {
-            var ui = window.SettlementUIState;
-            if (ui && typeof ui.setActiveTabId === 'function') {
-                ui.setActiveTabId(tabId);
+        },
+        {
+            id: 'economy',
+            label: 'Economy',
+            icon: 'COIN',
+            requiresSettlement: true,
+            render: function (containerId, locationId) {
+                if (window.SettlementEconomyTab
+                    && typeof window.SettlementEconomyTab.render === 'function') {
+                    window.SettlementEconomyTab.render(containerId, locationId);
+                }
             }
-            _renderStrip();
-        }
-
-        function _buildEmptyState(tabId, reason) {
-            if (reason === 'no-context') {
-                return '<div class="empty-state">Select a location from the sidebar</div>';
+        },
+        {
+            id: 'religion',
+            label: 'Religion',
+            icon: 'CIRCLE_DOT',
+            requiresSettlement: true,
+            render: function (containerId, locationId) {
+                if (window.SettlementReligionTab
+                    && typeof window.SettlementReligionTab.render === 'function') {
+                    window.SettlementReligionTab.render(containerId, locationId);
+                }
             }
-            if (reason === 'no-renderer') {
-                return '<div class="empty-state">This tab is not available yet.</div>';
+        },
+        {
+            id: 'industry',
+            label: 'Industry',
+            icon: 'GEAR',
+            requiresSettlement: true,
+            render: function (containerId, locationId) {
+                if (window.SettlementIndustryTab
+                    && typeof window.SettlementIndustryTab.render === 'function') {
+                    window.SettlementIndustryTab.render(containerId, locationId);
+                }
             }
-            return '';
-        }
-
-        function _onActivate(tabId, context) {
-            _renderStrip();
-            // Keep in sync with the old SettleTabs behaviour: when the
-            // user activates a tab from the strip, the tab id lives in
-            // SettlementUIState so other modules (crime events, etc.)
-            // can read it.
-            if (window.SettlementUIState
-                && typeof window.SettlementUIState.setActiveTabId === 'function') {
-                window.SettlementUIState.setActiveTabId(tabId);
+        },
+        {
+            id: 'education',
+            label: 'Education',
+            icon: 'BOOK',
+            requiresSettlement: true,
+            render: function (containerId, locationId) {
+                if (window.SettlementEducationTab
+                    && typeof window.SettlementEducationTab.render === 'function') {
+                    window.SettlementEducationTab.render(containerId, locationId);
+                }
+            }
+        },
+        {
+            id: 'history',
+            label: 'History',
+            icon: 'CIRCLE_DOT',
+            requiresSettlement: true,
+            render: function (containerId, locationId) {
+                if (window.SettlementHistoryTab
+                    && typeof window.SettlementHistoryTab.render === 'function') {
+                    window.SettlementHistoryTab.render(containerId, locationId);
+                }
+            }
+        },
+        {
+            id: 'roles',
+            label: 'Roles',
+            icon: 'PERSON',
+            requiresSettlement: true,
+            render: function (containerId, locationId) {
+                if (window.SettlementRolesTab
+                    && typeof window.SettlementRolesTab.render === 'function') {
+                    window.SettlementRolesTab.render(containerId, locationId);
+                }
+            }
+        },
+        {
+            id: 'government',
+            label: 'Government',
+            icon: 'HOME',
+            requiresSettlement: true,
+            render: function (containerId, locationId) {
+                if (window.GovernmentDetailsTab
+                    && typeof window.GovernmentDetailsTab.render === 'function') {
+                    window.GovernmentDetailsTab.render(containerId, locationId);
+                }
+            }
+        },
+        {
+            id: 'crime',
+            label: 'Crime',
+            icon: 'WARNING',
+            requiresSettlement: true,
+            // The crime tab exports renderSettlementCrime(containerId, locationId)
+            // as a free function and re-exports it as
+            // window.renderSettlementCrime. The registry adapter calls
+            // that free function. settlement-crime-tab.js also tries to
+            // register itself with SettlementTabs; that attempt is a
+            // no-op here because SettlementTabs is not defined.
+            render: function (containerId, locationId) {
+                if (typeof window.renderSettlementCrime === 'function') {
+                    window.renderSettlementCrime(containerId, locationId);
+                }
+            }
+        },
+        {
+            id: 'residences',
+            label: 'Residences',
+            icon: 'HOME',
+            requiresSettlement: false,
+            // Same pattern as crime: settlement-residence-tab.js
+            // exports renderSettlementResidences(containerId, locationId)
+            // as a free function. Residences can exist at a location
+            // that has no settlement record, so this tab does not gate
+            // on the settlement record.
+            render: function (containerId, locationId) {
+                if (typeof window.renderSettlementResidences === 'function') {
+                    window.renderSettlementResidences(containerId, locationId);
+                }
             }
         }
+    ];
 
-        function configure() {
-            var panelContent = document.getElementById('panelContent');
-            if (!panelContent) return;
+    var _activeSubtabId = 'overview';
+    var _currentLocationId = null;
 
-            _ensureHost();
+    // ---- Icon helpers (same as Location Manager) ------------------
+    function _icon(name) {
+        if (typeof window.getIcon === 'function') {
+            try {
+                var s = window.getIcon(name);
+                if (typeof s === 'string') return s;
+            } catch (e) { /* ignore */ }
+        }
+        return '';
+    }
+    function _esc(s) {
+        return typeof window.escapeHtml === 'function'
+            ? window.escapeHtml(s)
+            : String(s == null ? '' : s);
+    }
 
-            window.TabManager.configure('settlement', {
-                containerRoot: panelContent,
-                resolveContainer: _resolveContainer,
-                buildContext: _buildContext,
-                getActiveTabId: _getActiveTabId,
-                setActiveTabId: _setActiveTabId,
-                buildEmptyState: _buildEmptyState,
-                onActivate: _onActivate
-            });
+    // ---- Settlement presence check -------------------------------
+    //
+    // A single source of truth for "does this location have a
+    // settlement record". Uses SettlementQueries.getSettlementData
+    // (the canonical accessor). A missing record is a legitimate UI
+    // state; tabs that require it render the "create a settlement"
+    // message instead of throwing or rendering a hollow shell.
+    function _locationHasSettlement(locationId) {
+        if (!locationId) return false;
+        if (!window.SettlementQueries
+            || typeof window.SettlementQueries.getSettlementData !== 'function') {
+            return false;
+        }
+        try {
+            return window.SettlementQueries.getSettlementData(locationId) !== null;
+        } catch (e) {
+            return false;
+        }
+    }
 
-            window.TabManager.init();
-            _renderStrip();
+    // ---- Find a sub-tab by id ------------------------------------
+    function _findSubtab(id) {
+        for (var i = 0; i < SUBTABS.length; i++) {
+            if (SUBTABS[i].id === id) return SUBTABS[i];
+        }
+        return null;
+    }
+
+    // ---- Render the sub-tab strip and dispatch -------------------
+    //
+    // Idempotent and reentrant. Rebuilds container.innerHTML from
+    // scratch on every call, so an in-flight render from a prior
+    // click cannot leave DOM behind. Exactly the same shape as
+    // renderLocationManagerTab.
+    function renderSubtabStrip(containerId, locationId) {
+        var container = document.getElementById(containerId);
+        if (!container) return;
+
+        _currentLocationId = locationId || null;
+
+        if (!locationId) {
+            container.innerHTML =
+                '<div class="empty-state">Select a location from the sidebar</div>';
+            return;
         }
 
-        configure();
-    })();
+        var hasSettlement = _locationHasSettlement(locationId);
+
+        // ---- Strip HTML ----
+        var stripHtml = '<div class="manager-subtabs" role="tablist">';
+        for (var i = 0; i < SUBTABS.length; i++) {
+            var t = SUBTABS[i];
+            var isActive = (t.id === _activeSubtabId);
+            var cls = 'manager-subtab' + (isActive ? ' active' : '');
+            var iconHtml = _icon(t.icon)
+                ? '<span class="manager-subtab-icon">' + _icon(t.icon) + '</span>'
+                : '';
+            stripHtml +=
+                '<button type="button" class="' + cls + '" ' +
+                'data-subtab-id="' + _esc(t.id) + '" ' +
+                'role="tab" aria-selected="' + (isActive ? 'true' : 'false') + '">' +
+                iconHtml +
+                '<span>' + _esc(t.label) + '</span>' +
+                '</button>';
+        }
+        stripHtml += '</div>';
+        stripHtml += '<div id="' + _esc(containerId) + '-subpanel" ' +
+            'class="manager-subpanel" role="tabpanel"></div>';
+
+        container.innerHTML = stripHtml;
+
+        // ---- Strip click wiring ----
+        var buttons = container.querySelectorAll('.manager-subtab');
+        for (var b = 0; b < buttons.length; b++) {
+            (function (btn) {
+                btn.addEventListener('click', function () {
+                    var id = btn.getAttribute('data-subtab-id');
+                    if (!id || id === _activeSubtabId) return;
+                    _activeSubtabId = id;
+                    renderSubtabStrip(containerId, _currentLocationId);
+                });
+            })(buttons[b]);
+        }
+
+        // ---- Dispatch the active tab ----
+        var activeTab = _findSubtab(_activeSubtabId);
+        var subpanel = document.getElementById(containerId + '-subpanel');
+        if (!subpanel) return;
+
+        if (!activeTab) {
+            subpanel.innerHTML = '<div class="empty-state">This tab is not available.</div>';
+            return;
+        }
+
+        // The only precondition is "the location has a settlement
+        // record, or the tab does not need one". This mirrors the
+        // Location Manager's implicit precondition (a place exists).
+        if (activeTab.requiresSettlement && !hasSettlement) {
+            subpanel.innerHTML =
+                '<div class="empty-state">' +
+                'This location has no settlement yet. ' +
+                'Click <strong>Add Settlement</strong> in the topbar to create one.' +
+                '</div>';
+            return;
+        }
+
+        try {
+            activeTab.render(containerId + '-subpanel', locationId);
+        } catch (err) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    '[settlement-manager] tab "' + activeTab.id + '" threw:', err
+                );
+            }
+            subpanel.innerHTML =
+                '<div class="empty-state">' +
+                'Could not render this tab. See console for details.' +
+                '</div>';
+        }
+    }
+
+    // ---- Public entry point used by the manager init block ------
+    window.renderSettlementManagerTab = function (containerId, locationId) {
+        renderSubtabStrip(containerId, locationId);
+    };
+
+    // ---- Public "activate a specific tab then render" -----------
+    //
+    // Used by the topbar Add Settlement button to jump to Overview
+    // after creating a settlement.
+    window.activateSettlementSubtab = function (tabId, containerId, locationId) {
+        if (!_findSubtab(tabId)) return;
+        _activeSubtabId = tabId;
+        renderSubtabStrip(containerId, locationId);
+    };
+})();
 </script>
 
 <!-- ================================================================
-     BLOCK 35 — MANAGER INIT
+     BLOCK 32 — MANAGER INIT
      (mirrors Location Manager's init: setupUIText, setupYearControl,
       setupSidebar, setupTopBarActions, pickInitialSelection,
       selectLocation with in-place selection toggle, theme switcher)
@@ -1533,8 +1398,10 @@
             if (applied) {
                 showToast('Year set to ' + y, 'success');
                 syncFromCanonical();
-                if (window.SettlementUIState && window.SettlementTabs) {
-                    try { window.SettlementTabs.renderActiveTab(); } catch (e) { /* ignore */ }
+                if (typeof window.renderSettlementManagerTab === 'function'
+                    && currentPlaceId) {
+                    try { window.renderSettlementManagerTab('panelContent', currentPlaceId); }
+                    catch (e) { /* ignore */ }
                 }
                 setupSidebar();
             }
@@ -1640,8 +1507,8 @@
         if (!id) return;
 
         if (id === currentPlaceId) {
-            if (window.TabManager) {
-                try { window.TabManager.renderActive('settlement'); }
+            if (typeof window.renderSettlementManagerTab === 'function') {
+                try { window.renderSettlementManagerTab('panelContent', id); }
                 catch (e) { console.error(e); }
             }
             return;
@@ -1658,8 +1525,8 @@
 
         _applySidebarSelection(previousId, id);
 
-        if (window.TabManager) {
-            try { window.TabManager.renderActive('settlement'); }
+        if (typeof window.renderSettlementManagerTab === 'function') {
+            try { window.renderSettlementManagerTab('panelContent', id); }
             catch (e) { console.error(e); }
         }
 
@@ -1730,10 +1597,17 @@
                         (result && result.code ? result.code : 'unknown'), 'error');
                     return;
                 }
-                if (window.TabManager) {
-                    window.TabManager.activate('settlement', 'overview');
+                // After creation, jump to the Overview tab. The strip
+                // re-renders; the user sees the fresh overview rather
+                // than whichever tab happened to be active before.
+                if (typeof window.activateSettlementSubtab === 'function') {
+                    window.activateSettlementSubtab('overview', 'panelContent', currentPlaceId);
+                } else if (typeof window.renderSettlementManagerTab === 'function') {
+                    window.renderSettlementManagerTab('panelContent', currentPlaceId);
                 }
-                window.TabManager && window.TabManager.renderActive('settlement');
+                if (result.created === true) {
+                    showToast('Settlement created', 'success');
+                }
             } catch (e) {
                 console.error('[settlement-manager] createSettlement failed:', e);
                 showToast('Could not create settlement: ' + (e.message || 'unknown'), 'error');
@@ -1790,8 +1664,9 @@
                         currentPlaceId = null;
                         setupSidebar();
                         pickInitialSelection();
-                        if (window.TabManager) {
-                            try { window.TabManager.renderActive('settlement'); } catch (e) { /* ignore */ }
+                        if (typeof window.renderSettlementManagerTab === 'function') {
+                            try { window.renderSettlementManagerTab('panelContent', currentPlaceId); }
+                            catch (e) { /* ignore */ }
                         }
                         showToast('Import complete', 'success');
                     } catch (err) {
@@ -1857,19 +1732,16 @@
         if (window.GovernmentBootstrap && typeof window.GovernmentBootstrap.init === 'function') {
             try { window.GovernmentBootstrap.init(); } catch (e) { /* ignore */ }
         }
-
-        // TabManager.init() was already called from the configuration
-        // block. Calling again is a no-op.
-        if (window.TabManager) {
-            window.TabManager.init();
+        if (window.HouseholdBootstrap && typeof window.HouseholdBootstrap.init === 'function') {
+            try { window.HouseholdBootstrap.init(); } catch (e) { /* ignore */ }
         }
 
         setTimeout(function () {
             setupSidebar();
             pickInitialSelection();
 
-            if (!currentPlaceId && window.TabManager) {
-                try { window.TabManager.renderActive('settlement'); }
+            if (!currentPlaceId && typeof window.renderSettlementManagerTab === 'function') {
+                try { window.renderSettlementManagerTab('panelContent', null); }
                 catch (e) { /* ignore */ }
             }
 
@@ -1879,15 +1751,20 @@
             if (overlay) overlay.addEventListener('click', closeSidebar);
         }, 150);
 
-        // React to masterData updates (same contract as before).
+        // React to masterData updates.
         if (typeof window.addEventListener === 'function') {
             window.addEventListener('masterDataUpdated', function () {
                 setupSidebar();
-                if (window.TabManager) {
-                    try { window.TabManager.renderActive('settlement'); } catch (e) { /* ignore */ }
+                if (typeof window.renderSettlementManagerTab === 'function') {
+                    try { window.renderSettlementManagerTab('panelContent', currentPlaceId); }
+                    catch (e) { /* ignore */ }
                 }
             });
 
+            // Crime events refresh the tab when it's the active sub-tab.
+            // The check is against the SUBTABS registry's active id,
+            // which is exposed via the strip's aria-selected state.
+            // Read it from the DOM to avoid adding a second state var.
             var _crimeEvents = [
                 'crimeRecorded', 'crimeSolved', 'crimeDeleted',
                 'vendettaCreated', 'vendettaDeath', 'vendettaEscalated',
@@ -1896,11 +1773,12 @@
             for (var ci = 0; ci < _crimeEvents.length; ci++) {
                 (function (eventName) {
                     window.addEventListener(eventName, function () {
-                        if (window.SettlementUIState
-                            && window.SettlementUIState.getActiveTabId
-                            && window.SettlementUIState.getActiveTabId() === 'crime'
-                            && window.TabManager) {
-                            try { window.TabManager.renderActive('settlement'); }
+                        var active = document.querySelector('.manager-subtab.active');
+                        if (!active) return;
+                        var activeId = active.getAttribute('data-subtab-id');
+                        if (activeId !== 'crime') return;
+                        if (typeof window.renderSettlementManagerTab === 'function') {
+                            try { window.renderSettlementManagerTab('panelContent', currentPlaceId); }
                             catch (e) { /* ignore */ }
                         }
                     });
@@ -1918,8 +1796,7 @@
 </script>
 
 <!-- ================================================================
-     BLOCK 36 — THEME SWITCHER UI
-     (identical to Location Manager's theme switcher block)
+     BLOCK 33 — THEME SWITCHER UI
      ================================================================ -->
 <script>
 (function () {
