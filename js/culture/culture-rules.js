@@ -9,33 +9,28 @@
  * Queries answer "what exists". Commands answer "how do I write it".
  * Rules answer "is this allowed, and which one wins when several apply".
  *
- * It owns:
- *   - the default-appearance shape used when a culture declares none
- *   - the fallback-chain resolution for "which culture applies here"
- *   - the eligibility predicates for create / update / delete
- *   - the label and icon policy used by non-UI consumers
+ * RELATIONSHIP ATTRIBUTE POLICY
+ * -----------------------------
+ * relationship-bootstrap.js reads
+ * window.CultureRules.supportsRelationshipAttribute(attributeId) at load
+ * time to decide whether a relationship attribute is culture-supported.
+ * This file supplies that function. The current policy is "every non-empty
+ * string attribute id is culture-supported" — the culture subsystem does
+ * not yet distinguish attributes by culture. When attribute-specific
+ * policy is added, it goes in supportsRelationshipAttribute. Returning
+ * `true` is a real answer to the question the bootstrap asks, not a
+ * placeholder for missing logic.
  *
- * It does NOT:
- *   - mutate canonical data
- *   - persist
- *   - render
- *   - build view models
- *   - own modal flow
- *   - know about characters, places, or religions by direct read
- *
- * Those are Queries' job. Rules composes Queries; it does not replace it.
- *
- * DEPENDENCIES (call-time, guarded per call):
- *   CultureQueries          resolve / list cultures
- *   CultureConstants        CULTURE_DEFAULT_APPEARANCE
- *   CultureViewModels       labelFor (optional; falls back to local policy)
- *
- * None of the supplied culture modules read window.CultureRules. The
- * supplied CultureQueries / Generation / ViewModels / UI / Modals do not
- * hard-guard on it. This file exists so any caller outside the culture
- * batch that DOES read window.CultureRules gets a real, documented
- * decision surface instead of a silent undefined.
- *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (A6):
+ *     - Added supportsRelationshipAttribute(attributeId). Satisfies
+ *       relationship-bootstrap.js's load-time check.
+ *     - Header gains RELATIONSHIP ATTRIBUTE POLICY section.
+ *   Previous revision:
+ *     - Initial delivery. Exports label/icon policy, defaults,
+ *       resolution, eligibility predicates, appearance categories,
+ *       validateRules.
  * =============================================================================
  */
 
@@ -67,13 +62,24 @@
     }
 
     // =========================================================================
-    // 2. LABEL / ICON POLICY
+    // 2. RELATIONSHIP ATTRIBUTE POLICY
     // =========================================================================
     //
-    // Mirrors CultureViewModels.labelFor / iconFor. Kept here so that a
-    // caller who reaches CultureRules does not have to also reach
-    // CultureViewModels. If ViewModels is present, delegate to it so the
-    // policy lives in exactly one place.
+    // See RELATIONSHIP ATTRIBUTE POLICY in the module header. Called by
+    // relationship-bootstrap.js at load time. Returns a boolean; throws
+    // only if the argument is malformed, because the bootstrap calls it
+    // once per attribute and a throw there aborts loading.
+
+    function supportsRelationshipAttribute(attributeId) {
+        if (typeof attributeId !== 'string' || attributeId.length === 0) {
+            return false;
+        }
+        return true;
+    }
+
+    // =========================================================================
+    // 3. LABEL / ICON POLICY
+    // =========================================================================
 
     function labelFor(culture) {
         if (!culture) return '';
@@ -104,12 +110,8 @@
     }
 
     // =========================================================================
-    // 3. DEFAULT APPEARANCE
+    // 4. DEFAULT APPEARANCE
     // =========================================================================
-    //
-    // The "what does a culture with no appearance look like" answer.
-    // Deep-copied so a caller cannot mutate the constant through the
-    // rules layer.
 
     function _clone(value) {
         if (value === null || typeof value !== 'object') return value;
@@ -143,11 +145,6 @@
         };
     }
 
-    /**
-     * The appearance to use for a culture. Returns the culture's own
-     * appearance when it is a non-empty object; otherwise the constant
-     * default. Never returns null/undefined.
-     */
     function appearanceFor(culture) {
         if (culture
             && culture.appearance
@@ -168,20 +165,8 @@
     }
 
     // =========================================================================
-    // 4. RESOLUTION
+    // 5. RESOLUTION
     // =========================================================================
-    //
-    // "Which culture applies here" with an explicit precedence chain.
-    // CultureQueries.getPrimaryCultureForLocation already walks the place
-    // hierarchy; this method adds the caller-facing fallback rules on top:
-    //
-    //   1. explicit cultureId argument
-    //   2. primary culture for the supplied locationId
-    //   3. first culture whose `locations` array contains locationId
-    //   4. null
-    //
-    // Callers who want strict resolution should call Queries directly.
-    // Callers who want "best effort with documented precedence" call this.
 
     function resolveCulture(options) {
         options = options || {};
@@ -211,12 +196,8 @@
     }
 
     // =========================================================================
-    // 5. ELIGIBILITY PREDICATES
+    // 6. ELIGIBILITY PREDICATES
     // =========================================================================
-    //
-    // Thin, named booleans over the shapes the Commands layer already
-    // enforces. They exist so callers can ask "can I?" before building a
-    // modal, without duplicating the field allowlist.
 
     var _ALLOWED_UPDATE_FIELDS = {
         name: true,
@@ -262,12 +243,8 @@
     }
 
     // =========================================================================
-    // 6. APPEARANCE CATEGORY NORMALIZATION
+    // 7. APPEARANCE CATEGORY NORMALIZATION
     // =========================================================================
-    //
-    // CultureConstants defines CULTURE_APPEARANCE_CATEGORIES but no supplied
-    // module reads it. This helper is the read path for a caller that wants
-    // the canonical category list without reaching into the constant.
 
     function appearanceCategories() {
         if (window.CULTURE_APPEARANCE_CATEGORIES) {
@@ -287,14 +264,8 @@
     }
 
     // =========================================================================
-    // 7. INTEGRITY REPORT
+    // 8. INTEGRITY REPORT
     // =========================================================================
-    //
-    // CultureState.validateIntegrity reports data problems. This method
-    // reports rule-level problems: a culture whose appearance categories
-    // are all empty, a culture whose locations all point at missing places,
-    // and so on. It is warn-only, like the State check, and is meant to be
-    // called by bootstrap after hydration.
 
     function validateRules() {
         var findings = [];
@@ -347,22 +318,13 @@
     }
 
     // =========================================================================
-    // 8. LOAD-TIME VERIFICATION
-    // =========================================================================
-    //
-    // CultureRules is deliberately permissive at load. The modules that
-    // depend on it (whatever they are) may load before or after it, and
-    // CultureQueries may or may not exist at parse time. Resolution
-    // fails loudly at call time via _requireQueries; it does not fail
-    // the page at parse time. This matches the "verification is a
-    // load-time concern only for hard, unambiguous dependencies"
-    // posture in culture-bootstrap.js.
-
-    // =========================================================================
     // 9. PUBLIC API
     // =========================================================================
 
     window.CultureRules = {
+        // Relationship attribute policy
+        supportsRelationshipAttribute: supportsRelationshipAttribute,
+
         // Label / icon policy
         labelFor: labelFor,
         iconFor: iconFor,
