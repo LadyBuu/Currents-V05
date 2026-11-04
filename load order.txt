@@ -24,7 +24,7 @@
 <script src="js/core/time.js"></script>
 
 <!-- ============================================================
-     BLOCK 4 — CORE STORAGE (schema → storage → init)
+     BLOCK 4 — CORE STORAGE
      ============================================================ -->
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
@@ -36,6 +36,34 @@
     })();
 </script>
 <script src="js/core/accessors.js"></script>
+
+<!-- PlaceQueries façade — must load before culture (Block 21),
+     religion (Block 20), and settlement (Block 35). Defined as a
+     lazy façade so LocationState.getPlaceById resolves at call
+     time, not at definition time. -->
+<script>
+    (function () {
+        'use strict';
+        window.PlaceQueries = {
+            getPlaceById: function (id) {
+                if (!window.LocationState
+                    || typeof window.LocationState.getPlaceById !== 'function') {
+                    return null;
+                }
+                return window.LocationState.getPlaceById(id);
+            },
+            getPlaceSummaries: function () {
+                return (window.LocationQueries
+                    && typeof window.LocationQueries.getPlaceSummaries === 'function')
+                    ? window.LocationQueries.getPlaceSummaries()
+                    : [];
+            },
+            getAllPlaces: function () {
+                return (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
+            }
+        };
+    })();
+</script>
 
 <!-- ============================================================
      BLOCK 5 — CORE VALIDATION, WORLD, NAMES
@@ -72,6 +100,20 @@
 <script src="js/roles/skill-utils.js"></script>
 
 <!-- ============================================================
+     BLOCK 9b — EVENT LOGGER
+     Owns window.logEvent. Every subsystem that records a timeline
+     event calls it. Must load before:
+       - annualProcessing.js and social-events-system.js (Block 10)
+       - crime-commands.js / crime-bootstrap.js (Block 37)
+       - disaster-commands.js / disaster-bootstrap.js (Block 32)
+       - household-commands.js / household-servant.js (Block 30)
+       - any other consumer listed in the logEvent grep.
+     No hard load-time dependencies: masterData access is deferred
+     to call time, so it is safe to load here.
+     ============================================================ -->
+<script src="js/events/eventLogger.js"></script>
+
+<!-- ============================================================
      BLOCK 10 — EVENTS
      ============================================================ -->
 <script src="js/events/timeline-core.js"></script>
@@ -103,18 +145,32 @@
 
 <!-- ============================================================
      BLOCK 14 — CHARACTER AGGREGATION + LIFECYCLE
-     (character-lifecycle.js is MOVED HERE from the old Block 39.
-      It hard-guards on MortalityRules (Block 11) and calls into
-      CharacterCommands / FamilyCommands (Block 13). Crime
-      (Block 37) and household-servant (Block 31) load-time
-      require killCharacter / createRelationship from this file,
-      so it must precede both.)
      ============================================================ -->
 <script src="js/character/mortality-queries.js"></script>
 <script src="js/character/mortality-statistics.js"></script>
 <script src="js/character/family-statistics.js"></script>
 <script src="js/character/character-statistics.js"></script>
 <script src="js/character/character-lifecycle.js"></script>
+
+<!-- ============================================================
+     BLOCK 14b — CHARACTER SELECTOR
+     modals-char-selector.js requires FamilyQueries + accessors.
+     Both are satisfied here. modals-household-selector.js has
+     been MOVED to Block 30 (it requires HouseholdQueries at load).
+     ============================================================ -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script>
+    if (typeof window.getFilteredLocationOptions !== 'function') {
+        window.getFilteredLocationOptions = function (selectedId) {
+            if (typeof window.buildLocationDropdown === 'function') {
+                return window.buildLocationDropdown(selectedId, null, true);
+            }
+            return '<option value="">All locations</option>';
+        };
+    }
+</script>
+<script src="js/selectors/modals-char-selector.js"></script>
 
 <!-- ============================================================
      BLOCK 15 — CHARACTER FACTORY & CREATION
@@ -188,6 +244,8 @@
 
 <!-- ============================================================
      BLOCK 21 — CULTURE SUBSYSTEM
+     culture-rules.js MUST exist. If it 404s, every culture module
+     below cascades. Add the file or remove the script tag.
      ============================================================ -->
 <script src="js/culture/culture-constants.js"></script>
 <script src="js/culture/culture-validation.js"></script>
@@ -209,6 +267,46 @@
 <script src="js/relationships/relationship-state.js"></script>
 <script src="js/relationships/relationship-queries.js"></script>
 <script src="js/relationships/relationship-commands.js"></script>
+
+<!-- ============================================================
+     BLOCK 22b — RELATIONSHIP FLAT-GLOBAL SHIM
+     household-bootstrap.js requires window.createRelationship as
+     a cross-domain global. RelationshipCommands exports it on a
+     namespace. This shim creates the flat-global aliases the
+     household bootstrap expects, without modifying the household
+     domain. It is a one-way compatibility layer.
+     ============================================================ -->
+<script>
+    (function () {
+        'use strict';
+        if (!window.RelationshipCommands) return;
+        var RC = window.RelationshipCommands;
+        if (typeof RC.createRelationship === 'function'
+            && typeof window.createRelationship !== 'function') {
+            window.createRelationship = function (a, b, options) {
+                return RC.createRelationship(a, b, options);
+            };
+        }
+        if (typeof RC.endRelationship === 'function'
+            && typeof window.endRelationship !== 'function') {
+            window.endRelationship = function (id, year, reason) {
+                return RC.endRelationship(id, year, reason);
+            };
+        }
+        if (typeof RC.updateRelationship === 'function'
+            && typeof window.updateRelationship !== 'function') {
+            window.updateRelationship = function (id, patch) {
+                return RC.updateRelationship(id, patch);
+            };
+        }
+        if (typeof RC.getRelationshipById === 'function'
+            && typeof window.getRelationshipById !== 'function') {
+            window.getRelationshipById = function (id) {
+                return RC.getRelationshipById(id);
+            };
+        }
+    })();
+</script>
 
 <!-- ============================================================
      BLOCK 23 — RELATIONSHIP PER-ARCHETYPE RULES
@@ -262,6 +360,10 @@
 
 <!-- ============================================================
      BLOCK 29 — APPRENTICESHIP SUBSYSTEM
+     apprenticeship-commands.js requires
+     CharacterCommands.addProfessionSpecialization, which does not
+     exist in character-commands.js. Either add that method to
+     character-commands.js or patch apprenticeship-commands.js.
      ============================================================ -->
 <script src="js/apprenticeship/apprenticeship-constants.js"></script>
 <script src="js/apprenticeship/apprenticeship-rules.js"></script>
@@ -272,13 +374,9 @@
 
 <!-- ============================================================
      BLOCK 30 — HOUSEHOLD AND RESIDENCE SUBSYSTEM
-     (MOVED BEFORE INDUSTRY. industry-commands.js and
-      industry-bootstrap.js load-time / init-time require
-      HouseholdCommands.* — industry-bootstrap auto-inits at
-      load because Block 4 already created masterData.data, so
-      HouseholdCommands must be defined by the time
-      industry-bootstrap.js evaluates. Household-bootstrap.js
-      also does its own thing; it doesn't depend on industry.)
+     modals-household-selector.js MOVED HERE from Block 14b. It
+     hard-requires HouseholdQueries at load, and HouseholdQueries
+     is defined below.
      ============================================================ -->
 <script src="js/households/household-constants.js"></script>
 <script src="js/households/household-rules.js"></script>
@@ -286,6 +384,7 @@
 <script src="js/households/household-orchestration.js"></script>
 <script src="js/households/household-state.js"></script>
 <script src="js/households/household-queries.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
 <script src="js/households/household-commands.js"></script>
 <script src="js/households/household-economy.js"></script>
 <script src="js/households/household-assignment.js"></script>
@@ -305,14 +404,10 @@
 <script src="js/households/modals-assign-staff.js"></script>
 <script src="js/households/modals-residence-history.js"></script>
 <script src="js/households/modals-residence-vacancy.js"></script>
-<!-- NOTE: modals-residence-snapshot.js is DEPRECATED (console.warn
-     fired on load in the previous run). Functionality now lives in
-     modals-household-snapshot.js and modals-residence.js. -->
+<!-- modals-residence-snapshot.js is DEPRECATED. Do not add. -->
 
 <!-- ============================================================
      BLOCK 31 — INDUSTRY SUBSYSTEM
-     (MOVED AFTER HOUSEHOLDS. Every industry load-order guard is
-      satisfied at this point.)
      ============================================================ -->
 <script src="js/industry/industry-constants.js"></script>
 <script src="js/industry/industry-economics.js"></script>
@@ -345,7 +440,7 @@
 <script src="js/disaster/disaster-bootstrap.js"></script>
 
 <!-- ============================================================
-     BLOCK 33 — (intentionally empty — block parity preserved)
+     BLOCK 33 — (intentionally empty, block parity)
      ============================================================ -->
 
 <!-- ============================================================
@@ -366,31 +461,8 @@
 <script src="js/location/location-bootstrap.js"></script>
 
 <!-- ============================================================
-     BLOCK 34b — PlaceQueries FAÇADE
-     ============================================================ -->
-<script>
-    (function () {
-        'use strict';
-        if (!window.LocationState || typeof window.LocationState.getPlaceById !== 'function') {
-            throw new Error('place-queries shim: location-state.js must load first.');
-        }
-        window.PlaceQueries = {
-            getPlaceById: function (id) {
-                return window.LocationState.getPlaceById(id);
-            },
-            getPlaceSummaries: function () {
-                return (window.LocationQueries && typeof window.LocationQueries.getPlaceSummaries === 'function')
-                    ? window.LocationQueries.getPlaceSummaries()
-                    : [];
-            }
-        };
-    })();
-</script>
-
-<!-- ============================================================
      BLOCK 35 — SETTLEMENT SUBSYSTEM
      ============================================================ -->
-<!-- Definitions -->
 <script src="js/settlement/settlement-fiscal-definitions.js"></script>
 <script src="js/settlement/settlement-government-definitions.js"></script>
 <script src="js/settlement/settlement-rank-definitions.js"></script>
@@ -400,18 +472,15 @@
 <script src="js/settlement/settlement-feature-definitions.js"></script>
 <script src="js/settlement/settlement-education-definitions.js"></script>
 
-<!-- Rules -->
 <script src="js/settlement/settlement-rank-rules.js"></script>
 <script src="js/settlement/settlement-fiscal-rules.js"></script>
 <script src="js/settlement/settlement-government-rules.js"></script>
 <script src="js/settlement/settlement-feature-rules.js"></script>
 <script src="js/settlement/settlement-law-rules.js"></script>
 
-<!-- State + commit -->
 <script src="js/settlement/settlement-state.js"></script>
 <script src="js/settlement/settlement-command-commit.js"></script>
 
-<!-- Queries -->
 <script src="js/settlement/settlement-rank-queries.js"></script>
 <script src="js/settlement/settlement-queries.js"></script>
 <script src="js/settlement/settlement-feature-queries.js"></script>
@@ -423,7 +492,6 @@
 <script src="js/settlement/settlement-crime-queries.js"></script>
 <script src="js/settlement/settlement-prosperity-queries.js"></script>
 
-<!-- Commands -->
 <script src="js/settlement/settlement-feature-commands.js"></script>
 <script src="js/settlement/settlement-government-commands.js"></script>
 <script src="js/settlement/settlement-fiscal-commands.js"></script>
@@ -433,20 +501,14 @@
 <script src="js/settlement/settlement-rank-commands.js"></script>
 <script src="js/settlement/settlement-specialization-commands.js"></script>
 
-<!-- Factory + annual processor -->
 <script src="js/settlement/settlement-factory.js"></script>
 <script src="js/settlement/settlement-annual-processor.js"></script>
 
-<!-- View models + UI state -->
 <script src="js/settlement/settlement-view-models.js"></script>
 <script src="js/settlement/settlement-ui-state.js"></script>
 
 <!-- ============================================================
      BLOCK 36 — EDUCATION SUBSYSTEM
-     (education-history.js ADDED between state and commands —
-      education-commands.js load-time hard-guards on
-      EducationHistory. It must come after education-constants.js
-      (for HISTORY_EVENT_TYPES) and before education-commands.js.)
      ============================================================ -->
 <script src="js/education/education-constants.js"></script>
 <script src="js/education/education-rules.js"></script>
@@ -493,25 +555,7 @@
 <script src="js/government/settlement-law-formatters.js"></script>
 
 <!-- ============================================================
-     BLOCK 39 — SELECTORS
-     ============================================================ -->
-<script src="js/selectors/selector-base.js"></script>
-<script src="js/selectors/locationDropdown.js"></script>
-<script>
-    if (typeof window.getFilteredLocationOptions !== 'function') {
-        window.getFilteredLocationOptions = function (selectedId) {
-            if (typeof window.buildLocationDropdown === 'function') {
-                return window.buildLocationDropdown(selectedId, null, true);
-            }
-            return '<option value="">All locations</option>';
-        };
-    }
-</script>
-<script src="js/selectors/modals-char-selector.js"></script>
-<script src="js/selectors/modals-household-selector.js"></script>
-
-<!-- ============================================================
-     BLOCK 40 — CHARACTER UI MODALS
+     BLOCK 39 — CHARACTER UI MODALS
      ============================================================ -->
 <script src="js/character/character-ui-list.js"></script>
 <script src="js/character/modals-character.js"></script>
@@ -522,7 +566,7 @@
 <script src="js/character/character-system.js"></script>
 
 <!-- ============================================================
-     BLOCK 41 — SETTLEMENT UI + TAB RENDERERS
+     BLOCK 40 — SETTLEMENT UI + TAB RENDERERS
      ============================================================ -->
 <script src="js/settlement/settlement-tabs.js"></script>
 <script src="js/settlement/settlement-ui-list.js"></script>
@@ -559,8 +603,6 @@
 <script src="js/tabs/roles-analytics-tab.js"></script>
 <script src="js/tabs/roles-tab.js"></script>
 
-<!-- Settlement tab renderers — must load AFTER settlement-tabs.js
-     so their _register() calls find the registry. -->
 <script src="js/tabs/settlement-economy-tab.js"></script>
 <script src="js/tabs/settlement-education-tab.js"></script>
 <script src="js/tabs/settlement-features-tab.js"></script>
@@ -570,12 +612,10 @@
 <script src="js/tabs/settlement-religion-tab.js"></script>
 <script src="js/tabs/settlement-residence-tab.js"></script>
 <script src="js/tabs/settlement-roles-tab.js"></script>
-<!-- crime tab is loaded here so its self-register runs after
-     SettlementTabs exists -->
 <script src="js/tabs/settlement-crime-tab.js"></script>
 
 <!-- ============================================================
-     BLOCK 42 — OPTIONAL STATE FACADE
+     BLOCK 41 — OPTIONAL STATE FACADE
      ============================================================ -->
 <script src="js/core/census-state.js"></script>
 <script src="js/core/matchmaker-state.js"></script>
