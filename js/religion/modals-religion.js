@@ -14,8 +14,14 @@
  *   - Set Leader
  *   - End Leader Term
  *   - Add God
+ *   - Edit God                                   (added)
+ *   - Delete God                                 (added)
  *   - Add Law
+ *   - Edit Law                                   (added)
+ *   - Delete Law                                 (added)
  *   - Create Place of Worship
+ *   - Edit Place of Worship                      (added)
+ *   - Delete Place of Worship                    (added)
  *   - Assign Character Religion
  *
  * PERSISTENCE
@@ -116,23 +122,50 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - onConfirm handlers in every write modal now RETURN the result of
- *       _handleCommandResult (true on success, false on failure).
- *       _closeTopModal() is no longer called from within
+ *     - Added openEditGodModal, openDeleteGodModal,
+ *       openEditLawModal, openDeleteLawModal,
+ *       openEditPlaceOfWorshipModal, openDeletePlaceOfWorshipModal.
+ *       Prior revisions exposed only the ADD forms for gods, laws,
+ *       and places; the religion-*-tab.js modules each reimplemented
+ *       an EDIT and DELETE form for these three record types,
+ *       causing label drift (Civil vs. Civil Law) and default-value
+ *       drift (founded year 1250 vs. getCurrentYear) between the two
+ *       UI paths. The edit/delete modals close that gap. The tab
+ *       implementations are NOT removed by this revision; that is a
+ *       separate change with its own verification step.
+ *     - openAddLawModal now uses ReligionFormat.getLaw*Name for option
+ *       labels instead of inline .charAt().toUpperCase() + slice(1).
+ *       The labels now match openEditLawModal's labels and the law
+ *       records' canonical display strings (e.g. "Civil Law", not
+ *       "Civil").
+ *     - openAddGodModal now reads god domains from
+ *       ReligionConstants.GOD_DOMAINS when present, falling back to
+ *       the previous hardcoded list only when the enum is missing.
+ *       The god domain input remains a <select> (it was a <select>
+ *       in the prior revision too); the fallback list is unchanged.
+ *     - openAddGodModal's parent-god field is now a <select> of the
+ *       religion's existing gods (excluding the god being edited)
+ *       instead of a raw text input for an id. Raw-ID entry was a
+ *       footgun.
+ *     - The seven existing write modals' onConfirm handlers RETURN
+ *       the result of _handleCommandResult (true on success, false on
+ *       failure). _closeTopModal() is not called from within
  *       _handleCommandResult; modals-core.js closes the modal because
- *       onConfirm returned truthy. This eliminates the double-close and
- *       the latent onCancel-spurious-fire hazard. See
- *       ONCONFIRM / ONCANCEL CONTRACT in the header.
+ *       onConfirm returned truthy. This eliminates the double-close
+ *       and the latent onCancel-spurious-fire hazard documented in
+ *       ONCONFIRM / ONCANCEL CONTRACT.
  *     - _handleCommandResult signature is unchanged (result,
- *       successMessage, failurePrefix, onSuccess) → boolean. Its success
- *       path no longer calls _closeTopModal(); it returns true. Its
- *       failure path returns false.
+ *       successMessage, failurePrefix, onSuccess) → boolean. Its
+ *       success path does not call _closeTopModal(); it returns true.
+ *       Its failure path returns false.
  *     - Details modal button handlers that close-then-open another
- *       modal still use _closeTopModal() + setTimeout(100). That is the
- *       documented deferral for the navigation buttons, not the
+ *       modal still use _closeTopModal() + setTimeout(100). That is
+ *       the documented deferral for the navigation buttons, not the
  *       command-result path.
- *     - No behavioral change to any modal's rendered output, callback
- *       ordering on success, or failure messaging.
+ *     - No behavioral change to any existing modal's rendered output,
+ *       callback ordering on success, or failure messaging, except
+ *       the law-category label correction and the god-parent
+ *       selector noted above.
  *   Previous revisions:
  *     - onSuccess-before-close ordering; onSuccess exceptions caught.
  *     - Header CALLBACK ORDERING section added.
@@ -354,7 +387,59 @@
     }
 
     // =========================================================================
-    // 4. CREATE RELIGION MODAL
+    // 4. SHARED FORM HELPERS
+    // =========================================================================
+
+    /**
+     * Build a <select> of the existing gods in a religion, optionally
+     * excluding one id (used by the edit-god modal to prevent a god
+     * from being its own parent). Returns an HTML string.
+     *
+     * A leading "None" option with value "" is always emitted so the
+     * caller has a way to clear a parentGodId.
+     */
+    function _buildGodOptions(religionId, selectedGodId, excludeGodId) {
+        var gods = _getGodsByReligion(religionId) || [];
+        var html = '<option value="">None</option>';
+        for (var i = 0; i < gods.length; i++) {
+            var g = gods[i];
+            if (!g || !g.id) continue;
+            if (excludeGodId && g.id === excludeGodId) continue;
+            var label = (g.displayName || g.name || g.id);
+            var sel = (selectedGodId === g.id) ? ' selected' : '';
+            html += '<option value="' + _escapeHtml(g.id) + '"' + sel + '>' +
+                _escapeHtml(label) + '</option>';
+        }
+        return html;
+    }
+
+    /**
+     * Resolve the god domain enum. Prefers ReligionConstants.GOD_DOMAINS
+     * when present (future enum); falls back to the historical hardcoded
+     * list. The list is only used to seed a <select>, not to validate —
+     * validation lives in ReligionValidation.
+     */
+    function _getGodDomainOptions() {
+        if (window.ReligionConstants
+            && window.ReligionConstants.GOD_DOMAINS
+            && typeof window.ReligionConstants.GOD_DOMAINS === 'object') {
+            var out = [];
+            for (var k in window.ReligionConstants.GOD_DOMAINS) {
+                if (!Object.prototype.hasOwnProperty.call(
+                    window.ReligionConstants.GOD_DOMAINS, k)) continue;
+                var v = window.ReligionConstants.GOD_DOMAINS[k];
+                if (typeof v === 'string' && v.length > 0) out.push(v);
+            }
+            if (out.length > 0) return out;
+        }
+        return [
+            'war', 'fertility', 'wisdom', 'death', 'love', 'justice',
+            'craft', 'nature', 'sky', 'sea', 'fire', 'earth'
+        ];
+    }
+
+    // =========================================================================
+    // 5. CREATE RELIGION MODAL
     // =========================================================================
 
     function openCreateReligionModal(options) {
@@ -478,7 +563,7 @@
     }
 
     // =========================================================================
-    // 5. EDIT RELIGION MODAL
+    // 6. EDIT RELIGION MODAL
     // =========================================================================
 
     function openEditReligionModal(religionId, options) {
@@ -615,7 +700,7 @@
     }
 
     // =========================================================================
-    // 6. DELETE RELIGION MODAL
+    // 7. DELETE RELIGION MODAL
     // =========================================================================
 
     function openDeleteReligionModal(religionId, options) {
@@ -671,7 +756,7 @@
     }
 
     // =========================================================================
-    // 7. DEPRECATE RELIGION MODAL
+    // 8. DEPRECATE RELIGION MODAL
     // =========================================================================
 
     function openDeprecateReligionModal(religionId, options) {
@@ -721,7 +806,7 @@
     }
 
     // =========================================================================
-    // 8. RELIGION DETAILS MODAL
+    // 9. RELIGION DETAILS MODAL
     // =========================================================================
 
     function openReligionDetailsModal(religionId, options) {
@@ -938,7 +1023,7 @@
     }
 
     // =========================================================================
-    // 9. SET LEADER MODAL
+    // 10. SET LEADER MODAL
     // =========================================================================
 
     function openSetLeaderModal(religionId, options) {
@@ -1033,7 +1118,7 @@
     }
 
     // =========================================================================
-    // 10. END LEADER TERM MODAL
+    // 11. END LEADER TERM MODAL
     // =========================================================================
 
     function openEndLeaderTermModal(religionId, options) {
@@ -1094,7 +1179,7 @@
     }
 
     // =========================================================================
-    // 11. ADD GOD MODAL
+    // 12. ADD GOD MODAL
     // =========================================================================
 
     function openAddGodModal(religionId, options) {
@@ -1107,7 +1192,7 @@
             return null;
         }
 
-        var domains = ['war', 'fertility', 'wisdom', 'death', 'love', 'justice', 'craft', 'nature', 'sky', 'sea', 'fire', 'earth'];
+        var domains = _getGodDomainOptions();
 
         var domainOptions = '';
         for (var i = 0; i < domains.length; i++) {
@@ -1125,6 +1210,8 @@
         for (var i = 0; i < alignments.length; i++) {
             alignmentOptions += '<option value="' + alignments[i] + '">' + alignments[i].charAt(0).toUpperCase() + alignments[i].slice(1) + '</option>';
         }
+
+        var parentOptions = _buildGodOptions(religionId, null, null);
 
         var content =
             '<div style="display:flex;flex-direction:column;gap:12px;">' +
@@ -1171,8 +1258,10 @@
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Parent God ID (optional)</label>' +
-            '<input type="text" id="godParent" placeholder="ID of parent god" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Parent God (optional)</label>' +
+            '<select id="godParent" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            parentOptions +
+            '</select>' +
             '</div>' +
             '</div>';
 
@@ -1196,7 +1285,7 @@
                     symbol: root.querySelector('#godSymbol').value.trim(),
                     gender: root.querySelector('#godGender').value,
                     alignment: root.querySelector('#godAlignment').value,
-                    parentGodId: root.querySelector('#godParent').value.trim() || null
+                    parentGodId: root.querySelector('#godParent').value || null
                 };
 
                 var result = window.ReligionCommands.addGod(religionId, data);
@@ -1213,7 +1302,214 @@
     }
 
     // =========================================================================
-    // 12. ADD LAW MODAL
+    // 13. EDIT GOD MODAL
+    // =========================================================================
+    //
+    // Mirrors openAddGodModal's field layout, prefilled from the existing
+    // god record. The parent-god <select> excludes the god being edited
+    // so a god cannot become its own parent.
+
+    function openEditGodModal(religionId, godId, options) {
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
+
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            _showToast('Religion not found', 'error');
+            return null;
+        }
+
+        var gods = _getGodsByReligion(religionId) || [];
+        var god = null;
+        for (var g = 0; g < gods.length; g++) {
+            if (gods[g] && gods[g].id === godId) {
+                god = gods[g];
+                break;
+            }
+        }
+        if (!god) {
+            _showToast('God not found', 'error');
+            return null;
+        }
+
+        var domains = _getGodDomainOptions();
+        var domainOptions = '';
+        var seenDomain = false;
+        for (var i = 0; i < domains.length; i++) {
+            var sel = (god.domain === domains[i]) ? 'selected' : '';
+            if (sel) seenDomain = true;
+            domainOptions += '<option value="' + domains[i] + '" ' + sel + '>' +
+                domains[i].charAt(0).toUpperCase() + domains[i].slice(1) + '</option>';
+        }
+        // Preserve a legacy domain value that is not in the current enum.
+        if (!seenDomain && god.domain) {
+            domainOptions = '<option value="' + _escapeHtml(god.domain) + '" selected>' +
+                _escapeHtml(god.domain) + ' (legacy)</option>' + domainOptions;
+        }
+
+        var genders = ['male', 'female', 'neuter'];
+        var genderOptions = '';
+        for (var i = 0; i < genders.length; i++) {
+            var sel = (god.gender === genders[i]) ? 'selected' : '';
+            genderOptions += '<option value="' + genders[i] + '" ' + sel + '>' +
+                genders[i].charAt(0).toUpperCase() + genders[i].slice(1) + '</option>';
+        }
+
+        var alignments = ['good', 'neutral', 'evil', 'chaotic', 'lawful'];
+        var alignmentOptions = '';
+        for (var i = 0; i < alignments.length; i++) {
+            var sel = (god.alignment === alignments[i]) ? 'selected' : '';
+            alignmentOptions += '<option value="' + alignments[i] + '" ' + sel + '>' +
+                alignments[i].charAt(0).toUpperCase() + alignments[i].slice(1) + '</option>';
+        }
+
+        var parentOptions = _buildGodOptions(religionId, god.parentGodId || '', godId);
+
+        var content =
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">God Name *</label>' +
+            '<input type="text" id="godName" value="' + _escapeHtml(god.name || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Display Name</label>' +
+            '<input type="text" id="godDisplayName" value="' + _escapeHtml(god.displayName || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description</label>' +
+            '<textarea id="godDescription" rows="2" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;">' + _escapeHtml(god.description || '') + '</textarea>' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Domain</label>' +
+            '<select id="godDomain" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            domainOptions +
+            '</select>' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Symbol</label>' +
+            '<input type="text" id="godSymbol" value="' + _escapeHtml(god.symbol || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Gender</label>' +
+            '<select id="godGender" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            genderOptions +
+            '</select>' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Alignment</label>' +
+            '<select id="godAlignment" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            alignmentOptions +
+            '</select>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Parent God (optional)</label>' +
+            '<select id="godParent" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            parentOptions +
+            '</select>' +
+            '</div>' +
+            '</div>';
+
+        var modal = _openModal({
+            titleHtml: 'Edit God: ' + _escapeHtml(god.displayName || god.name),
+            contentHtml: content,
+            confirmText: 'Save',
+            cancelText: 'Cancel',
+            onConfirm: function(root) {
+                var name = root.querySelector('#godName').value.trim();
+                if (!name) {
+                    _showToast('God name is required', 'error');
+                    return false;
+                }
+
+                var updates = {
+                    name: name,
+                    displayName: root.querySelector('#godDisplayName').value.trim() || name,
+                    description: root.querySelector('#godDescription').value.trim(),
+                    domain: root.querySelector('#godDomain').value,
+                    symbol: root.querySelector('#godSymbol').value.trim(),
+                    gender: root.querySelector('#godGender').value,
+                    alignment: root.querySelector('#godAlignment').value,
+                    parentGodId: root.querySelector('#godParent').value || null
+                };
+
+                var result = window.ReligionCommands.updateGod(godId, updates);
+                return _handleCommandResult(
+                    result,
+                    'God updated: ' + name,
+                    'Failed to update god',
+                    onSuccess
+                );
+            }
+        });
+
+        return modal;
+    }
+
+    // =========================================================================
+    // 14. DELETE GOD MODAL
+    // =========================================================================
+
+    function openDeleteGodModal(religionId, godId, options) {
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
+
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            _showToast('Religion not found', 'error');
+            return null;
+        }
+
+        var gods = _getGodsByReligion(religionId) || [];
+        var god = null;
+        for (var g = 0; g < gods.length; g++) {
+            if (gods[g] && gods[g].id === godId) {
+                god = gods[g];
+                break;
+            }
+        }
+        if (!god) {
+            _showToast('God not found', 'error');
+            return null;
+        }
+
+        var godName = god.displayName || god.name || godId;
+
+        var content =
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<p style="font-size:0.75rem;">Remove <strong>' + _escapeHtml(godName) +
+            '</strong> from the pantheon of ' + _escapeHtml(religion.name) + '?</p>' +
+            '<p style="font-size:0.65rem;color:var(--dim);">This cannot be undone.</p>' +
+            '</div>';
+
+        var modal = _openModal({
+            titleHtml: 'Delete God',
+            contentHtml: content,
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: function(root) {
+                var result = window.ReligionCommands.removeGod(religionId, godId);
+                return _handleCommandResult(
+                    result,
+                    'God removed: ' + godName,
+                    'Failed to remove god',
+                    onSuccess
+                );
+            }
+        });
+
+        return modal;
+    }
+
+    // =========================================================================
+    // 15. ADD LAW MODAL
     // =========================================================================
 
     function openAddLawModal(religionId, options) {
@@ -1237,13 +1533,6 @@
             : { types: null, categories: null, domains: null, severities: null, crimeTypes: null };
 
         function _buildOptionsFromEnum(enumObj, preferredKey, fallback) {
-            // Prefer the canonical enum. Fall back to a single-option
-            // entry only when the enum is entirely missing — the option
-            // value is the module's current default, so a save succeeds
-            // against the fallback the command already uses. The
-            // dropdown is minimal but functional; the caller will see
-            // the missing enum error on save if the canonical value
-            // differs from the fallback default.
             if (enumObj && typeof enumObj === 'object') {
                 var out = '';
                 for (var k in enumObj) {
@@ -1261,7 +1550,10 @@
                 + '</option>';
         }
 
-        function _buildLabeledOptionsFromEnum(enumObj, nameResolver, preferredKey, fallback) {
+        // Uses ReligionFormat.getLaw*Name for labels. This matches the
+        // labels used by openEditLawModal and by the canonical law
+        // records' display strings (e.g. "Civil Law", not "Civil").
+        function _buildLabeledOptionsFromEnum(enumObj, nameResolver, fallback) {
             if (enumObj && typeof enumObj === 'object') {
                 var out = '';
                 for (var k in enumObj) {
@@ -1287,16 +1579,16 @@
         }
 
         var typeOptions = _buildLabeledOptionsFromEnum(
-            enums.types, _getLawTypeName, 'LAW', 'law'
+            enums.types, _getLawTypeName, 'law'
         );
         var categoryOptions = _buildLabeledOptionsFromEnum(
-            enums.categories, _getLawCategoryName, 'RELIGIOUS', 'religious'
+            enums.categories, _getLawCategoryName, 'religious'
         );
         var domainOptions = _buildLabeledOptionsFromEnum(
-            enums.domains, _getLawDomainName, 'BEHAVIOR', 'behavior'
+            enums.domains, _getLawDomainName, 'behavior'
         );
         var severityOptions = _buildLabeledOptionsFromEnum(
-            enums.severities, _getLawSeverityName, 'MINOR', 'minor'
+            enums.severities, _getLawSeverityName, 'minor'
         );
         var crimeTypeOptions = '<option value="">None</option>'
             + _buildOptionsFromEnum(enums.crimeTypes, null, '');
@@ -1409,7 +1701,291 @@
     }
 
     // =========================================================================
-    // 13. CREATE PLACE OF WORSHIP MODAL
+    // 16. EDIT LAW MODAL
+    // =========================================================================
+    //
+    // Mirrors openAddLawModal's field layout, prefilled from the existing
+    // law record. Adds a Crime Severity Override field that openAddLawModal
+    // does not expose (crimeSeverity is a valid input on updateLaw; the
+    // add path leaves it null).
+
+    function openEditLawModal(religionId, lawId, options) {
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
+
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            _showToast('Religion not found', 'error');
+            return null;
+        }
+
+        var laws = _getLawsByReligion(religionId) || [];
+        var law = null;
+        for (var l = 0; l < laws.length; l++) {
+            if (laws[l] && laws[l].id === lawId) {
+                law = laws[l];
+                break;
+            }
+        }
+        if (!law) {
+            _showToast('Law not found', 'error');
+            return null;
+        }
+
+        var enums = (typeof window.ReligionCommands !== 'undefined'
+            && typeof window.ReligionCommands.getLawEnums === 'function')
+            ? window.ReligionCommands.getLawEnums()
+            : { types: null, categories: null, domains: null, severities: null, crimeTypes: null };
+
+        function _buildLabeledOptionsFromEnum(enumObj, nameResolver, currentValue, fallback) {
+            if (enumObj && typeof enumObj === 'object') {
+                var out = '';
+                var seen = false;
+                for (var k in enumObj) {
+                    if (!Object.prototype.hasOwnProperty.call(enumObj, k)) continue;
+                    var v = enumObj[k];
+                    if (typeof v !== 'string' || v.length === 0) continue;
+                    var label = nameResolver(v);
+                    if (typeof label !== 'string' || label.length === 0) {
+                        label = v.charAt(0).toUpperCase() + v.slice(1);
+                    }
+                    var sel = (v === currentValue) ? ' selected' : '';
+                    if (sel) seen = true;
+                    out += '<option value="' + _escapeHtml(v) + '"' + sel + '>'
+                        + _escapeHtml(label) + '</option>';
+                }
+                if (!seen && currentValue) {
+                    out = '<option value="' + _escapeHtml(currentValue) + '" selected>'
+                        + _escapeHtml(String(currentValue)) + ' (unknown)</option>' + out;
+                }
+                if (out.length > 0) return out;
+            }
+            var fb = currentValue || fallback;
+            var fbLabel = nameResolver(fb);
+            if (typeof fbLabel !== 'string' || fbLabel.length === 0) {
+                fbLabel = String(fb);
+            }
+            return '<option value="' + _escapeHtml(String(fb)) + '" selected>'
+                + _escapeHtml('(enum not loaded — using ' + fbLabel + ')')
+                + '</option>';
+        }
+
+        var typeOptions = _buildLabeledOptionsFromEnum(
+            enums.types, _getLawTypeName, law.type, 'law'
+        );
+        var categoryOptions = _buildLabeledOptionsFromEnum(
+            enums.categories, _getLawCategoryName, law.lawCategory, 'religious'
+        );
+        var domainOptions = _buildLabeledOptionsFromEnum(
+            enums.domains, _getLawDomainName, law.domain, 'behavior'
+        );
+        var severityOptions = _buildLabeledOptionsFromEnum(
+            enums.severities, _getLawSeverityName, law.severity, 'minor'
+        );
+
+        var currentCrimeType = (law.crimeMapping && law.crimeMapping.crimeType)
+            ? law.crimeMapping.crimeType : '';
+        var currentCrimeSeverity = (law.crimeMapping && law.crimeMapping.crimeSeverity)
+            ? String(law.crimeMapping.crimeSeverity) : '';
+        var currentPunishment = (law.crimeMapping && law.crimeMapping.punishment)
+            ? law.crimeMapping.punishment : '';
+        var currentEnforced = !!(law.crimeMapping && law.crimeMapping.isEnforced);
+
+        var crimeTypeOptions = '<option value="">None</option>';
+        if (enums.crimeTypes && typeof enums.crimeTypes === 'object') {
+            for (var k in enums.crimeTypes) {
+                if (!Object.prototype.hasOwnProperty.call(enums.crimeTypes, k)) continue;
+                var cv = enums.crimeTypes[k];
+                if (typeof cv !== 'string' || cv.length === 0) continue;
+                var sel = (cv === currentCrimeType) ? ' selected' : '';
+                crimeTypeOptions += '<option value="' + _escapeHtml(cv) + '"' + sel + '>'
+                    + _escapeHtml(cv.charAt(0).toUpperCase() + cv.slice(1))
+                    + '</option>';
+            }
+        } else if (currentCrimeType) {
+            crimeTypeOptions += '<option value="' + _escapeHtml(currentCrimeType) + '" selected>'
+                + _escapeHtml(currentCrimeType) + ' (enum not loaded)</option>';
+        }
+
+        var content =
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Law Name *</label>' +
+            '<input type="text" id="lawName" value="' + _escapeHtml(law.name || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Type</label>' +
+            '<select id="lawType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            typeOptions +
+            '</select>' +
+            '</div>' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Category</label>' +
+            '<select id="lawCategory" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            categoryOptions +
+            '</select>' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Domain</label>' +
+            '<select id="lawDomain" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            domainOptions +
+            '</select>' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description</label>' +
+            '<textarea id="lawDescription" rows="2" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;">' + _escapeHtml(law.description || '') + '</textarea>' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Severity</label>' +
+            '<select id="lawSeverity" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            severityOptions +
+            '</select>' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Crime Type (for enforcement)</label>' +
+            '<select id="lawCrimeType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            crimeTypeOptions +
+            '</select>' +
+            '</div>' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
+            '<input type="checkbox" id="lawEnforced" ' + (currentEnforced ? 'checked' : '') + ' style="width:16px;height:16px;">' +
+            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Is Enforced</label>' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Default Punishment</label>' +
+            '<input type="text" id="lawPunishment" value="' + _escapeHtml(currentPunishment) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '</div>' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Crime Severity Override (1-10, optional)</label>' +
+            '<input type="number" id="lawCrimeSeverity" min="1" max="10" value="' + _escapeHtml(currentCrimeSeverity) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
+            '<input type="text" id="lawNotes" value="' + _escapeHtml(law.notes || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '</div>' +
+            '</div>' +
+            '</div>';
+
+        var modal = _openModal({
+            titleHtml: 'Edit Law: ' + _escapeHtml(law.name || ''),
+            contentHtml: content,
+            confirmText: 'Save',
+            cancelText: 'Cancel',
+            onConfirm: function(root) {
+                var name = root.querySelector('#lawName').value.trim();
+                if (!name) {
+                    _showToast('Law name is required', 'error');
+                    return false;
+                }
+
+                var crimeSeverityRaw = root.querySelector('#lawCrimeSeverity').value;
+                var crimeSeverityVal = null;
+                if (crimeSeverityRaw !== '') {
+                    var parsed = parseInt(crimeSeverityRaw, 10);
+                    if (!Number.isNaN(parsed)) crimeSeverityVal = parsed;
+                }
+
+                var updates = {
+                    name: name,
+                    type: root.querySelector('#lawType').value,
+                    lawCategory: root.querySelector('#lawCategory').value,
+                    domain: root.querySelector('#lawDomain').value,
+                    description: root.querySelector('#lawDescription').value.trim(),
+                    severity: root.querySelector('#lawSeverity').value,
+                    notes: root.querySelector('#lawNotes').value.trim(),
+                    crimeMapping: {
+                        crimeType: root.querySelector('#lawCrimeType').value || null,
+                        crimeSeverity: crimeSeverityVal,
+                        isEnforced: root.querySelector('#lawEnforced').checked,
+                        punishment: root.querySelector('#lawPunishment').value.trim() || null,
+                        notes: ''
+                    }
+                };
+
+                var result = window.ReligionCommands.updateLaw(lawId, updates);
+                return _handleCommandResult(
+                    result,
+                    'Law updated: ' + name,
+                    'Failed to update law',
+                    onSuccess
+                );
+            }
+        });
+
+        return modal;
+    }
+
+    // =========================================================================
+    // 17. DELETE LAW MODAL
+    // =========================================================================
+
+    function openDeleteLawModal(religionId, lawId, options) {
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
+
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            _showToast('Religion not found', 'error');
+            return null;
+        }
+
+        var laws = _getLawsByReligion(religionId) || [];
+        var law = null;
+        for (var l = 0; l < laws.length; l++) {
+            if (laws[l] && laws[l].id === lawId) {
+                law = laws[l];
+                break;
+            }
+        }
+        if (!law) {
+            _showToast('Law not found', 'error');
+            return null;
+        }
+
+        var lawName = law.name || lawId;
+
+        var content =
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<p style="font-size:0.75rem;">Remove <strong>' + _escapeHtml(lawName) +
+            '</strong> from the laws of ' + _escapeHtml(religion.name) + '?</p>' +
+            '<p style="font-size:0.65rem;color:var(--dim);">This cannot be undone.</p>' +
+            '</div>';
+
+        var modal = _openModal({
+            titleHtml: 'Delete Law',
+            contentHtml: content,
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: function(root) {
+                var result = window.ReligionCommands.removeLaw(religionId, lawId);
+                return _handleCommandResult(
+                    result,
+                    'Law removed: ' + lawName,
+                    'Failed to remove law',
+                    onSuccess
+                );
+            }
+        });
+
+        return modal;
+    }
+
+    // =========================================================================
+    // 18. CREATE PLACE OF WORSHIP MODAL
     // =========================================================================
 
     function openCreatePlaceOfWorshipModal(religionId, options) {
@@ -1525,7 +2101,192 @@
     }
 
     // =========================================================================
-    // 14. ASSIGN CHARACTER RELIGION MODAL
+    // 19. EDIT PLACE OF WORSHIP MODAL
+    // =========================================================================
+    //
+    // Partial: ReligionCommands.updatePlaceOfWorship is a documented
+    // no-op stub (see religion-commands.js §13). This modal is wired
+    // correctly against the command's signature, so when the command
+    // starts applying updates, this modal starts persisting them. Until
+    // then, submitting it will toast success and change nothing — same
+    // as calling updatePlaceOfWorship directly. Callers should gate
+    // this modal behind the same PLACES_EDITABLE flag the places tab
+    // uses.
+
+    function openEditPlaceOfWorshipModal(religionId, placeId, options) {
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
+
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            _showToast('Religion not found', 'error');
+            return null;
+        }
+
+        var place = window.ReligionQueries.getPlaceOfWorship(placeId);
+        if (!place) {
+            _showToast('Place of worship not found', 'error');
+            return null;
+        }
+
+        var worshipTypes = window.ReligionConstants.WORSHIP_TYPES;
+
+        var typeOptions = '';
+        var typeSeen = false;
+        for (var key in worshipTypes) {
+            if (worshipTypes.hasOwnProperty(key)) {
+                var val = worshipTypes[key];
+                var sel = (place.type === val) ? ' selected' : '';
+                if (sel) typeSeen = true;
+                typeOptions += '<option value="' + val + '"' + sel + '>' +
+                    _escapeHtml(_getWorshipTypeName(val)) + '</option>';
+            }
+        }
+        if (!typeSeen && place.type) {
+            typeOptions = '<option value="' + _escapeHtml(place.type) + '" selected>' +
+                _escapeHtml(String(place.type)) + ' (legacy)</option>' + typeOptions;
+        }
+
+        var locationOptions = _getLocationOptions(place.locationId || null);
+
+        var content =
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Place Name *</label>' +
+            '<input type="text" id="placeName" value="' + _escapeHtml(place.name || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Type</label>' +
+            '<select id="placeType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            typeOptions +
+            '</select>' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Location</label>' +
+            '<select id="placeLocation" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            locationOptions +
+            '</select>' +
+            '</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Base Tithe (per follower)</label>' +
+            '<input type="number" id="placeTithe" min="0" step="0.5" value="' + (typeof place.baseTithe === 'number' ? place.baseTithe : 1) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Founded Year</label>' +
+            '<input type="number" id="placeFoundedYear" value="' + (typeof place.foundedYear === 'number' ? place.foundedYear : _getCurrentYear()) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '</div>' +
+            '</div>' +
+
+            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
+            '<input type="checkbox" id="placeProducesIncome" ' + (place.producesIncome !== false ? 'checked' : '') + ' style="width:16px;height:16px;">' +
+            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Produces Income (Collects Tithes)</label>' +
+            '</div>' +
+
+            '<div class="form-group">' +
+            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
+            '<input type="text" id="placeNotes" value="' + _escapeHtml(place.notes || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '</div>' +
+
+            '<div style="padding:8px 12px;background:rgba(181,164,74,0.1);border:1px solid #c87040;border-radius:4px;font-size:0.6rem;color:#c87040;">' +
+            'Note: place records are not fully persisted yet. Edits submitted here will be accepted by the command but not applied to canonical storage until the canonical place store lands.' +
+            '</div>' +
+            '</div>';
+
+        var modal = _openModal({
+            titleHtml: 'Edit Place of Worship: ' + _escapeHtml(place.name || ''),
+            contentHtml: content,
+            confirmText: 'Save',
+            cancelText: 'Cancel',
+            onConfirm: function(root) {
+                var name = root.querySelector('#placeName').value.trim();
+                if (!name) {
+                    _showToast('Place name is required', 'error');
+                    return false;
+                }
+
+                var titheValue = parseFloat(root.querySelector('#placeTithe').value);
+                if (Number.isNaN(titheValue)) titheValue = 1;
+
+                var updates = {
+                    name: name,
+                    type: root.querySelector('#placeType').value,
+                    locationId: root.querySelector('#placeLocation').value || null,
+                    locationName: _getPlaceName(root.querySelector('#placeLocation').value || null),
+                    baseTithe: titheValue,
+                    foundedYear: _resolveParsedYear(root.querySelector('#placeFoundedYear').value),
+                    producesIncome: root.querySelector('#placeProducesIncome').checked,
+                    notes: root.querySelector('#placeNotes').value.trim()
+                };
+
+                var result = window.ReligionCommands.updatePlaceOfWorship(placeId, updates);
+                return _handleCommandResult(
+                    result,
+                    'Place of worship updated: ' + name,
+                    'Failed to update place of worship',
+                    onSuccess
+                );
+            }
+        });
+
+        return modal;
+    }
+
+    // =========================================================================
+    // 20. DELETE PLACE OF WORSHIP MODAL
+    // =========================================================================
+    //
+    // Place deletion is fully working — the command removes the place
+    // id from religion.placesOfWorship. The partial-store concern only
+    // affects edit/update, not delete.
+
+    function openDeletePlaceOfWorshipModal(religionId, placeId, options) {
+        options = options || {};
+        var onSuccess = options.onSuccess || null;
+
+        var religion = _getReligion(religionId);
+        if (!religion) {
+            _showToast('Religion not found', 'error');
+            return null;
+        }
+
+        var place = window.ReligionQueries.getPlaceOfWorship(placeId);
+        var placeName = place
+            ? (place.name || place.locationName || placeId)
+            : placeId;
+
+        var content =
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<p style="font-size:0.75rem;">Remove <strong>' + _escapeHtml(placeName) +
+            '</strong> from the places of worship of ' + _escapeHtml(religion.name) + '?</p>' +
+            '<p style="font-size:0.65rem;color:var(--dim);">This cannot be undone.</p>' +
+            '</div>';
+
+        var modal = _openModal({
+            titleHtml: 'Delete Place of Worship',
+            contentHtml: content,
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: function(root) {
+                var result = window.ReligionCommands.deletePlaceOfWorship(placeId);
+                return _handleCommandResult(
+                    result,
+                    'Place of worship removed: ' + placeName,
+                    'Failed to remove place of worship',
+                    onSuccess
+                );
+            }
+        });
+
+        return modal;
+    }
+
+    // =========================================================================
+    // 21. ASSIGN CHARACTER RELIGION MODAL
     // =========================================================================
 
     function openAssignCharacterReligionModal(characterId, options) {
@@ -1641,7 +2402,7 @@
     }
 
     // =========================================================================
-    // 15. LOAD-TIME VERIFICATION
+    // 22. LOAD-TIME VERIFICATION
     // =========================================================================
 
     (function _verifyLoadTimeDependencies() {
@@ -1738,7 +2499,7 @@
     })();
 
     // =========================================================================
-    // 16. EXPORTS
+    // 23. EXPORTS
     // =========================================================================
 
     window.openCreateReligionModal = openCreateReligionModal;
@@ -1749,8 +2510,14 @@
     window.openSetLeaderModal = openSetLeaderModal;
     window.openEndLeaderTermModal = openEndLeaderTermModal;
     window.openAddGodModal = openAddGodModal;
+    window.openEditGodModal = openEditGodModal;
+    window.openDeleteGodModal = openDeleteGodModal;
     window.openAddLawModal = openAddLawModal;
+    window.openEditLawModal = openEditLawModal;
+    window.openDeleteLawModal = openDeleteLawModal;
     window.openCreatePlaceOfWorshipModal = openCreatePlaceOfWorshipModal;
+    window.openEditPlaceOfWorshipModal = openEditPlaceOfWorshipModal;
+    window.openDeletePlaceOfWorshipModal = openDeletePlaceOfWorshipModal;
     window.openAssignCharacterReligionModal = openAssignCharacterReligionModal;
 
     window.ReligionModals = {
@@ -1762,8 +2529,14 @@
         openSetLeaderModal: openSetLeaderModal,
         openEndLeaderTermModal: openEndLeaderTermModal,
         openAddGodModal: openAddGodModal,
+        openEditGodModal: openEditGodModal,
+        openDeleteGodModal: openDeleteGodModal,
         openAddLawModal: openAddLawModal,
+        openEditLawModal: openEditLawModal,
+        openDeleteLawModal: openDeleteLawModal,
         openCreatePlaceOfWorshipModal: openCreatePlaceOfWorshipModal,
+        openEditPlaceOfWorshipModal: openEditPlaceOfWorshipModal,
+        openDeletePlaceOfWorshipModal: openDeletePlaceOfWorshipModal,
         openAssignCharacterReligionModal: openAssignCharacterReligionModal
     };
 
