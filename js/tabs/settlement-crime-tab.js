@@ -6,17 +6,28 @@
  *
  * CRIME TAB RENDERER — SETTLEMENT-SCOPED.
  *
- * Renders the settlement's crime landscape and hosts the actions to
- * RECORD new crime, RECORD executions, CREATE vendettas, and edit the
- * justice/watch configuration — all scoped to the currently selected
- * settlement.
+ * Renders the settlement's crime landscape and hosts the actions to:
+ *
+ *     - Record Crime        (CrimeModals.openCreateCrimeModal → recordCrime
+ *                            or triggerMurder, per selected type)
+ *     - Create Vendetta     (CrimeModals.openVendettaModal, settlement-scoped)
+ *     - Edit Justice Settings (SettlementEconomyModals.openJusticeModal)
+ *     - View Crime Statistics (CrimeModals.openCrimeStatsModal)
+ *
+ * All four actions are scoped to the currently selected settlement.
+ *
+ * "Record Execution" is NOT a tab action. Execution is a consequence
+ * emitted by the law layer inside triggerMurder (via _executeConsequence
+ * → triggerExecution). It is not a user-initiated action under the
+ * current settlement UI. The openExecutionModal entry point on
+ * CrimeModals remains for legacy callers that still open it directly;
+ * this tab does not expose it.
  *
  * It is a UI module. It:
  *   - reads through SettlementCrimeQueries, SettlementViewModels,
  *     SettlementQueries, CrimeQueries, and CrimeViewModels
  *   - opens modals via SettlementEconomyModals and CrimeModals
- *   - delegates the crime list, vendetta list, and detail views to
- *     CrimeStatsUI / CrimeModals
+ *   - delegates the crime list and vendetta list to CrimeStatsUI
  *   - does not read canonical settlement data directly
  *   - does not read canonical crime data directly
  *   - does not compute domain values
@@ -39,7 +50,7 @@
  *   Registered via SettlementTabs.registerTabRenderer('crime', fn).
  *   SettlementTabs invokes fn(container, context):
  *
- *     container  HTMLElement       already emptied by SettlementTabs
+ *     container  HTMLElement       render target
  *     context    {
  *       locationId  string|null    selected settlement id
  *       data        Object|null    canonical settlement record
@@ -49,38 +60,60 @@
  *   SettlementTabs has already validated locationId and data before
  *   calling the renderer.
  *
- * WHAT "SETTLEMENT-SCOPED" MEANS HERE
- * -----------------------------------
- *   Every recorded incident, every executed punishment, and every
- *   vendetta created from this tab is scoped to the currently
- *   selected settlement:
+ *   The renderer replaces container.innerHTML on every call. The
+ *   container's click listener (see _wireActions) is attached at most
+ *   once per container element, guarded by container.dataset.crimeTabWired,
+ *   so repeated renders do not stack handlers. Handlers read the
+ *   current location from btn.dataset.location on each click, not from
+ *   a closure, so a settlement switch does not stale-bind the handler.
  *
- *     - Murder and execution are recorded with
- *       defaultData.locationId = <settlement>, so the resulting
- *       crime record carries that location.
+ * SCOPE OF THE INCIDENT LIST
+ * --------------------------
+ *   The tab's "Recorded Crimes" list is scoped to the settlement's
+ *   OWN location (CrimeQueries.getCrimesByLocation(locationId)), not
+ *   the whole subtree. This is a deliberate choice:
  *
- *     - Vendettas are created between households in the settlement's
- *       subtree. The tab opens CrimeModals.openVendettaModal with
- *       { settlementHouseholdIds: <string[]>, locationId } so the
- *       modal's two household pickers are filtered to the
- *       settlement's households (see SUPPORTING CHANGE, below).
- *       The resulting vendetta is between two settlement households.
- *       Note that CrimeState.createVendetta does not carry a
- *       locationId field; the vendetta's settlement scope is
- *       derived from the households' locations, which the modal
- *       guarantees by picking both parties from the settlement
- *       subtree.
+ *     - The crime rate shown in the header is a settlement SCALAR
+ *       (SettlementCrimeQueries.getCrimeRate derives it from the
+ *       settlement record's own fields plus its subtree's aggregated
+ *       modifiers — prosperity, taxation, watch, features, employment,
+ *       military spending, justice, religious unity, places of worship —
+ *       but the value itself is one number for one settlement).
  *
- *     - Justice severity and watch are settlement fields, edited
- *       through the existing SettlementEconomyModals.openJusticeModal
- *       (which calls SettlementGovernmentCommands.setJusticeSeverity
- *       / setWatch in one atomic transaction each).
+ *     - The list is the raw record set for the settlement's own
+ *       location, so a ruler sees the crimes recorded in the capital
+ *       (or the settlement's own town) without having to distinguish
+ *       them from subtree crimes.
  *
- *   The tab does NOT create crime records, vendettas, or justice
- *   changes itself. It opens the appropriate modal; the modal calls
- *   CrimeCommands / CrimeState / SettlementGovernmentCommands. This
- *   preserves the "tab renders, modal mutates" contract and does not
- *   duplicate any command logic here.
+ *     - Subtree crime can be surfaced later by adding a
+ *       SettlementQueries.getSettlementCrimes(locationId) aggregate
+ *       that walks the subtree. Until that exists, this tab does not
+ *       re-implement the walk; see the "No subtree walk for crimes"
+ *       note in _getSettlementVendettas for the parallel decision on
+ *       vendettas.
+ *
+ *   If you later want subtree-wide crime in the list, add
+ *   SettlementQueries.getSettlementCrimes(locationId) (walking
+ *   LocationQueries.getAllSubLocationIds and de-duping by crime id)
+ *   and swap the tab's one call. Do not duplicate the walk here.
+ *
+ * SCOPE OF THE VENDETTA LIST
+ * --------------------------
+ *   The tab's "Active Vendettas" list is the union of
+ *   CrimeQueries.getVendettasByHousehold(householdId) for every
+ *   household in the settlement's subtree, de-duped by vendetta id.
+ *
+ *   This shows:
+ *     - feuds between two settlement households, and
+ *     - feuds between a settlement household and an outside household.
+ *
+ *   The create path (Create Vendetta) restricts BOTH parties to
+ *   settlement households. The read path is broader because a ruler
+ *   wants to know about any feud their households are involved in.
+ *   If you want the read path to show only internal feuds, filter
+ *   out entries where both household ids are not in the settlement's
+ *   household id set. Not done here because it hides information a
+ *   ruler plausibly wants.
  *
  * CRIME RATE IS DERIVED
  * ---------------------
@@ -90,12 +123,24 @@
  *   It does NOT recompute any modifier, does not re-derive the base,
  *   and does not clamp.
  *
+ *   If SettlementCrimeQueries throws (e.g. IndustryQueries is not
+ *   loaded and the settlement has enterprises), the tab catches and
+ *   renders the "Crime rate unavailable" empty state. The tab does
+ *   not fabricate a value.
+ *
+ *   If SettlementViewModels.buildCrimeView throws for the same
+ *   reason, the tab's justiceSeverityName lookup falls back to
+ *   summary.justiceSeverityName from buildSettlementSummary, which
+ *   reads the settlement's own justice field directly and does not
+ *   touch the industry domain. Same defensive pattern used by
+ *   modals-household-economy.js.
+ *
  * INCIDENT AND VENDETTA READS
  * ---------------------------
  *   Crimes:
  *     CrimeQueries.getCrimesByLocation(locationId)
- *       — the canonical location-scoped crime list. No filter is
- *         applied by the tab; the query is already scoped.
+ *       the canonical location-scoped crime list. No filter is
+ *       applied by the tab; the query is already scoped.
  *
  *   Vendettas:
  *     CrimeQueries.getAllVendettas is world-wide. CrimeQueries
@@ -104,82 +149,91 @@
  *     (LocationQueries.getAllSubLocationIds → for each, HouseholdQueries
  *     .getHouseholdsByLocation) to build the household-id set, then
  *     calls getVendettasByHousehold for each household id, de-dupes by
- *     vendetta id, and renders the merged list.
+ *     vendetta id, and renders the merged list. See SCOPE OF THE
+ *     VENDETTA LIST.
  *
- *     This is the same walk SettlementQueries.getSettlementRoleStats
- *     uses to build the settlement character set. It is projection
- *     enumeration, not a re-implementation of a query. A future
- *     SettlementQueries.getSettlementVendettas(locationId) would
- *     replace the walk; the tab documents the walk inline so a future
- *     reader knows the tab does not own the scoping rule.
- *
- * VENDETTA CREATION — SUPPORTING CHANGE REQUIRED
- * ----------------------------------------------
- *   The current CrimeModals.openVendettaModal (in modals-crime.js)
- *   opens two household selectors (openHouseholdSelector) without a
- *   settlement filter. To scope vendetta creation to a settlement,
- *   the modal must accept an options argument with
- *   `settlementHouseholdIds: string[]` and `locationId: string`, and
- *   pass `filterConfig` (or the equivalent `householdIds` filter) to
- *   the two selectors so the pickers only offer settlement
- *   households.
- *
- *   The tab calls:
- *
- *     CrimeModals.openVendettaModal({
- *       settlementHouseholdIds: [...],
- *       locationId: locationId,
- *       onComplete: ...
+ * CREATION FLOWS
+ * --------------
+ *   Record Crime:
+ *     CrimeModals.openCreateCrimeModal({
+ *         locationId: locationId,
+ *         onComplete: function() { requestRefresh('crime'); }
  *     })
+ *   The modal exposes the full creatable crime type select (excludes
+ *   execution, includes murder). Murder routes to
+ *   CrimeCommands.triggerMurder; every other type routes to
+ *   CrimeCommands.recordCrime(locationId, data).
  *
- *   If the modal does not yet support these options, the tab
- *   detects that by inspecting the modal's return value (or by the
- *   absence of the option on the modal function). The tab shows a
- *   toast and does NOT open the modal, to prevent accidental
- *   creation of a vendetta whose participants are outside the
- *   settlement.
+ *   Create Vendetta:
+ *     CrimeModals.openVendettaModal({
+ *         locationId: locationId,
+ *         settlementHouseholdIds: [...],
+ *         onComplete: function() { requestRefresh('crime'); }
+ *     })
+ *   The modal feature-detects settlement scope via
+ *   openVendettaModal.supportsSettlementScope === true. If the
+ *   capability flag is not set, the tab refuses to open the modal
+ *   with a toast — otherwise the user could create a vendetta whose
+ *   participants are outside the settlement.
  *
- *   A one-paragraph version of the modal change is in the answer
- *   body: it is a `filterConfig` on the household selector, not a
- *   new modal.
+ *   Justice Settings:
+ *     SettlementEconomyModals.openJusticeModal(locationId)
+ *   The modal calls SettlementGovernmentCommands.setJusticeSeverity
+ *   and setWatch in one atomic transaction each. Those commands call
+ *   SettlementState.publish; the tab's SettlementState subscription
+ *   (see below) catches the change and re-renders the crime rate
+ *   without the user having to click Refresh.
  *
- * POST-MODAL REFRESH
- * ------------------
- *   Every modal that mutates is invoked with an onComplete callback
- *   that calls SettlementTabs.requestRender('crime'). The tab does not
- *   wire refresh itself — the modal is the caller that knows the
- *   mutation succeeded.
+ * AUTO-REFRESH ON SETTLEMENT MUTATION
+ * -----------------------------------
+ *   The crime rate modifier "justice severity" is a settlement field
+ *   edited through the Justice Settings modal. When the user saves,
+ *   SettlementGovernmentCommands.setJusticeSeverity calls
+ *   SettlementState.publish, and the crime rate changes. Without an
+ *   auto-refresh, the user would see stale numbers until manually
+ *   hitting Refresh.
+ *
+ *   The tab subscribes to SettlementState once at module load. The
+ *   subscription calls SettlementTabs.requestRender('crime') on every
+ *   settlement event, which is cheap (a single re-render) and keeps
+ *   the visible crime rate in sync with the canonical settlement
+ *   record. The subscription lives for the page session; it is not
+ *   torn down on modal close or tab switch. If you add a subscription
+ *   teardown later, tie it to the same lifecycle as SettlementTabs
+ *   (which has no teardown today).
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - Settled on settlement-scoped incident recording. Murder and
- *       execution modals are opened with
- *       { locationId, defaultData.locationId } so the resulting crime
- *       records carry the settlement's location. The tab reads the
- *       crime list via CrimeQueries.getCrimesByLocation(locationId)
- *       (already settlement-scoped). No world-wide-then-filter.
- *     - Added Create Vendetta action. Opens
- *       CrimeModals.openVendettaModal with
- *       { settlementHouseholdIds, locationId, onComplete }.
- *       Detects modal support for the settlement-scoping options and
- *       refuses to open the modal if unsupported (avoids creating a
- *       vendetta whose participants are not in the settlement).
- *       Reads vendettas by walking the settlement subtree households
- *       and calling CrimeQueries.getVendettasByHousehold per household,
- *       de-duping by id.
- *     - Added Record Execution action.
- *     - Justice/watch edits delegate to
- *       SettlementEconomyModals.openJusticeModal.
- *     - Detail views delegate to CrimeModals.openCrimeDetailsModal
- *       and openVendettaDetailsModal. Stats modal delegates to
- *       CrimeModals.openCrimeStatsModal.
- *     - The tab does not call any crime command directly, and does
- *       not call any government command directly. Every mutation is
- *       inside a modal.
+ *     - Action set reduced to four buttons per the settlement UI brief:
+ *       Justice Settings, Create Crime, Create Vendetta, Crime Statistics.
+ *       Removed Record Murder and Record Execution.
+ *         Record Murder is subsumed by Create Crime → type=murder.
+ *         Record Execution is not a user action; execution is emitted by
+ *         the law layer inside triggerMurder.
+ *     - Added _openCreateCrimeModal and its action handler. It calls
+ *       CrimeModals.openCreateCrimeModal({ locationId, onComplete }).
+ *     - _wireActions now guards against stacked click listeners. The
+ *       prior version called container.addEventListener on every
+ *       render, so a tab that rendered N times ran the handler N times
+ *       per click. Guarded by container.dataset.crimeTabWired.
+ *     - Added SettlementState subscription so the crime rate updates
+ *       after a Justice Settings save. Prior version required a
+ *       manual Refresh click.
+ *     - Header SCOPE OF THE INCIDENT LIST and SCOPE OF THE VENDETTA
+ *       LIST sections added, documenting the two scope choices the
+ *       tab makes and why. These are design choices, not bugs:
+ *       the tab does not walk the subtree for crime, and does not
+ *       restrict the vendetta list to internal feuds only.
+ *     - Header AUTO-REFRESH ON SETTLEMENT MUTATION section added.
+ *     - Removed options.defaultData from openCreateCrimeModal /
+ *       (deprecated) openMurderModal / openExecutionModal calls;
+ *       options.locationId is the supported way to seed the location
+ *       field, and defaultData was dead code against the current
+ *       modals-crime.js surface.
  *   Previous revisions:
- *     - Initial view-only implementation. No Create Vendetta, no
- *       Record Execution, no settlement-scoped household filtering.
+ *     - Initial settlement-scoped implementation with Record Murder,
+ *       Record Execution, Create Vendetta, and Crime Statistics.
  * =============================================================================
  */
 
@@ -239,10 +293,13 @@
 
     function _getCrimeModals() {
         var M = window.CrimeModals;
-        if (!M || typeof M.openCrimeDetailsModal !== 'function') {
+        if (!M || typeof M.openCreateCrimeModal !== 'function' ||
+            typeof M.openCrimeStatsModal !== 'function' ||
+            typeof M.openVendettaModal !== 'function') {
             throw new Error(
-                'settlement-crime-tab: CrimeModals is missing. Load ' +
-                'modals-crime.js before this tab.'
+                'settlement-crime-tab: CrimeModals is missing required ' +
+                'entry points (openCreateCrimeModal, openVendettaModal, ' +
+                'openCrimeStatsModal). Load modals-crime.js before this tab.'
             );
         }
         return M;
@@ -287,6 +344,10 @@
 
     function _getTabs() {
         return window.SettlementTabs || null;
+    }
+
+    function _getSettlementState() {
+        return window.SettlementState || null;
     }
 
     // =========================================================================
@@ -434,7 +495,10 @@
     //
     // CrimeQueries.getVendettasByHousehold(id) is per-household. The
     // tab calls it once per settlement household and de-dupes by
-    // vendetta id. See VENDETTA CREATION / READS in the header.
+    // vendetta id. See SCOPE OF THE VENDETTA LIST in the header.
+    //
+    // includeResolved: false → active + escalated, excludes resolved.
+    // The tab label "Active Vendettas" matches.
 
     function _getSettlementVendettas(locationId) {
         var CQ = _getCrimeQueries();
@@ -543,6 +607,14 @@
             '</div>';
     }
 
+    /**
+     * Action buttons. Four actions per the settlement UI brief:
+     * Justice Settings, Create Crime, Create Vendetta, Crime Statistics.
+     * Record Murder and Record Execution are NOT tab actions:
+     *   - Record Murder is subsumed by Create Crime → type=murder.
+     *   - Record Execution is emitted by the law layer inside
+     *     triggerMurder, not a user action.
+     */
     function _buildActionButtons(locationId, canCreateVendetta) {
         function btn(action, label, iconName, accent, disabled, title) {
             var border = accent ? 'var(--accent)' : 'var(--border)';
@@ -568,8 +640,7 @@
 
         return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;">' +
             btn('justice', 'Justice Settings', 'SHIELD', true) +
-            btn('record-murder', 'Record Murder', 'WARNING') +
-            btn('record-execution', 'Record Execution', 'SWORD') +
+            btn('create-crime', 'Create Crime', 'WARNING') +
             btn('create-vendetta', 'Create Vendetta', 'FLAG', false,
                 !canCreateVendetta,
                 canCreateVendetta
@@ -659,7 +730,7 @@
             '</div>';
     }
 
-    function _buildActionsCard(locationId, crimeStats) {
+    function _buildActionsCard(crimeStats) {
         var unsolved = (crimeStats && typeof crimeStats.unsolvedCrimes === 'number')
             ? crimeStats.unsolvedCrimes
             : null;
@@ -731,8 +802,8 @@
             'features, unemployment, military spending, justice severity, ' +
             'religious unity, and places of worship. Justice and watch are ' +
             'settlement fields, edited through the Justice Settings modal. ' +
-            'Incidents, executions, and vendettas are recorded through the ' +
-            'crime domain\'s own modals, scoped to this settlement.' +
+            'Incidents and vendettas are recorded through the crime ' +
+            "domain's own modals, scoped to this settlement." +
             '</div>';
     }
 
@@ -743,32 +814,35 @@
     function _openJusticeModal(locationId) {
         var M = _getEconomyModals();
         M.openJusticeModal(locationId);
+        // The modal calls SettlementGovernmentCommands.setJusticeSeverity
+        // / setWatch. Those commands publish on SettlementState; the
+        // tab's SettlementState subscription auto-refreshes.
     }
 
-    function _openMurderModal(locationId) {
+    /**
+     * Opens the Create Crime modal, scoped to the settlement.
+     *
+     * The modal exposes the full creatable crime type select (excludes
+     * execution, includes murder). Murder routes to
+     * CrimeCommands.triggerMurder; every other type routes to
+     * CrimeCommands.recordCrime(locationId, data). See
+     * modals-crime.js::openCreateCrimeModal for the full contract.
+     *
+     * @param {string} locationId
+     */
+    function _openCreateCrimeModal(locationId) {
         var M = _getCrimeModals();
-        if (typeof M.openMurderModal !== 'function') {
-            _toast('Murder modal is not available.', 'error');
+        if (typeof M.openCreateCrimeModal !== 'function') {
+            _toast(
+                'Create Crime modal is not available. Load modals-crime.js ' +
+                'with the openCreateCrimeModal entry point.',
+                'error'
+            );
             return;
         }
-        M.openMurderModal({
-            locationId: locationId,
-            defaultData: { locationId: locationId },
-            onComplete: function () {
-                _requestRefresh();
-            }
-        });
-    }
 
-    function _openExecutionModal(locationId) {
-        var M = _getCrimeModals();
-        if (typeof M.openExecutionModal !== 'function') {
-            _toast('Execution modal is not available.', 'error');
-            return;
-        }
-        M.openExecutionModal({
+        M.openCreateCrimeModal({
             locationId: locationId,
-            defaultData: { locationId: locationId },
             onComplete: function () {
                 _requestRefresh();
             }
@@ -779,19 +853,16 @@
      * Opens the Create Vendetta modal, scoped to the settlement's
      * households.
      *
-     * See VENDETTA CREATION — SUPPORTING CHANGE REQUIRED in the module
-     * header. The tab refuses to open the modal if it does not accept
-     * the settlementHouseholdIds option, to avoid creating a vendetta
-     * whose participants are outside the settlement.
+     * See SCOPE OF THE VENDETTA LIST in the header for what the read
+     * path shows; the create path restricts BOTH parties to settlement
+     * households, guaranteeing the recorded vendetta's participants are
+     * local.
      *
-     * Detection: we call the modal with the option and inspect the
-     * return value. A modal that ignores the option will still open
-     * but will let the user pick a non-settlement household. To
-     * prevent that, the tab checks whether the modal's signature
-     * accepts the option by inspecting the modal function's documented
-     * capability flag. modals-crime.js can expose
-     * `openVendettaModal.supportsSettlementScope = true` after the
-     * supporting change lands. Until then, this tab refuses.
+     * The modal feature-detects settlement scope via
+     * openVendettaModal.supportsSettlementScope === true. If the
+     * capability flag is not set, this tab refuses to open the modal —
+     * otherwise the user could create a vendetta whose participants
+     * are outside the settlement.
      *
      * @param {string} locationId
      */
@@ -802,13 +873,11 @@
             return;
         }
 
-        // Capability check. modals-crime.js sets
-        // `openVendettaModal.supportsSettlementScope = true` after the
-        // supporting change lands (see SUPPORTING CHANGE in the answer).
         if (M.openVendettaModal.supportsSettlementScope !== true) {
             _toast(
                 'Creating a settlement-scoped vendetta requires the ' +
-                'settlement-scoped vendetta modal. See modals-crime.js.',
+                'settlement-scoped vendetta modal. Update modals-crime.js ' +
+                'to set openVendettaModal.supportsSettlementScope = true.',
                 'error'
             );
             return;
@@ -852,14 +921,9 @@
                     _openJusticeModal(locationId);
                 });
                 return;
-            case 'record-murder':
+            case 'create-crime':
                 _safeModalOpen(function () {
-                    _openMurderModal(locationId);
-                });
-                return;
-            case 'record-execution':
-                _safeModalOpen(function () {
-                    _openExecutionModal(locationId);
+                    _openCreateCrimeModal(locationId);
                 });
                 return;
             case 'create-vendetta':
@@ -877,7 +941,23 @@
         }
     }
 
+    /**
+     * Wires the click handler for the tab's action buttons.
+     *
+     * GUARDED: a container is wired at most once, tracked by
+     * container.dataset.crimeTabWired. This prevents the stacking
+     * bug where re-rendering the tab (via requestRender('crime')) added
+     * another listener per render, so N renders ran N handlers per
+     * click.
+     *
+     * The handler reads locationId from btn.dataset.location on each
+     * click, NOT from a closure, so switching settlements does not
+     * stale-bind the handler to the previous location.
+     */
     function _wireActions(container, locationId) {
+        if (container.dataset.crimeTabWired === '1') return;
+        container.dataset.crimeTabWired = '1';
+
         container.addEventListener('click', function (event) {
             var target = event.target;
             if (!target || typeof target.closest !== 'function') return;
@@ -913,6 +993,13 @@
         try {
             crimeView = _getSettlementViewModels().buildCrimeView(locationId);
         } catch (err) {
+            // buildCrimeView composes SettlementCrimeQueries, which
+            // reads SettlementEmploymentQueries, which reads
+            // IndustryQueries. If IndustryQueries is not loaded and the
+            // settlement has enterprises, buildCrimeView throws. The
+            // header explains the fallback (summary.justiceSeverityName
+            // from buildSettlementSummary, which does not touch
+            // industry). Do not fabricate a crime rate here.
             crimeView = null;
         }
 
@@ -925,7 +1012,6 @@
 
         var summary = context.viewModel || null;
 
-        // Incident and vendetta reads, settlement-scoped.
         var crimes = [];
         try {
             crimes = _getCrimeQueries().getCrimesByLocation(locationId) || [];
@@ -940,12 +1026,11 @@
             vendettas = [];
         }
 
-        // Crime stats for the overview card (total, unsolved, solve rate).
-        // Computed from the settlement-scoped list the tab already holds.
-        // We do NOT call CrimeQueries.getLocationCrimeStats here because
-        // that method returns a richer object whose fields we are already
-        // rendering (through the crime stats modal). The card only needs
-        // the three counts, which are cheap derivations of the list.
+        // Overview stats. Computed from the settlement-scoped list the
+        // tab already holds. We deliberately do not call
+        // CrimeQueries.getLocationCrimeStats here — that method returns
+        // a richer object whose fields are already surfaced in the crime
+        // stats modal, and the card only needs the three counts.
         var solved = 0;
         for (var i = 0; i < crimes.length; i++) {
             if (crimes[i] && crimes[i].solved === true) solved++;
@@ -965,7 +1050,7 @@
             _buildHeader(context, crimeView, summary, crimeRateView) +
             _buildActionButtons(locationId, canCreateVendetta) +
             _buildCrimeRateSection(crimeRateView) +
-            _buildActionsCard(locationId, crimeStats) +
+            _buildActionsCard(crimeStats) +
             _buildListSections(locationId) +
             _buildFooter() +
             '</div>';
@@ -973,9 +1058,6 @@
         container.innerHTML = html;
         _wireActions(container, locationId);
 
-        // Render the crime and vendetta lists through CrimeStatsUI.
-        // Both renderers register their container so CrimeStatsUI.refreshAll()
-        // can re-render them; the tab does not maintain its own list DOM.
         try {
             var UI = _getCrimeStatsUI();
             UI.renderCrimeList(
@@ -1004,7 +1086,54 @@
     }
 
     // =========================================================================
-    // 8. REGISTRATION
+    // 8. AUTO-REFRESH ON SETTLEMENT MUTATION
+    // =========================================================================
+    //
+    // Subscribe once at module load. Every settlement event triggers a
+    // re-render of the crime tab. This is what closes the "save Justice
+    // Settings → see the crime rate update" gap without requiring the
+    // user to click Refresh.
+    //
+    // The subscription is NOT torn down on modal close or tab switch.
+    // It lives for the page session. If you later add teardown, tie it
+    // to the same lifecycle as SettlementTabs (which has none today).
+
+    (function _subscribeToSettlementEvents() {
+        var state = _getSettlementState();
+        if (!state || typeof state.subscribe !== 'function') {
+            // SettlementState not loaded yet. That is a legitimate
+            // load-order state during early bootstrap; skip the
+            // subscription. If the module loads later, subscribers must
+            // re-subscribe manually (the module has no re-subscription
+            // hook today).
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn(
+                    'settlement-crime-tab: SettlementState.subscribe is ' +
+                    'not available; the crime tab will not auto-refresh ' +
+                    'after justice/watch changes. Load settlement-state.js ' +
+                    'before this tab if auto-refresh is required.'
+                );
+            }
+            return;
+        }
+
+        try {
+            state.subscribe(function (event) {
+                if (!event || typeof event !== 'object') return;
+                _requestRefresh();
+            });
+        } catch (err) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'settlement-crime-tab: SettlementState.subscribe threw:',
+                    err
+                );
+            }
+        }
+    })();
+
+    // =========================================================================
+    // 9. REGISTRATION
     // =========================================================================
 
     function _register() {
@@ -1021,7 +1150,7 @@
     _register();
 
     // =========================================================================
-    // 9. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.renderSettlementCrime = renderSettlementCrime;
