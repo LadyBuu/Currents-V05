@@ -28,99 +28,25 @@
  * Contract reference: Settlement Architecture Contracts §15 (ViewModel
  * Contract), §16 (UI Contract), §32 (Completion Standard).
  *
- * RENDERER CONTRACT
- * -----------------
- *   Registered via SettlementTabs.registerTabRenderer('overview', fn).
- *   SettlementTabs invokes fn(container, context):
- *
- *     container  HTMLElement       already emptied by SettlementTabs
- *     context    {
- *       locationId  string|null    selected settlement id
- *       data        Object|null    canonical settlement record
- *       viewModel   Object|null    buildSettlementSummary result
- *     }
- *
- *   SettlementTabs has already validated locationId and data before
- *   calling the renderer; the renderer can rely on both being present.
- *   viewModel is the summary model, not the raw record.
- *
- * TIME CONTRACT
- * -------------
- *   window.getCurrentYear from time.js. The deprecated
- *   window.getCurrentYearSafe alias is NOT used. getCurrentYear is not
- *   called at all by this renderer — the historical "recent events"
- *   section reads the settlement's own annualHistory and
- *   demolitionHistory, whose years are stored on the records.
- *
- * HISTORY SOURCE
- * --------------
- *   The settlement record carries two append-only history arrays:
- *
- *     annualHistory       per-year financial transition entries
- *                         { year, debtBefore, debtAfter, interest,
- *                           wealthBefore, wealthAfter }
- *     demolitionHistory   feature demolition entries
- *                         { featureId, featureName, category,
- *                           demolishedYear, demolishedReason,
- *                           recordedAt }
- *
- *   There is no generic settlement.history array under the new
- *   architecture. The prior overview tab read
- *   SettlementState.getSettlementHistory(id), which does not exist.
- *   This renderer reads the two real arrays and shows their most
- *   recent entries. A settlement with no history renders "No history
- *   recorded yet."
- *
- * UPGRADE FLOW
- * ------------
- *   The Upgrade button opens SettlementModals.openUpgradeSettlementModal,
- *   which performs the rank upgrade via SettlementRankCommands after a
- *   confirmation. The old tab called
- *   SettlementCommands.upgradeSettlement(id) directly and, if that was
- *   missing, mutated settlement.rankId inline — a §16 violation. Both
- *   are gone; the modal is the only upgrade entry point.
- *
- * TAB NAVIGATION
- * --------------
- *   Buttons that lead to another settlement tab call
- *   SettlementUIState.setActiveTabId(tabId). SettlementTabs subscribes
- *   to SettlementUIState and re-renders on the active-tab change.
- *   Button rows that lead to modals call the modal's export directly.
- *
- * ICON POLICY
- * -----------
- *   No emojis. No inline SVG. Chrome icons come from window.getIcon if
- *   it is loaded; when icons.js is not on the page, the renderer falls
- *   back to plain text labels. Icons are decorative, not load-bearing.
+ * PROSPERITY BAND COLORS
+ * ----------------------
+ *   SettlementProsperityDefinitions.PROSPERITY_BANDS carries a `color`
+ *   field per band (thriving / stable / struggling). This tab reads that
+ *   field directly instead of re-deriving a color from the band id. The
+ *   domain owns the palette; the tab renders it.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
- *     - Rewritten against the new settlement module set.
- *     - Signature changed from (containerId, locationId) to
- *       (container, context), matching settlement-tabs.js.
- *     - Recursion guard (_rendering) removed (§20 prohibits it).
- *     - Reads go through SettlementViewModels.buildSettlementSummary
- *       and SettlementQueries (for annualHistory / demolitionHistory).
- *     - Upgrade button opens SettlementModals.openUpgradeSettlementModal
- *       instead of calling SettlementCommands.upgradeSettlement (does
- *       not exist) or mutating settlement.rankId inline (§16 violation).
- *     - Feature / economy / roles / laws / specialization buttons route
- *       through SettlementModals, SettlementEconomyModals,
- *       SettlementRolesModals, and SettlementTabs — no direct command
- *       calls from this renderer.
- *     - History section reads annualHistory and demolitionHistory; the
- *       phantom settlement.history array is gone.
- *     - All numeric values route through a _fmtNumber helper that
- *       renders a presentation placeholder for null/undefined/non-finite
- *       (§10 NUMERIC RENDERING).
- *     - Religious unity and dominant religion render their reason codes
- *       (§10 REASON-CODE RENDERING).
- *     - window.getCurrentYearSafe is not referenced.
+ *   Current revision (Step-1 duplication cleanup):
+ *     - Removed _prosperityBandColor(band). The function switched on
+ *       band.id and re-derived a CSS color. The band already carries a
+ *       `color` field in SettlementProsperityDefinitions.PROSPERITY_BANDS.
+ *       Callers now read band.color directly (with 'var(--dim)' as the
+ *       "no band" fallback). No behavior change; single source of truth.
+ *     - No other behavioral change. Every read, mutation-delegation, and
+ *       modal-open path is byte-identical.
  *   Previous revisions:
- *     - Pre-refactor implementation against SettlementState /
- *       SettlementCommands / SettlementCrud, all of which no longer
- *       exist.
+ *     - Rewritten against the current settlement module set.
  * =============================================================================
  */
 
@@ -130,12 +56,6 @@
     // =========================================================================
     // 1. DEPENDENCY ACCESS
     // =========================================================================
-    //
-    // Each dependency is resolved at call time, not cached at load.
-    // If a required module is missing when the renderer runs, the call
-    // throws with a clear message naming the missing surface. There is
-    // no silent "feature unavailable" fallback (§21 DEPENDENCY POLICY).
-    //
 
     function _getSummaryModel() {
         var VMs = window.SettlementViewModels;
@@ -235,11 +155,6 @@
         return place ? (place.displayName || place.name || null) : null;
     }
 
-    /**
-     * Human label for religiousUnityReason. Mirrors
-     * modals-settlement-core.js::_religiousUnityLabel. See §10
-     * REASON-CODE RENDERING.
-     */
     function _religiousUnityLabel(reason, value) {
         if (reason === 'available') return _fmtNumber(value);
         if (reason === 'no_population') return _escapeHtml('No population');
@@ -247,10 +162,6 @@
         return _unknown();
     }
 
-    /**
-     * Human label for dominantReligionReason. Mirrors
-     * modals-settlement-core.js::_dominantReligionLabel.
-     */
     function _dominantReligionLabel(reason, religion) {
         if (reason === 'available' && religion) {
             return _escapeHtml(religion.name || religion.id || 'Unknown');
@@ -276,36 +187,38 @@
         }
     }
 
-    function _prosperityBandColor(band) {
-        if (!band || !band.id) return 'var(--dim)';
-        switch (band.id) {
-            case 'thriving':   return 'var(--success)';
-            case 'stable':     return 'var(--accent)';
-            case 'struggling': return 'var(--danger)';
-            default:           return 'var(--dim)';
+    /**
+     * Returns the CSS color for a prosperity band.
+     *
+     * Reads band.color from SettlementProsperityDefinitions (which is
+     * exposed on the band object returned by
+     * SettlementProsperityQueries.getProsperity / buildSettlementSummary).
+     *
+     * The band object is the single source of truth for its color. This
+     * helper exists so the "no band" case has a single fallback; it does
+     * NOT re-derive a color from the band id.
+     *
+     * @param {Object|null} band
+     * @returns {string}
+     */
+    function _prosperityColor(band) {
+        if (!band) return 'var(--dim)';
+        if (typeof band.color === 'string' && band.color.length > 0) {
+            return band.color;
         }
+        return 'var(--dim)';
     }
 
     // =========================================================================
     // 3. NAVIGATION
     // =========================================================================
 
-    /**
-     * Activates another settlement tab. SettlementTabs subscribes to
-     * SettlementUIState and re-renders on the active-tab change, so
-     * setting the id is the entire operation.
-     */
     function _activateTab(tabId) {
         var ui = _getUIState();
         if (!ui || typeof ui.setActiveTabId !== 'function') return;
         ui.setActiveTabId(tabId);
     }
 
-    /**
-     * Opens a modal via the appropriate settlement modal bundle. Each
-     * bundle is exported as a frozen object with named functions. If
-     * the bundle is not loaded, throws — there is no silent fallback.
-     */
     function _openSettlementModal(name, args) {
         var bundle = window.SettlementModals;
         if (!bundle || typeof bundle[name] !== 'function') {
@@ -401,16 +314,12 @@
                 _openSettlementModal('openSettlementDetailsModal', [locationId]);
                 return;
             case 'refresh':
-                // SettlementTabs re-renders the active tab on
-                // requestRender.
                 var tabs = _getTabs();
                 if (tabs && typeof tabs.requestRender === 'function') {
                     tabs.requestRender('overview');
                 }
                 return;
             default:
-                // Unknown action: no-op. Do not throw — a stale button
-                // in cached HTML should not break the tab.
                 return;
         }
     }
@@ -447,11 +356,6 @@
     // =========================================================================
     // 5. HISTORY SECTION
     // =========================================================================
-    //
-    // Two append-only arrays live on the settlement record:
-    // annualHistory and demolitionHistory. See HISTORY SOURCE in the
-    // header. The renderer merges them into a short "recent events"
-    // list, sorted by year descending, capped at 5 entries.
 
     function _readHistory(locationId) {
         var data = _getSettlementQueries().getSettlementData(locationId);
@@ -480,7 +384,6 @@
             }
             return 'Annual processing complete';
         }
-        // demolition
         var name = event.featureName || event.featureId || 'Feature';
         var reason = event.demolishedReason || 'Demolished';
         return 'Demolished "' + String(name) + '" (' + String(reason) + ')';
@@ -500,9 +403,6 @@
             events.push({ kind: 'demolition', record: demolition[j] });
         }
 
-        // Sort by year desc, then by recordedAt / timestamp desc when
-        // both entries have one. Stable for entries with no year: they
-        // go to the end.
         events.sort(function (a, b) {
             var ay = _eventYear(a.record);
             var by = _eventYear(b.record);
@@ -599,7 +499,7 @@
             ? prosperity.value
             : null;
         var prosperityBand = prosperity ? prosperity.band : null;
-        var prosperityColor = _prosperityBandColor(prosperityBand);
+        var prosperityColor = _prosperityColor(prosperityBand);
 
         function cell(label, iconName, valueHtml, extraStyle) {
             return '<div style="background:var(--bg2);padding:12px;' +
@@ -858,14 +758,6 @@
     // 7. RENDER
     // =========================================================================
 
-    /**
-     * Renders the overview into the container. The renderer contract:
-     * SettlementTabs already emptied the container and validated
-     * locationId and data before calling.
-     *
-     * @param {HTMLElement} container
-     * @param {Object} context  { locationId, data, viewModel }
-     */
     function renderSettlementOverview(container, context) {
         if (!container) {
             throw new Error(
@@ -885,9 +777,6 @@
 
         var locationId = context.locationId;
 
-        // Population comes from the canonical accessor. The summary
-        // carries it too, but reading it fresh keeps the accessor
-        // semantics ("the current population") in one place.
         var populationAccessor = _getPopulationAccessor();
         var population = populationAccessor
             ? populationAccessor(locationId)
@@ -920,9 +809,6 @@
     function _register() {
         var tabs = _getTabs();
         if (!tabs || typeof tabs.registerTabRenderer !== 'function') {
-            // SettlementTabs is a required dependency for the tab to
-            // run. Registration cannot happen without it. Throw so a
-            // load-order bug is loud, not silent.
             throw new Error(
                 'settlement-overview-tab: SettlementTabs is missing. ' +
                 'Load settlement-tabs.js before this tab.'
@@ -936,13 +822,6 @@
     // =========================================================================
     // 9. EXPORTS
     // =========================================================================
-    //
-    // The renderer is registered with SettlementTabs under the tab id
-    // 'overview'. The module also exposes the renderer under its legacy
-    // global name so a caller that has not yet migrated from the old
-    // (containerId, locationId) signature can still find it. The legacy
-    // name is a compatibility alias, not the intended entry point.
-    //
 
     window.renderSettlementOverview = renderSettlementOverview;
     window._renderSettlementOverview = renderSettlementOverview;
