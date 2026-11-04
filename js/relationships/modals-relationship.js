@@ -60,7 +60,7 @@
  *   prevents cross-modal ID collisions when one modal opens over
  *   another.
  *
- * PREVIOUS REVISION (FIXED IN THIS ONE)
+ * PREVIOUS REVISIONS (FIXED)
  *
  *   Every call site used `title:` / `content:`. modals-core.js reads
  *   ONLY `titleHtml:` / `contentHtml:`; it does not read `title` or
@@ -79,6 +79,15 @@
  *
  *   getCurrentYearSafe (deprecated alias in time.js) → getCurrentYear.
  *
+ *   The load-time dependency check and every call site used
+ *   window.getCurrentLocation, which accessors.js never exported —
+ *   that name belongs to world.js, and even there it is called
+ *   getCurrentPlace / getCurrentLocationId. The guard therefore threw
+ *   on load, before the modal could ever open. Replaced with a local
+ *   _getCurrentLocationOrNull helper (the same two-step "resolve place,
+ *   extract id, return null if missing" pattern used by
+ *   modals-roles.js) and the guard now checks for getCurrentPlace.
+ *
  * DEPENDENCIES (must be loaded first):
  *   - relationship-types.js           (RELATIONSHIP_ARCHETYPES,
  *                                      RELATIONSHIP_ATTRIBUTES)
@@ -87,8 +96,10 @@
  *   - formatting.js                   (_escapeHtml)
  *   - ui.js                           (_showToast)
  *   - icons.js                        (Icons via _getIcon)
- *   - accessors.js                    (getCharacterById,
- *                                      getCurrentLocation)
+ *   - accessors.js                    (getCharacterById)
+ *   - world.js                        (getCurrentPlace — the place
+ *                                      resolver; getCurrentLocationId
+ *                                      is a secondary fallback)
  *   - time.js                         (getCurrentYear, calculateAge)
  *   - romance-commands.js             (RomanceCommands)
  *   - friendship-commands.js          (FriendshipCommands)
@@ -118,7 +129,6 @@
         ['_showToast',               'ui.js'],
         ['Icons',                    'icons.js'],
         ['getCharacterById',         'accessors.js'],
-        ['getCurrentLocation',       'accessors.js'],
         ['getCurrentYear',           'time.js'],
         ['calculateAge',             'time.js'],
         ['RomanceCommands',          'romance-commands.js'],
@@ -135,6 +145,16 @@
                 ' (' + REQUIRED[_i][0] + ').'
             );
         }
+    }
+
+    // getCurrentPlace lives on world.js. It is not listed in REQUIRED
+    // above because world.js is loaded at a different point in the
+    // boot order than the modules in REQUIRED; the guard below is
+    // sufficient to catch its absence at load time.
+    if (typeof window.getCurrentPlace !== 'function') {
+        throw new Error(
+            'modals-relationship.js requires world.js (getCurrentPlace).'
+        );
     }
 
     var A = window.RELATIONSHIP_ARCHETYPES;
@@ -184,10 +204,44 @@
         );
     }
 
-    function _location(character) {
+    /**
+     * Resolves the character's current place id, or null.
+     *
+     * world.js owns place resolution. There are two surfaces:
+     *
+     *   getCurrentPlace(character)      → place object or null.
+     *                                     The canonical surface.
+     *   getCurrentLocationId(character) → place id string or null.
+     *                                     A convenience wrapper that
+     *                                     may not exist on every
+     *                                     build.
+     *
+     * This helper prefers the place object (canonical) and falls back
+     * to the id accessor. It returns null if neither resolves, which
+     * the caller renders as "no location" rather than fabricating a
+     * value.
+     *
+     * This is the same two-step pattern used by
+     * js/systems/roles/modals-roles.js (_getCurrentLocationOrNull).
+     * Copying it here keeps the two modals consistent and avoids the
+     * load-time crash the old getCurrentLocation guard produced.
+     */
+    function _getCurrentLocationOrNull(character) {
         if (!character) return null;
-        var loc = window.getCurrentLocation(character);
-        return (loc === undefined) ? null : loc;
+
+        if (typeof window.getCurrentPlace === 'function') {
+            var place = window.getCurrentPlace(character);
+            if (place && typeof place.id === 'string' && place.id.length > 0) {
+                return place.id;
+            }
+        }
+
+        if (typeof window.getCurrentLocationId === 'function') {
+            var id = window.getCurrentLocationId(character);
+            if (typeof id === 'string' && id.length > 0) return id;
+        }
+
+        return null;
     }
 
     // =========================================================================
@@ -420,8 +474,8 @@
         var currentYear = _getCurrentYear();
         var age1 = _age(char1);
         var age2 = _age(char2);
-        var loc1 = _location(char1);
-        var loc2 = _location(char2);
+        var loc1 = _getCurrentLocationOrNull(char1);
+        var loc2 = _getCurrentLocationOrNull(char2);
 
         var infoIcon = _icon('CIRCLE_DOT');
         var heartIcon = _icon('HEART');
