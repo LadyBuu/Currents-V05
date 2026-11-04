@@ -6,12 +6,6 @@
     <title>Culture Manager</title>
     <link rel="icon" href="data:," />
 
-    <!--
-      Theme bootstrap runs first, reading data-theme from localStorage.
-      It writes data-theme to <html>. common.css styles against that.
-      If your tree loads themes.css as a token source, add it here;
-      otherwise common.css is the only stylesheet.
-    -->
     <script src="js/core/theme-boot.js"></script>
 
     <link rel="stylesheet" href="css/common.css">
@@ -20,7 +14,7 @@
         /* ============================================================
            Culture Manager — inline CSS
            Every class the four tabs emit is defined here.
-           Structural layout uses common.css tokens.
+           Fallback values are used so a missing token does not blank the page.
            ============================================================ */
 
         html, body { height: 100%; margin: 0; overflow: hidden; }
@@ -73,7 +67,6 @@
             cursor: pointer;
         }
 
-        /* ---- Topbar buttons ---- */
         .tb-btn {
             display: inline-flex;
             align-items: center;
@@ -103,7 +96,6 @@
         .tb-btn.primary:hover { background: var(--accent-dark, #5a82d7); }
         .tb-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-        /* ---- Generic rt-btn (tabs use this) ---- */
         .rt-btn {
             display: inline-flex;
             align-items: center;
@@ -136,8 +128,8 @@
         .rt-btn--danger:hover {
             background: var(--danger-soft, rgba(247, 118, 142, 0.1));
         }
+        .rt-btn--icon { padding: 5px 10px; }
 
-        /* ---- Year input ---- */
         .year-input {
             display: inline-flex;
             align-items: center;
@@ -174,7 +166,6 @@
             border-color: var(--accent, #7aa2f7);
         }
 
-        /* ---- Theme toggle ---- */
         .theme-toggle { position: relative; display: inline-flex; }
         .theme-toggle__menu {
             position: absolute;
@@ -210,7 +201,6 @@
             color: var(--accent-light, #a8c1f8);
         }
 
-        /* ---- App shell ---- */
         .app-layout {
             display: flex;
             flex-direction: row;
@@ -258,7 +248,6 @@
             overflow: hidden;
         }
 
-        /* ---- Sub-tab strip ---- */
         .manager-subtabs {
             position: sticky;
             top: 0;
@@ -320,7 +309,7 @@
         .tab-pane.active { display: block; }
 
         /* ============================================================
-           SHARED — hint, empty, loading
+           Shared — hint, empty, loading
            ============================================================ */
         .ct-hint {
             background: var(--bg2, #222);
@@ -362,8 +351,7 @@
         }
 
         /* ============================================================
-           SHARED — cards, badges, form controls
-           Used across all four tabs.
+           Shared — cards, badges, form controls
            ============================================================ */
         .ct-card {
             background: var(--bg2, #222);
@@ -398,6 +386,10 @@
             font-size: 0.65rem;
             color: var(--dim, #888);
             font-family: var(--f-mono, ui-monospace, monospace);
+        }
+        .ct-card__caret {
+            color: var(--dim, #888);
+            font-size: 0.7rem;
         }
 
         .ct-badge {
@@ -448,18 +440,6 @@
             outline: none;
             border-color: var(--accent, #7aa2f7);
         }
-
-        .ct-hint {
-            font-size: 0.7rem;
-            color: var(--dim, #888);
-            line-height: 1.55;
-            margin-bottom: 12px;
-            padding: 8px 12px;
-            background: var(--bg2, #222);
-            border-left: 3px solid var(--accent, #7aa2f7);
-            border-radius: 0 4px 4px 0;
-        }
-        .ct-hint--footer { margin-top: 12px; margin-bottom: 0; }
 
         .ct-search input {
             width: 100%;
@@ -562,7 +542,6 @@
             color: var(--dim, #888);
             font-family: var(--f-mono, ui-monospace, monospace);
         }
-
         .ct-appearance-height { grid-column: 1 / -1; }
         .ct-appearance-height-grid {
             display: grid;
@@ -811,30 +790,6 @@
             gap: 6px;
             flex-shrink: 0;
         }
-        .ct-badge {
-            display: inline-flex;
-            align-items: center;
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-size: 0.6rem;
-            font-family: var(--f-mono, ui-monospace, monospace);
-            background: var(--accent-dim, rgba(122, 162, 247, 0.1));
-            color: var(--accent-light, #a8c1f8);
-            white-space: nowrap;
-        }
-        .ct-badge--muted { background: var(--bg3, #2a2a2a); color: var(--dim, #888); }
-        .ct-badge--accent { background: var(--accent, #7aa2f7); color: var(--accent-fg, #111); }
-        .ct-clear {
-            padding: 6px 12px;
-            background: transparent;
-            border: 1px solid var(--border, #333);
-            border-radius: var(--radius, 4px);
-            color: var(--dim, #888);
-            font-family: var(--f-body, system-ui);
-            font-size: 0.72rem;
-            cursor: pointer;
-        }
-        .ct-clear:hover { color: var(--text, #e5e5e5); border-color: var(--accent, #7aa2f7); }
 
         /* ============================================================
            NAMES TAB
@@ -852,9 +807,7 @@
             border-radius: var(--radius, 4px);
             padding: 14px 16px;
         }
-        .ct-names__card--rules {
-            grid-column: 1 / -1;
-        }
+        .ct-names__card--rules { grid-column: 1 / -1; }
         .ct-names__card-header {
             display: flex;
             align-items: flex-start;
@@ -974,7 +927,6 @@
             outline: none;
             border-color: var(--accent, #7aa2f7);
         }
-
         .ct-names__form-row {
             display: grid;
             grid-template-columns: 180px 1fr;
@@ -1015,6 +967,23 @@
         .ct-names__rules-section { margin: 12px 0; }
         .ct-names__rules-section[hidden] { display: none; }
 
+        /* ---- Sidebar row (fallback when CultureUI is absent) ---- */
+        .culture-list { display: flex; flex-direction: column; gap: 2px; }
+        .culture-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+            border-radius: var(--radius, 4px);
+            cursor: pointer;
+            font-size: 0.78rem;
+        }
+        .culture-row:hover { background: var(--bg3, #2a2a2a); }
+        .culture-row.is-selected {
+            background: var(--accent-dim, rgba(122, 162, 247, 0.15));
+            color: var(--accent-light, #a8c1f8);
+        }
+
         /* ============================================================
            RESPONSIVE
            ============================================================ */
@@ -1046,7 +1015,6 @@
             .ct-mythology__list-grid { grid-template-columns: 1fr; }
         }
 
-        /* ---- Sidebar overlay ---- */
         .sidebar-overlay { display: none; }
         .sidebar-overlay.active {
             display: block;
@@ -1137,10 +1105,7 @@
 </div>
 
 <!-- ================================================================
-     SCRIPTS
-     Order follows the load-order file, adjusted for the culture
-     subsystem's actual dependencies. See the "Order of application"
-     section in the delivery message before applying.
+     SCRIPTS — load order follows the load-order file's culture path.
      ================================================================ -->
 
 <!-- Core constants -->
@@ -1213,12 +1178,8 @@
 <!-- Skill taxonomy -->
 <script src="js/roles/skill-utils.js"></script>
 
-<!-- Event logger + events -->
+<!-- Event logger -->
 <script src="js/events/eventLogger.js"></script>
-<script src="js/events/timeline-core.js"></script>
-<script src="js/events/census-core.js"></script>
-<script src="js/events/annualProcessing.js"></script>
-<script src="js/events/social-events-system.js"></script>
 
 <!-- Character pure policy -->
 <script src="js/character/family-rules.js"></script>
@@ -1243,7 +1204,7 @@
 <script src="js/character/character-statistics.js"></script>
 <script src="js/character/character-lifecycle.js"></script>
 
-<!-- Selectors -->
+<!-- Selectors (char selector: used by characters tab if present) -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
 <script>
@@ -1308,7 +1269,7 @@
 <script src="js/religion/modals-religion.js"></script>
 <script src="js/religion/religion-bootstrap.js"></script>
 
-<!-- Location (needed before culture; PlaceQueries reads through LocationState) -->
+<!-- Location (needed by PlaceQueries consumers; also loads LocationState/Queries) -->
 <script src="js/location/location-state.js"></script>
 <script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-commands.js"></script>
@@ -1323,10 +1284,11 @@
 <script src="js/location/modals-moves.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
-<!-- Culture subsystem (the whole point of this file) -->
+<!-- Culture subsystem -->
 <script src="js/culture/culture-constants.js"></script>
 <script src="js/culture/culture-validation.js"></script>
 <script src="js/culture/culture-state.js"></script>
+<script src="js/culture/culture-rules.js"></script>
 <script src="js/culture/culture-commands.js"></script>
 <script src="js/culture/culture-queries.js"></script>
 <script src="js/culture/culture-generation.js"></script>
@@ -1352,7 +1314,7 @@
 <script src="js/character/modals-death.js"></script>
 <script src="js/character/character-system.js"></script>
 
-<!-- Culture editor + tabs -->
+<!-- Culture editor host + the four tabs -->
 <script src="js/tabs/culture-editor-tab.js"></script>
 <script src="js/tabs/culture-appearance-tab.js"></script>
 <script src="js/tabs/culture-mythology-tab.js"></script>
@@ -1361,6 +1323,7 @@
 
 <!-- ================================================================
      ORCHESTRATOR
+     Renders the tab's real content directly, without opening the editor modal.
      ================================================================ -->
 <script>
 (function () {
@@ -1388,6 +1351,9 @@
     var activeTabId        = 'details';
     var isInitialized      = false;
 
+    // -----------------------------------------------------------------
+    // Bootstrap
+    // -----------------------------------------------------------------
     function bootstrap() {
         if (isInitialized) return;
         isInitialized = true;
@@ -1397,6 +1363,9 @@
             catch (e) { console.error('[culture-manager] loadMasterData failed:', e); }
         }
 
+        // Initialize the subsystems culture reads. Order matches the
+        // application bootstrap block at the bottom of the load-order file,
+        // minus the ones culture does not consume.
         if (window.RankBootstrap && typeof window.RankBootstrap.init === 'function') {
             try { window.RankBootstrap.init(); } catch (e) { console.error(e); }
         }
@@ -1417,6 +1386,9 @@
         syncTabButtons(activeTabId);
     }
 
+    // -----------------------------------------------------------------
+    // Icons
+    // -----------------------------------------------------------------
     function injectIcons() {
         if (typeof window.Icons === 'undefined') {
             setTimeout(injectIcons, 100);
@@ -1431,6 +1403,9 @@
         }
     }
 
+    // -----------------------------------------------------------------
+    // Sidebar
+    // -----------------------------------------------------------------
     function renderCultureList() {
         if (!cultureContainer) return;
 
@@ -1451,7 +1426,9 @@
                     }
                 });
                 return;
-            } catch (e) { console.error(e); }
+            } catch (e) {
+                console.error('[culture-manager] renderCultureList failed:', e);
+            }
         }
         renderCultureListFallback(cultures);
     }
@@ -1466,17 +1443,15 @@
                 '</div>';
             return;
         }
-        var html = '';
+        var html = '<div class="culture-list">';
         for (var i = 0; i < cultures.length; i++) {
             var c = cultures[i];
             var sel = c.id === selectedCultureId ? ' is-selected' : '';
-            html += '<div class="culture-row' + sel + '" data-culture-id="' + c.id + '"' +
-                ' style="padding:8px;border-radius:4px;cursor:pointer;margin:2px 0;background:' +
-                (sel ? 'var(--accent-dim)' : 'transparent') + ';">' +
-                '<div style="font-size:0.78rem;color:var(--text)">' +
-                escapeHtml(c.displayName || c.name) + '</div>' +
+            html += '<div class="culture-row' + sel + '" data-culture-id="' + c.id + '">' +
+                escapeHtml(c.displayName || c.name) +
                 '</div>';
         }
+        html += '</div>';
         cultureContainer.innerHTML = html;
         var rows = cultureContainer.querySelectorAll('[data-culture-id]');
         for (var j = 0; j < rows.length; j++) {
@@ -1512,6 +1487,9 @@
         if (window.innerWidth <= 768) closeSidebar();
     }
 
+    // -----------------------------------------------------------------
+    // Tabs
+    // -----------------------------------------------------------------
     function activateTab(tabId) {
         activeTabId = tabId;
         syncTabButtons(tabId);
@@ -1563,13 +1541,16 @@
             return;
         }
 
-        // Render the tab's real content, not a preview.
-        // The CultureEditorTabs registry holds the render functions;
-        // we call them directly against the tab pane.
+        // The four content tabs register themselves on window as
+        // `AppearanceTab`, `MythologyTab`, `CharactersTab`, and
+        // `CultureNamesTab`. Call each tab's render directly against
+        // the tab pane. The editor modal is a separate surface; the
+        // manager uses the tab objects for inline rendering.
         var tab = _getRegisteredTab(activeTabId);
         if (tab && typeof tab.render === 'function') {
-            try { tab.render(container, culture); }
-            catch (e) {
+            try {
+                tab.render(container, culture);
+            } catch (e) {
                 container.innerHTML =
                     '<div class="rt-unavailable">' +
                     'Error rendering tab: ' + escapeHtml(e.message || 'unknown') +
@@ -1579,7 +1560,6 @@
             return;
         }
 
-        // Fall back to details if the tab isn't registered.
         if (activeTabId === 'details') {
             renderDetailsView(container, culture);
         } else {
@@ -1588,31 +1568,33 @@
     }
 
     function _getRegisteredTab(tabId) {
-        // CultureEditorTabs exposes the registry but not the render fns.
-        // The tab files expose their tab objects directly on window
-        // (AppearanceTab, MythologyTab, etc.) and also register them.
-        // We prefer the window globals so the manager can call render
-        // without opening the editor modal.
         if (tabId === 'appearance' && window.AppearanceTab) return window.AppearanceTab;
-        if (tabId === 'mythology' && window.MythologyTab) return window.MythologyTab;
+        if (tabId === 'mythology'  && window.MythologyTab)  return window.MythologyTab;
         if (tabId === 'characters' && window.CharactersTab) return window.CharactersTab;
-        if (tabId === 'names' && window.CultureNamesTab) return window.CultureNamesTab;
+        if (tabId === 'names'      && window.CultureNamesTab) return window.CultureNamesTab;
         return null;
     }
 
     function renderDetailsView(container, culture) {
         var desc = culture.description
-            ? '<p class="ct-hint">' + escapeHtml(culture.description) + '</p>'
+            ? '<div class="ct-hint">' + escapeHtml(culture.description) + '</div>'
             : '';
         var notes = culture.notes
-            ? '<p class="ct-hint">' + escapeHtml(culture.notes) + '</p>'
+            ? '<div class="ct-hint">' + escapeHtml(culture.notes) + '</div>'
             : '';
-        var stats = '<div class="ct-card"><div class="ct-card__header">' +
-            '<div class="ct-card__title">' + escapeHtml(culture.displayName || culture.name) + '</div>' +
-            '</div>' + desc + notes +
-            '<button type="button" class="rt-btn rt-btn--primary" id="ct_details_edit">Edit Details</button>' +
+        container.innerHTML =
+            '<div class="ct-card">' +
+              '<div class="ct-card__header">' +
+                '<div class="ct-card__title">' +
+                  escapeHtml(culture.displayName || culture.name) +
+                '</div>' +
+              '</div>' +
+              desc +
+              notes +
+              '<div class="ct-names__bulk-actions">' +
+                '<button type="button" class="rt-btn rt-btn--primary" id="ct_details_edit">Edit Details</button>' +
+              '</div>' +
             '</div>';
-        container.innerHTML = stats;
         var btn = container.querySelector('#ct_details_edit');
         if (btn) btn.addEventListener('click', function () { openEditCulture(culture.id); });
     }
@@ -1621,9 +1603,12 @@
         container.innerHTML = '<div class="ct-empty">' + escapeHtml(message) + '</div>';
     }
 
+    // -----------------------------------------------------------------
+    // Create / edit / delete culture
+    // -----------------------------------------------------------------
     function openCreateCulture() {
         if (typeof window.openCreateCultureModal !== 'function') {
-            window.alert('Create Culture modal not loaded.');
+            window.alert('Create Culture modal not loaded (modals-culture.js).');
             return;
         }
         window.openCreateCultureModal({
@@ -1636,7 +1621,7 @@
 
     function openEditCulture(id) {
         if (typeof window.openEditCultureModal !== 'function') {
-            window.alert('Edit Culture modal not loaded.');
+            window.alert('Edit Culture modal not loaded (modals-culture.js).');
             return;
         }
         window.openEditCultureModal(id, {
@@ -1649,7 +1634,7 @@
 
     function openDeleteCulture(id) {
         if (typeof window.openDeleteCultureModal !== 'function') {
-            window.alert('Delete Culture modal not loaded.');
+            window.alert('Delete Culture modal not loaded (modals-culture.js).');
             return;
         }
         window.openDeleteCultureModal(id, {
@@ -1673,6 +1658,9 @@
         if (selectedCultureId) openDeleteCulture(selectedCultureId);
     });
 
+    // -----------------------------------------------------------------
+    // Sidebar toggle
+    // -----------------------------------------------------------------
     function openSidebar() {
         if (sidebar) sidebar.classList.add('visible');
         if (sidebarOverlay) sidebarOverlay.classList.add('active');
@@ -1692,6 +1680,9 @@
         if (e.key === 'Escape') closeSidebar();
     });
 
+    // -----------------------------------------------------------------
+    // Year
+    // -----------------------------------------------------------------
     function syncYearInput() {
         if (!yearInput) return;
         try {
@@ -1723,6 +1714,9 @@
         renderActiveTab();
     });
 
+    // -----------------------------------------------------------------
+    // Export / Import
+    // -----------------------------------------------------------------
     if (exportBtn) exportBtn.addEventListener('click', function () {
         if (typeof window.exportData === 'function') { window.exportData(); return; }
         if (typeof window.exportToJSON === 'function' && window.masterData) {
