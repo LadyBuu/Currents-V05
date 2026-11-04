@@ -10,65 +10,138 @@
  * FEATURES:
  *   - List places with filters (search, type, status)
  *   - Sort by name, type, founded year
- *   - Add place (modal, requires location)
- *   - Edit place (modal, gated by PARTIAL note — see below)
- *   - Remove place (confirm + deletePlaceOfWorship)
- *   - Collect tithes (calls RC.collectTithes; returns amount)
+ *   - Add place (delegates to window.openCreatePlaceOfWorshipModal)
+ *   - Edit place (delegates to window.openEditPlaceOfWorshipModal;
+ *     gated behind PLACES_EDITABLE — see PLACES ARE PARTIAL below)
+ *   - Remove place (delegates to window.openDeletePlaceOfWorshipModal)
+ *   - Collect tithes (direct call to ReligionCommands.collectTithes;
+ *     no modal — it is a one-click read, not a form)
  *
  * REGISTRATION (TabManager):
  *   TabManager.register('religion', 'places', renderAdapter)
  *
  *   renderAdapter(container, context) → renderPlacesTab(container, context.religion)
  *
- * PLACES ARE PARTIAL (see religion-commands.js §13 and religion-docs.txt
- * §7 "Place of worship" deferral):
- *   - createPlaceOfWorship writes place ids into religion.placesOfWorship
- *     and RETURNS a place record, but the place record itself is not
- *     canonically stored yet.
- *   - updatePlaceOfWorship is a documented no-op stub: it re-commits the
- *     unchanged religion and returns success without applying updates.
- *   - getPlaceOfWorship (ReligionQueries) reads through
- *     ReligionState.getPlaceOfWorshipById, which indexes only
- *     { religionId, religionName } per place id — the rest of the record
- *     is not persisted yet.
+ * CRUD DELEGATION
+ * ---------------
+ *   This tab owns the LIST and FILTERS. It does NOT own the add/edit/delete
+ *   forms. Every write operation is delegated to the canonical religion
+ *   modals:
  *
- *   This tab therefore:
- *     - Creates places through ReligionCommands (working).
- *     - Deletes places through ReligionCommands (working — removes the id
- *       from religion.placesOfWorship).
- *     - Gates Edit behind PLACES_EDITABLE = false with a visible "partial"
- *       note, because updatePlaceOfWorship is a stub and calling it would
- *       toast success while changing nothing. Better to hide the button
- *       than to lie. Flip PLACES_EDITABLE to true when the canonical
- *       place store lands.
- *     - Renders whatever the query layer actually returns; when place data
- *       is only { religionId, religionName }, the card shows the id as the
- *       display name (that is the truth of the current shape, not a
- *       fabricated label).
+ *     window.openCreatePlaceOfWorshipModal(religionId, { onSuccess })
+ *     window.openEditPlaceOfWorshipModal(religionId, placeId, { onSuccess })
+ *     window.openDeletePlaceOfWorshipModal(religionId, placeId, { onSuccess })
+ *
+ *   Those modals are the save owner: they call ReligionCommands.persist()
+ *   exactly once per successful command, toast on success/failure, and fire
+ *   onSuccess BEFORE closing. The tab's onSuccess callback re-renders the
+ *   tab; it does NOT need to persist, toast, or close anything.
+ *
+ *   Prior revisions of this tab built their own add/edit/delete forms
+ *   locally. That duplicated modals-religion.js's place modals, and the
+ *   two copies drifted:
+ *     - The tab hardcoded founded-year default 1250; the modal used
+ *       getCurrentYear(). Same record, two different default years
+ *       depending on which UI path created it.
+ *     - The tab used a local _getLocationOptions fallback that returned
+ *       different labels for missing places than
+ *       locationDropdown.js's getFilteredLocationOptions.
+ *   The tab now delegates every write to the canonical modal, which
+ *   eliminates both drifts by construction.
+ *
+ * PLACES ARE PARTIAL
+ * ------------------
+ *   Place records are not yet canonically stored. What is stored:
+ *
+ *     religion.placesOfWorship: [placeId, placeId, ...]
+ *
+ *   What is NOT stored:
+ *
+ *     The full place record (name, type, location, baseTithe,
+ *     foundedYear, producesIncome, notes, headClergyId, clergy,
+ *     wealth, isActive, ...). The full record exists only as the
+ *     return value of createPlaceOfWorship, in-memory, for the caller
+ *     that created it.
+ *
+ *   What this means for the tab:
+ *
+ *     - Add works (the id is linked).
+ *     - Delete works (the id is unlinked).
+ *     - Edit does NOT work: ReligionCommands.updatePlaceOfWorship is a
+ *       documented no-op stub (see religion-commands.js §13). It
+ *       returns success without applying any updates.
+ *     - The list rendering falls back to the place id as the display
+ *       name when the record only carries the id (which is what
+ *       ReligionState.getPlaceOfWorshipById returns today — it
+ *       indexes only { religionId, religionName } per id).
+ *
+ *   The PLACES_EDITABLE gate exists to make this honest. When false,
+ *   the Edit button is not rendered, and a visible note explains why.
+ *   When true, the Edit button delegates to
+ *   window.openEditPlaceOfWorshipModal, which is wired correctly
+ *   against the stub — it will toast success and change nothing until
+ *   the command becomes real. Flip PLACES_EDITABLE to true when
+ *   ReligionCommands.updatePlaceOfWorship stops being a stub.
  *
  * DEPENDENCIES (resolved at call time — no load-time guards):
  *   - TabManager            (js/core/tab-manager.js)
  *   - ReligionQueries       (js/religion/religion-queries.js)
- *   - ReligionCommands      (js/religion/religion-commands.js)
+ *   - ReligionCommands      (js/religion/religion-commands.js) —
+ *                            collectTithes is called directly; there is
+ *                            no modal for it
  *   - ReligionFormat        (js/religion/religion-format.js) — for
- *                            getWorshipTypeName; falls back to raw type
+ *                            getWorshipTypeName
  *   - formatting.js         (escapeHtml)
- *   - icons.js              (Icons — chrome icons via _getIcon; no emoji)
- *   - ui.js                 (showToast)
- *   - modals-core.js        (openModal, closeTopModal, confirmDialog)
- *   - locationDropdown.js   (getFilteredLocationOptions — optional;
- *                            the modal has a fallback that reads
- *                            accessors.getPlaces())
- *   - accessors.js          (getPlaceById, getPlaceName, getPlaces)
+ *   - ui.js                 (showToast) — used for collect-tithes toast
+ *                            and the rare "modal unavailable" defensive
+ *                            toast
+ *   - ReligionModals        (js/religion/modals-religion.js) — provides
+ *                            openCreatePlaceOfWorshipModal /
+ *                            openEditPlaceOfWorshipModal /
+ *                            openDeletePlaceOfWorshipModal
+ *   - accessors.js          (getPlaceById, getPlaceName) — for the
+ *                            location column display
  *
  * ICON POLICY: no emojis. The worship-type emoji map from the original
- * (🏛 ⛪ ⛩ 🕌 🕍 🏯 🌳) is removed. Places are rendered with their
- * display name and type as text. If you later add per-type icons, register
- * them in icons.js and call _getIcon('WORSHIP_' + type) with the CIRCLE
- * fallback. Do not reintroduce a local emoji map.
+ * (🏛 ⛪ ⛩ 🕌 🕍 🏯 🌳) is removed. Places are rendered with their display
+ * name and type as text. If you later add per-type icons, register them in
+ * icons.js and call _getIcon('WORSHIP_' + type) with the CIRCLE fallback.
+ * Do not reintroduce a local emoji map.
  *
  * INLINE STYLES: none. All classes are in css/religion-tabs.css.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - CRUD delegation. Add / Edit / Delete now call the canonical
+ *       religion modals instead of building local forms. Deleted local:
+ *       _openAddPlace, _openEditPlace, _confirmDeletePlace, _readVal,
+ *       _getLocationOptions fallback (the modal owns location options).
+ *     - Fixes default drift: the tab hardcoded founded-year default
+ *       1250; the modal uses getCurrentYear(). Now the modal is the
+ *       only place-creation input path.
+ *     - PLACES_EDITABLE gate retained. When false, the Edit button is
+ *       not rendered, and a visible "partial store" note explains why.
+ *       When true, Edit delegates to openEditPlaceOfWorshipModal, which
+ *       is wired correctly against the current updatePlaceOfWorship
+ *       stub (it will toast success and change nothing until the
+ *       command becomes real).
+ *     - Collect Tithes stays a direct call to RC.collectTithes — it is
+ *       a read that returns an amount, not a form. The tab no longer
+ *       re-renders after collecting (nothing changed), which removes a
+ *       flicker. If a future revision makes collectTithes record the
+ *       collection on the place record, the call site is commented and
+ *       the re-render must be restored.
+ *     - The list rendering is unchanged: place cards with display name,
+ *       type label, location name, founded year, head clergy, clergy
+ *       count, wealth, notes, Active / Inactive status, and a partial-
+ *       store footnote for records that only carry an id.
+ *     - TabManager.register('religion', 'places', renderAdapter) is
+ *       unchanged. renderAdapter is unchanged. The ReligionPlacesTab
+ *       export is unchanged, including isEditable().
+ *   Previous revisions:
+ *     - Filter/sort/list rendering extracted from earlier monolithic
+ *       religion UI code.
  * =============================================================================
  */
 
@@ -94,26 +167,8 @@
             .replace(/'/g, '&#39;');
     }
 
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) return window.Icons[name];
-        return '';
-    }
-
     function _showToast(msg, type) {
         if (typeof window.showToast === 'function') window.showToast(msg, type);
-    }
-
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') return window.openModal(options);
-        return null;
-    }
-
-    function _confirmDialog(message, title, onConfirm) {
-        if (typeof window.confirmDialog === 'function') {
-            window.confirmDialog(message, title, onConfirm);
-        } else if (typeof confirm === 'function' && confirm(message)) {
-            onConfirm();
-        }
     }
 
     function _getReligionQueries() {
@@ -137,32 +192,32 @@
         return id || '—';
     }
 
-    function _getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-    }
-
-    function _getLocationOptions(selectedId) {
-        if (typeof window.getFilteredLocationOptions === 'function') {
-            return window.getFilteredLocationOptions(selectedId);
-        }
-        var places = _getPlaces();
-        var html = '<option value="">— Select a location —</option>';
-        for (var i = 0; i < places.length; i++) {
-            var p = places[i];
-            if (!p || !p.id) continue;
-            var sel = (selectedId === p.id) ? ' selected' : '';
-            html += '<option value="' + _escapeHtml(p.id) + '"' + sel + '>' +
-                _escapeHtml(p.displayName || p.name || p.id) + '</option>';
-        }
-        return html;
-    }
-
     function _worshipTypeLabel(typeId) {
         var fmt = _getReligionFormat();
         if (fmt && typeof fmt.getWorshipTypeName === 'function') {
             return fmt.getWorshipTypeName(typeId);
         }
         return typeId || '';
+    }
+
+    // The three canonical write modals. The tab renders and filters; the
+    // modals own the write path (form + persist + toast).
+    function _getOpenCreatePlaceModal() {
+        return typeof window.openCreatePlaceOfWorshipModal === 'function'
+            ? window.openCreatePlaceOfWorshipModal
+            : null;
+    }
+
+    function _getOpenEditPlaceModal() {
+        return typeof window.openEditPlaceOfWorshipModal === 'function'
+            ? window.openEditPlaceOfWorshipModal
+            : null;
+    }
+
+    function _getOpenDeletePlaceModal() {
+        return typeof window.openDeletePlaceOfWorshipModal === 'function'
+            ? window.openDeletePlaceOfWorshipModal
+            : null;
     }
 
     // =========================================================================
@@ -484,11 +539,8 @@
     // =========================================================================
 
     function _attachHandlers(container, religion) {
-        var RC = _getReligionCommands();
-        if (!RC) return;
-
         function rerender() {
-            renderPlacesTab(container, religion);
+            renderPlacesTab(container, _freshReligion(religion.id) || religion);
         }
 
         // ---- Search (debounced) ----
@@ -537,11 +589,26 @@
             });
         }
 
-        // ---- Add place ----
+        // ---- Add place (delegate to canonical modal) ----
         var addBtn = container.querySelector('.add-place-btn');
         if (addBtn) {
             addBtn.addEventListener('click', function () {
-                _openAddPlace(religion, rerender);
+                var openCreate = _getOpenCreatePlaceModal();
+                if (!openCreate) {
+                    _showToast(
+                        'Create Place of Worship modal is not available. ' +
+                        'Load modals-religion.js first.',
+                        'error'
+                    );
+                    return;
+                }
+                openCreate(religion.id, {
+                    onSuccess: function () {
+                        // The modal has already toasted and persisted.
+                        // We only re-render with the fresh religion.
+                        rerender();
+                    }
+                });
             });
         }
 
@@ -577,8 +644,6 @@
     }
 
     function _attachRowActions(container, religion) {
-        var RC = _getReligionCommands();
-        if (!RC) return;
         var body = container.querySelector('.rt-tab__body');
         if (!body) return;
         if (body.__rtHandled) return;
@@ -588,20 +653,24 @@
             var target = e.target;
             if (!target || typeof target.closest !== 'function') return;
 
+            // ---- Collect tithes (direct command call, not a modal) ----
             var collectBtn = target.closest('.collect-tithes-btn');
             if (collectBtn) {
                 e.preventDefault();
                 var cid = collectBtn.getAttribute('data-place-id');
-                if (cid) _collectTithes(cid, religion, function () {
-                    renderPlacesTab(container, religion);
-                });
+                if (cid) _collectTithes(cid);
                 return;
             }
 
+            // ---- Edit place (delegates to canonical modal) ----
             var editBtn = target.closest('.edit-place-btn');
             if (editBtn) {
                 e.preventDefault();
                 if (!PLACES_EDITABLE) {
+                    // Defensive: the button is not rendered when
+                    // PLACES_EDITABLE is false, so this branch is only
+                    // reachable if a caller mutated the DOM. Toast is
+                    // still correct.
                     _showToast(
                         'Editing places is disabled until the canonical ' +
                         'place store lands.',
@@ -610,315 +679,64 @@
                     return;
                 }
                 var eid = editBtn.getAttribute('data-place-id');
-                if (eid) {
-                    _openEditPlace(religion, eid, function () {
-                        renderPlacesTab(container, religion);
-                    });
+                if (!eid) return;
+                var openEdit = _getOpenEditPlaceModal();
+                if (!openEdit) {
+                    _showToast(
+                        'Edit Place of Worship modal is not available. ' +
+                        'Load modals-religion.js first.',
+                        'error'
+                    );
+                    return;
                 }
+                openEdit(religion.id, eid, {
+                    onSuccess: function () {
+                        rerender();
+                    }
+                });
                 return;
             }
 
+            // ---- Delete place (delegates to canonical modal) ----
             var delBtn = target.closest('.delete-place-btn');
             if (delBtn) {
                 e.preventDefault();
                 var did = delBtn.getAttribute('data-place-id');
-                if (did) {
-                    _confirmDeletePlace(religion, did, function () {
-                        renderPlacesTab(container, religion);
-                    });
-                }
-            }
-        });
-    }
-
-    // =========================================================================
-    // 7. ADD / EDIT / DELETE / TITHES
-    // =========================================================================
-
-    function _openAddPlace(religion, onDone) {
-        var RC = _getReligionCommands();
-        if (!RC) {
-            _showToast('ReligionCommands not available', 'error');
-            return;
-        }
-
-        var enums = null;
-        if (typeof window.ReligionConstants !== 'undefined'
-            && window.ReligionConstants
-            && window.ReligionConstants.WORSHIP_TYPES) {
-            enums = window.ReligionConstants.WORSHIP_TYPES;
-        }
-
-        var typeOpts = '<option value="temple">Temple</option>';
-        if (enums) {
-            typeOpts = '';
-            for (var k in enums) {
-                if (!Object.prototype.hasOwnProperty.call(enums, k)) continue;
-                var v = enums[k];
-                if (typeof v !== 'string' || v.length === 0) continue;
-                var label = _worshipTypeLabel(v) || (v.charAt(0).toUpperCase() + v.slice(1));
-                var sel = (v === 'temple') ? ' selected' : '';
-                typeOpts += '<option value="' + _escapeHtml(v) + '"' + sel + '>' +
-                    _escapeHtml(label) + '</option>';
-            }
-        }
-
-        var locationOpts = _getLocationOptions(null);
-
-        var content =
-            '<div class="rt-form">' +
-              '<div class="rt-form__grid-2">' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="placeName">Place Name *</label>' +
-                  '<input type="text" id="placeName" placeholder="e.g., The Great Temple">' +
-                '</div>' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="placeType">Type</label>' +
-                  '<select id="placeType">' + typeOpts + '</select>' +
-                '</div>' +
-              '</div>' +
-              '<div class="rt-form__group">' +
-                '<label class="rt-form__label" for="placeLocation">Location *</label>' +
-                '<select id="placeLocation">' + locationOpts + '</select>' +
-              '</div>' +
-              '<div class="rt-form__grid-2">' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="placeTithe">Base Tithe (per follower)</label>' +
-                  '<input type="number" id="placeTithe" value="1" min="0" step="0.5">' +
-                '</div>' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="placeFoundedYear">Founded Year</label>' +
-                  '<input type="number" id="placeFoundedYear" value="1250">' +
-                '</div>' +
-              '</div>' +
-              '<div class="rt-form__group">' +
-                '<label class="rt-form__checkbox">' +
-                  '<input type="checkbox" id="placeProducesIncome" checked>' +
-                  '<span>Produces income (collects tithes)</span>' +
-                '</label>' +
-              '</div>' +
-              '<div class="rt-form__group">' +
-                '<label class="rt-form__label" for="placeNotes">Notes</label>' +
-                '<input type="text" id="placeNotes" placeholder="Additional notes...">' +
-              '</div>' +
-              '<div class="rt-form__partial-note">' +
-                'Note: place records are not yet fully persisted. The new ' +
-                'place will be linked to this religion, but its details ' +
-                '(type, tithe, founded year) are held in-memory until the ' +
-                'canonical place store lands.' +
-              '</div>' +
-            '</div>';
-
-        _openModal({
-            titleHtml: 'Add Place of Worship',
-            contentHtml: content,
-            confirmText: 'Add Place',
-            cancelText: 'Cancel',
-            onConfirm: function (root) {
-                var nameInput = root.querySelector('#placeName');
-                var name = nameInput ? nameInput.value.trim() : '';
-                if (!name) {
-                    _showToast('Place name is required', 'error');
-                    return false;
-                }
-
-                var locSel = root.querySelector('#placeLocation');
-                var locationId = locSel ? locSel.value : '';
-                if (!locationId) {
-                    _showToast('Please select a location', 'error');
-                    return false;
-                }
-
-                var titheInput = root.querySelector('#placeTithe');
-                var titheVal = titheInput ? parseFloat(titheInput.value) : 1;
-                if (Number.isNaN(titheVal)) titheVal = 1;
-
-                var foundedInput = root.querySelector('#placeFoundedYear');
-                var foundedVal = foundedInput ? parseInt(foundedInput.value, 10) : 1250;
-                if (Number.isNaN(foundedVal)) foundedVal = 1250;
-
-                var incomeEl = root.querySelector('#placeProducesIncome');
-
-                var data = {
-                    name: name,
-                    religionId: religion.id,
-                    locationId: locationId,
-                    locationName: _getPlaceName(locationId),
-                    type: _readVal(root, '#placeType') || 'temple',
-                    baseTithe: titheVal,
-                    foundedYear: foundedVal,
-                    producesIncome: incomeEl ? incomeEl.checked === true : true,
-                    notes: _readVal(root, '#placeNotes')
-                };
-
-                var result = RC.createPlaceOfWorship(data);
-                if (result && result.success) {
+                if (!did) return;
+                var openDelete = _getOpenDeletePlaceModal();
+                if (!openDelete) {
                     _showToast(
-                        'Place created: ' + (result.data && result.data.name
-                            ? result.data.name
-                            : name),
-                        'success'
-                    );
-                    if (typeof onDone === 'function') onDone();
-                    return true;
-                }
-                _showToast(
-                    'Failed to create place: ' +
-                    (result && result.reason ? result.reason : 'unknown'),
-                    'error'
-                );
-                return false;
-            }
-        });
-    }
-
-    function _openEditPlace(religion, placeId, onDone) {
-        // Reached only when PLACES_EDITABLE is true. Kept complete so
-        // flipping the flag is the only change needed to activate it.
-        // updatePlaceOfWorship is currently a stub; when it becomes real,
-        // the modal wiring below is already correct.
-        var RC = _getReligionCommands();
-        var RQ = _getReligionQueries();
-        if (!RC || !RQ) {
-            _showToast('Religion system not available', 'error');
-            return;
-        }
-
-        var places = RQ.getPlacesOfWorshipByReligion(religion.id) || [];
-        var place = null;
-        for (var i = 0; i < places.length; i++) {
-            if (places[i] && places[i].id === placeId) { place = places[i]; break; }
-        }
-        if (!place) {
-            _showToast('Place not found', 'error');
-            return;
-        }
-
-        var nameVal = place.name || '';
-        var locationVal = place.locationId || '';
-        var typeVal = place.type || 'temple';
-        var titheVal = (typeof place.baseTithe === 'number') ? String(place.baseTithe) : '1';
-        var foundedVal = (typeof place.foundedYear === 'number') ? String(place.foundedYear) : '';
-        var producesIncome = place.producesIncome !== false;
-        var notesVal = place.notes || '';
-
-        var content =
-            '<div class="rt-form">' +
-              '<div class="rt-form__grid-2">' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="editPlaceName">Place Name *</label>' +
-                  '<input type="text" id="editPlaceName" value="' +
-                    _escapeHtml(nameVal) + '">' +
-                '</div>' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="editPlaceType">Type</label>' +
-                  '<input type="text" id="editPlaceType" value="' +
-                    _escapeHtml(typeVal) + '">' +
-                '</div>' +
-              '</div>' +
-              '<div class="rt-form__group">' +
-                '<label class="rt-form__label" for="editPlaceLocation">Location</label>' +
-                '<select id="editPlaceLocation">' +
-                  _getLocationOptions(locationVal) +
-                '</select>' +
-              '</div>' +
-              '<div class="rt-form__grid-2">' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="editPlaceTithe">Base Tithe</label>' +
-                  '<input type="number" id="editPlaceTithe" value="' +
-                    _escapeHtml(titheVal) + '" min="0" step="0.5">' +
-                '</div>' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="editPlaceFoundedYear">Founded Year</label>' +
-                  '<input type="number" id="editPlaceFoundedYear" value="' +
-                    _escapeHtml(foundedVal) + '">' +
-                '</div>' +
-              '</div>' +
-              '<div class="rt-form__group">' +
-                '<label class="rt-form__checkbox">' +
-                  '<input type="checkbox" id="editPlaceProducesIncome"' +
-                    (producesIncome ? ' checked' : '') + '>' +
-                  '<span>Produces income</span>' +
-                '</label>' +
-              '</div>' +
-              '<div class="rt-form__group">' +
-                '<label class="rt-form__label" for="editPlaceNotes">Notes</label>' +
-                '<input type="text" id="editPlaceNotes" value="' +
-                  _escapeHtml(notesVal) + '">' +
-              '</div>' +
-            '</div>';
-
-        _openModal({
-            titleHtml: 'Edit Place of Worship',
-            contentHtml: content,
-            confirmText: 'Save',
-            cancelText: 'Cancel',
-            onConfirm: function (root) {
-                var nameInput = root.querySelector('#editPlaceName');
-                var name = nameInput ? nameInput.value.trim() : '';
-                if (!name) {
-                    _showToast('Place name is required', 'error');
-                    return false;
-                }
-
-                var updates = {
-                    name: name,
-                    type: _readVal(root, '#editPlaceType') || 'temple',
-                    locationId: _readVal(root, '#editPlaceLocation') || null,
-                    baseTithe: parseFloat(_readVal(root, '#editPlaceTithe')) || 1,
-                    foundedYear: parseInt(_readVal(root, '#editPlaceFoundedYear'), 10) || 1250,
-                    producesIncome: (root.querySelector('#editPlaceProducesIncome') || {}).checked === true,
-                    notes: _readVal(root, '#editPlaceNotes')
-                };
-
-                var result = RC.updatePlaceOfWorship(placeId, updates);
-                if (result && result.success) {
-                    _showToast('Place updated', 'success');
-                    if (typeof onDone === 'function') onDone();
-                    return true;
-                }
-                _showToast(
-                    'Failed to update place: ' +
-                    (result && result.reason ? result.reason : 'unknown'),
-                    'error'
-                );
-                return false;
-            }
-        });
-    }
-
-    function _confirmDeletePlace(religion, placeId, onDone) {
-        var RC = _getReligionCommands();
-        if (!RC) return;
-
-        var RQ = _getReligionQueries();
-        var places = RQ ? (RQ.getPlacesOfWorshipByReligion(religion.id) || []) : [];
-        var place = null;
-        for (var i = 0; i < places.length; i++) {
-            if (places[i] && places[i].id === placeId) { place = places[i]; break; }
-        }
-        var displayName = place ? _placeDisplayName(place) : placeId;
-
-        _confirmDialog(
-            'Remove "' + displayName + '" from this religion?',
-            'Delete Place of Worship',
-            function () {
-                var result = RC.deletePlaceOfWorship(placeId);
-                if (result && result.success) {
-                    _showToast('Place removed', 'info');
-                    if (typeof onDone === 'function') onDone();
-                } else {
-                    _showToast(
-                        'Failed to remove place: ' +
-                        (result && result.reason ? result.reason : 'unknown'),
+                        'Delete Place of Worship modal is not available. ' +
+                        'Load modals-religion.js first.',
                         'error'
                     );
+                    return;
                 }
+                openDelete(religion.id, did, {
+                    onSuccess: function () {
+                        rerender();
+                    }
+                });
             }
-        );
+        });
     }
 
-    function _collectTithes(placeId, religion, onDone) {
+    /**
+     * Collect tithes for a place.
+     *
+     * ReligionCommands.collectTithes is a READ that returns
+     * { success, data: { placeId, year, amount } }. It does not mutate
+     * canonical state and does not need persist(). The toast is the
+     * entire effect.
+     *
+     * The tab does NOT re-render after collecting. Nothing changed, so
+     * the list is unaffected. If a future revision makes collectTithes
+     * record the collection on the place record (or update
+     * collectedThisYear), this helper must restore the re-render — at
+     * that point the toast is not the entire effect. The call site is
+     * commented to flag this.
+     */
+    function _collectTithes(placeId) {
         var RC = _getReligionCommands();
         if (!RC) {
             _showToast('ReligionCommands not available', 'error');
@@ -934,7 +752,8 @@
                 'Collected ' + amount + ' gold in tithes',
                 'success'
             );
-            if (typeof onDone === 'function') onDone();
+            // No re-render: collectTithes does not mutate. See the
+            // helper docstring above.
         } else {
             _showToast(
                 'Failed to collect tithes: ' +
@@ -944,17 +763,31 @@
         }
     }
 
-    // =========================================================================
-    // 8. SMALL HELPERS
-    // =========================================================================
-
-    function _readVal(root, selector) {
-        var el = root ? root.querySelector(selector) : null;
-        return el ? el.value : '';
+    /**
+     * Re-fetch the current religion record from Queries. Returns null
+     * if the religion no longer exists (e.g. the caller deleted it from
+     * another tab while this one was open). The caller falls back to the
+     * stale `religion` argument in that case, which will render the
+     * empty places list — a graceful degradation, not a crash.
+     *
+     * This helper exists because the canonical write modals'
+     * onSuccess payload is NOT the religion record. For
+     * createPlaceOfWorship it is the new place record; for
+     * updatePlaceOfWorship it is the (unchanged) religion record
+     * because the command re-clones and re-commits; for
+     * deletePlaceOfWorship it is undefined. The tab needs the religion,
+     * not the place, to re-render. Rather than thread a different
+     * payload shape through each modal (a modals-religion.js change),
+     * the tab re-fetches.
+     */
+    function _freshReligion(religionId) {
+        var RQ = _getReligionQueries();
+        if (!RQ) return null;
+        return RQ.getReligion(religionId);
     }
 
     // =========================================================================
-    // 9. TABMANAGER ADAPTER + REGISTRATION
+    // 7. TABMANAGER ADAPTER + REGISTRATION
     // =========================================================================
 
     function renderAdapter(container, context) {
@@ -972,7 +805,7 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 8. EXPORTS
     // =========================================================================
 
     window.ReligionPlacesTab = {
