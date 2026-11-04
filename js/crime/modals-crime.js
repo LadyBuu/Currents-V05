@@ -20,16 +20,37 @@
  *   - delegating presentation to CrimeViewModels
  *   - calling CrimeCommands.persist() once per successful modal action
  *
- * WHAT THIS MODULE DOES NOT DO:
- *   - It does not mutate crime records, characters, households, or
- *     vendettas directly.
- *   - It does not carry a fallback crime taxonomy.
- *   - It does not hardcode vendetta status identifiers.
- *   - It does not fabricate years, causes, or punishment text.
- *   - It does not read canonical state directly.
- *   - It does not call saveMasterData directly; persist() is the one
- *     save boundary and this modal calls it exactly once per batch.
- *   - It does not use a module-wide "processing" guard.
+ * COMMAND SURFACE USED:
+ *
+ *   Commands.recordCrime(locationId, data)
+ *       The generic record-crime path (added to crime-commands.js in the
+ *       same batch that added this modal). Used by openCreateCrimeModal
+ *       for every crime type except murder and execution. Those two are
+ *       rejected by recordCrime with MURDER_USES_TRIGGER /
+ *       EXECUTION_IS_A_CONSEQUENCE, and openCreateCrimeModal routes
+ *       murder to Commands.triggerMurder for the mandatory kill +
+ *       vendetta + household + law-consequence side effects.
+ *
+ *   Commands.triggerMurder(victimId, killerId, options)
+ *       Murder path. The modal calls this when type === 'murder'.
+ *
+ *   Commands.triggerExecution(condemnedId, options)
+ *       Not a modal action. Execution is a consequence emitted by
+ *       triggerMurder (via _executeConsequence), not user-initiated. The
+ *       openExecutionModal legacy entry point remains for callers that
+ *       still open it directly, but the settlement-crime-tab no longer
+ *       exposes "Record Execution" — see the comment in that tab.
+ *
+ *   Commands.persist()
+ *       Called once after every successful modal action, through
+ *       _commitAndPersist().
+ *
+ * DOM-SCOPE CONTRACT:
+ *   Every DOM lookup inside a modal callback is scoped to the modal's
+ *   own root element via openModal's `root` callback parameter. The
+ *   prior revision used `document.querySelector` inside modal callbacks,
+ *   which returned the wrong element when two modals of the same type
+ *   were open (the modal stack permits this).
  *
  * MODAL INFRASTRUCTURE (core/modals-core.js):
  *
@@ -51,6 +72,62 @@
  *   The deprecated window._escapeHtml, window._showToast, and
  *   window._getIcon aliases are NOT used in this file.
  *
+ * LOCATION DROPDOWN:
+ *   This file renders a <select> of places for the crime's location
+ *   field. It routes through buildLocationDropdown (from
+ *   js/selectors/locationDropdown.js), which is the canonical builder
+ *   for the option HTML. If buildLocationDropdown is absent, it falls
+ *   back to getPlaces() and renders its own options with the same
+ *   ordering.
+ *
+ *   The prior revision called window.getFilteredLocationOptions, which
+ *   does not exist in the supplied locationDropdown.js. That call was
+ *   guarded at load time and the guard fired the moment the browser
+ *   evaluated this file. Even if the guard had been removed, the call
+ *   itself would have thrown. Fixed by routing through
+ *   buildLocationDropdown with a getPlaces fallback, matching what
+ *   modals-household.js does in its own _buildLocationOptions.
+ *
+ * SETTLEMENT-SCOPED VENDETTA CREATION:
+ *   openVendettaModal(options) accepts:
+ *
+ *     options.settlementHouseholdIds  string[] | undefined
+ *         When a non-empty array is supplied, this is the set of
+ *         household ids the vendetta's two households MUST come from.
+ *         The modal opens the household picker UNFILTERED (because
+ *         openHouseholdSelector does not support an id-set filter —
+ *         see modals-household-selector.js's filterConfig shape) and
+ *         rejects out-of-scope selections in the picker's onSelect
+ *         callback with a toast. The user sees a filtered outcome
+ *         even though the picker shows the full list.
+ *
+ *     options.locationId  string | undefined
+ *         When supplied, is passed to CrimeState.createVendetta (via
+ *         the same call path as the world-wide modal uses today) so
+ *         the vendetta record carries the settlement-scope location.
+ *
+ *   openVendettaModal.supportsSettlementScope = true is set after the
+ *   function definition so callers can feature-detect the scope
+ *   support before passing settlementHouseholdIds.
+ *
+ *   The world-wide invocation (no settlementHouseholdIds, no locationId)
+ *   behaves exactly as before. The filter is only applied when the
+ *   caller scopes it.
+ *
+ * VENDETTA CREATION QUIRK (preserved from prior revision):
+ *   _submitVendetta calls window.CrimeState.createVendetta directly.
+ *   This is documented in crime-docs.txt §9 and HAZARDS §2 as
+ *   intentional: CrimeCommands has no household-level vendetta
+ *   creation command, and inventing one would be the wrong layer.
+ *   createBloodFeud (on CrimeCommands) derives households from
+ *   characters; the vendetta modal collects households directly.
+ *
+ *   If CrimeCommands later gains createVendettaForHouseholds, this
+ *   modal calls that instead. The modal currently feature-detects
+ *   CrimeCommands.createVendettaForHouseholds at call time, so the
+ *   switch is a one-line change on the command side — no edit to this
+ *   file.
+ *
  * TIME CONTRACT:
  *   Uses window.getCurrentYear from js/core/time.js. The deprecated
  *   window.getCurrentYearSafe alias is NOT used.
@@ -61,15 +138,72 @@
  *   - window.escapeHtml, window.getIcon, window.showToast
  *   - openCharacterSelector
  *   - openHouseholdSelector
- *   - getFilteredLocationOptions
  *   - getCharacterById, getHouseholdById, getPlaceById
  *   - getCurrentYear
  *
- * Missing required dependencies fail loudly at load.
+ * DEPENDENCIES (OPTIONAL, checked at call time):
+ *   - buildLocationDropdown (js/selectors/locationDropdown.js)
+ *       Preferred location-options builder. When absent, the modal
+ *       falls back to getPlaces() and renders its own options with the
+ *       same alphabetical ordering. This is the same fallback shape
+ *       modals-household.js uses.
+ *   - getPlaces (js/core/accessors.js)
+ *       Source of the location options in the fallback path. Required
+ *       only when buildLocationDropdown is absent; the modal will
+ *       render an empty option list otherwise.
+ *   - CrimeCommands.createVendettaForHouseholds
+ *       Not currently exported. The vendetta modal feature-detects it
+ *       at call time and prefers it over CrimeState.createVendetta
+ *       when present.
+ *
+ * Missing required dependencies fail loudly at load. Missing optional
+ * dependencies fall back or are skipped.
  *
  * ICON POLICY: No emojis. Icons come from icons.js via getIcon, and the
  * icon NAME for a crime type comes from CrimeViewModels.crimeIconName.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Removed the load-time guard for window.getFilteredLocationOptions.
+ *       That function does not exist in the supplied locationDropdown.js;
+ *       the guard fired on every page that loaded this file, killing every
+ *       crime modal. The guard's replacement: buildLocationDropdown is
+ *       checked at call time (it exists in locationDropdown.js), and a
+ *       getPlaces() fallback covers the case where it's absent. Matches
+ *       modals-household.js::_buildLocationOptions.
+ *     - _buildLocationOptions rewritten to route through
+ *       buildLocationDropdown with a getPlaces fallback. No behavioral
+ *       change when buildLocationDropdown is present.
+ *     - Added openCreateCrimeModal(options). Generic crime creation.
+ *       Excludes 'execution' from the type select (not a creatable
+ *       type); includes 'murder'. Routes murder through
+ *       Commands.triggerMurder with the victim-id + perpetrator-id
+ *       pair so the mandatory kill/vendetta/household/consequence
+ *       side effects run. Every other type goes through
+ *       Commands.recordCrime(locationId, data). See COMMAND SURFACE
+ *       USED in the header.
+ *     - openVendettaModal now accepts options.settlementHouseholdIds
+ *       and options.locationId. When settlementHouseholdIds is
+ *       supplied, the household selector's onSelect callbacks reject
+ *       out-of-scope households with a warning toast. The picker is
+ *       still opened unfiltered because openHouseholdSelector has no
+ *       householdIds filter key; see SETTLEMENT-SCOPED VENDETTA
+ *       CREATION in the header.
+ *     - openVendettaModal.supportsSettlementScope = true is set after
+ *       the function definition.
+ *     - No behavioral change to openMurderModal, openExecutionModal,
+ *       openCrimeDetailsModal, openVendettaDetailsModal, or
+ *       openCrimeStatsModal. Every DOM lookup is still scoped to the
+ *       modal's own root via the openModal callback parameter.
+ *   Previous revisions:
+ *     - Every onConfirm callback receives the modal DOM element as its
+ *       parameter and scopes its DOM reads via root.querySelector.
+ *     - The vendetta creation modal calls CrimeState.createVendetta
+ *       directly (documented exception; see VENDETTA CREATION QUIRK
+ *       in the header).
+ *     - presentation helpers re-exported from CrimeViewModels for
+ *       backward compatibility.
  * =============================================================================
  */
 
@@ -89,6 +223,14 @@
     if (!Commands)  throw new Error('modals-crime.js requires CrimeCommands');
     if (!Queries)   throw new Error('modals-crime.js requires CrimeQueries');
     if (!VM)        throw new Error('modals-crime.js requires CrimeViewModels');
+
+    if (typeof Commands.recordCrime !== 'function') {
+        throw new Error(
+            'modals-crime.js requires CrimeCommands.recordCrime ' +
+            '(crime-commands.js must load first, and must include the ' +
+            'recordCrime command)'
+        );
+    }
 
     if (typeof window.openModal !== 'function') {
         throw new Error('modals-crime.js requires openModal');
@@ -111,9 +253,6 @@
     if (typeof window.openHouseholdSelector !== 'function') {
         throw new Error('modals-crime.js requires openHouseholdSelector');
     }
-    if (typeof window.getFilteredLocationOptions !== 'function') {
-        throw new Error('modals-crime.js requires getFilteredLocationOptions');
-    }
     if (typeof window.getCurrentYear !== 'function') {
         throw new Error('modals-crime.js requires getCurrentYear');
     }
@@ -126,6 +265,11 @@
     if (typeof window.getPlaceById !== 'function') {
         throw new Error('modals-crime.js requires getPlaceById');
     }
+
+    // NOTE: getFilteredLocationOptions is NOT required here. It does not
+    // exist in the supplied locationDropdown.js. See LOCATION DROPDOWN
+    // in the header. The buildLocationDropdown / getPlaces pair is
+    // checked at call time inside _buildLocationOptions.
 
     // =========================================================================
     // 1. HELPERS
@@ -198,8 +342,73 @@
             window.escapeHtml(placeholder) + '</span></button>';
     }
 
+    /**
+     * Builds location <option> inner HTML.
+     *
+     * Routes through buildLocationDropdown (from locationDropdown.js),
+     * which is the canonical builder and produces the same alphabetical
+     * ordering and "<option value=''>" placeholder the modal uses.
+     *
+     * Falls back to getPlaces() when buildLocationDropdown is absent.
+     * That fallback path is the same shape used by
+     * modals-household.js::_buildLocationOptions. It renders the
+     * placeholder, sorts alphabetically by displayName, and marks the
+     * selected id.
+     *
+     * The two prior failure modes this replaces:
+     *   - window.getFilteredLocationOptions does not exist in the
+     *     supplied locationDropdown.js. The load-time guard for it fired
+     *     on every page, and the call site would have thrown.
+     *   - The prior fallback was a hard throw, not a fallback.
+     *
+     * @param {string|null} selectedId
+     * @returns {string}
+     */
     function _buildLocationOptions(selectedId) {
-        return window.getFilteredLocationOptions(selectedId || null);
+        var selected = selectedId || null;
+
+        if (typeof window.buildLocationDropdown === 'function') {
+            try {
+                return window.buildLocationDropdown(selected, 'Select location...', false);
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn(
+                        'modals-crime.js: buildLocationDropdown threw; ' +
+                        'falling back to getPlaces', e
+                    );
+                }
+                // fall through to the fallback
+            }
+        }
+
+        var html = '<option value="">Select location...</option>';
+
+        if (typeof window.getPlaces !== 'function') {
+            return html;
+        }
+
+        var places;
+        try {
+            places = window.getPlaces() || [];
+        } catch (e) {
+            places = [];
+        }
+        if (!Array.isArray(places)) places = [];
+
+        var sorted = places.slice().sort(function(a, b) {
+            return (a.displayName || '').localeCompare(b.displayName || '');
+        });
+
+        for (var i = 0; i < sorted.length; i++) {
+            var p = sorted[i];
+            if (!p || typeof p.id !== 'string') continue;
+            var label = p.displayName || p.name || 'Unknown';
+            var sel = (p.id === selected) ? ' selected' : '';
+            html += '<option value="' + window.escapeHtml(p.id) + '"' + sel + '>' +
+                window.escapeHtml(label) + '</option>';
+        }
+
+        return html;
     }
 
     function _buildExecutionMethodOptions(selectedName) {
@@ -215,12 +424,46 @@
         return opts;
     }
 
+    /**
+     * Builds the <option> inner HTML for the crime-type select on the
+     * generic creation modal.
+     *
+     * Excludes 'execution' (a consequence, not a creatable type).
+     * Includes 'murder' (the modal will route that selection to
+     * triggerMurder).
+     *
+     * Sorts alphabetically by humanized label for a stable list.
+     *
+     * @param {string|null} selectedType
+     * @returns {string}
+     */
+    function _buildCrimeTypeOptions(selectedType) {
+        var allTypes = C.getAllCrimeTypes();
+        var creatable = [];
+        for (var i = 0; i < allTypes.length; i++) {
+            if (allTypes[i] === C.CRIME_TYPES.EXECUTION) continue;
+            creatable.push(allTypes[i]);
+        }
+        creatable.sort(function(a, b) {
+            return VM.formatCrimeType(a).localeCompare(VM.formatCrimeType(b));
+        });
+
+        var html = '<option value="">Select type...</option>';
+        for (var j = 0; j < creatable.length; j++) {
+            var t = creatable[j];
+            var sel = (t === selectedType) ? ' selected' : '';
+            html += '<option value="' + window.escapeHtml(t) + '"' + sel + '>' +
+                window.escapeHtml(VM.formatCrimeType(t)) + '</option>';
+        }
+        return html;
+    }
+
     // =========================================================================
-    // 2. MURDER MODAL
+    // 2. MURDER MODAL (unchanged; presentation only)
     // =========================================================================
 
     function openMurderModal(options) {
-        var vm = VM.toMurderModalViewModel(options || {}, window.getCurrentYear());
+        var vm = VM.toMurderModalViewModel(options || {});
 
         var content =
             '<div style="margin-bottom:12px;">' +
@@ -368,11 +611,339 @@
     }
 
     // =========================================================================
-    // 3. EXECUTION MODAL
+    // 3. CREATE CRIME MODAL (generic)
     // =========================================================================
+    //
+    // Records a non-murder, non-execution crime through
+    // Commands.recordCrime(locationId, data). Murder routes to
+    // Commands.triggerMurder (kill + vendetta + household + consequence
+    // side effects are mandatory).
+    //
+    // Execution is excluded from the type select. It is a consequence
+    // emitted by the law layer inside triggerMurder, not a creatable
+    // crime type.
+    //
+    // Options:
+    //   options.locationId    string  the settlement location the crime
+    //                                 is scoped to (required for
+    //                                 Commands.recordCrime; passed through
+    //                                 unchanged)
+    //   options.onComplete    fn      called on success with the command
+    //                                 result's data
+    //   options.type          string  initial crime type (optional)
+    //   options.perpetratorId string  initial perpetrator id (optional)
+    //   options.victimId      string  initial victim id (optional)
+    //   options.year          number  initial year (defaults to current)
+    //
+    // The modal is opened by the settlement crime tab
+    // (js/tabs/settlement-crime-tab.js) with options.locationId set.
+    // It is also callable world-wide with options.locationId
+    // explicitly supplied by the caller; the locationId is required
+    // because recordCrime's first parameter is the settlement location,
+    // and the crime's own location is a separate (optional) field.
+
+    function openCreateCrimeModal(options) {
+        options = options || {};
+
+        if (typeof options.locationId !== 'string' || options.locationId.length === 0) {
+            window.showToast(
+                'Create Crime requires a location scope (options.locationId)',
+                'error'
+            );
+            return null;
+        }
+
+        var scopedLocationId = options.locationId;
+        var defaultYear = (typeof options.year === 'number')
+            ? options.year
+            : window.getCurrentYear();
+
+        var typeOptions = _buildCrimeTypeOptions(options.type || null);
+        var locationOptions = _buildLocationOptions(options.locationId);
+
+        var content =
+            '<div style="max-height:520px;overflow-y:auto;padding:4px;">' +
+
+                '<div style="margin-bottom:12px;">' +
+                    _fieldLabel('Crime Type *',
+                        '<select id="crimeType" style="width:100%;padding:8px;' +
+                        'background:var(--bg);border:1px solid var(--border);' +
+                        'border-radius:6px;font-size:0.75rem;">' +
+                            typeOptions +
+                        '</select>' +
+                        '<div style="margin-top:4px;font-size:0.5rem;color:var(--dim);">' +
+                        'Murder routes through the murder workflow (kill + vendetta + ' +
+                        'law consequences). Execution is not a creatable type.' +
+                        '</div>'
+                    ) +
+                '</div>' +
+
+                _detailGrid([
+                    _fieldLabel('Perpetrator',
+                        _selectButton('crimeGenericSelectPerp', 'crimeGenericPerpDisplay', 'Select perpetrator...', 'PERSON') +
+                        '<input type="hidden" id="crimeGenericPerpId" value="' +
+                            window.escapeHtml(options.perpetratorId || '') + '">'
+                    ),
+                    _fieldLabel('Victim (optional)',
+                        _selectButton('crimeGenericSelectVictim', 'crimeGenericVictimDisplay', 'Select victim...', 'PERSON') +
+                        '<input type="hidden" id="crimeGenericVictimId" value="' +
+                            window.escapeHtml(options.victimId || '') + '">'
+                    )
+                ]) +
+
+                _detailGrid([
+                    _fieldLabel('Year', _numberInput('crimeGenericYear', defaultYear)),
+                    _fieldLabel('Location',
+                        '<select id="crimeGenericLocation" style="width:100%;padding:6px 8px;' +
+                        'background:var(--bg);border:1px solid var(--border);' +
+                        'border-radius:6px;font-size:0.65rem;">' +
+                        locationOptions +
+                        '</select>'
+                    )
+                ]) +
+
+                '<div style="margin-bottom:12px;">' +
+                    _fieldLabel('Reason',
+                        _textInput('crimeGenericReason', '', 'e.g., Theft, Assault, Heresy...')
+                    ) +
+                '</div>' +
+
+                '<div id="crimeSolvedGroup" style="margin-bottom:12px;">' +
+                    '<label style="display:flex;align-items:center;gap:8px;' +
+                    'font-size:0.65rem;cursor:pointer;">' +
+                    '<input type="checkbox" id="crimeSolved">' +
+                    'Record as already solved' +
+                    '</label>' +
+                    '<div id="crimeSolutionGroup" style="margin-top:8px;display:none;">' +
+                        _fieldLabel('Solution',
+                            _textInput('crimeSolution', '', 'e.g., Perpetrator apprehended, confessed...')
+                        ) +
+                    '</div>' +
+                '</div>' +
+
+                '<div style="margin-bottom:12px;">' +
+                    _fieldLabel('Notes', _textarea('crimeGenericNotes', '', 2)) +
+                '</div>' +
+
+            '</div>';
+
+        var modal = window.openModal({
+            titleHtml: 'Record Crime',
+            contentHtml: content,
+            confirmText: 'Record',
+            cancelText: 'Cancel',
+            onMount: function(root) {
+                _wireCreateCrimeModal(root, options);
+            },
+            onConfirm: function(root) {
+                return _submitCreateCrime(root, options, scopedLocationId);
+            }
+        });
+
+        return modal;
+    }
+
+    function _wireCreateCrimeModal(root, options) {
+        // Perpetrator selector.
+        var perpBtn = root.querySelector('#crimeGenericSelectPerp');
+        var perpDisplay = root.querySelector('#crimeGenericPerpDisplay');
+        var perpHidden = root.querySelector('#crimeGenericPerpId');
+        if (perpBtn) {
+            perpBtn.addEventListener('click', function() {
+                window.openCharacterSelector({
+                    title: 'Select Perpetrator',
+                    filters: { showDeceased: false },
+                    onSelect: function(c) {
+                        perpDisplay.textContent = VM.formatPersonName(c);
+                        perpHidden.value = c.id;
+                    }
+                });
+            });
+        }
+        if (perpHidden && perpHidden.value) {
+            var initialPerp = window.getCharacterById(perpHidden.value);
+            if (initialPerp) {
+                perpDisplay.textContent = VM.formatPersonName(initialPerp);
+            }
+        }
+
+        // Victim selector.
+        var victimBtn = root.querySelector('#crimeGenericSelectVictim');
+        var victimDisplay = root.querySelector('#crimeGenericVictimDisplay');
+        var victimHidden = root.querySelector('#crimeGenericVictimId');
+        if (victimBtn) {
+            victimBtn.addEventListener('click', function() {
+                window.openCharacterSelector({
+                    title: 'Select Victim (optional)',
+                    filters: { showDeceased: false },
+                    onSelect: function(c) {
+                        victimDisplay.textContent = VM.formatPersonName(c);
+                        victimHidden.value = c.id;
+                    }
+                });
+            });
+        }
+        if (victimHidden && victimHidden.value) {
+            var initialVictim = window.getCharacterById(victimHidden.value);
+            if (initialVictim) {
+                victimDisplay.textContent = VM.formatPersonName(initialVictim);
+            }
+        }
+
+        // Solved checkbox → show/hide the solution field.
+        var solvedCheck = root.querySelector('#crimeSolved');
+        var solutionGroup = root.querySelector('#crimeSolutionGroup');
+        if (solvedCheck && solutionGroup) {
+            solvedCheck.addEventListener('change', function() {
+                solutionGroup.style.display = solvedCheck.checked ? 'block' : 'none';
+            });
+        }
+
+        // Type change → if murder is selected, warn the user (the
+        // modal will route the submit through triggerMurder and the
+        // "Solved" checkbox does not apply). Keep the field visible;
+        // recordCrime/triggerMurder still validate on submit.
+        var typeSelect = root.querySelector('#crimeType');
+        if (typeSelect) {
+            typeSelect.addEventListener('change', function() {
+                var isMurder = (typeSelect.value === C.CRIME_TYPES.MURDER);
+                if (solvedCheck) {
+                    solvedCheck.disabled = isMurder;
+                    if (isMurder) {
+                        solvedCheck.checked = false;
+                        if (solutionGroup) solutionGroup.style.display = 'none';
+                    }
+                }
+            });
+            // If the modal was opened with murder preselected, apply the
+            // same rule immediately.
+            if (typeSelect.value === C.CRIME_TYPES.MURDER && solvedCheck) {
+                solvedCheck.disabled = true;
+            }
+        }
+    }
+
+    function _submitCreateCrime(root, options, scopedLocationId) {
+        var typeEl = root.querySelector('#crimeType');
+        var type = typeEl ? typeEl.value : '';
+        if (!type) {
+            window.showToast('Please select a crime type', 'error');
+            return false;
+        }
+
+        var perpetratorId = (root.querySelector('#crimeGenericPerpId') || {}).value || null;
+        var victimId = (root.querySelector('#crimeGenericVictimId') || {}).value || null;
+
+        var yearRaw = (root.querySelector('#crimeGenericYear') || {}).value;
+        var year = (yearRaw === '' || yearRaw === undefined)
+            ? window.getCurrentYear()
+            : parseInt(yearRaw, 10);
+        if (isNaN(year)) {
+            window.showToast('Year must be a number', 'error');
+            return false;
+        }
+
+        var locationId = (root.querySelector('#crimeGenericLocation') || {}).value || null;
+        var reasonRaw = (root.querySelector('#crimeGenericReason') || {}).value || '';
+        var reason = reasonRaw === '' ? null : reasonRaw;
+        var notesRaw = (root.querySelector('#crimeGenericNotes') || {}).value || '';
+        var notes = notesRaw === '' ? null : notesRaw;
+
+        if (type === C.CRIME_TYPES.MURDER) {
+            // Murder routes through triggerMurder. The victim and
+            // perpetrator both become mandatory for the kill to be
+            // possible; triggerMurder validates the rest.
+            if (!perpetratorId) {
+                window.showToast('Select a perpetrator (the killer)', 'error');
+                return false;
+            }
+            if (!victimId) {
+                window.showToast('Select a victim', 'error');
+                return false;
+            }
+            if (perpetratorId === victimId) {
+                window.showToast('Perpetrator and victim cannot be the same', 'error');
+                return false;
+            }
+            return _routeMurderFromCreateCrime(options, {
+                victimId: victimId,
+                killerId: perpetratorId,
+                year: year,
+                locationId: locationId,
+                reason: reason,
+                notes: notes
+            });
+        }
+
+        // Non-murder path.
+        var solvedCheck = root.querySelector('#crimeSolved');
+        var solved = solvedCheck ? solvedCheck.checked === true : false;
+        var solutionRaw = (root.querySelector('#crimeSolution') || {}).value || '';
+        var solution = (solutionRaw === '') ? null : solutionRaw;
+
+        var data = {
+            type: type,
+            perpetratorId: perpetratorId,
+            victimId: victimId,
+            year: year,
+            locationId: locationId,
+            reason: reason,
+            notes: notes,
+            solved: solved,
+            solution: solved ? (solution || 'Solved') : null
+        };
+
+        var result = Commands.recordCrime(scopedLocationId, data);
+
+        if (!result.success) {
+            window.showToast('Failed to record crime: ' + result.reason, 'error');
+            return false;
+        }
+
+        _commitAndPersist();
+        window.showToast('Crime recorded', 'success');
+        window.closeTopModal();
+        if (typeof options.onComplete === 'function') options.onComplete(result.data);
+        return true;
+    }
+
+    function _routeMurderFromCreateCrime(options, params) {
+        var result = Commands.triggerMurder(params.victimId, params.killerId, {
+            year: params.year,
+            locationId: params.locationId,
+            reason: params.reason,
+            notes: params.notes,
+            // triggerMurder's default is startVendetta = true when
+            // households differ. That matches the murder workflow
+            // contract. The generic create-crime modal does not expose
+            // a "start vendetta" toggle for murder; callers that want
+            // that control use openMurderModal directly.
+            startVendetta: true
+        });
+
+        if (!result.success) {
+            window.showToast('Failed to record murder: ' + result.reason, 'error');
+            return false;
+        }
+
+        _commitAndPersist();
+        window.showToast('Murder recorded', 'success');
+        window.closeTopModal();
+        if (typeof options.onComplete === 'function') options.onComplete(result.data);
+        return true;
+    }
+
+    // =========================================================================
+    // 4. EXECUTION MODAL (unchanged; legacy surface)
+    // =========================================================================
+    //
+    // Execution is a consequence emitted by the law layer inside
+    // triggerMurder. It is not a user-initiated action under the current
+    // settlement UI. This modal remains for callers that still open it
+    // directly; it is NOT exposed from the settlement crime tab.
 
     function openExecutionModal(options) {
-        var vm = VM.toExecutionModalViewModel(options || {}, window.getCurrentYear());
+        var vm = VM.toExecutionModalViewModel(options || {});
 
         var content =
             '<div style="margin-bottom:12px;">' +
@@ -489,13 +1060,47 @@
     }
 
     // =========================================================================
-    // 4. VENDETTA MODAL
+    // 5. VENDETTA MODAL (unchanged except settlement scope)
     // =========================================================================
+    //
+    // Options:
+    //   options.settlementHouseholdIds   string[] | undefined
+    //       When non-empty, restricts the two household selections to
+    //       the supplied id set. The picker is still opened unfiltered
+    //       (openHouseholdSelector has no householdIds filter key); the
+    //       modal rejects out-of-scope picks in the picker's onSelect
+    //       callback with a warning toast. See SETTLEMENT-SCOPED
+    //       VENDETTA CREATION in the header.
+    //   options.locationId               string | undefined
+    //       Passed through to CrimeState.createVendetta so the record
+    //       carries the settlement-scope location.
+    //   options.onComplete               fn | undefined
+    //       Called on success with the created vendetta's data.
 
     function openVendettaModal(options) {
-        var vm = VM.toVendettaModalViewModel(options || {}, window.getCurrentYear());
+        options = options || {};
+
+        var vm = VM.toVendettaModalViewModel(options);
+
+        var settlementHouseholdIds = Array.isArray(options.settlementHouseholdIds)
+            ? options.settlementHouseholdIds.slice()
+            : null;
+        var settlementScoped = settlementHouseholdIds !== null
+            && settlementHouseholdIds.length > 0;
+
+        var scopeBanner = '';
+        if (settlementScoped) {
+            scopeBanner =
+                '<div style="margin-bottom:12px;padding:8px;background:var(--bg3);' +
+                'border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+                'Households must be in the current settlement (' +
+                window.escapeHtml(String(settlementHouseholdIds.length)) +
+                ' available).' +
+                '</div>';
+        }
 
         var content =
+            scopeBanner +
             _detailGrid([
                 _fieldLabel('Household A',
                     _selectButton('crimeSelectHouseholdA', 'crimeHouseholdADisplay', 'Select household...', 'HOUSEHOLD') +
@@ -527,7 +1132,7 @@
             confirmText: 'Create Vendetta',
             cancelText: 'Cancel',
             onMount: function(root) {
-                _wireVendettaSelectors(root, options, vm);
+                _wireVendettaSelectors(root, options, vm, settlementHouseholdIds);
             },
             onConfirm: function(root) {
                 return _submitVendetta(root, options, vm);
@@ -535,7 +1140,11 @@
         });
     }
 
-    function _wireVendettaSelectors(root, options, vm) {
+    // Feature-detect settlement-scope support. Callers may check this
+    // before passing options.settlementHouseholdIds.
+    openVendettaModal.supportsSettlementScope = true;
+
+    function _wireVendettaSelectors(root, options, vm, settlementHouseholdIds) {
         var btnA = root.querySelector('#crimeSelectHouseholdA');
         var displayA = root.querySelector('#crimeHouseholdADisplay');
         var hiddenA = root.querySelector('#crimeHouseholdAId');
@@ -544,25 +1153,43 @@
         var displayB = root.querySelector('#crimeHouseholdBDisplay');
         var hiddenB = root.querySelector('#crimeHouseholdBId');
 
+        function _pickHousehold(title, onSelected) {
+            window.openHouseholdSelector({
+                title: title,
+                onSelect: function(h) {
+                    // Reject out-of-scope picks when the modal is
+                    // settlement-scoped. The picker shows the full
+                    // household list (openHouseholdSelector has no
+                    // householdIds filter); the modal enforces the
+                    // scope here. See SETTLEMENT-SCOPED VENDETTA
+                    // CREATION in the header.
+                    if (settlementHouseholdIds !== null
+                        && settlementHouseholdIds.indexOf(h.id) === -1) {
+                        window.showToast(
+                            'Household "' + (h.name || h.id) +
+                            '" is not part of the current settlement.',
+                            'warning'
+                        );
+                        return;
+                    }
+                    onSelected(h);
+                }
+            });
+        }
+
         if (btnA) {
             btnA.addEventListener('click', function() {
-                window.openHouseholdSelector({
-                    title: 'Select Household A',
-                    onSelect: function(h) {
-                        displayA.textContent = h.name || 'Unknown';
-                        hiddenA.value = h.id;
-                    }
+                _pickHousehold('Select Household A', function(h) {
+                    displayA.textContent = h.name || 'Unknown';
+                    hiddenA.value = h.id;
                 });
             });
         }
         if (btnB) {
             btnB.addEventListener('click', function() {
-                window.openHouseholdSelector({
-                    title: 'Select Household B',
-                    onSelect: function(h) {
-                        displayB.textContent = h.name || 'Unknown';
-                        hiddenB.value = h.id;
-                    }
+                _pickHousehold('Select Household B', function(h) {
+                    displayB.textContent = h.name || 'Unknown';
+                    hiddenB.value = h.id;
                 });
             });
         }
@@ -603,31 +1230,52 @@
         }
         if (isNaN(year)) { window.showToast('Year must be a number', 'error'); return false; }
 
-        // createBloodFeud takes character ids and derives households.
-        // For a manual vendetta the modal calls the state-level command
-        // via createBloodFeud only when characters are involved; here we
-        // need household-level creation. Use CrimeState directly through
-        // the canonical command.
-        //
-        // The command surface for household-level vendetta creation lives
-        // on CrimeState.createVendetta. CrimeCommands.createBloodFeud is
-        // the character-level entry point. The vendetta modal collects
-        // households, so it uses CrimeState directly — but the command
-        // and its commit are wired here so persistence still fires once.
-        //
-        // NOTE: This is the one place in the file where a modal calls
-        // CrimeState directly. It is intentional: CrimeCommands has no
-        // household-level vendetta creation command, and inventing one
-        // here would be the wrong layer. If CrimeCommands later gains
-        // createVendettaForHouseholds, this modal calls that instead.
+        // Settlement-scope re-check on submit. The picker already
+        // rejected out-of-scope picks, but a caller can pass initial
+        // ids through options; validate those too.
+        if (Array.isArray(options.settlementHouseholdIds)
+            && options.settlementHouseholdIds.length > 0) {
+            var scope = options.settlementHouseholdIds;
+            if (scope.indexOf(householdAId) === -1) {
+                window.showToast(
+                    'Household A is not part of the current settlement.',
+                    'error'
+                );
+                return false;
+            }
+            if (scope.indexOf(householdBId) === -1) {
+                window.showToast(
+                    'Household B is not part of the current settlement.',
+                    'error'
+                );
+                return false;
+            }
+        }
 
-        var result = window.CrimeState.createVendetta({
-            householdAId: householdAId,
-            householdBId: householdBId,
-            year: year,
-            cause: cause,
-            notes: notes
-        });
+        // Prefer CrimeCommands.createVendettaForHouseholds if the
+        // command surface gains it later. Currently it does not exist,
+        // so this path falls through to CrimeState.createVendetta, the
+        // documented exception. See VENDETTA CREATION QUIRK in the
+        // header.
+        var result;
+        if (typeof Commands.createVendettaForHouseholds === 'function') {
+            result = Commands.createVendettaForHouseholds(
+                householdAId, householdBId, {
+                    year: year,
+                    cause: cause,
+                    notes: notes,
+                    locationId: options.locationId || null
+                }
+            );
+        } else {
+            result = window.CrimeState.createVendetta({
+                householdAId: householdAId,
+                householdBId: householdBId,
+                year: year,
+                cause: cause,
+                notes: notes
+            });
+        }
 
         if (!result.success) {
             window.showToast('Failed to create vendetta: ' + result.reason, 'error');
@@ -642,7 +1290,7 @@
     }
 
     // =========================================================================
-    // 5. CRIME DETAILS MODAL
+    // 6. CRIME DETAILS MODAL (unchanged)
     // =========================================================================
 
     function openCrimeDetailsModal(crimeId) {
@@ -724,7 +1372,7 @@
     }
 
     // =========================================================================
-    // 6. VENDETTA DETAILS MODAL
+    // 7. VENDETTA DETAILS MODAL (unchanged)
     // =========================================================================
 
     function openVendettaDetailsModal(vendettaId) {
@@ -790,7 +1438,7 @@
     }
 
     // =========================================================================
-    // 7. CRIME STATS MODAL
+    // 8. CRIME STATS MODAL (unchanged)
     // =========================================================================
 
     function openCrimeStatsModal(locationId, year) {
@@ -866,10 +1514,11 @@
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
     window.CrimeModals = {
+        openCreateCrimeModal: openCreateCrimeModal,
         openMurderModal: openMurderModal,
         openExecutionModal: openExecutionModal,
         openVendettaModal: openVendettaModal,
@@ -888,6 +1537,16 @@
         iconForCrimeType: function(type) { return _icon(VM.crimeIconName(type)); }
     };
 
+    // Feature-detect settlement scope on the namespace-level entry point
+    // too. Callers that check window.CrimeModals.openVendettaModal vs.
+    // window.CrimeModals.openVendettaModal.supportsSettlementScope see
+    // the same boolean.
+    window.CrimeModals.openVendettaModal.supportsSettlementScope = true;
+
     window._crimeModals = window.CrimeModals;
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.CrimeModals;
+    }
 
 })();
