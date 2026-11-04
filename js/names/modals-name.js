@@ -5,125 +5,25 @@
  *
  * LOCATION: js/modules/names/modals-name.js
  *
- * SCOPE:
- *   - Name generator modal (preview random names, select one)
- *   - Surname history modal (view changes, revert, clear)
+ * Name generator modal (preview random names, select one). Surname
+ * history modal (view changes, revert, clear).
  *
- * OUT OF SCOPE:
- *   - Name/surname generation logic → name-queries.js, name-rules.js
- *   - Name/surname mutations → name-commands.js
- *   - Surname history reads/writes → name-queries.js, name-commands.js
- *   - Country resolution → world.js
- *   - Modal lifecycle → modals-core.js
- *   - Presentation CSS → name-modals.css
- *   - Confirmation dialogs → modals-core.js (confirmDialog)
- *   - Year formatting → formatting.js (formatYear)
+ * CULTURE KEY
+ * -----------
+ * The name generator picks a culture, not a country. There is no
+ * country concept in this module. See name-queries.js's header.
  *
- * SEMANTIC RULES:
- *   - This module is pure UI. It reads via NameQueries, mutates via
- *     NameCommands, and renders. It does not touch storage, masterData,
- *     NameState, or accessors directly.
- *   - Required dependencies throw at load. No silent fallbacks.
- *   - Missing optional data renders as a legitimate UI state.
- *   - Presentation is owned by CSS. No inline style attributes.
- *   - Events are delegated on the modal root, scoped via data-action.
- *   - The generated name is held in local state, not read back from DOM.
- *   - Year formatting delegates to formatting.js's formatYear. The
- *     modal's "no year" fallback ('—') is preserved as a display
- *     convention; every other year value is rendered by the canonical
- *     formatter, which handles year 0 and BC years correctly.
- *   - No browser confirm(). Confirmation goes through confirmDialog.
- *   - No Unicode arrows in buttons. Icons come from icons.js.
- *   - Canonical strings in innerHTML are escaped.
- *
- * PERSISTENCE:
- *   NameCommands no longer save. Every successful command path in this
- *   module calls NameCommands.persist() exactly once, then refreshes
- *   the modal content. A failed persist is a toast, not a thrown
- *   error — the canonical data is already updated and in-memory state
- *   is consistent. The user can retry by triggering the action again.
- *
- *   The name generator modal does not call any command and does not
- *   persist. It only reads (NameQueries.getRandomName). Selecting a
- *   name is a caller concern: the caller decides whether to persist
- *   the selection (and to what).
- *
- * DEFERRALS:
- *   - _renderError auto-clears after 5 seconds. This is deliberate: it
- *     prevents stacking stale error messages. A future improvement is a
- *     dismissable error, but that requires a CSS class and a click
- *     handler; out of scope here.
- *
- * CHARACTER NAMES:
- *   Character display names come from
- *   NameQueries.getCharacterDisplayName(characterId). This module does
- *   not touch accessors directly.
- *
- * ICON CONTRACT:
- *   All icons used by this module (REFRESH, BOOK, UNDO, TRASH) are
- *   required. An unknown icon name throws.
- *
- * REQUIRED CSS:
- *   See name-modals.css. The module emits:
- *     .name-modal
- *     .name-modal__intro
- *     .name-modal__field
- *     .name-modal__label
- *     .name-modal__input
- *     .name-modal__button-row
- *     .name-modal__generate
- *     .name-modal__preview
- *     .name-modal__preview--empty
- *     .name-modal__preview--filled
- *     .name-modal__history
- *     .name-modal__history-title
- *     .name-modal__history-list
- *     .name-modal__history-entry
- *     .name-modal__history-entry--current
- *     .name-modal__history-entry--past
- *     .name-modal__history-year
- *     .name-modal__history-reason
- *     .name-modal__history-surname
- *     .name-modal__history-previous
- *     .name-modal__history-empty
- *     .name-modal__surname-summary
- *     .name-modal__surname-summary-cell
- *     .name-modal__surname-summary-label
- *     .name-modal__surname-summary-value
- *     .name-modal__surname-summary-value--accent
- *     .name-modal__actions
- *     .name-modal__action-button
- *     .name-modal__action-button--danger
- *     .name-modal__error
- *
- * DEPENDENCIES (REQUIRED):
- *   - formatting.js:    escapeHtml, formatYear
- *   - icons.js:         Icons
- *   - modals-core.js:   openModal, confirmDialog
- *   - name-queries.js:  NameQueries
- *   - name-commands.js: NameCommands (including persist)
- *   - world.js:         getCountryPlaces
- *
- * DEPENDENCIES (OPTIONAL):
- *   - None.
- *
- * ICON POLICY: Uses icons.js. No emojis. No Unicode arrows.
+ * PERSISTENCE: unchanged. The surname modal calls NameCommands.persist
+ * after every successful command. The generator does not persist.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Original: pure UI with commands that saved themselves.
- *   Prior revision:
- *     - NameCommands.persist() called after every successful command
- *       path in the surname management modal. Persist failure is a
- *       toast, not a throw.
- *     - _renderError auto-clear documented as deliberate deferral.
- *     - Load-time dependency verification requires NameCommands.persist.
- *   Current revision:
- *     - _formatYear delegates to window.formatYear. Year 0 and BC
- *       years are now rendered by the canonical formatter instead of
- *       String(year). The modal's '—' fallback for missing year is
- *       preserved. formatYear added to the dependency guard.
- *     - No other behavioural change.
+ *   Current revision (culture-keyed):
+ *     - Name generator's selector is a culture list. Drops
+ *       getCountryPlaces from the guard.
+ *     - Calls NameQueries.getRandomName(cultureId, gender).
+ *   Previous revision:
+ *     - _formatYear delegates to window.formatYear.
  * =============================================================================
  */
 
@@ -139,8 +39,7 @@
             'escapeHtml',
             'formatYear',
             'openModal',
-            'confirmDialog',
-            'getCountryPlaces'
+            'confirmDialog'
         ];
         var missing = [];
         for (var i = 0; i < requiredFns.length; i++) {
@@ -151,6 +50,7 @@
         if (typeof window.Icons === 'undefined') missing.push('Icons');
         if (typeof window.NameQueries === 'undefined') missing.push('NameQueries');
         if (typeof window.NameCommands === 'undefined') missing.push('NameCommands');
+        if (typeof window.CultureQueries === 'undefined') missing.push('CultureQueries');
         if (typeof window.NameCommands !== 'undefined'
             && typeof window.NameCommands.persist !== 'function') {
             missing.push('NameCommands.persist');
@@ -193,10 +93,6 @@
         return v === undefined || v === null;
     }
 
-    /**
-     * Returns an icon SVG by name. Unknown names throw: a missing icon
-     * is a programming error, not a UI state.
-     */
     function _icon(name) {
         var svg = window.Icons[name];
         if (typeof svg !== 'string' || svg.length === 0) {
@@ -205,21 +101,6 @@
         return svg;
     }
 
-    /**
-     * Formats a year for display inside the modal.
-     *
-     * Missing (null/undefined) uses the caller-supplied missingText,
-     * defaulting to an em-dash. Every other value delegates to
-     * formatting.js's formatYear, which handles:
-     *   - year 0 → '0' (or '*' if useAsteriskForZero is passed)
-     *   - negative years → '100 BC'
-     *   - non-finite / non-integer numbers → '?'
-     *   - non-number values → '?'
-     *
-     * The delegate keeps the modal's "no year recorded" display
-     * distinct from formatYear's "?" (which means "invalid year,"
-     * not "missing year").
-     */
     function _formatYear(year, missingText) {
         if (_isMissing(year)) return missingText || '—';
         return window.formatYear(year);
@@ -232,14 +113,6 @@
         return surname;
     }
 
-    /**
-     * Renders an error line inside the modal. Auto-clears after 5
-     * seconds. Calling this again while an error is visible removes the
-     * previous one and starts a fresh timer.
-     *
-     * DEFERRAL: 5-second auto-clear is deliberate. A dismissable error
-     * would need a CSS class and a click handler; out of scope here.
-     */
     function _renderError(root, message) {
         if (!root) return;
         var existing = root.querySelector('.name-modal__error');
@@ -259,10 +132,6 @@
         return window.NameQueries.getCharacterDisplayName(characterId);
     }
 
-    /**
-     * Calls NameCommands.persist() and reports a failure via _renderError.
-     * Returns true on success, false on failure.
-     */
     function _persistOrReport(root) {
         var saveResult = window.NameCommands.persist();
         if (saveResult && saveResult.success === false) {
@@ -273,27 +142,9 @@
     }
 
     // =========================================================================
-    // 3. NAME GENERATOR MODAL
+    // 3. NAME GENERATOR MODAL (culture selector)
     // =========================================================================
 
-    /**
-     * Opens the name generator modal.
-     *
-     * Options:
-     *   title       - modal title (default 'Generate Name')
-     *   countryId   - preselect a country
-     *   gender      - 'male' | 'female' | 'all' (default 'all')
-     *   onSelect    - called with the chosen name string when the user
-     *                 confirms. Not called if the user cancels or if no
-     *                 name has been generated. "Open then close without
-     *                 generating" is not signaled separately.
-     *
-     * This modal does not persist. It only reads (NameQueries.getRandomName).
-     * Selecting a name is a caller concern.
-     *
-     * @param {Object} [options]
-     * @returns {Object} the modal handle from openModal
-     */
     function openNameGeneratorModal(options) {
         if (_isMissing(options)) options = {};
         if (typeof options !== 'object' || Array.isArray(options)) {
@@ -301,7 +152,7 @@
         }
 
         var title = _isMissing(options.title) ? 'Generate Name' : options.title;
-        var initialCountryId = _isMissing(options.countryId) ? null : options.countryId;
+        var initialCultureId = _isMissing(options.cultureId) ? null : options.cultureId;
         var initialGender = _isMissing(options.gender) ? 'all' : options.gender;
         var onSelect = _isMissing(options.onSelect) ? null : options.onSelect;
 
@@ -315,43 +166,44 @@
         }
 
         var instanceId = _nextInstanceId();
-        var countrySelectId = instanceId + '-country';
+        var cultureSelectId = instanceId + '-culture';
         var genderSelectId = instanceId + '-gender';
 
         var state = {
             generatedName: null
         };
 
-        var countries = window.getCountryPlaces();
-        if (!Array.isArray(countries)) {
+        var cultures = window.CultureQueries.getAllCultures();
+        if (!Array.isArray(cultures)) {
             throw new Error(
-                'openNameGeneratorModal: getCountryPlaces() did not return an array'
+                'openNameGeneratorModal: CultureQueries.getAllCultures() did not return an array'
             );
         }
 
-        var hasCountries = countries.length > 0;
+        var hasCultures = cultures.length > 0;
 
         var html = '';
         html += '<div class="name-modal">';
 
         html += '<p class="name-modal__intro">'
-             + (hasCountries
-                ? 'Choose a country to draw names from its cultural pool.'
-                : 'No countries with name data are available yet.')
+             + (hasCultures
+                ? 'Choose a culture to draw names from its pool.'
+                : 'No cultures with name data are available yet.')
              + '</p>';
 
         html += '<div class="name-modal__field">';
-        html += '<label class="name-modal__label" for="' + _esc(countrySelectId) + '">Country</label>';
-        html += '<select class="name-modal__input" id="' + _esc(countrySelectId) + '"'
-             + ' data-role="country"'
-             + (hasCountries ? '' : ' disabled') + '>';
-        html += '<option value="">— Select country —</option>';
-        for (var ci = 0; ci < countries.length; ci++) {
-            var country = countries[ci];
-            if (!country || !_hasId(country.id)) continue;
-            var selected = (country.id === initialCountryId) ? ' selected' : '';
-            html += '<option value="' + _esc(country.id) + '"' + selected + '>'
-                 + _esc(country.displayName || country.id)
+        html += '<label class="name-modal__label" for="' + _esc(cultureSelectId) + '">Culture</label>';
+        html += '<select class="name-modal__input" id="' + _esc(cultureSelectId) + '"'
+             + ' data-role="culture"'
+             + (hasCultures ? '' : ' disabled') + '>';
+        html += '<option value="">— Select culture —</option>';
+        for (var ci = 0; ci < cultures.length; ci++) {
+            var culture = cultures[ci];
+            if (!culture || !_hasId(culture.id)) continue;
+            var selected = (culture.id === initialCultureId) ? ' selected' : '';
+            var label = culture.displayName || culture.name || culture.id;
+            html += '<option value="' + _esc(culture.id) + '"' + selected + '>'
+                 + _esc(label)
                  + '</option>';
         }
         html += '</select>';
@@ -397,7 +249,7 @@
     }
 
     function _bindNameGeneratorActions(root, state, onSelect) {
-        var countrySelect = root.querySelector('[data-role="country"]');
+        var cultureSelect = root.querySelector('[data-role="culture"]');
         var genderSelect = root.querySelector('[data-role="gender"]');
         var previewEl = root.querySelector('[data-role="preview"]');
 
@@ -410,24 +262,24 @@
             }
         }
 
-        if (countrySelect) countrySelect.addEventListener('change', _clearPreview);
+        if (cultureSelect) cultureSelect.addEventListener('change', _clearPreview);
         if (genderSelect) genderSelect.addEventListener('change', _clearPreview);
 
         root.addEventListener('click', function(e) {
             var target = e.target.closest('[data-action="generate"]');
             if (!target) return;
 
-            var countryId = countrySelect ? countrySelect.value : '';
+            var cultureId = cultureSelect ? cultureSelect.value : '';
             var gender = genderSelect ? genderSelect.value : 'all';
 
-            if (!countryId) {
-                _renderError(root, 'Please choose a country first.');
+            if (!cultureId) {
+                _renderError(root, 'Please choose a culture first.');
                 return;
             }
 
             var name;
             try {
-                name = window.NameQueries.getRandomName(countryId, gender);
+                name = window.NameQueries.getRandomName(cultureId, gender);
             } catch (err) {
                 _renderError(root, err.message || 'Could not generate name.');
                 return;
@@ -436,7 +288,7 @@
             if (!name) {
                 state.generatedName = null;
                 if (previewEl) {
-                    previewEl.textContent = 'No names available for this country.';
+                    previewEl.textContent = 'No names available for this culture.';
                     previewEl.classList.remove('name-modal__preview--filled');
                     previewEl.classList.add('name-modal__preview--empty');
                 }
@@ -453,18 +305,9 @@
     }
 
     // =========================================================================
-    // 4. SURNAME MANAGEMENT MODAL
+    // 4. SURNAME MANAGEMENT MODAL (unchanged apart from the character projection)
     // =========================================================================
 
-    /**
-     * Opens the surname history modal for a character.
-     *
-     * @param {string} characterId
-     * @param {Function} [onChange]
-     * @returns {Object} the modal handle from openModal
-     * @throws {Error} when characterId is missing or the character does
-     *   not exist
-     */
     function openSurnameManagementModal(characterId, onChange) {
         if (!_hasId(characterId)) {
             throw new Error('openSurnameManagementModal: characterId is required');
@@ -496,14 +339,6 @@
         return modal;
     }
 
-    /**
-     * Builds the modal's HTML from current canonical data. Called at open
-     * time and again after a mutation.
-     *
-     * Assumption: NameQueries.getSurnameChanges returns entries in
-     * chronological order (oldest first). The last entry is the current
-     * surname. This is a domain invariant enforced by NameCommands.
-     */
     function _buildSurnameManagementContent(characterId) {
         var changes = window.NameQueries.getSurnameChanges(characterId);
         var birthSurname = window.NameQueries.getBirthSurname(characterId);
@@ -593,9 +428,6 @@
                     _renderError(root, result.reason || 'Failed to revert surname change.');
                     return;
                 }
-                // Persist. A save failure is reported but does not block
-                // the UI refresh — the canonical data is updated, and the
-                // next successful persist will catch up.
                 _persistOrReport(root);
                 _refreshSurnameModalContent(root, characterId);
                 if (onChange) onChange();
@@ -622,11 +454,6 @@
         });
     }
 
-    /**
-     * Re-renders the surname management content in place. Throws if the
-     * modal body is not found; replacing the root would destroy the
-     * modal shell.
-     */
     function _refreshSurnameModalContent(root, characterId) {
         var contentHost = root.querySelector('.modal-body');
         if (!contentHost) {
