@@ -15,14 +15,11 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 
-    <!-- 3. Shared stylesheets (external, per request) -->
+    <!-- 3. Shared stylesheets -->
     <link rel="stylesheet" href="css/themes.css" />
     <link rel="stylesheet" href="css/common.css" />
 
     <style>
-        /* ==================================================================
-           SETTLEMENT MANAGER — INLINE STYLES
-           ================================================================== */
         html, body { height: 100%; margin: 0; overflow: hidden; }
         body {
             display: flex; flex-direction: column;
@@ -281,9 +278,7 @@
 <!-- SCRIPT LOAD ORDER                                                   -->
 <!-- ================================================================== -->
 
-<!-- ============================================================
-     BLOCK 1 — CORE CONSTANTS (leaf)
-     ============================================================ -->
+<!-- BLOCK 1 — CORE CONSTANTS -->
 <script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
 <script src="js/core/constants/character-constants.js"></script>
@@ -291,23 +286,17 @@
 <script src="js/core/constants/location-constants.js"></script>
 <script src="js/core/constants/relationship-constants.js"></script>
 
-<!-- ============================================================
-     BLOCK 2 — CORE UTILITIES (leaf)
-     ============================================================ -->
+<!-- BLOCK 2 — CORE UTILITIES -->
 <script src="js/core/formatting.js"></script>
 <script src="js/core/icons.js"></script>
 <script src="js/core/collections.js"></script>
 <script src="js/core/ids.js"></script>
 <script src="js/core/randomness.js"></script>
 
-<!-- ============================================================
-     BLOCK 3 — CORE TIME
-     ============================================================ -->
+<!-- BLOCK 3 — CORE TIME -->
 <script src="js/core/time.js"></script>
 
-<!-- ============================================================
-     BLOCK 4 — CORE STORAGE (schema → storage → init)
-     ============================================================ -->
+<!-- BLOCK 4 — CORE STORAGE -->
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
 <script>
@@ -319,16 +308,37 @@
 </script>
 <script src="js/core/accessors.js"></script>
 
-<!-- ============================================================
-     BLOCK 5 — CORE VALIDATION, WORLD, NAMES
-     ============================================================ -->
+<!-- PlaceQueries façade (lazy; LocationState resolves at call time) -->
+<script>
+    (function () {
+        'use strict';
+        window.PlaceQueries = {
+            getPlaceById: function (id) {
+                if (!window.LocationState
+                    || typeof window.LocationState.getPlaceById !== 'function') {
+                    return null;
+                }
+                return window.LocationState.getPlaceById(id);
+            },
+            getPlaceSummaries: function () {
+                return (window.LocationQueries
+                    && typeof window.LocationQueries.getPlaceSummaries === 'function')
+                    ? window.LocationQueries.getPlaceSummaries()
+                    : [];
+            },
+            getAllPlaces: function () {
+                return (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
+            }
+        };
+    })();
+</script>
+
+<!-- BLOCK 5 — CORE VALIDATION, WORLD, NAMES -->
 <script src="js/core/validation.js"></script>
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
 
-<!-- ============================================================
-     BLOCK 6 — CORE UI PRIMITIVES
-     ============================================================ -->
+<!-- BLOCK 6 — CORE UI PRIMITIVES -->
 <script src="js/core/ui.js"></script>
 <script src="js/core/ui-state.js"></script>
 <script src="js/core/modals-core.js"></script>
@@ -337,64 +347,49 @@
 <script src="js/core/tab-manager.js"></script>
 <script src="js/core/exportUtils.js"></script>
 
-<!-- ============================================================
-     BLOCK 7 — CORE INTEGRITY / MAINTENANCE
-     ============================================================ -->
+<!-- BLOCK 7 — CORE INTEGRITY / MAINTENANCE -->
 <script src="js/core/integrity.js"></script>
 <script src="js/core/maintenance.js"></script>
 
-<!-- ============================================================
-     BLOCK 8 — CORE SIMULATION GENERATORS
-     ============================================================ -->
+<!-- BLOCK 8 — CORE SIMULATION GENERATORS -->
 <script src="js/core/simulation-generators.js"></script>
 
-<!-- ============================================================
-     BLOCK 9 — SKILL TAXONOMY
-     ============================================================ -->
+<!-- BLOCK 9 — SKILL TAXONOMY -->
 <script src="js/roles/skill-utils.js"></script>
 
-<!-- ============================================================
-     BLOCK 10 — EVENTS
-     ============================================================ -->
+<!-- BLOCK 9b — EVENT LOGGER -->
+<script src="js/events/eventLogger.js"></script>
+
+<!-- BLOCK 10 — EVENTS -->
 <script src="js/events/timeline-core.js"></script>
 <script src="js/events/census-core.js"></script>
 <script src="js/events/annualProcessing.js"></script>
 <script src="js/events/social-events-system.js"></script>
 
-<!-- ============================================================
-     BLOCK 11 — CHARACTER PURE POLICY
-     ============================================================ -->
+<!-- BLOCK 11 — CHARACTER PURE POLICY -->
 <script src="js/character/family-rules.js"></script>
 <script src="js/character/children-rules.js"></script>
 <script src="js/character/mortality-rules.js"></script>
 
-<!-- ============================================================
-     BLOCK 12 — CHARACTER STATE
-     ============================================================ -->
+<!-- BLOCK 12 — CHARACTER STATE -->
 <script src="js/character/character-state.js"></script>
 <script src="js/character/family-state.js"></script>
 <script src="js/character/children-state.js"></script>
 
-<!-- ============================================================
-     BLOCK 13 — CHARACTER COMMANDS & QUERIES
-     ============================================================ -->
+<!-- BLOCK 13 — CHARACTER COMMANDS & QUERIES -->
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
 <script src="js/character/family-queries.js"></script>
 <script src="js/character/family-commands.js"></script>
 
-<!-- ============================================================
-     BLOCK 14 — CHARACTER AGGREGATION + LIFECYCLE
-     ============================================================ -->
+<!-- BLOCK 14 — CHARACTER AGGREGATION + LIFECYCLE -->
 <script src="js/character/mortality-queries.js"></script>
 <script src="js/character/mortality-statistics.js"></script>
 <script src="js/character/family-statistics.js"></script>
 <script src="js/character/character-statistics.js"></script>
 <script src="js/character/character-lifecycle.js"></script>
 
-<!-- ============================================================
-     BLOCK 14b — SELECTORS
-     ============================================================ -->
+<!-- BLOCK 14b — CHARACTER SELECTOR -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
 <script>
@@ -408,27 +403,20 @@
     }
 </script>
 <script src="js/selectors/modals-char-selector.js"></script>
-<script src="js/selectors/modals-household-selector.js"></script>
 
-<!-- ============================================================
-     BLOCK 15 — CHARACTER FACTORY & CREATION
-     ============================================================ -->
+<!-- BLOCK 15 — CHARACTER FACTORY & CREATION -->
 <script src="js/character/character-factory.js"></script>
 <script src="js/character/character-generator.js"></script>
 <script src="js/character/character-creation-commands.js"></script>
 <script src="js/character/character-deletion-commands.js"></script>
 
-<!-- ============================================================
-     BLOCK 16 — CHARACTER CHILDREN
-     ============================================================ -->
+<!-- BLOCK 16 — CHARACTER CHILDREN -->
 <script src="js/character/children-queries.js"></script>
 <script src="js/character/children-generator.js"></script>
 <script src="js/character/children-commands.js"></script>
 <script src="js/character/children-statistics.js"></script>
 
-<!-- ============================================================
-     BLOCK 17 — NAME SUBSYSTEM
-     ============================================================ -->
+<!-- BLOCK 17 — NAME SUBSYSTEM -->
 <script src="js/names/name-queries.js"></script>
 <script src="js/names/name-rules.js"></script>
 <script src="js/names/names-state.js"></script>
@@ -436,9 +424,7 @@
 <script src="js/names/name-system.js"></script>
 <script src="js/names/modals-name.js"></script>
 
-<!-- ============================================================
-     BLOCK 18 — RANK SUBSYSTEM
-     ============================================================ -->
+<!-- BLOCK 18 — RANK SUBSYSTEM -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
 <script src="js/ranks/rank-state.js"></script>
@@ -450,9 +436,7 @@
 <script src="js/ranks/modals-rank.js"></script>
 <script src="js/ranks/rank-bootstrap.js"></script>
 
-<!-- ============================================================
-     BLOCK 19 — ROLE SUBSYSTEM
-     ============================================================ -->
+<!-- BLOCK 19 — ROLE SUBSYSTEM -->
 <script src="js/roles/role-constants.js"></script>
 <script src="js/roles/role-state.js"></script>
 <script src="js/roles/role-queries.js"></script>
@@ -462,9 +446,7 @@
 <script src="js/roles/modals-roles.js"></script>
 <script src="js/roles/modals-role-select.js"></script>
 
-<!-- ============================================================
-     BLOCK 20 — RELIGION SUBSYSTEM
-     ============================================================ -->
+<!-- BLOCK 20 — RELIGION SUBSYSTEM -->
 <script src="js/religion/religion-constants.js"></script>
 <script src="js/religion/religion-format.js"></script>
 <script src="js/religion/religion-validation.js"></script>
@@ -480,9 +462,7 @@
 <script src="js/religion/modals-religion.js"></script>
 <script src="js/religion/religion-bootstrap.js"></script>
 
-<!-- ============================================================
-     BLOCK 21 — CULTURE SUBSYSTEM
-     ============================================================ -->
+<!-- BLOCK 21 — CULTURE SUBSYSTEM -->
 <script src="js/culture/culture-constants.js"></script>
 <script src="js/culture/culture-validation.js"></script>
 <script src="js/culture/culture-state.js"></script>
@@ -495,18 +475,47 @@
 <script src="js/culture/modals-culture.js"></script>
 <script src="js/culture/culture-bootstrap.js"></script>
 
-<!-- ============================================================
-     BLOCK 22 — RELATIONSHIP BASE
-     ============================================================ -->
+<!-- BLOCK 22 — RELATIONSHIP BASE -->
 <script src="js/relationships/relationship-types.js"></script>
 <script src="js/relationships/relationship-utils.js"></script>
 <script src="js/relationships/relationship-state.js"></script>
 <script src="js/relationships/relationship-queries.js"></script>
 <script src="js/relationships/relationship-commands.js"></script>
 
-<!-- ============================================================
-     BLOCK 23 — RELATIONSHIP PER-ARCHETYPE RULES
-     ============================================================ -->
+<!-- BLOCK 22b — RELATIONSHIP FLAT-GLOBAL SHIM -->
+<script>
+    (function () {
+        'use strict';
+        if (!window.RelationshipCommands) return;
+        var RC = window.RelationshipCommands;
+        if (typeof RC.createRelationship === 'function'
+            && typeof window.createRelationship !== 'function') {
+            window.createRelationship = function (a, b, options) {
+                return RC.createRelationship(a, b, options);
+            };
+        }
+        if (typeof RC.endRelationship === 'function'
+            && typeof window.endRelationship !== 'function') {
+            window.endRelationship = function (id, year, reason) {
+                return RC.endRelationship(id, year, reason);
+            };
+        }
+        if (typeof RC.updateRelationship === 'function'
+            && typeof window.updateRelationship !== 'function') {
+            window.updateRelationship = function (id, patch) {
+                return RC.updateRelationship(id, patch);
+            };
+        }
+        if (typeof RC.getRelationshipById === 'function'
+            && typeof window.getRelationshipById !== 'function') {
+            window.getRelationshipById = function (id) {
+                return RC.getRelationshipById(id);
+            };
+        }
+    })();
+</script>
+
+<!-- BLOCK 23 — RELATIONSHIP PER-ARCHETYPE RULES -->
 <script src="js/relationships/romance-rules.js"></script>
 <script src="js/relationships/friendship-rules.js"></script>
 <script src="js/relationships/rivalry-rules.js"></script>
@@ -515,9 +524,7 @@
 <script src="js/relationships/affair-rules.js"></script>
 <script src="js/relationships/matchmaking-rules.js"></script>
 
-<!-- ============================================================
-     BLOCK 24 — RELATIONSHIP PER-ARCHETYPE QUERIES
-     ============================================================ -->
+<!-- BLOCK 24 — RELATIONSHIP PER-ARCHETYPE QUERIES -->
 <script src="js/relationships/romance-queries.js"></script>
 <script src="js/relationships/friendship-queries.js"></script>
 <script src="js/relationships/rivalry-queries.js"></script>
@@ -526,9 +533,7 @@
 <script src="js/relationships/affair-queries.js"></script>
 <script src="js/relationships/matchmaking-queries.js"></script>
 
-<!-- ============================================================
-     BLOCK 25 — RELATIONSHIP PER-ARCHETYPE COMMANDS
-     ============================================================ -->
+<!-- BLOCK 25 — RELATIONSHIP PER-ARCHETYPE COMMANDS -->
 <script src="js/relationships/romance-commands.js"></script>
 <script src="js/relationships/friendship-commands.js"></script>
 <script src="js/relationships/rivalry-commands.js"></script>
@@ -536,27 +541,19 @@
 <script src="js/relationships/affair-commands.js"></script>
 <script src="js/relationships/professional-commands.js"></script>
 
-<!-- ============================================================
-     BLOCK 26 — RELATIONSHIP FINDER, UI METADATA, INTEGRATIONS
-     ============================================================ -->
+<!-- BLOCK 26 — RELATIONSHIP FINDER, UI METADATA, INTEGRATIONS -->
 <script src="js/relationships/relationship-finder-queries.js"></script>
 <script src="js/relationships/relationship-ui-metadata.js"></script>
 <script src="js/relationships/relationship-integrations.js"></script>
 
-<!-- ============================================================
-     BLOCK 27 — RELATIONSHIP MODALS
-     ============================================================ -->
+<!-- BLOCK 27 — RELATIONSHIP MODALS -->
 <script src="js/relationships/modals-relationship.js"></script>
 <script src="js/relationships/modals-friendship.js"></script>
 
-<!-- ============================================================
-     BLOCK 28 — RELATIONSHIP BOOTSTRAP
-     ============================================================ -->
+<!-- BLOCK 28 — RELATIONSHIP BOOTSTRAP -->
 <script src="js/relationships/relationship-bootstrap.js"></script>
 
-<!-- ============================================================
-     BLOCK 29 — APPRENTICESHIP SUBSYSTEM
-     ============================================================ -->
+<!-- BLOCK 29 — APPRENTICESHIP SUBSYSTEM -->
 <script src="js/apprenticeship/apprenticeship-constants.js"></script>
 <script src="js/apprenticeship/apprenticeship-rules.js"></script>
 <script src="js/apprenticeship/apprenticeship-queries.js"></script>
@@ -564,15 +561,14 @@
 <script src="js/apprenticeship/professional-knowledge-commands.js"></script>
 <script src="js/apprenticeship/modals-apprenticeship.js"></script>
 
-<!-- ============================================================
-     BLOCK 30 — HOUSEHOLD AND RESIDENCE SUBSYSTEM
-     ============================================================ -->
+<!-- BLOCK 30 — HOUSEHOLD AND RESIDENCE SUBSYSTEM -->
 <script src="js/households/household-constants.js"></script>
 <script src="js/households/household-rules.js"></script>
 <script src="js/households/household-view-models.js"></script>
 <script src="js/households/household-orchestration.js"></script>
 <script src="js/households/household-state.js"></script>
 <script src="js/households/household-queries.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
 <script src="js/households/household-commands.js"></script>
 <script src="js/households/household-economy.js"></script>
 <script src="js/households/household-assignment.js"></script>
@@ -593,9 +589,7 @@
 <script src="js/households/modals-residence-history.js"></script>
 <script src="js/households/modals-residence-vacancy.js"></script>
 
-<!-- ============================================================
-     BLOCK 31 — INDUSTRY SUBSYSTEM
-     ============================================================ -->
+<!-- BLOCK 31 — INDUSTRY SUBSYSTEM -->
 <script src="js/industry/industry-constants.js"></script>
 <script src="js/industry/industry-economics.js"></script>
 <script src="js/industry/industry-type-defaults.js"></script>
@@ -613,9 +607,7 @@
 <script src="js/industry/modals-industry.js"></script>
 <script src="js/industry/industry-bootstrap.js"></script>
 
-<!-- ============================================================
-     BLOCK 32 — DISASTER SUBSYSTEM
-     ============================================================ -->
+<!-- BLOCK 32 — DISASTER SUBSYSTEM -->
 <script src="js/disaster/disaster-constants.js"></script>
 <script src="js/disaster/disaster-state.js"></script>
 <script src="js/disaster/disaster-queries.js"></script>
@@ -626,13 +618,9 @@
 <script src="js/disaster/disaster-ui-stats.js"></script>
 <script src="js/disaster/disaster-bootstrap.js"></script>
 
-<!-- ============================================================
-     BLOCK 33 — (intentionally empty, block parity)
-     ============================================================ -->
+<!-- BLOCK 33 — (intentionally empty) -->
 
-<!-- ============================================================
-     BLOCK 34 — LOCATION SUBSYSTEM
-     ============================================================ -->
+<!-- BLOCK 34 — LOCATION SUBSYSTEM -->
 <script src="js/location/location-state.js"></script>
 <script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-commands.js"></script>
@@ -647,34 +635,7 @@
 <script src="js/location/modals-moves.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
-<!-- ============================================================
-     BLOCK 34b — PlaceQueries FAÇADE
-     ============================================================ -->
-<script>
-    (function () {
-        'use strict';
-        if (!window.LocationState || typeof window.LocationState.getPlaceById !== 'function') {
-            throw new Error('place-queries shim: location-state.js must load first.');
-        }
-        window.PlaceQueries = {
-            getPlaceById: function (id) {
-                return window.LocationState.getPlaceById(id);
-            },
-            getPlaceSummaries: function () {
-                return (window.LocationQueries && typeof window.LocationQueries.getPlaceSummaries === 'function')
-                    ? window.LocationQueries.getPlaceSummaries()
-                    : [];
-            },
-            getAllPlaces: function () {
-                return (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
-            }
-        };
-    })();
-</script>
-
-<!-- ============================================================
-     BLOCK 35 — SETTLEMENT SUBSYSTEM
-     ============================================================ -->
+<!-- BLOCK 35 — SETTLEMENT SUBSYSTEM -->
 <script src="js/settlement/settlement-fiscal-definitions.js"></script>
 <script src="js/settlement/settlement-government-definitions.js"></script>
 <script src="js/settlement/settlement-rank-definitions.js"></script>
@@ -719,9 +680,7 @@
 <script src="js/settlement/settlement-view-models.js"></script>
 <script src="js/settlement/settlement-ui-state.js"></script>
 
-<!-- ============================================================
-     BLOCK 36 — EDUCATION SUBSYSTEM
-     ============================================================ -->
+<!-- BLOCK 36 — EDUCATION SUBSYSTEM -->
 <script src="js/education/education-constants.js"></script>
 <script src="js/education/education-rules.js"></script>
 <script src="js/education/education-state.js"></script>
@@ -733,9 +692,7 @@
 <script src="js/education/education-ui-list.js"></script>
 <script src="js/education/modals-education.js"></script>
 
-<!-- ============================================================
-     BLOCK 37 — CRIME SUBSYSTEM
-     ============================================================ -->
+<!-- BLOCK 37 — CRIME SUBSYSTEM -->
 <script src="js/crime/crime-constants.js"></script>
 <script src="js/crime/crime-state.js"></script>
 <script src="js/crime/crime-law-integration.js"></script>
@@ -747,9 +704,7 @@
 <script src="js/crime/vendetta-system.js"></script>
 <script src="js/crime/crime-bootstrap.js"></script>
 
-<!-- ============================================================
-     BLOCK 38 — GOVERNMENT SUBSYSTEM
-     ============================================================ -->
+<!-- BLOCK 38 — GOVERNMENT SUBSYSTEM -->
 <script src="js/government/government-constants.js"></script>
 <script src="js/government/government-state.js"></script>
 <script src="js/government/government-rules.js"></script>
@@ -766,9 +721,7 @@
 <script src="js/government/modals-government-economy.js"></script>
 <script src="js/government/settlement-law-formatters.js"></script>
 
-<!-- ============================================================
-     BLOCK 39 — CHARACTER UI MODALS
-     ============================================================ -->
+<!-- BLOCK 39 — CHARACTER UI MODALS -->
 <script src="js/character/character-ui-list.js"></script>
 <script src="js/character/modals-character.js"></script>
 <script src="js/character/modals-children-birth.js"></script>
@@ -777,9 +730,7 @@
 <script src="js/character/modals-death.js"></script>
 <script src="js/character/character-system.js"></script>
 
-<!-- ============================================================
-     BLOCK 40 — SETTLEMENT UI + TAB RENDERERS
-     ============================================================ -->
+<!-- BLOCK 40 — SETTLEMENT UI + TAB RENDERERS -->
 <script src="js/settlement/settlement-tabs.js"></script>
 <script src="js/settlement/settlement-ui-list.js"></script>
 <script src="js/settlement/modals-settlement-core.js"></script>
@@ -826,17 +777,13 @@
 <script src="js/tabs/settlement-roles-tab.js"></script>
 <script src="js/tabs/settlement-crime-tab.js"></script>
 
-<!-- ============================================================
-     BLOCK 41 — OPTIONAL STATE FACADE
-     ============================================================ -->
+<!-- BLOCK 41 — OPTIONAL STATE FACADE -->
 <script src="js/core/census-state.js"></script>
 <script src="js/core/matchmaker-state.js"></script>
 <script src="js/core/misc-state.js"></script>
 <script src="js/core/state.js"></script>
 
-<!-- ============================================================
-     APPLICATION BOOTSTRAP (function calls — after all script tags)
-     ============================================================ -->
+<!-- APPLICATION BOOTSTRAP -->
 <script>
     (function () {
         'use strict';
@@ -852,13 +799,5 @@
     })();
 </script>
 
-<!-- ============================================================
-     DO NOT LOAD (deprecated compatibility façades)
-     ============================================================
-       js/government/government-system.js
-       js/government/government-assignment.js
-       js/government/government-laws.js
-       js/households/modals-residence-snapshot.js
-     ============================================================ -->
 </body>
 </html>
