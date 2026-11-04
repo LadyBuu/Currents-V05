@@ -16,7 +16,7 @@
  *   - opens the industry modals via IndustryModals (modals-industry.js)
  *   - opens the industry list via IndustryModals.openEnterpriseListModal
  *   - processes per-enterprise via IndustryProcessor.processAnnualEnterprise
- *     and persists once per batch
+ *     and settlement batches via IndustryProcessor.processEnterprisesForLocation
  *   - does not read canonical settlement data directly
  *   - does not read canonical industry data directly (IndustryQueries only)
  *   - does not compute domain values
@@ -25,7 +25,8 @@
  *   - does not mutate canonical settlement data
  *   - does not mutate canonical industry data directly (only through the
  *     processor and the modals)
- *   - does not persist ad hoc — one persist at the end of a batch
+ *   - does not persist ad hoc — the processor owns persistence for
+ *     batches; the modals own persistence for single mutations
  *   - does not fabricate missing domain values
  *   - does not render raw null/undefined as "null" or "undefined"
  *   - does not use a recursion guard
@@ -103,27 +104,30 @@
  *   IndustryProcessor.processAllEnterprises(), which walks EVERY
  *   enterprise in the catalogue — not just this settlement's. The
  *   button's label and confirm dialog said "this settlement"; the
- *   actual scope was the world. This tab now processes only the
- *   enterprises at context.locationId.
+ *   actual scope was the world.
  *
- *   Because IndustryProcessor does not yet expose a location-scoped
- *   batch method, the tab composes one from the primitives:
+ *   The tab now delegates to
+ *   IndustryProcessor.processEnterprisesForLocation(locationId), which:
  *
- *     for each eligible enterprise at the settlement:
- *       IndustryProcessor.processAnnualEnterprise(id, { persist: false })
- *     then a single IndustryCommands.persist() at the end
+ *     - selects enterprises via IndustryQueries.getEnterprisesByLocation
+ *     - enforces the eligibility gate (status === 'active') inside the
+ *       processor, not in this tab
+ *     - persists once at the end of the batch
  *
- *   If IndustryProcessor.processEnterprisesForLocation(locationId,
- *   options) exists (a future addition), the tab prefers it — that
- *   method would have the same contract but live in the processor
- *   module where it belongs.
+ *   The tab does NOT pre-filter by status. The processor's eligibility
+ *   gate skips ineligible enterprises and does NOT count them as
+ *   failures. The prior revision pre-filtered `s.status !== 'active'`
+ *   here, which duplicated the processor's gate and — because the
+ *   single-enterprise entry returns { success: false } for ineligible
+ *   records — would have produced spurious failures if the pre-filter
+ *   were ever removed in isolation. Both concerns are now owned by the
+ *   processor.
  *
- *   The per-enterprise call inside the loop is what the details
- *   modal's "Process Year" button uses; the tab reuses the same
- *   public entry point rather than re-deriving the calculation. The
- *   only difference from calling `processAnnualEnterprise(id)` is
- *   that the tab passes `persist: false` and persists once at the
- *   end.
+ *   Scope note: processEnterprisesForLocation matches the settlement's
+ *   OWN location exactly. It does not walk the location subtree. This
+ *   matches the tab's historical scope ("only the enterprises at
+ *   context.locationId"). A future subtree-wide entry point is a
+ *   processor addition, not a tab change.
  *
  * INDUSTRY HYDRATION GUARD
  * ------------------------
@@ -149,35 +153,26 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - "Process All" is now settlement-scoped. The prior
- *       implementation called IndustryProcessor.processAllEnterprises(),
- *       which processes every enterprise in the catalogue. The
- *       confirmation dialog said "this settlement" while the actual
- *       scope was the world. The tab now calls
- *       _processSettlementEnterprises(locationId), which filters
- *       IQ.getEnterprisesByLocation to eligible enterprises, calls
- *       processAnnualEnterprise(id, { persist: false }) per enterprise,
- *       and persists once at the end. If
- *       IndustryProcessor.processEnterprisesForLocation exists, it is
- *       used directly.
- *     - The per-enterprise row template now renders row.workersLabel
- *       directly. The prior implementation called
- *       _fmtNumber(row.workersLabel ? null : null), which always
- *       produced '—'. row.workersLabel is a string like '3 / 10', not
- *       a number, so _fmtNumber was the wrong formatter; the value is
- *       now escaped and rendered as-is.
- *     - Defensive IndustryState hydration. The tab calls
- *       _ensureIndustryStateHydrated() before any IndustryQueries
- *       read. If IndustryState.isHydrated() is false, it calls
- *       hydrateFromMasterData(enterprises, types) from masterData.
- *       This matches government-type-manager-tab.js and makes the tab
- *       render reliably when the settlement page loads before
- *       IndustryBootstrap.init() has run.
- *     - Removed the unused `stats = IQ.getEnterpriseStatistics()`
- *       assignment and its misleading comment ("For the stats row,
- *       compute a location-scoped subset"). The tab builds
- *       locationStats from the location-scoped summaries it already
- *       has; the world-wide aggregate was never used.
+ *     - _processSettlementEnterprises now delegates entirely to
+ *       IndustryProcessor.processEnterprisesForLocation(locationId).
+ *       The composed fallback (query summaries, filter to active, call
+ *       processAnnualEnterprise per enterprise with persist:false,
+ *       persist once) is deleted. The processor owns eligibility, the
+ *       batch loop, and the single persist. The tab's
+ *       `s.status !== 'active'` pre-filter — which duplicated the
+ *       processor's gate and would have produced spurious failures if
+ *       removed in isolation, because processAnnualEnterprise returns
+ *       { success: false } for ineligible records — is gone with the
+ *       fallback.
+ *     - _handleProcessAll continues to read the same result shape
+ *       (success, processed, skipped, failed, persist) that
+ *       processEnterprisesForLocation produces.
+ *     - The per-enterprise row template continues to render
+ *       row.workersLabel directly (a string like '3 / 10', not a
+ *       number).
+ *     - Defensive IndustryState hydration (from prior revision) is
+ *       retained: _ensureIndustryStateHydrated() runs before any
+ *       IndustryQueries read.
  *     - No behavioural change to details, edit, or create paths.
  *   Previous revisions:
  *     - Rewritten against the industry module set and the settlement
@@ -226,17 +221,6 @@
             );
         }
         return P;
-    }
-
-    function _getIndustryCommands() {
-        var C = window.IndustryCommands;
-        if (!C || typeof C.persist !== 'function') {
-            throw new Error(
-                'settlement-industry-tab: IndustryCommands is missing. ' +
-                'Load industry-commands.js before this tab.'
-            );
-        }
-        return C;
     }
 
     function _getIndustryState() {
@@ -471,44 +455,54 @@
     /**
      * Settlement-scoped batch processing.
      *
-     * See AGGREGATE PROCESSING in the header. Prefers
-     * IndustryProcessor.processEnterprisesForLocation when present;
-     * otherwise composes the same semantics from the per-enterprise
-     * primitive.
+     * Delegates entirely to
+     * IndustryProcessor.processEnterprisesForLocation(locationId), which:
+     *   - selects enterprises at this location
+     *   - enforces the eligibility gate (status === 'active') inside
+     *     the processor
+     *   - persists once at the end of the batch
+     *
+     * The tab does NOT pre-filter by status. See AGGREGATE PROCESSING
+     * in the header for why the pre-filter is now redundant and would
+     * produce spurious failures if reintroduced here.
+     *
+     * Returns the processor's structured result:
+     *   { success, attempted, processed, skipped, failed, results,
+     *     failures, persist, locationId }
      *
      * @param {string} locationId
-     * @returns {Object} structured result
-     *   { success, attempted, processed, skipped, failed, results, failures,
-     *     persist }
+     * @returns {Object}
      */
     function _processSettlementEnterprises(locationId) {
         var processor = _getIndustryProcessor();
-        var IC = _getIndustryCommands();
 
-        // Preferred path: a processor method with the same contract.
-        if (typeof processor.processEnterprisesForLocation === 'function') {
-            try {
-                return processor.processEnterprisesForLocation(locationId);
-            } catch (err) {
-                return {
-                    success: false,
-                    attempted: 0,
-                    processed: 0,
-                    skipped: 0,
-                    failed: 0,
-                    results: [],
-                    failures: [{
-                        reason: err && err.message ? err.message : 'unknown error'
-                    }],
-                    persist: null
-                };
-            }
+        if (typeof processor.processEnterprisesForLocation !== 'function') {
+            // Hard failure, not a silent fallback. The tab is written
+            // against the processor's location-scoped entry point;
+            // a missing method is a load-order / version mismatch
+            // that must surface, not be papered over with a local
+            // loop that re-implements the eligibility gate.
+            return {
+                success: false,
+                attempted: 0,
+                processed: 0,
+                skipped: 0,
+                failed: 0,
+                results: [],
+                failures: [{
+                    reason:
+                        'IndustryProcessor.processEnterprisesForLocation ' +
+                        'is not available. Load a version of ' +
+                        'industry-processor.js that exports the ' +
+                        'location-scoped batch entry point.'
+                }],
+                persist: null,
+                locationId: locationId
+            };
         }
 
-        // Composed path.
-        var summaries;
         try {
-            summaries = _getIndustryQueries().getLocationEnterprisesSummary(locationId);
+            return processor.processEnterprisesForLocation(locationId);
         } catch (err) {
             return {
                 success: false,
@@ -518,72 +512,14 @@
                 failed: 0,
                 results: [],
                 failures: [{
-                    reason: err && err.message ? err.message : 'unknown error'
+                    reason: err && err.message
+                        ? err.message
+                        : 'unknown error'
                 }],
-                persist: null
+                persist: null,
+                locationId: locationId
             };
         }
-
-        var results = [];
-        var failures = [];
-        var skipped = 0;
-        var attempted = 0;
-
-        for (var i = 0; i < summaries.length; i++) {
-            var s = summaries[i];
-            if (!s || !s.id) continue;
-            // Only 'active' enterprises process. Matches the
-            // processor's own eligibility gate.
-            if (s.status !== 'active') continue;
-
-            attempted++;
-
-            var result;
-            try {
-                result = processor.processAnnualEnterprise(s.id, { persist: false });
-            } catch (err) {
-                failures.push({
-                    enterpriseId: s.id,
-                    enterpriseName: s.name || null,
-                    reason: err && err.message ? err.message : 'process threw'
-                });
-                continue;
-            }
-
-            if (result && result.success === true) {
-                if (result.skipped === true) {
-                    skipped++;
-                } else {
-                    results.push(result);
-                }
-            } else {
-                failures.push({
-                    enterpriseId: s.id,
-                    enterpriseName: s.name || null,
-                    reason: (result && result.reason) || 'process failed'
-                });
-            }
-        }
-
-        // Persist once at the end. If nothing was actually mutated
-        // (results.length === 0), skip the save — a batch that
-        // produced no state changes has nothing to write.
-        var persistResult = null;
-        if (results.length > 0) {
-            persistResult = IC.persist();
-        }
-
-        return {
-            success: failures.length === 0 &&
-                (!persistResult || persistResult.success === true),
-            attempted: attempted,
-            processed: results.length,
-            skipped: skipped,
-            failed: failures.length,
-            results: results,
-            failures: failures,
-            persist: persistResult
-        };
     }
 
     function _handleProcessAll(locationId) {
