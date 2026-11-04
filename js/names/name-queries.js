@@ -5,24 +5,32 @@
  *
  * LOCATION: js/modules/names/name-queries.js
  *
- * SCOPE:
- *   - Read-only retrieval of name lists, ancestor data, surname history
- *   - Character display-name projection
- *   - Random name and surname selection
- *   - Country surname rule retrieval
- *   - Delegation of country resolution to world.js
+ * Read-only retrieval of name lists, ancestor data, surname history,
+ * character display-name projection, random name and surname selection,
+ * and culture surname rule retrieval.
  *
- * OUT OF SCOPE:
- *   - Rule application → name-rules.js
- *   - Mutations → name-commands.js
- *   - Persisted data ownership → storage.js / storage-schema.js
- *   - Runtime caches → name-state.js
- *   - Base-name extraction → name-rules.js (canonical owner)
- *   - Presentation → modals / UI
- *   - Randomness implementation → randomness.js
- *   - Family graph traversal → family-queries.js
+ * CULTURE KEY
+ * -----------
+ * Name data is keyed by culture.id in masterData.data.nameLists. There
+ * is no country key. The subsystem was migrated wholesale: there is no
+ * compatibility layer for country-keyed reads, because there is no data
+ * keyed by country to read. Country facts belong to the location domain,
+ * not to the name domain.
  *
- * SEMANTIC RULES:
+ * A culture's name data is:
+ *   masterData.data.nameLists[cultureId] = {
+ *     male:     [string, ...],
+ *     female:   [string, ...],
+ *     surnames: [string, ...],
+ *     rules:    { type: 'family'|'patronymic'|'chain'|'random', ... } | null
+ *   }
+ *
+ * The shape is identical to the pre-migration shape. Only the key
+ * changed. This is why the migration required no data rewrite: an
+ * empty save is empty on both sides.
+ *
+ * SEMANTIC RULES
+ * --------------
  *   - Missing input returns null (singular) or [] (collection).
  *   - Invalid explicit arguments throw.
  *   - Malformed canonical data throws; corruption is not collapsed into
@@ -32,114 +40,34 @@
  *   - Returned objects are defensive clones. Mutation for commands goes
  *     through NamesState, not through this module.
  *   - This module is read-only.
- *   - No recursion guard.
- *
- * ERROR MESSAGES:
- *   When a read fails, the error message names the failing level:
- *     - "accessors.getNameLists() returned non-object" — accessor broken
- *     - "name list for '<countryId>' is not an object" — data broken
- *   The distinction matters because the fix is different.
- *
- * ANCESTOR MODEL:
- *   Slots (all resolved against the starting character):
- *     father, mother,
- *     paternal_grandfather, paternal_grandmother,
- *     maternal_grandfather, maternal_grandmother,
- *     paternal_great_grandfather, maternal_great_grandfather
- *
- *   _resolveAncestor walks one step at a time via FamilyQueries. Each
- *   slot is a fixed composition of _getParentByRole calls:
- *
- *     father                     = _getParentByRole(char.id, 'father')
- *     paternal_grandfather       = _getParentByRole(father.id, 'father')
- *     paternal_great_grandfather = _getParentByRole(pgf.id, 'father')
- *
- *   There are no arbitrary-depth slots, so recursion terminates at the
- *   leaves of the slot grammar.
- *
- *   getAncestorData(character, slot) returns
- *     { id, firstName, surname }
- *   where `firstName` is the ancestor's raw `name` field. It is NOT
- *   stripped of epithets; that transformation is owned by
- *   NameRules.getBaseFirstName and applied by callers that need it.
- *
- *   getAncestorNames(character, order, source) resolves each slot in
- *   `order` against the starting character. There is no `depth`
- *   parameter; `order.length` is the depth.
- *
- *   Deduplication in getAncestorNames is by ancestor ID. If two slots
- *   resolve to the same ancestor (e.g. a consanguineous marriage), the
- *   name is returned once.
- *
- * PARENTAGE SOURCE:
- *   Parentage is NOT stored on the character record. It lives in
- *   FamilyState as parentChildEdges, and is read through FamilyQueries.
- *   The character record's historical fields (motherId, fatherId,
- *   adoptedParents, etc.) were removed when parentage moved to the
- *   edge model; this module must not read them.
- *
- *   FamilyQueries is an OPTIONAL dependency of this module:
- *     - present  → ancestor lookups resolve correctly
- *     - absent   → ancestor lookups return null (name-only environments
- *                  continue to function; ancestor-based rule types
- *                  produce no surname, which is the documented
- *                  "no usable data" outcome, not a fabrication)
- *
- *   Production load order always loads family-queries.js before this
- *   module (per the character subsystem's bootstrap). The optional
- *   status exists so that bare test harnesses and name-generation-only
- *   paths still work without pulling in the family subsystem.
- *
- * NAME STATE:
- *   NamesState is an OPTIONAL cache hint. The character record is
- *   canonical. If NamesState is present, reads consult it first; if
- *   not, reads fall through to the character record directly. State's
- *   accessors are named getMutable* to make the mutability contract
- *   explicit; this module uses them as a cache hint and then clones.
- *
- *   The lookup is on window.NamesState (plural), which is the
- *   name-state.js primary export. window.NameState (singular) is a
- *   backward-compat alias and is not consulted here, because relying
- *   on the alias would couple this read path to the alias being
- *   installed.
- *
- * CLONING:
- *   _clone delegates to window.deepClone (collections.js) when
- *   available. deepClone handles cycles and unsafe keys, which the
- *   local implementation does not. The local implementation is retained
- *   as a fallback for bare test harnesses that do not load
- *   collections.js. In production the delegation path is always taken.
  *
  * DEPENDENCIES (REQUIRED):
- *   - accessors.js:  getNameLists, getCharacterById
- *   - randomness.js: pickRandom
- *   - world.js:      getCharacterCountryId, getCountryIdForPlace
+ *   - accessors.js:     getNameLists, getCharacterById
+ *   - randomness.js:    pickRandom
+ *   - CultureQueries:   getCultureForCharacter (resolves a character's
+ *                       culture for random selection and rules lookup)
  *
  * DEPENDENCIES (OPTIONAL):
  *   - collections.js:   deepClone — used when present, local fallback
- *                       otherwise
  *   - family-queries.js: FamilyQueries.getParentsByRole — required for
  *                        ancestor lookups; absence yields null
  *   - name-state.js:    NamesState (cache hint only)
  *
- * ICON POLICY: No emojis. No icons.
- *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Original: cache-hint-based read module with defensive clone.
- *   Prior revisions:
- *     - Error messages name the failing level (accessor vs. data).
- *     - Ancestor recursion bounded-by-grammar documented.
- *     - getAncestorNames dedup reason documented.
- *     - Cache-hint lookup migrated from window.NameState (singular) to
- *       window.NamesState (plural).
- *   Current revision:
- *     - _resolveAncestor no longer reads character.fatherId /
- *       character.motherId. Those fields were removed when parentage
- *       moved to parentChildEdges. Ancestor resolution now delegates to
- *       FamilyQueries.getParentsByRole, which is an optional dependency.
+ *   Current revision (culture-keyed):
+ *     - Name data is keyed by culture.id. Country keys are gone.
+ *     - getRandomName(cultureId, gender), getRandomSurname(cultureId),
+ *       getCountrySurnameRules(cultureId) are renamed to
+ *       getCultureSurnameRules(cultureId) — the family of functions
+ *       take a culture ID, not a country ID.
+ *     - getCharacterCultureId replaces getCharacterCountryId, resolving
+ *       through CultureQueries.getCultureForCharacter.
+ *     - getCountryIdForPlace is removed. The name subsystem does not
+ *       resolve country facts.
+ *   Previous revision:
+ *     - _resolveAncestor delegates to FamilyQueries.getParentsByRole.
  *     - _clone delegates to window.deepClone when available.
- *     - No public signature change, no public return-shape change.
  * =============================================================================
  */
 
@@ -154,15 +82,17 @@
         var requiredFns = [
             'getNameLists',
             'getCharacterById',
-            'pickRandom',
-            'getCharacterCountryId',
-            'getCountryIdForPlace'
+            'pickRandom'
         ];
         var missing = [];
         for (var i = 0; i < requiredFns.length; i++) {
             if (typeof window[requiredFns[i]] !== 'function') {
                 missing.push(requiredFns[i]);
             }
+        }
+        if (typeof window.CultureQueries === 'undefined'
+            || typeof window.CultureQueries.getCultureForCharacter !== 'function') {
+            missing.push('CultureQueries.getCultureForCharacter');
         }
         if (missing.length > 0) {
             throw new Error(
@@ -207,12 +137,6 @@
             || slot === 'maternal_great_grandfather';
     }
 
-    /**
-     * Local clone fallback used when collections.js's deepClone is not
-     * loaded. Handles primitives, arrays, and plain objects. Does NOT
-     * handle cycles — callers must guarantee acyclic input (name lists
-     * and surname histories are always acyclic by schema).
-     */
     function _localClone(value) {
         if (Array.isArray(value)) {
             var arr = [];
@@ -232,14 +156,6 @@
         return value;
     }
 
-    /**
-     * Deep-clones plain objects and arrays. Primitives pass through.
-     * Used to hand callers a projection they cannot use to mutate
-     * canonical data.
-     *
-     * Delegates to window.deepClone when available (handles cycles and
-     * unsafe keys). Falls back to the local implementation otherwise.
-     */
     function _clone(value) {
         if (typeof window.deepClone === 'function') {
             return window.deepClone(value);
@@ -248,16 +164,12 @@
     }
 
     // =========================================================================
-    // 2. NAME LIST RETRIEVAL
+    // 2. CULTURE NAME LIST RETRIEVAL
     // =========================================================================
 
     /**
-     * Returns a defensive copy of the full name-list map, keyed by place ID.
-     *
-     * If the accessor returns something that is not a plain object, this
-     * throws. The error names the accessor, because the fix is in the
-     * accessor or in whatever populates masterData.data.nameLists, not
-     * in this module.
+     * Returns a defensive copy of the full name-list map, keyed by
+     * culture ID.
      */
     function getNameLists() {
         var lists = window.getNameLists();
@@ -271,15 +183,11 @@
     }
 
     /**
-     * Returns a defensive copy of the name list for a place ID, or null.
-     *
-     * A place with no configured list returns null. A place whose list is
-     * present but malformed (e.g. `male` is not an array) throws with the
-     * place ID in the message, so the caller knows exactly which entry is
-     * broken.
+     * Returns a defensive copy of the name list for a culture ID, or
+     * null when the culture has no configured list.
      */
-    function getNameList(countryId) {
-        if (!_hasId(countryId)) return null;
+    function getNameList(cultureId) {
+        if (!_hasId(cultureId)) return null;
 
         var lists = window.getNameLists();
         if (!_isPlainObject(lists)) {
@@ -289,11 +197,12 @@
             );
         }
 
-        var list = lists[countryId];
+        var list = lists[cultureId];
         if (_isMissing(list)) return null;
         if (!_isPlainObject(list)) {
             throw new Error(
-                'name-queries.js: name list for "' + countryId + '" is not an object'
+                'name-queries.js: name list for culture "' + cultureId +
+                '" is not an object'
             );
         }
 
@@ -301,10 +210,10 @@
     }
 
     /**
-     * Returns the list of place IDs that have a configured name list.
+     * Returns the list of culture IDs that have a configured name list.
      * Sorted for determinism.
      */
-    function getCountryIdsWithNameLists() {
+    function getCultureIdsWithNameLists() {
         var lists = window.getNameLists();
         if (!_isPlainObject(lists)) return [];
         return Object.keys(lists).filter(function(id) {
@@ -315,24 +224,18 @@
     // =========================================================================
     // 3. RANDOM NAME AND SURNAME SELECTION
     // =========================================================================
-    //
-    // These consume the canonical RNG stream. They never cache.
-    //
-    // If the requested pool is empty, the function returns null. It does
-    // not fall back to another pool or another country. A silent fallback
-    // would produce a name from the wrong culture.
 
     /**
-     * Picks a random given name from a country's name list.
+     * Picks a random given name from a culture's name list.
      *
-     * @param {string} countryId
+     * @param {string} cultureId
      * @param {string} [gender] - 'male' | 'female' | 'all' (default 'all')
      * @returns {string|null}
-     * @throws {Error} for invalid countryId or unknown gender
+     * @throws {Error} for invalid cultureId or unknown gender
      */
-    function getRandomName(countryId, gender) {
-        if (!_hasId(countryId)) {
-            throw new Error('getRandomName: countryId must be a non-empty string');
+    function getRandomName(cultureId, gender) {
+        if (!_hasId(cultureId)) {
+            throw new Error('getRandomName: cultureId must be a non-empty string');
         }
         if (_isMissing(gender)) {
             gender = 'all';
@@ -342,7 +245,7 @@
             );
         }
 
-        var list = getNameList(countryId);
+        var list = getNameList(cultureId);
         if (!list) return null;
 
         var pool;
@@ -362,17 +265,13 @@
     }
 
     /**
-     * Picks a random surname from a country's name list.
-     *
-     * @param {string} countryId
-     * @returns {string|null}
-     * @throws {Error} for invalid countryId
+     * Picks a random surname from a culture's name list.
      */
-    function getRandomSurname(countryId) {
-        if (!_hasId(countryId)) {
-            throw new Error('getRandomSurname: countryId must be a non-empty string');
+    function getRandomSurname(cultureId) {
+        if (!_hasId(cultureId)) {
+            throw new Error('getRandomSurname: cultureId must be a non-empty string');
         }
-        var list = getNameList(countryId);
+        var list = getNameList(cultureId);
         if (!list) return null;
 
         var pool = Array.isArray(list.surnames) ? list.surnames : [];
@@ -386,19 +285,6 @@
     // 4. CHARACTER PROJECTION
     // =========================================================================
 
-    /**
-     * Returns the character's display name (the `name` field), or null
-     * when the character does not exist.
-     *
-     * If the character exists but has no string `name` field, returns ''.
-     * (Distinct from null: null = character not found; '' = found but
-     * nameless. In practice, nameless characters shouldn't exist, but the
-     * projection is honest about what it found.)
-     *
-     * This is the only character-record projection this module exposes.
-     * It exists so that UI modules do not reach for getCharacterById
-     * directly.
-     */
     function getCharacterDisplayName(characterId) {
         if (!_hasId(characterId)) return null;
         var character = window.getCharacterById(characterId);
@@ -409,28 +295,12 @@
     // =========================================================================
     // 5. PARENTAGE SOURCE (FamilyQueries bridge)
     // =========================================================================
-    //
-    // Parentage is read through FamilyQueries, not the character record.
-    // FamilyQueries is an optional dependency: absent in bare test
-    // harnesses, present in production. When absent, every ancestor
-    // lookup returns null — which is the documented "no usable data"
-    // outcome for ancestor-based rule types.
 
     function _familyAvailable() {
         return typeof window.FamilyQueries !== 'undefined'
             && typeof window.FamilyQueries.getParentsByRole === 'function';
     }
 
-    /**
-     * Returns the biological parent projection for the given role, or
-     * null when:
-     *   - FamilyQueries is not loaded
-     *   - the character has no parent in that role
-     *   - the parent record cannot be resolved
-     *
-     * Only biological parentage is considered. Legal and social parents
-     * do not participate in ancestor chains for naming purposes.
-     */
     function _getParentByRole(characterId, role) {
         if (!_hasId(characterId)) return null;
         if (role !== 'father' && role !== 'mother') return null;
@@ -454,20 +324,6 @@
     // 6. ANCESTOR DATA
     // =========================================================================
 
-    /**
-     * Resolves one ancestor slot relative to the starting character.
-     *
-     * Each slot is a fixed composition of _getParentByRole calls:
-     *   father                     = one step from char
-     *     paternal_grandfather     = two steps (father, father)
-     *     paternal_great_grandfather = three steps (father, father, father)
-     *   mother                     = one step from char
-     *     maternal_grandfather     = two steps (mother, father)
-     *     maternal_great_grandfather = three steps (mother, father, father)
-     *
-     * The recursion is bounded by the slot grammar; there is no
-     * arbitrary-depth slot, so this terminates.
-     */
     function _resolveAncestor(character, slot) {
         if (!character || !_hasId(character.id)) return null;
 
@@ -514,15 +370,6 @@
         return null;
     }
 
-    /**
-     * Returns the ancestor record for a slot, or null.
-     *
-     * `firstName` is the ancestor's raw `name` field. It is NOT stripped
-     * of epithets. Callers that need the base given name call
-     * NameRules.getBaseFirstName(ancestor).
-     *
-     * @returns {{ id: string, firstName: string, surname: string }|null}
-     */
     function getAncestorData(character, slot) {
         if (!character || !_hasId(character.id)) return null;
         if (!_isValidAncestorSlot(slot)) return null;
@@ -537,23 +384,6 @@
         };
     }
 
-    /**
-     * Resolves each absolute slot in `order` against the starting
-     * character and returns the requested source field.
-     *
-     * Deduplication is by ancestor ID. If two slots resolve to the same
-     * ancestor (e.g. through consanguineous marriage), the name appears
-     * once. This is what a caller wants: "give me the names of each
-     * distinct ancestor in this chain."
-     *
-     * @param {Object} character
-     * @param {string[]} order - list of absolute ancestor slots
-     * @param {string} source - 'firstname' | 'surname'
-     * @returns {string[]} resolved names, deduplicated by ancestor ID,
-     *   in the order the slots were resolved
-     *
-     * @throws {Error} for invalid character, order, or source
-     */
     function getAncestorNames(character, order, source) {
         if (!character || !_hasId(character.id)) return [];
         if (!Array.isArray(order)) {
@@ -593,16 +423,6 @@
     // =========================================================================
     // 7. SURNAME HISTORY
     // =========================================================================
-    //
-    // The canonical owner of surname history is the character record. This
-    // module reads it, optionally through the NamesState cache, and returns
-    // a defensive copy so callers cannot mutate canonical data by accident.
-    //
-    // Three failure modes, three responses:
-    //   - character does not exist          → null (singular) / [] (entries)
-    //   - character exists, no surnameHistory → null / []
-    //   - surnameHistory present, malformed   → throw with character id
-    //
 
     function _readSurnameHistory(characterId) {
         if (!_hasId(characterId)) return null;
@@ -627,33 +447,18 @@
         return history;
     }
 
-    /**
-     * Returns a defensive copy of the surname history object for a
-     * character, or null when no history exists.
-     *
-     * Shape: { birthSurname: string, entries: Object[], lastUpdated: number }
-     */
     function getSurnameHistory(characterId) {
         var history = _readSurnameHistory(characterId);
         if (!history) return null;
         return _clone(history);
     }
 
-    /**
-     * Returns the birth surname of a character, or null when no history
-     * exists. Distinguishes "missing history" (null) from "empty surname"
-     * ('').
-     */
     function getBirthSurname(characterId) {
         var history = _readSurnameHistory(characterId);
         if (!history) return null;
         return typeof history.birthSurname === 'string' ? history.birthSurname : '';
     }
 
-    /**
-     * Returns the character's current surname, or null when the character
-     * does not exist. Empty string is a legitimate value.
-     */
     function getCurrentSurname(characterId) {
         if (!_hasId(characterId)) return null;
         var character = window.getCharacterById(characterId);
@@ -661,17 +466,6 @@
         return typeof character.surname === 'string' ? character.surname : '';
     }
 
-    /**
-     * Returns a defensive copy of the surname-change entries, or [].
-     *
-     * Three states collapse to []:
-     *   - character does not exist
-     *   - character exists but has no surnameHistory
-     *   - history exists with an empty entries array
-     *
-     * A history object whose `entries` is present but not an array is
-     * malformed and throws.
-     */
     function getSurnameChanges(characterId) {
         var history = _readSurnameHistory(characterId);
         if (!history) return [];
@@ -685,52 +479,42 @@
         return _clone(history.entries);
     }
 
-    /**
-     * Returns the number of recorded surname changes.
-     */
     function getSurnameChangeCount(characterId) {
         return getSurnameChanges(characterId).length;
     }
 
     // =========================================================================
-    // 8. COUNTRY RULES AND RESOLUTION
+    // 8. CULTURE RULES AND RESOLUTION
     // =========================================================================
 
     /**
      * Returns a defensive copy of the surname rules configured for a
-     * country, or null when no list or no rules are configured.
-     *
-     * A rules object present but malformed throws with the country ID.
+     * culture, or null when no list or no rules are configured.
      */
-    function getCountrySurnameRules(countryId) {
-        if (!_hasId(countryId)) return null;
-        var list = getNameList(countryId);
+    function getCultureSurnameRules(cultureId) {
+        if (!_hasId(cultureId)) return null;
+        var list = getNameList(cultureId);
         if (!list) return null;
         if (_isMissing(list.rules)) return null;
         if (!_isPlainObject(list.rules)) {
             throw new Error(
-                'name-queries.js: rules for "' + countryId + '" are malformed'
+                'name-queries.js: rules for culture "' + cultureId + '" are malformed'
             );
         }
         return list.rules;
     }
 
     /**
-     * Resolves the country ID for a character. Delegates to world.js.
-     * The canonical definition lives there; this facade exists so that
-     * name-domain consumers do not need a direct World dependency.
+     * Resolves the culture ID for a character. Delegates to
+     * CultureQueries.getCultureForCharacter, which applies the
+     * precedence: explicit cultureId → primary culture of current
+     * location (semantic, honours moves and birthplace) → primary
+     * culture of birthplace → null.
      */
-    function getCharacterCountryId(characterId) {
+    function getCharacterCultureId(characterId) {
         if (!_hasId(characterId)) return null;
-        return window.getCharacterCountryId(characterId);
-    }
-
-    /**
-     * Resolves the country ID for a place ID. Delegates to world.js.
-     */
-    function getCountryIdForPlace(placeId) {
-        if (!_hasId(placeId)) return null;
-        return window.getCountryIdForPlace(placeId);
+        var culture = window.CultureQueries.getCultureForCharacter(characterId);
+        return culture ? culture.id : null;
     }
 
     // =========================================================================
@@ -738,10 +522,10 @@
     // =========================================================================
 
     window.NameQueries = {
-        // Name lists
+        // Name lists (keyed by culture)
         getNameLists: getNameLists,
         getNameList: getNameList,
-        getCountryIdsWithNameLists: getCountryIdsWithNameLists,
+        getCultureIdsWithNameLists: getCultureIdsWithNameLists,
 
         // Random selection
         getRandomName: getRandomName,
@@ -761,10 +545,9 @@
         getSurnameChanges: getSurnameChanges,
         getSurnameChangeCount: getSurnameChangeCount,
 
-        // Country
-        getCountrySurnameRules: getCountrySurnameRules,
-        getCharacterCountryId: getCharacterCountryId,
-        getCountryIdForPlace: getCountryIdForPlace
+        // Culture rules and resolution
+        getCultureSurnameRules: getCultureSurnameRules,
+        getCharacterCultureId: getCharacterCultureId
     };
 
 })();
