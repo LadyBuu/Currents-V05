@@ -1628,8 +1628,69 @@
         }
     }
 
+    /**
+     * Move the .is-selected class from the previous row to the new row
+     * without rebuilding the tree.
+     *
+     * LocationUI renders each row as:
+     *   <div class="location-tree-item is-selected" data-node-id="…">…</div>
+     * (see js/location/location-ui-list.js::_renderNode)
+     *
+     * So the toggle is a class add/remove on the two rows. If the new
+     * node isn't in the DOM (shouldn't happen for a click on a visible
+     * row, but defensive), we fall back to a full rebuild.
+     */
+    function _applySidebarSelection(previousId, nextId) {
+        var container = document.getElementById('placeList');
+        if (!container) return;
+
+        var newRow = container.querySelector(
+            '.location-tree-item[data-node-id="' + _cssEscape(nextId) + '"]'
+        );
+
+        if (!newRow) {
+            setupSidebar();
+            return;
+        }
+
+        if (previousId) {
+            var prevRow = container.querySelector(
+                '.location-tree-item[data-node-id="' + _cssEscape(previousId) + '"]'
+            );
+            if (prevRow) prevRow.classList.remove('is-selected');
+        }
+
+        newRow.classList.add('is-selected');
+    }
+
+    /**
+     * Minimal CSS.escape shim. Node ids from generateId('place') only
+     * contain [A-Za-z0-9_], but the shim means an id with a stray
+     * character can't break the selector.
+     */
+    function _cssEscape(s) {
+        if (typeof window.CSS !== 'undefined' &&
+            typeof window.CSS.escape === 'function') {
+            return window.CSS.escape(s);
+        }
+        return String(s).replace(/([^A-Za-z0-9_-])/g, '\\$1');
+    }
+
     function selectLocation(id) {
         if (!id) return;
+
+        if (id === currentPlaceId) {
+            // Re-selecting the current place: still re-render the tab in
+            // case the caller expects a refresh, but skip the sidebar
+            // class churn.
+            if (typeof window.renderLocationManagerTab === 'function') {
+                try { window.renderLocationManagerTab('panelContent', id); }
+                catch (e) { console.error(e); }
+            }
+            return;
+        }
+
+        var previousId = currentPlaceId;
         currentPlaceId = id;
 
         var editBtn = document.getElementById('editPlaceBtn');
@@ -1643,8 +1704,10 @@
             catch (e) { /* ignore */ }
         }
 
-        setupSidebar();
+        // Update the sidebar highlight in place — no tree rebuild.
+        _applySidebarSelection(previousId, id);
 
+        // Render the tab.
         if (typeof window.renderLocationManagerTab === 'function') {
             try { window.renderLocationManagerTab('panelContent', id); }
             catch (e) { console.error(e); }
