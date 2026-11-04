@@ -42,18 +42,90 @@
  *
  * Data sources:
  *
- *   Role distribution and apprenticeship data are owned by the
- *   Character / Role domains. This module reads through their public
- *   query APIs. It does not compute the distribution itself.
+ *   SETTLEMENT-SCOPED AGGREGATES.
  *
- *   Education stats are owned by SettlementEducationQueries. This
- *   module reads through that module's API.
+ *   The three modals read settlement-scoped views of role and
+ *   apprenticeship data through SettlementQueries:
  *
- *   If a query returns null (settlement missing) the modal renders an
- *   error state. If a query returns empty results (no roles, no
- *   apprentices, no schools), the modal renders an explicit empty
- *   state. The two are distinguished.
+ *     SettlementQueries.getSettlementRoleStats(locationId)
+ *       Role-skill tier distribution over the settlement subtree.
+ *       Returns:
+ *         {
+ *           locationId, totalProfessions, uniqueRoles, characterCount,
+ *           roleIds, countsByTier, byCategory, topRoles,
+ *           mastersByRole, apprenticesByRole, canTeachByRole,
+ *           primaryByRole
+ *         }
+ *       Returns null for a missing settlement.
  *
+ *     SettlementQueries.getSettlementApprenticeshipDensity(locationId)
+ *       Active apprenticeship relationship counts over the settlement
+ *       subtree. Returns:
+ *         {
+ *           locationId, totalMasters, totalApprentices,
+ *           masterToApprenticeRatio, topRoles, topMasters
+ *         }
+ *       Returns null for a missing settlement.
+ *
+ *   Education stats are owned by SettlementEducationQueries (unchanged
+ *   in this revision; the education modal is untouched by the roles
+ *   rewrite except that it now reads a named helper
+ *   _getSettlementEducationQueries for symmetry with the other two).
+ *
+ *   Prior revisions of openRolesModal and openApprenticeshipsModal
+ *   called RoleQueries.getSettlementRoleStats and
+ *   RoleQueries.getSettlementApprenticeshipDensity. Neither method
+ *   exists on RoleQueries (role-queries.js exports the world-wide
+ *   getRoleStatistics / getRoleStatisticsBatch; it does not export
+ *   settlement-scoped aggregates). Both modals therefore threw
+ *   "Role data not available." on every invocation. The settlement-
+ *   scoped aggregates now live on SettlementQueries and the modals
+ *   read them there.
+ *
+ *   The RoleQueries dependency is retained because openRolesModal
+ *   still uses RoleQueries.getRoleById to resolve display names for
+ *   category-role rows. That is a world-wide role lookup; the
+ *   settlement-scoped aggregate carries the ids, and the role catalogue
+ *   carries the names.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - openRolesModal now reads
+ *       SettlementQueries.getSettlementRoleStats(locationId) instead of
+ *       the phantom RoleQueries.getSettlementRoleStats. The phantom
+ *       never existed; every invocation threw "Role data not
+ *       available." Fixed.
+ *     - openRolesModal renders topRoles directly from the aggregate.
+ *       The aggregate's `topRoles` already carries `name` and
+ *       `percentage`; the modal no longer re-derives percentages
+ *       from count / totalProfessions. Output shape unchanged.
+ *     - openRolesModal renders category breakdown directly from the
+ *       aggregate's `byCategory`. The aggregate already carries each
+ *       category's role list with names and counts; the modal no
+ *       longer calls RoleQueries.getRoleById per role to fill in
+ *       names.
+ *     - openApprenticeshipsModal now reads
+ *       SettlementQueries.getSettlementApprenticeshipDensity(locationId)
+ *       instead of the phantom
+ *       RoleQueries.getSettlementApprenticeshipDensity. Fixed.
+ *     - openApprenticeshipsModal renders topMasters directly from the
+ *       aggregate's `topMasters` (with masterName already resolved).
+ *       The modal no longer calls getCharacterById per master.
+ *     - Both modals format the master:apprentice ratio from the
+ *       aggregate's `masterToApprenticeRatio` (already rounded to one
+ *       decimal). The modal does not divide inline.
+ *     - Added _getSettlementQueries helper for symmetry with the
+ *       already-present _getPlaceQueries / _getEducationQueries /
+ *       _getRoleQueries helpers.
+ *     - Header Data sources section rewritten to describe the
+ *       settlement-scoped aggregates.
+ *     - openEducationModal unchanged.
+ *   Previous revisions:
+ *     - _getRoleQueries().getSettlementRoleStats and
+ *       _getRoleQueries().getSettlementApprenticeshipDensity were the
+ *       data sources. Both are phantom (never existed on
+ *       role-queries.js). Both modals were dead code.
  * =============================================================================
  */
 
@@ -97,10 +169,11 @@
         return _escapeHtml(value.toLocaleString());
     }
 
-    /**
-     * Opens a modal via the core modal shell. Returns the modal element,
-     * or null if openModal returned an unexpected shape.
-     */
+    function _fmtRatio(value) {
+        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
+        return _escapeHtml(String(value)) + ':1';
+    }
+
     function _openModal(options) {
         var result = window.openModal(options);
         if (!result) return null;
@@ -125,7 +198,7 @@
 
         var stats;
         try {
-            stats = _getRoleQueries().getSettlementRoleStats(locationId);
+            stats = _getSettlementQueries().getSettlementRoleStats(locationId);
         } catch (err) {
             if (typeof console !== 'undefined' && console.error) {
                 console.error('openRolesModal: role stats unavailable', err);
@@ -134,55 +207,91 @@
             return;
         }
 
+        if (!stats) {
+            _toast('Role data not available.', 'error');
+            return;
+        }
+
         var content = '';
         content += '<div class="roles-view">';
 
-        if (!stats || stats.totalProfessions === 0) {
-            content += '<div class="roles-view__empty">No professions found in this settlement.</div>';
+        if (stats.totalProfessions === 0) {
+            content += '<div class="roles-view__empty">' +
+                'No professions found in this settlement.' +
+                '</div>';
         } else {
             content += '<div class="roles-view__header">';
-            content += '<span>' + _fmtNumber(stats.totalProfessions) + ' professions</span>';
-            content += '<span>' + _fmtNumber(stats.uniqueRoles) + ' unique roles</span>';
+            content += '<span>' + _fmtNumber(stats.totalProfessions) +
+                ' professions</span>';
+            content += '<span>' + _fmtNumber(stats.uniqueRoles) +
+                ' unique roles</span>';
             content += '</div>';
 
             if (stats.byCategory) {
-                content += '<section class="roles-view__section">';
-                content += '<h3>By Category</h3>';
-                content += '<ul class="roles-view__list">';
-                var categories = Object.keys(stats.byCategory);
-                categories.sort(function (a, b) {
-                    return (stats.byCategory[b].count || 0) - (stats.byCategory[a].count || 0);
-                });
-                for (var i = 0; i < categories.length; i++) {
-                    var cat = stats.byCategory[categories[i]];
-                    var pct = stats.totalProfessions > 0
-                        ? Math.round((cat.count / stats.totalProfessions) * 100)
-                        : 0;
-                    content += '<li class="roles-view__item">';
-                    content += '<span class="roles-view__name">' + _escapeHtml(cat.name) + '</span>';
-                    content += '<span class="roles-view__bar"><span class="roles-view__bar-fill" style="width:' + pct + '%"></span></span>';
-                    content += '<span class="roles-view__count">' + _fmtNumber(cat.count) + '</span>';
-                    content += '</li>';
+                var categoryIds = Object.keys(stats.byCategory);
+                if (categoryIds.length > 0) {
+                    categoryIds.sort(function (a, b) {
+                        return (stats.byCategory[b].count || 0) -
+                            (stats.byCategory[a].count || 0);
+                    });
+
+                    content += '<section class="roles-view__section">';
+                    content += '<h3>By Category</h3>';
+                    content += '<ul class="roles-view__list">';
+
+                    for (var i = 0; i < categoryIds.length; i++) {
+                        var catId = categoryIds[i];
+                        var cat = stats.byCategory[catId];
+                        var catCount = (typeof cat.count === 'number') ? cat.count : 0;
+                        var pct = stats.totalProfessions > 0
+                            ? Math.round((catCount / stats.totalProfessions) * 100)
+                            : 0;
+                        var catLabel = _categoryLabel(cat, catId);
+
+                        content += '<li class="roles-view__item">';
+                        content += '<span class="roles-view__name">' +
+                            _escapeHtml(catLabel) + '</span>';
+                        content += '<span class="roles-view__bar">' +
+                            '<span class="roles-view__bar-fill" style="width:' +
+                            pct + '%"></span></span>';
+                        content += '<span class="roles-view__count">' +
+                            _fmtNumber(catCount) + '</span>';
+                        content += '</li>';
+                    }
+
+                    content += '</ul>';
+                    content += '</section>';
                 }
-                content += '</ul>';
-                content += '</section>';
             }
 
-            if (stats.topRoles && stats.topRoles.length > 0) {
+            if (Array.isArray(stats.topRoles) && stats.topRoles.length > 0) {
                 content += '<section class="roles-view__section">';
                 content += '<h3>Top Roles</h3>';
                 content += '<ul class="roles-view__list">';
+
                 for (var j = 0; j < stats.topRoles.length; j++) {
                     var role = stats.topRoles[j];
-                    var share = typeof role.percentage === 'number' ? role.percentage : 0;
+                    if (!role) continue;
+                    var share = (typeof role.percentage === 'number')
+                        ? role.percentage
+                        : 0;
+                    var roleName = role.name || role.id || 'Unnamed';
+                    var roleCount = (typeof role.count === 'number')
+                        ? role.count
+                        : 0;
+
                     content += '<li class="roles-view__item">';
-                    content += '<span class="roles-view__name">' + _escapeHtml(role.name) + '</span>';
-                    content += '<span class="roles-view__bar"><span class="roles-view__bar-fill" style="width:' + share + '%"></span></span>';
+                    content += '<span class="roles-view__name">' +
+                        _escapeHtml(roleName) + '</span>';
+                    content += '<span class="roles-view__bar">' +
+                        '<span class="roles-view__bar-fill" style="width:' +
+                        share + '%"></span></span>';
                     content += '<span class="roles-view__count">' +
-                        _fmtNumber(role.count) + ' (' + _escapeHtml(share) + '%)' +
+                        _fmtNumber(roleCount) + ' (' + _escapeHtml(String(share)) + '%)' +
                         '</span>';
                     content += '</li>';
                 }
+
                 content += '</ul>';
                 content += '</section>';
             }
@@ -200,6 +309,23 @@
         });
     }
 
+    /**
+     * Resolves the display label for a category entry in the aggregate's
+     * byCategory map. The aggregate already puts the resolved category
+     * name on the first role entry (from RoleState.getCategories). If
+     * the category is empty of roles, fall back to the category id.
+     */
+    function _categoryLabel(cat, catId) {
+        if (cat && Array.isArray(cat.roles) && cat.roles.length > 0) {
+            var first = cat.roles[0];
+            if (first && typeof first.categoryName === 'string' &&
+                first.categoryName.length > 0) {
+                return first.categoryName;
+            }
+        }
+        return catId || 'Uncategorized';
+    }
+
     // =========================================================================
     // 4. APPRENTICESHIPS MODAL
     // =========================================================================
@@ -213,7 +339,7 @@
 
         var density;
         try {
-            density = _getRoleQueries().getSettlementApprenticeshipDensity(locationId);
+            density = _getSettlementQueries().getSettlementApprenticeshipDensity(locationId);
         } catch (err) {
             if (typeof console !== 'undefined' && console.error) {
                 console.error('openApprenticeshipsModal: data unavailable', err);
@@ -222,58 +348,73 @@
             return;
         }
 
+        if (!density) {
+            _toast('Apprenticeship data not available.', 'error');
+            return;
+        }
+
         var content = '';
         content += '<div class="apprenticeship-view">';
 
-        if (!density) {
-            content += '<div class="apprenticeship-view__empty">No apprenticeship data available.</div>';
-        } else {
-            content += '<div class="apprenticeship-view__stats">';
-            content += '<div class="apprenticeship-view__stat">';
-            content += '<div class="apprenticeship-view__label">Masters</div>';
-            content += '<div class="apprenticeship-view__value">' + _fmtNumber(density.totalMasters) + '</div>';
-            content += '</div>';
-            content += '<div class="apprenticeship-view__stat">';
-            content += '<div class="apprenticeship-view__label">Apprentices</div>';
-            content += '<div class="apprenticeship-view__value">' + _fmtNumber(density.totalApprentices) + '</div>';
-            content += '</div>';
-            content += '<div class="apprenticeship-view__stat">';
-            content += '<div class="apprenticeship-view__label">Ratio (Master:Apprentice)</div>';
-            content += '<div class="apprenticeship-view__value">' + _escapeHtml(density.masterToApprenticeRatio) + ':1</div>';
-            content += '</div>';
-            content += '</div>';
+        content += '<div class="apprenticeship-view__stats">';
+        content += '<div class="apprenticeship-view__stat">';
+        content += '<div class="apprenticeship-view__label">Masters</div>';
+        content += '<div class="apprenticeship-view__value">' +
+            _fmtNumber(density.totalMasters) + '</div>';
+        content += '</div>';
+        content += '<div class="apprenticeship-view__stat">';
+        content += '<div class="apprenticeship-view__label">Apprentices</div>';
+        content += '<div class="apprenticeship-view__value">' +
+            _fmtNumber(density.totalApprentices) + '</div>';
+        content += '</div>';
+        content += '<div class="apprenticeship-view__stat">';
+        content += '<div class="apprenticeship-view__label">Ratio (Master:Apprentice)</div>';
+        content += '<div class="apprenticeship-view__value">' +
+            _fmtRatio(density.masterToApprenticeRatio) + '</div>';
+        content += '</div>';
+        content += '</div>';
 
-            if (Array.isArray(density.topRoles) && density.topRoles.length > 0) {
-                content += '<section class="apprenticeship-view__section">';
-                content += '<h3>Apprentices by Role</h3>';
-                content += '<ul class="apprenticeship-view__list">';
-                for (var i = 0; i < density.topRoles.length; i++) {
-                    var role = density.topRoles[i];
-                    content += '<li class="apprenticeship-view__item">';
-                    content += '<span class="apprenticeship-view__name">' + _escapeHtml(role.name) + '</span>';
-                    content += '<span class="apprenticeship-view__count">' + _fmtNumber(role.count) + '</span>';
-                    content += '</li>';
-                }
-                content += '</ul>';
-                content += '</section>';
+        if (Array.isArray(density.topRoles) && density.topRoles.length > 0) {
+            content += '<section class="apprenticeship-view__section">';
+            content += '<h3>Apprentices by Role</h3>';
+            content += '<ul class="apprenticeship-view__list">';
+
+            for (var i = 0; i < density.topRoles.length; i++) {
+                var role = density.topRoles[i];
+                if (!role) continue;
+                content += '<li class="apprenticeship-view__item">';
+                content += '<span class="apprenticeship-view__name">' +
+                    _escapeHtml(role.roleName || role.roleId || 'Unknown') +
+                    '</span>';
+                content += '<span class="apprenticeship-view__count">' +
+                    _fmtNumber(role.count) + '</span>';
+                content += '</li>';
             }
 
-            if (Array.isArray(density.topMasters) && density.topMasters.length > 0) {
-                content += '<section class="apprenticeship-view__section">';
-                content += '<h3>Top Masters</h3>';
-                content += '<ul class="apprenticeship-view__list">';
-                for (var j = 0; j < density.topMasters.length; j++) {
-                    var master = density.topMasters[j];
-                    content += '<li class="apprenticeship-view__item">';
-                    content += '<span class="apprenticeship-view__name">' + _escapeHtml(master.name) + '</span>';
-                    content += '<span class="apprenticeship-view__count">' +
-                        _fmtNumber(master.apprenticeCount) + ' apprentice(s)' +
-                        '</span>';
-                    content += '</li>';
-                }
-                content += '</ul>';
-                content += '</section>';
+            content += '</ul>';
+            content += '</section>';
+        }
+
+        if (Array.isArray(density.topMasters) && density.topMasters.length > 0) {
+            content += '<section class="apprenticeship-view__section">';
+            content += '<h3>Top Masters</h3>';
+            content += '<ul class="apprenticeship-view__list">';
+
+            for (var j = 0; j < density.topMasters.length; j++) {
+                var master = density.topMasters[j];
+                if (!master) continue;
+                content += '<li class="apprenticeship-view__item">';
+                content += '<span class="apprenticeship-view__name">' +
+                    _escapeHtml(master.masterName || master.masterId || 'Unknown') +
+                    '</span>';
+                content += '<span class="apprenticeship-view__count">' +
+                    _fmtNumber(master.apprenticeCount) + ' apprentice(s)' +
+                    '</span>';
+                content += '</li>';
             }
+
+            content += '</ul>';
+            content += '</section>';
         }
 
         content += '</div>';
@@ -318,27 +459,29 @@
         content += '<div class="education-view">';
 
         if (!stats) {
-            content += '<div class="education-view__empty">No education data available.</div>';
+            content += '<div class="education-view__empty">' +
+                'No education data available.</div>';
         } else {
-            // Header stats
             content += '<div class="education-view__stats">';
             content += '<div class="education-view__stat">';
             content += '<div class="education-view__label">Schools</div>';
-            content += '<div class="education-view__value">' + _fmtNumber(stats.schoolCount) + '</div>';
+            content += '<div class="education-view__value">' +
+                _fmtNumber(stats.schoolCount) + '</div>';
             content += '</div>';
             content += '<div class="education-view__stat">';
             content += '<div class="education-view__label">Literacy Rate</div>';
-            content += '<div class="education-view__value">' + _fmtNumber(stats.literacyRate) + '%</div>';
+            content += '<div class="education-view__value">' +
+                _fmtNumber(stats.literacyRate) + '%</div>';
             content += '</div>';
             content += '<div class="education-view__stat">';
             content += '<div class="education-view__label">Literate Population</div>';
             content += '<div class="education-view__value">' +
-                _fmtNumber(stats.literateCount) + ' / ' + _fmtNumber(stats.totalPopulation) +
+                _fmtNumber(stats.literateCount) + ' / ' +
+                _fmtNumber(stats.totalPopulation) +
                 '</div>';
             content += '</div>';
             content += '</div>';
 
-            // Education level distribution
             if (stats.educationLevels) {
                 content += '<section class="education-view__section">';
                 content += '<h3>Education Levels</h3>';
@@ -350,37 +493,42 @@
                     var count = stats.educationLevels[level.id] || 0;
                     var pct = Math.round((count / totalPop) * 100);
                     content += '<li class="education-view__item">';
-                    content += '<span class="education-view__name">' + _escapeHtml(level.name) + '</span>';
-                    content += '<span class="education-view__bar"><span class="education-view__bar-fill" style="width:' + pct + '%"></span></span>';
-                    content += '<span class="education-view__count">' + _fmtNumber(count) + '</span>';
+                    content += '<span class="education-view__name">' +
+                        _escapeHtml(level.name) + '</span>';
+                    content += '<span class="education-view__bar">' +
+                        '<span class="education-view__bar-fill" style="width:' +
+                        pct + '%"></span></span>';
+                    content += '<span class="education-view__count">' +
+                        _fmtNumber(count) + '</span>';
                     content += '</li>';
                 }
                 content += '</ul>';
                 content += '</section>';
             }
 
-            // Capacity
             if (capacity) {
                 content += '<section class="education-view__section">';
                 content += '<h3>Capacity</h3>';
                 content += '<div class="education-view__field">';
                 content += '<span class="education-view__field-label">Total Students</span>';
-                content += '<span class="education-view__field-value">' + _fmtNumber(capacity.totalStudents) + '</span>';
+                content += '<span class="education-view__field-value">' +
+                    _fmtNumber(capacity.totalStudents) + '</span>';
                 content += '</div>';
                 content += '<div class="education-view__field">';
                 content += '<span class="education-view__field-label">Total Teachers</span>';
-                content += '<span class="education-view__field-value">' + _fmtNumber(capacity.totalTeachers) + '</span>';
+                content += '<span class="education-view__field-value">' +
+                    _fmtNumber(capacity.totalTeachers) + '</span>';
                 content += '</div>';
                 if (typeof capacity.studentTeacherRatio === 'number') {
                     content += '<div class="education-view__field">';
                     content += '<span class="education-view__field-label">Student:Teacher Ratio</span>';
-                    content += '<span class="education-view__field-value">' + _fmtNumber(capacity.studentTeacherRatio) + ':1</span>';
+                    content += '<span class="education-view__field-value">' +
+                        _fmtNumber(capacity.studentTeacherRatio) + ':1</span>';
                     content += '</div>';
                 }
                 content += '</section>';
             }
 
-            // School list
             if (Array.isArray(schools) && schools.length > 0) {
                 content += '<section class="education-view__section">';
                 content += '<h3>Schools</h3>';
@@ -388,7 +536,8 @@
                 for (var j = 0; j < schools.length; j++) {
                     var school = schools[j];
                     content += '<li class="education-view__item">';
-                    content += '<span class="education-view__name">' + _escapeHtml(school.name) + '</span>';
+                    content += '<span class="education-view__name">' +
+                        _escapeHtml(school.name) + '</span>';
                     content += '<span class="education-view__meta">' +
                         'cost ' + _fmtNumber(school.cost) +
                         ' · maintenance ' + _fmtNumber(school.maintenance) +
