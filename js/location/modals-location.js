@@ -29,6 +29,15 @@
  *   file. It owns the LocationCommands.persist dependency; this file
  *   does not need to call persist() directly.
  *
+ * HIERARCHICAL PARENT OPTIONS (edit-place modal):
+ *   openEditPlaceModal builds its parent <select> via
+ *   _buildNestedParentOptions(place), which emits a depth-first tree of
+ *   locations (siblings alphabetical, current place + descendants
+ *   excluded) with non-breaking-space indent per level. Prior revisions
+ *   listed every place flat / alphabetically, which made nested places
+ *   look unordered. The nesting logic lives here, not in the HTML and
+ *   not in a wrapper module.
+ *
  * MODAL CALLBACK API (from modals-core.js):
  *   openModal(options) returns { element, close }.
  *
@@ -47,12 +56,6 @@
  *   modals of the same type can be open simultaneously (the modal
  *   stack permits it), and `document.querySelector` returns the first
  *   match in DOM order — always the older modal.
- *
- *   This file was previously written against `document.querySelector`.
- *   Every modal's `onConfirm` read from the page scope, so two open
- *   add-location modals would both confirm with the first modal's
- *   inputs. Fixed in this revision: every callback accepts the
- *   parameter and scopes to it. See MODAL INPUT READS below.
  *
  * MODAL INPUT READS:
  *   Every modal reads its inputs via `root.querySelector('.<form-class>')`
@@ -85,6 +88,14 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - openEditPlaceModal's parent <select> now uses
+ *       _buildNestedParentOptions(place), which emits a depth-first tree
+ *       with per-level indent and alphabetical sibling order. Prior
+ *       revisions listed every place flat / alphabetically, so nested
+ *       places appeared as an unstructured list. The current place and
+ *       all of its descendants are still excluded. No other behavior
+ *       changes; the helper is the only new code.
+ *   Previous revision:
  *     - Removed the local copies of _escapeHtml, _toast, _close, and
  *       _runCommand. All four were byte-identical to modals-moves.js
  *       and are now shared via modals-location-helper.js. The aliases
@@ -93,7 +104,7 @@
  *     - No behavioural change to any modal entry point. Every
  *       onConfirm still routes through _runCommand, which now
  *       delegates to the shared helper.
- *   Previous revision:
+ *   Earlier revisions:
  *     - CRITICAL (compatibility with modals-core.js): every onConfirm
  *       callback now accepts the modal DOM element as its parameter
  *       and scopes its DOM reads via `root.querySelector`. Previously
@@ -155,6 +166,104 @@
     var _toast = window.LocationModals.toast;
     var _close = window.LocationModals.close;
     var _runCommand = window.LocationModals.runCommand;
+
+    // =========================================================================
+    // 1b. HIERARCHICAL PARENT OPTIONS
+    // =========================================================================
+    //
+    // Builds the parent <select> for openEditPlaceModal as a depth-first
+    // tree:
+    //
+    //   <option value="">None (root)</option>
+    //   <option value="c1">Country A</option>
+    //   <option value="r1">  Region A1</option>
+    //   <option value="co1">    County A1a</option>
+    //   <option value="t1">      Town A1a-1</option>
+    //   <option value="r2">  Region A2</option>
+    //   <option value="c2">Country B</option>
+    //   ...
+    //
+    // Rules:
+    //   - The current place is excluded (cannot be its own parent).
+    //   - Every descendant of the current place is excluded (cannot
+    //     reparent a place under one of its own descendants).
+    //   - Siblings are alphabetical by displayName so the picker is
+    //     stable and scannable.
+    //   - Depth is rendered as two non-breaking spaces per level. Native
+    //     <option> cannot be styled with CSS padding across browsers,
+    //     so the indent lives in the label text.
+    //   - The current parent is re-selected.
+    //
+    // The parent type priority is not enforced here — that is
+    // LocationHierarchy.validateHierarchy's job on the command side. If
+    // the user picks an invalid parent, LocationCommands.updatePlace
+    // refuses with a structured reason. The picker only excludes
+    // structurally-impossible choices (self / descendant).
+    function _buildNestedParentOptions(place) {
+        var html = '<option value="">None (root)</option>';
+
+        var allPlaces = LQ.getAllPlaces({});
+        if (!allPlaces || allPlaces.length === 0) return html;
+
+        var currentPlaceId = place ? place.id : null;
+        var currentParentId = place ? place.parentId : null;
+
+        // Build a parent → children map once.
+        var childrenByParent = Object.create(null);
+        for (var i = 0; i < allPlaces.length; i++) {
+            var p = allPlaces[i];
+            if (!p || !p.id) continue;
+            var key = p.parentId || '__root__';
+            if (!childrenByParent[key]) childrenByParent[key] = [];
+            childrenByParent[key].push(p);
+        }
+
+        // Sort every sibling list alphabetically by displayName.
+        Object.keys(childrenByParent).forEach(function (k) {
+            childrenByParent[k].sort(function (a, b) {
+                return (a.displayName || '').localeCompare(b.displayName || '');
+            });
+        });
+
+        // Exclusion set: the place itself + all of its descendants.
+        var excluded = Object.create(null);
+        if (currentPlaceId) {
+            excluded[currentPlaceId] = true;
+            var descendants = LQ.getPlaceChildren(currentPlaceId, true) || [];
+            for (var d = 0; d < descendants.length; d++) {
+                if (descendants[d] && descendants[d].id) {
+                    excluded[descendants[d].id] = true;
+                }
+            }
+        }
+
+        function emit(list, depth) {
+            for (var j = 0; j < list.length; j++) {
+                var child = list[j];
+                if (!child || !child.id) continue;
+                if (excluded[child.id]) continue;
+
+                var indent = '';
+                for (var n = 0; n < depth; n++) indent += '\u00A0\u00A0';
+
+                var label = indent + (child.displayName || '(unnamed)');
+                var typeName = LQ.getLocationTypeName(child.typeId);
+                if (typeName) label += ' (' + typeName + ')';
+
+                var sel = (child.id === currentParentId) ? ' selected' : '';
+
+                html += '<option value="' + _escapeHtml(child.id) + '"' + sel + '>' +
+                        _escapeHtml(label) +
+                        '</option>';
+
+                var kids = childrenByParent[child.id];
+                if (kids && kids.length > 0) emit(kids, depth + 1);
+            }
+        }
+
+        emit(childrenByParent['__root__'] || [], 0);
+        return html;
+    }
 
     // =========================================================================
     // 2. ADD PLACE
@@ -242,20 +351,9 @@
                 '</option>';
         }).join('');
 
-        var descendants = {};
-        LQ.getPlaceChildren(placeId, true).forEach(function (d) {
-            descendants[d.id] = true;
-        });
-
-        var parentOptions = '<option value="">None (root)</option>' +
-            LQ.getAllPlaces({}).map(function (p) {
-                if (p.id === placeId) return '';
-                if (descendants[p.id]) return '';
-                var sel = (p.id === place.parentId) ? ' selected' : '';
-                return '<option value="' + _escapeHtml(p.id) + '"' + sel + '>' +
-                    _escapeHtml(p.displayName) +
-                    '</option>';
-            }).join('');
+        // Hierarchical parent options: depth-indented tree, siblings
+        // alphabetical, current place + descendants excluded.
+        var parentOptions = _buildNestedParentOptions(place);
 
         var html =
             '<form class="location-form">' +
