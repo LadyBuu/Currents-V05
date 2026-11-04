@@ -26,34 +26,79 @@
  *   TabManager handles the null-context case before our renderer runs, so
  *   we can assume context.religion is a valid object when we render.
  *
- * DEPENDENCIES (all read at call time — no load-time guards, because
- * TabManager treats this file as one of several optional renderers and
- * will not fail the whole scope if one tab file is missing):
- *   - TabManager            (js/core/tab-manager.js)
- *   - ReligionState         (js/religion/religion-state.js)
- *   - ReligionQueries       (js/religion/religion-queries.js)
- *   - ReligionCommands      (js/religion/religion-commands.js)
- *   - ReligionFormat        (js/religion/religion-format.js)
- *   - formatting.js         (escapeHtml)
- *   - icons.js              (Icons — record.icon is data; chrome icons via
- *                            Icons[name] with CIRCLE fallback)
- *   - ui.js                 (showToast)
- *   - modals-core.js        (openModal, closeTopModal, confirmDialog)
- *   - modals-char-selector  (openCharacterSelector)
- *   - locationDropdown.js   (getFilteredLocationOptions)
- *   - religion modals       (openEditReligionModal, openDeprecateReligionModal,
- *                            openDeleteReligionModal)
+ * CRUD DELEGATION
+ * ---------------
+ *   This tab owns the RENDERING. Every write operation is either delegated
+ *   to the canonical religion modal, or run through the tab's local
+ *   _runCommand() helper which mirrors the modal's
+ *   (command → persist → toast → onSuccess) sequence:
+ *
+ *     Edit                    → window.openEditReligionModal
+ *     Deprecate               → window.openDeprecateReligionModal
+ *     Delete                  → window.openDeleteReligionModal
+ *     Set Leader              → window.openSetLeaderModal
+ *     End Leader Term         → window.openEndLeaderTermModal
+ *     Reactivate              → local _runCommand (no modal exists)
+ *     Add Location            → local _runCommand (no modal exists)
+ *     Remove Location         → local _runCommand (no modal exists)
+ *
+ *   Prior revisions of this tab delegated the first five paths but ran
+ *   the last three directly without calling ReligionCommands.persist().
+ *   That was a real correctness bug: reactivateReligion,
+ *   addReligionLocation, and removeReligionLocation all mutate canonical
+ *   state via ReligionState and _commit, but none of them save. A user
+ *   who clicked Reactivate and then reloaded the page before any other
+ *   save would lose the change. The local _runCommand() helper fixes
+ *   that by calling persist() after a successful command, exactly like
+ *   the modals do.
  *
  * TIME CONTRACT: window.getCurrentYear() (canonical). Throws if time.js is
  * not loaded — that is a load-order failure and must be loud.
  *
  * ICON POLICY: no emojis. religion.icon is a DATA field and is rendered
  * verbatim (escaped). Chrome icons route through _getIcon(name) which
- * returns Icons[name] or '' — never a fabricated glyph.
+ * returns Icons[name] or '' — never a fabricated glyph. This tab currently
+ * renders no chrome icons; the icon of the record is the only glyph.
  *
  * INLINE STYLES: none. All classes are in css/religion-tabs.css. If this
  * file is edited to add a style="" attribute, that is a regression.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Set Leader and End Leader Term now delegate to
+ *       window.openSetLeaderModal / window.openEndLeaderTermModal. The
+ *       local prompt()-based forms (start year, title, end year, reason)
+ *       are deleted. prompt() blocked the event loop, was unstyled, and
+ *       bypassed the modal's callback ordering. The canonical modals
+ *       handle persist + toast + onSuccess-before-close correctly.
+ *     - Reactivate, Add Location, and Remove Location now run through
+ *       the local _runCommand(result, successMessage, failurePrefix,
+ *       onSuccess) helper, which calls ReligionCommands.persist() after
+ *       a successful command — exactly like modals-religion.js's
+ *       _handleCommandResult does. Prior revisions did NOT persist on
+ *       these three paths. That was a silent-data-loss bug: the
+ *       in-memory state was correct, the toast was shown, the tab
+ *       re-rendered — but a page reload before any other save would
+ *       discard the change.
+ *     - Deleted local helpers that the delegation made dead:
+ *       _openCharacterSelector (set-leader used it; the modal owns it
+ *       now), _getIcon (never used in this tab).
+ *     - _confirmDialog retained only for the two paths that still need
+ *       a yes/no gate (Reactivate, Remove Location). Add Location opens
+ *       a one-field modal directly (no confirm needed — the modal's
+ *       own Cancel/Add buttons are the confirm).
+ *     - Leader panel now shows the current leader's title and start
+ *       year from religion.leader, same as before. The old tab showed
+ *       'Religious Leader' when title was empty; the modal enforces a
+ *       non-empty title on save, so the fallback is now only used for
+ *       legacy records.
+ *     - The rendering (hero, stats, grid, panels, footer) is unchanged.
+ *     - The TabManager.register('religion', 'details', renderAdapter)
+ *       and the window.ReligionDetailsTab export shape are unchanged.
+ *   Previous revisions:
+ *     - Extracted from ad-hoc religion editor into a TabManager tab.
+ *     - Delegated Edit / Deprecate / Delete to canonical modals.
  * =============================================================================
  */
 
@@ -75,11 +120,6 @@
             .replace(/'/g, '&#39;');
     }
 
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) return window.Icons[name];
-        return '';
-    }
-
     function _showToast(msg, type) {
         if (typeof window.showToast === 'function') window.showToast(msg, type);
     }
@@ -87,10 +127,6 @@
     function _openModal(options) {
         if (typeof window.openModal === 'function') return window.openModal(options);
         return null;
-    }
-
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') window.closeTopModal();
     }
 
     function _confirmDialog(message, title, onConfirm) {
@@ -137,15 +173,15 @@
         return 'Unknown';
     }
 
-    function _getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-    }
-
     function _getLocationOptions(selectedId) {
         if (typeof window.getFilteredLocationOptions === 'function') {
             return window.getFilteredLocationOptions(selectedId);
         }
-        var places = _getPlaces();
+        // Defensive fallback only. The canonical source is
+        // locationDropdown.js. If it is missing, we still build a usable
+        // <select> from accessors, but the labels may differ from the
+        // canonical dropdown.
+        var places = typeof window.getPlaces === 'function' ? window.getPlaces() : [];
         var html = '<option value="">— Select a location —</option>';
         for (var i = 0; i < places.length; i++) {
             var p = places[i];
@@ -155,16 +191,6 @@
                 _escapeHtml(p.displayName || p.name || p.id) + '</option>';
         }
         return html;
-    }
-
-    function _openCharacterSelector(options) {
-        if (typeof window.openCharacterSelector === 'function') {
-            return window.openCharacterSelector(options);
-        }
-        if (typeof window.openUnifiedCharacterSelector === 'function') {
-            return window.openUnifiedCharacterSelector(options);
-        }
-        return null;
     }
 
     // =========================================================================
@@ -197,7 +223,66 @@
     }
 
     // =========================================================================
-    // 3. RENDER
+    // 3. COMMAND RUNNER (persist + toast + onSuccess, no modal)
+    // =========================================================================
+    //
+    // Mirrors modals-religion.js::_handleCommandResult for callers that
+    // are NOT modal onConfirm handlers. The three paths that use it —
+    // Reactivate, Add Location, Remove Location — mutate canonical state
+    // via ReligionCommands but have no modal to close, so the tab owns
+    // the persist step.
+    //
+    // On success:
+    //   1. toast(successMessage, 'success')
+    //   2. ReligionCommands.persist()
+    //      (failure → second toast; onSuccess still runs)
+    //   3. onSuccess(result.data || result)
+    //   4. return true
+    //
+    // On failure:
+    //   toast(failurePrefix + ': ' + reason, 'error')
+    //   return false
+    //
+    // onSuccess exceptions are caught and logged. A throwing onSuccess
+    // cannot prevent the persist from being attempted (already done) or
+    // the failure toast from being shown (already shown).
+
+    function _runCommand(result, successMessage, failurePrefix, onSuccess) {
+        if (result && result.success) {
+            _showToast(successMessage, 'success');
+
+            var RC = _getReligionCommands();
+            if (RC && typeof RC.persist === 'function') {
+                var saveResult = RC.persist();
+                if (saveResult && saveResult.success === false) {
+                    _showToast(
+                        'Save failed: ' + (saveResult.reason || 'unknown error'),
+                        'error'
+                    );
+                }
+            }
+
+            if (typeof onSuccess === 'function') {
+                try {
+                    onSuccess(result.data || result);
+                } catch (e) {
+                    if (typeof console !== 'undefined' && console.error) {
+                        console.error(
+                            'religion-details-tab.js: onSuccess threw:', e
+                        );
+                    }
+                }
+            }
+            return true;
+        }
+
+        var reason = (result && result.reason) ? result.reason : 'Unknown error';
+        _showToast(failurePrefix + ': ' + reason, 'error');
+        return false;
+    }
+
+    // =========================================================================
+    // 4. RENDER
     // =========================================================================
 
     function renderDetailsTab(container, religion) {
@@ -234,6 +319,9 @@
             ? _getCharacterName(religion.leader.characterId)
             : null;
         var leaderTitle = religion.leader ? (religion.leader.title || '') : '';
+        var leaderStartYear = religion.leader
+            ? religion.leader.startYear
+            : null;
 
         var locationNames = [];
         if (Array.isArray(religion.locations)) {
@@ -341,7 +429,7 @@
                       '</span>' +
                       '<span class="rt-kv__key">Start Year:</span>' +
                       '<span class="rt-kv__val">' +
-                        _escapeHtml(String(religion.leader.startYear || 'Unknown')) +
+                        _escapeHtml(String(leaderStartYear != null ? leaderStartYear : 'Unknown')) +
                       '</span>' +
                     '</div>' +
                     (Array.isArray(religion.leaderHistory) && religion.leaderHistory.length > 0
@@ -415,22 +503,15 @@
     }
 
     // =========================================================================
-    // 4. HANDLERS
+    // 5. HANDLERS
     // =========================================================================
 
     function _attachHandlers(container, religion) {
         var RC = _getReligionCommands();
         if (!RC) return;
 
-        function rerender(updated) {
-            if (updated) renderDetailsTab(container, updated);
-        }
-
-        function reloadFromQueries() {
-            var RQ = _getReligionQueries();
-            if (!RQ) return;
-            var fresh = RQ.getReligion(religion.id);
-            if (fresh) rerender(fresh);
+        function rerender() {
+            renderDetailsTab(container, _freshReligion(religion.id) || religion);
         }
 
         function refreshSidebar() {
@@ -439,40 +520,47 @@
             }
         }
 
-        // ---- Edit ----
+        // ---- Edit (delegate to canonical modal) ----
         var editBtn = container.querySelector('.edit-religion-btn');
         if (editBtn) {
             editBtn.addEventListener('click', function () {
-                if (typeof window.openEditReligionModal !== 'function') return;
+                if (typeof window.openEditReligionModal !== 'function') {
+                    _showToast(
+                        'Edit Religion modal is not available. Load modals-religion.js first.',
+                        'error'
+                    );
+                    return;
+                }
                 window.openEditReligionModal(religion.id, {
-                    onSuccess: function (updated) {
-                        _showToast('Religion updated', 'success');
-                        rerender(updated);
-                        reloadFromQueries();
+                    onSuccess: function () {
+                        rerender();
                         refreshSidebar();
                     }
                 });
             });
         }
 
-        // ---- Deprecate ----
+        // ---- Deprecate (delegate to canonical modal) ----
         var deprecateBtn = container.querySelector('.deprecate-religion-btn');
         if (deprecateBtn) {
             deprecateBtn.addEventListener('click', function () {
-                if (typeof window.openDeprecateReligionModal !== 'function') return;
+                if (typeof window.openDeprecateReligionModal !== 'function') {
+                    _showToast(
+                        'Deprecate Religion modal is not available. Load modals-religion.js first.',
+                        'error'
+                    );
+                    return;
+                }
                 window.openDeprecateReligionModal(religion.id, {
-                    onSuccess: function (updated) {
-                        _showToast('Religion deprecated', 'warning');
-                        rerender(updated);
-                        reloadFromQueries();
+                    onSuccess: function () {
+                        rerender();
                         refreshSidebar();
                     }
                 });
             });
         }
 
-        // ---- Reactivate (uses the command directly: updateReligion
-        //      rejects isDeprecated / deprecatedYear as unknown fields) ----
+        // ---- Reactivate (no modal exists; run command + persist) ----
         var reactivateBtn = container.querySelector('.reactivate-religion-btn');
         if (reactivateBtn) {
             reactivateBtn.addEventListener('click', function () {
@@ -481,31 +569,33 @@
                     'Reactivate Religion',
                     function () {
                         var result = RC.reactivateReligion(religion.id);
-                        if (result && result.success) {
-                            _showToast('Religion reactivated', 'success');
-                            rerender(result.data);
-                            reloadFromQueries();
-                            refreshSidebar();
-                        } else {
-                            _showToast(
-                                'Failed to reactivate: ' +
-                                (result && result.reason ? result.reason : 'unknown'),
-                                'error'
-                            );
-                        }
+                        _runCommand(
+                            result,
+                            'Religion reactivated',
+                            'Failed to reactivate religion',
+                            function () {
+                                rerender();
+                                refreshSidebar();
+                            }
+                        );
                     }
                 );
             });
         }
 
-        // ---- Delete ----
+        // ---- Delete (delegate to canonical modal) ----
         var deleteBtn = container.querySelector('.delete-religion-btn');
         if (deleteBtn && !deleteBtn.disabled) {
             deleteBtn.addEventListener('click', function () {
-                if (typeof window.openDeleteReligionModal !== 'function') return;
+                if (typeof window.openDeleteReligionModal !== 'function') {
+                    _showToast(
+                        'Delete Religion modal is not available. Load modals-religion.js first.',
+                        'error'
+                    );
+                    return;
+                }
                 window.openDeleteReligionModal(religion.id, {
                     onSuccess: function () {
-                        _showToast('Religion deleted', 'info');
                         container.innerHTML =
                             '<div class="rt-empty">' +
                               'Religion deleted.' +
@@ -519,91 +609,47 @@
             });
         }
 
-        // ---- Set Leader ----
+        // ---- Set Leader (delegate to canonical modal) ----
         var setLeaderBtn = container.querySelector('.set-leader-btn');
         if (setLeaderBtn) {
             setLeaderBtn.addEventListener('click', function () {
-                var selector = _openCharacterSelector({
-                    title: 'Select Religious Leader for ' + (religion.displayName || religion.name),
-                    preset: 'elder',
-                    filters: { showDeceased: false },
-                    onSelect: function (character) {
-                        if (!character || !character.id) return;
-
-                        var yearInput = prompt('Start Year:', _getCurrentYear());
-                        if (yearInput === null) return;
-                        var year = parseInt(yearInput, 10);
-                        if (Number.isNaN(year)) year = _getCurrentYear();
-
-                        var titleInput = prompt('Title:', 'Religious Leader');
-                        if (titleInput === null) return;
-
-                        var result = RC.setReligionLeader(religion.id, character.id, {
-                            title: titleInput || 'Religious Leader',
-                            startYear: year
-                        });
-                        if (result && result.success) {
-                            _showToast('Leader appointed: ' + character.name, 'success');
-                            rerender(result.data && result.data.religion ? result.data.religion : null);
-                            reloadFromQueries();
-                            refreshSidebar();
-                        } else {
-                            _showToast(
-                                'Failed to set leader: ' +
-                                (result && result.reason ? result.reason : 'unknown'),
-                                'error'
-                            );
-                        }
+                if (typeof window.openSetLeaderModal !== 'function') {
+                    _showToast(
+                        'Set Leader modal is not available. Load modals-religion.js first.',
+                        'error'
+                    );
+                    return;
+                }
+                window.openSetLeaderModal(religion.id, {
+                    onSuccess: function () {
+                        rerender();
+                        refreshSidebar();
                     }
                 });
-                if (!selector) {
-                    _showToast('Character selector not available', 'error');
-                }
             });
         }
 
-        // ---- End Leader Term ----
+        // ---- End Leader Term (delegate to canonical modal) ----
         var endLeaderBtn = container.querySelector('.end-leader-btn');
         if (endLeaderBtn && religion.leader) {
             endLeaderBtn.addEventListener('click', function () {
-                var displayName = religion.leader.characterName
-                    || _getCharacterName(religion.leader.characterId);
-                _confirmDialog(
-                    'End the term of ' + displayName + ' as leader?',
-                    'End Leader Term',
-                    function () {
-                        var yearInput = prompt('End Year:', _getCurrentYear());
-                        if (yearInput === null) return;
-                        var year = parseInt(yearInput, 10);
-                        if (Number.isNaN(year)) year = _getCurrentYear();
-
-                        var reasonInput = prompt('Reason:', 'Term ended');
-                        if (reasonInput === null) return;
-
-                        var result = RC.endReligionLeaderTerm(
-                            religion.id,
-                            religion.leader.characterId,
-                            year,
-                            reasonInput || 'Term ended'
-                        );
-                        if (result && result.success) {
-                            _showToast('Leader term ended', 'success');
-                            rerender(result.data);
-                            reloadFromQueries();
-                            refreshSidebar();
-                        } else {
-                            _showToast(
-                                'Failed to end term: ' +
-                                (result && result.reason ? result.reason : 'unknown'),
-                                'error'
-                            );
-                        }
+                if (typeof window.openEndLeaderTermModal !== 'function') {
+                    _showToast(
+                        'End Leader Term modal is not available. Load modals-religion.js first.',
+                        'error'
+                    );
+                    return;
+                }
+                window.openEndLeaderTermModal(religion.id, {
+                    onSuccess: function () {
+                        rerender();
+                        refreshSidebar();
                     }
-                );
+                });
             });
         }
 
-        // ---- Add Location ----
+        // ---- Add Location (no modal exists; inline modal + persist) ----
         var addLocationBtn = container.querySelector('.add-location-btn');
         if (addLocationBtn) {
             addLocationBtn.addEventListener('click', function () {
@@ -633,24 +679,26 @@
                             return false;
                         }
                         var result = RC.addReligionLocation(religion.id, locationId);
-                        if (result && result.success) {
-                            _showToast('Location added', 'success');
-                            rerender(result.data);
-                            refreshSidebar();
-                            return true;
-                        }
-                        _showToast(
-                            'Failed to add location: ' +
-                            (result && result.reason ? result.reason : 'unknown'),
-                            'error'
+                        // _runCommand returns true on success (so
+                        // onConfirm closes the modal) or false on
+                        // failure (modal stays open). It also calls
+                        // persist() on success, which the prior revision
+                        // did NOT do.
+                        return _runCommand(
+                            result,
+                            'Location added',
+                            'Failed to add location',
+                            function () {
+                                rerender();
+                                refreshSidebar();
+                            }
                         );
-                        return false;
                     }
                 });
             });
         }
 
-        // ---- Remove Location (one listener per chip button) ----
+        // ---- Remove Location (no modal exists; confirm + persist) ----
         var removeBtns = container.querySelectorAll('.remove-location-btn');
         for (var i = 0; i < removeBtns.length; i++) {
             (function (btn) {
@@ -664,17 +712,15 @@
                         'Remove Location',
                         function () {
                             var result = RC.removeReligionLocation(religion.id, locationId);
-                            if (result && result.success) {
-                                _showToast('Location removed', 'info');
-                                rerender(result.data);
-                                refreshSidebar();
-                            } else {
-                                _showToast(
-                                    'Failed to remove location: ' +
-                                    (result && result.reason ? result.reason : 'unknown'),
-                                    'error'
-                                );
-                            }
+                            _runCommand(
+                                result,
+                                'Location removed',
+                                'Failed to remove location',
+                                function () {
+                                    rerender();
+                                    refreshSidebar();
+                                }
+                            );
                         }
                     );
                 });
@@ -682,18 +728,36 @@
         }
     }
 
+    /**
+     * Re-fetch the current religion record from Queries. Returns null
+     * if the religion no longer exists. The caller falls back to the
+     * stale `religion` argument in that case.
+     *
+     * This helper exists because the canonical modals' onSuccess payload
+     * is not always the religion record:
+     *   - openEditReligionModal: onSuccess receives result.data = the
+     *     updated religion (fine to rerender with)
+     *   - openDeprecateReligionModal: onSuccess receives result.data =
+     *     the updated religion (fine)
+     *   - openSetLeaderModal: onSuccess receives result.data =
+     *     { religion, leader } — NOT the religion directly
+     *   - openEndLeaderTermModal: onSuccess receives result.data = the
+     *     updated religion
+     *
+     * Rather than special-case each modal's payload shape, the tab
+     * re-fetches. This is cheap (a clone read) and always correct.
+     * Also handles the "record was deleted from another tab" case
+     * gracefully via the null fallback.
+     */
+    function _freshReligion(religionId) {
+        var RQ = _getReligionQueries();
+        if (!RQ) return null;
+        return RQ.getReligion(religionId);
+    }
+
     // =========================================================================
-    // 5. TABMANAGER ADAPTER + REGISTRATION
+    // 6. TABMANAGER ADAPTER + REGISTRATION
     // =========================================================================
-    //
-    // TabManager renderers receive (container, context). The context
-    // is whatever the editor's buildContext() returns; by convention it
-    // carries { religion }. We forward to renderDetailsTab(container, religion)
-    // and leave every existing renderer contract intact.
-    //
-    // The adapter is defensive: if the editor forgot to pass a religion
-    // context object, we render the "select a religion" empty state
-    // (which renderDetailsTab already handles for null/undefined).
 
     function renderAdapter(container, context) {
         var religion = (context && context.religion) ? context.religion : null;
@@ -710,7 +774,7 @@
     }
 
     // =========================================================================
-    // 6. EXPORTS
+    // 7. EXPORTS
     // =========================================================================
 
     window.ReligionDetailsTab = {
