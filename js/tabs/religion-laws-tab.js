@@ -11,15 +11,38 @@
  * FEATURES:
  *   - List laws with filters (search, type, category, domain, severity)
  *   - Sort by name, domain, severity
- *   - Add law (modal)
- *   - Edit law (modal)
- *   - Remove law (confirm + removeLaw)
+ *   - Add law (delegates to window.openAddLawModal)
+ *   - Edit law (delegates to window.openEditLawModal)
+ *   - Remove law (delegates to window.openDeleteLawModal)
  *   - Show enforcement status and crime mapping
  *
  * REGISTRATION (TabManager):
  *   TabManager.register('religion', 'laws', renderAdapter)
  *
  *   renderAdapter(container, context) → renderLawsTab(container, context.religion)
+ *
+ * CRUD DELEGATION
+ * ---------------
+ *   This tab owns the LIST and FILTERS. It does NOT own the add/edit/delete
+ *   forms. Every write operation is delegated to the canonical religion
+ *   modals:
+ *
+ *     window.openAddLawModal(religionId, { onSuccess })
+ *     window.openEditLawModal(religionId, lawId, { onSuccess })
+ *     window.openDeleteLawModal(religionId, lawId, { onSuccess })
+ *
+ *   Those modals are the save owner: they call ReligionCommands.persist()
+ *   exactly once per successful command, toast on success/failure, and
+ *   fire onSuccess BEFORE closing. The tab's onSuccess callback re-renders
+ *   the tab; it does NOT need to persist, toast, or close anything.
+ *
+ *   Prior revisions of this tab built their own add/edit/delete forms
+ *   locally. That duplicated modals-religion.js's openAddLawModal, and the
+ *   two copies drifted: the tab's local form used raw
+ *   .charAt().toUpperCase() labels for category (showing "Civil" instead of
+ *   "Civil Law"), while the canonical modal used ReligionFormat.getLaw*Name.
+ *   The tab now uses the canonical modal for every write, which eliminates
+ *   the drift by construction.
  *
  * LAW ENUM SOURCE (canonical, per religion-docs.txt §7.2):
  *   Law vocabulary (type / category / domain / severity / crimeType) is
@@ -28,34 +51,66 @@
  *   namespaced source and returns null per missing enum. Labels come from
  *   ReligionFormat.getLaw*Name().
  *
- *   Do NOT read flat window.LAW_TYPES / window.CRIME_TYPES — those globals
- *   do not exist in the current tree. Validation rejects every value when
- *   the enum is missing (that is the whole point of the religion-commands
- *   _readLawEnums fix).
+ *   The tab reads the enums for its FILTER dropdowns only (the add/edit
+ *   forms get their own enums inside the modals). Do NOT read flat
+ *   window.LAW_TYPES / window.CRIME_TYPES — those globals do not exist in
+ *   the current tree.
+ *
+ * FIELD NAME:
+ *   The canonical field for the law's category is `lawCategory` (not
+ *   `category`). See religion-docs.txt §7.20. The tab reads `lawCategory`
+ *   in its filters and delegates the write to the modals (which also read
+ *   `lawCategory`).
  *
  * DEPENDENCIES (resolved at call time — no load-time guards):
  *   - TabManager            (js/core/tab-manager.js)
  *   - ReligionQueries       (js/religion/religion-queries.js)
- *   - ReligionCommands      (js/religion/religion-commands.js) — also
- *                            exposes getLawEnums()
- *   - ReligionFormat        (js/religion/religion-format.js)
+ *   - ReligionCommands      (js/religion/religion-commands.js) — exposes
+ *                            getLawEnums() for filter dropdowns
+ *   - ReligionFormat        (js/religion/religion-format.js) — filter labels
  *   - formatting.js         (escapeHtml)
- *   - icons.js              (Icons — chrome icons via _getIcon; no emoji)
- *   - ui.js                 (showToast)
- *   - modals-core.js        (openModal, closeTopModal, confirmDialog)
+ *   - ui.js                 (showToast) — only used for the rare
+ *                            "modal unavailable" defensive toast
+ *   - ReligionModals        (js/religion/modals-religion.js) — provides
+ *                            openAddLawModal / openEditLawModal /
+ *                            openDeleteLawModal
  *
- * MUTATION ROUTING:
- *   Law mutations (addLaw / updateLaw / removeLaw) live on ReligionCommands,
- *   NOT on ReligionLaws. ReligionLaws is query-only. This tab uses
- *   ReligionCommands for every write.
- *
- * FIELD NAME:
- *   The canonical field for the law's category is `lawCategory`
- *   (not `category`). See religion-docs.txt §7.20. The tab reads and
- *   writes `lawCategory`.
+ * ICON POLICY: no emojis. No chrome icons in this tab.
  *
  * INLINE STYLES: none. All classes are in css/religion-tabs.css.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - CRUD delegation. Every add/edit/delete now calls the canonical
+ *       religion modal (openAddLawModal / openEditLawModal /
+ *       openDeleteLawModal) instead of building a local form. Deleted
+ *       local: _openAddLaw, _openEditLaw, _confirmDeleteLaw,
+ *       _enumOptionsForAdd, _enumOptionsForEdit, _readVal, and the four
+ *       _law*Label wrappers (the modals now own label resolution).
+ *     - Fixes label drift: the tab used to render "Civil" / "Custom"
+ *       for law category in its local add form, while the canonical
+ *       modal rendered "Civil Law" / "Custom Law". Both paths now go
+ *       through ReligionFormat.getLawCategoryName.
+ *     - _readLawEnums collapsed from a four-way defensive wrapper
+ *       (commands → validation → empty) to a single direct call to
+ *       ReligionCommands.getLawEnums(), which is a hard dependency of
+ *       this tab. The try/catch is retained as a last-resort guard
+ *       against a broken commands module, but the fallback chain is
+ *       gone.
+ *     - _SEVERITY_ORDER retained as a tab-local constant. It drives
+ *       the tab's sort-by-severity comparator only. A future change
+ *       could move it to ReligionConstants alongside LAW_SEVERITY_NAMES;
+ *       not done here to avoid touching the constants module for a
+ *       single tab's sort order.
+ *     - TabManager.register('religion', 'laws', renderAdapter) is
+ *       unchanged. renderAdapter is unchanged. The ReligionLawsTab
+ *       export is unchanged.
+ *     - The public surface (id, render, renderAdapter) is unchanged.
+ *   Previous revisions:
+ *     - Canonical law enum resolution via ReligionCommands.getLawEnums().
+ *     - Filter/sort/list rendering extracted from earlier monolithic
+ *       religion UI code.
  * =============================================================================
  */
 
@@ -77,26 +132,8 @@
             .replace(/'/g, '&#39;');
     }
 
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) return window.Icons[name];
-        return '';
-    }
-
     function _showToast(msg, type) {
         if (typeof window.showToast === 'function') window.showToast(msg, type);
-    }
-
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') return window.openModal(options);
-        return null;
-    }
-
-    function _confirmDialog(message, title, onConfirm) {
-        if (typeof window.confirmDialog === 'function') {
-            window.confirmDialog(message, title, onConfirm);
-        } else if (typeof confirm === 'function' && confirm(message)) {
-            onConfirm();
-        }
     }
 
     function _getReligionQueries() {
@@ -111,15 +148,35 @@
         return typeof window.ReligionFormat !== 'undefined' ? window.ReligionFormat : null;
     }
 
+    // The three canonical write modals. The tab renders and filters; the
+    // modals own the write path (form + persist + toast).
+    function _getOpenAddLawModal() {
+        return typeof window.openAddLawModal === 'function'
+            ? window.openAddLawModal
+            : null;
+    }
+
+    function _getOpenEditLawModal() {
+        return typeof window.openEditLawModal === 'function'
+            ? window.openEditLawModal
+            : null;
+    }
+
+    function _getOpenDeleteLawModal() {
+        return typeof window.openDeleteLawModal === 'function'
+            ? window.openDeleteLawModal
+            : null;
+    }
+
     // =========================================================================
-    // 2. LAW ENUM RESOLUTION (canonical)
+    // 2. LAW ENUM RESOLUTION (canonical, for filter dropdowns only)
     // =========================================================================
     //
-    // Delegates to ReligionCommands.getLawEnums() when available; falls
-    // back to religion-validation.js's getLawEnums if that module happens
-    // to be loaded; otherwise returns all-null enums so the UI shows the
-    // "(enum not loaded)" option — exactly matching the validation failure
-    // path.
+    // ReligionCommands is a hard dependency of this tab (see header). Its
+    // getLawEnums() is the single canonical resolver. The try/catch is a
+    // last-resort guard: if the commands module is broken enough that
+    // getLawEnums throws, the filter dropdowns degrade to empty (no
+    // options beyond "All ..."), which is visible but non-fatal.
 
     function _readLawEnums() {
         if (typeof window.ReligionCommands !== 'undefined'
@@ -127,15 +184,6 @@
             && typeof window.ReligionCommands.getLawEnums === 'function') {
             try {
                 return window.ReligionCommands.getLawEnums() || _emptyEnums();
-            } catch (e) {
-                return _emptyEnums();
-            }
-        }
-        if (typeof window.ReligionValidation !== 'undefined'
-            && window.ReligionValidation
-            && typeof window.ReligionValidation.getLawEnums === 'function') {
-            try {
-                return window.ReligionValidation.getLawEnums() || _emptyEnums();
             } catch (e) {
                 return _emptyEnums();
             }
@@ -169,20 +217,12 @@
         return out.length > 0 ? out : null;
     }
 
-    function _enumHas(enumObj, value) {
-        if (!value) return false;
-        var vals = _enumValues(enumObj);
-        if (!vals) return false;
-        return vals.indexOf(value) !== -1;
-    }
-
     // =========================================================================
-    // 3. FORMAT (labels)
+    // 3. FILTER LABELS (via ReligionFormat)
     // =========================================================================
     //
-    // Labels come from ReligionFormat, not from any local map. If
-    // ReligionFormat is missing, fall back to the raw value — never to a
-    // fabricated label.
+    // Used only for the tab's filter dropdown labels. The write modals
+    // resolve their own labels via the same ReligionFormat helpers.
 
     function _lawTypeLabel(typeId) {
         var fmt = _getReligionFormat();
@@ -314,7 +354,7 @@
               '</select>' +
               '<select class="laws-category-filter">' +
                 '<option value="all">All Categories</option>' +
-                _buildEnumOptions(_readLawEnums().categories, 'Religious', 'Civil', 'Custom') +
+                _buildEnumOptions(_readLawEnums().categories, 'Religious Law', 'Civil Law', 'Custom Law') +
               '</select>' +
               '<select class="laws-domain-filter">' +
                 '<option value="all">All Domains</option>' +
@@ -341,7 +381,6 @@
 
         container.innerHTML = html;
 
-        // Restore filter selections after innerHTML assignment.
         _syncFilterSelects(container);
 
         _attachHandlers(container, religion);
@@ -539,11 +578,22 @@
     // =========================================================================
 
     function _attachHandlers(container, religion) {
-        var RC = _getReligionCommands();
-        if (!RC) return;
-
-        function rerender() {
-            renderLawsTab(container, religion);
+        function rerender(updatedReligion) {
+            var fresh = updatedReligion;
+            // The modals' onSuccess payloads are the command's `data`
+            // field, whose shape differs by command. For addLaw /
+            // updateLaw it is the LAW record (result.data = law);
+            // for removeLaw it is undefined (result.data is absent).
+            // So we cannot assume the payload is a religion. Instead,
+            // re-fetch the current religion by id from Queries and
+            // re-render with that. This is cheap (a clone read) and
+            // always correct.
+            var RQ = _getReligionQueries();
+            if (RQ) {
+                var current = RQ.getReligion(religion.id);
+                if (current) fresh = current;
+            }
+            renderLawsTab(container, fresh || religion);
         }
 
         // ---- Search (debounced) ----
@@ -604,15 +654,29 @@
         if (clearBtn) {
             clearBtn.addEventListener('click', function () {
                 _resetState();
-                rerender();
+                rerender(religion);
             });
         }
 
-        // ---- Add law ----
+        // ---- Add law (delegate to canonical modal) ----
         var addBtn = container.querySelector('.add-law-btn');
         if (addBtn) {
             addBtn.addEventListener('click', function () {
-                _openAddLaw(religion, rerender);
+                var openAdd = _getOpenAddLawModal();
+                if (!openAdd) {
+                    _showToast(
+                        'Add Law modal is not available. Load modals-religion.js first.',
+                        'error'
+                    );
+                    return;
+                }
+                openAdd(religion.id, {
+                    onSuccess: function () {
+                        // The modal has already toasted and persisted.
+                        // We only re-render with the fresh religion.
+                        rerender(religion);
+                    }
+                });
             });
         }
 
@@ -648,8 +712,6 @@
     }
 
     function _attachRowActions(container, religion) {
-        var RC = _getReligionCommands();
-        if (!RC) return;
         var body = container.querySelector('.rt-tab__body');
         if (!body) return;
         if (body.__rtHandled) return;
@@ -663,11 +725,20 @@
             if (editBtn) {
                 e.preventDefault();
                 var eid = editBtn.getAttribute('data-law-id');
-                if (eid) {
-                    _openEditLaw(religion, eid, function () {
-                        renderLawsTab(container, religion);
-                    });
+                if (!eid) return;
+                var openEdit = _getOpenEditLawModal();
+                if (!openEdit) {
+                    _showToast(
+                        'Edit Law modal is not available. Load modals-religion.js first.',
+                        'error'
+                    );
+                    return;
                 }
+                openEdit(religion.id, eid, {
+                    onSuccess: function () {
+                        renderLawsTab(container, _freshReligion(religion.id) || religion);
+                    }
+                });
                 return;
             }
 
@@ -675,422 +746,47 @@
             if (delBtn) {
                 e.preventDefault();
                 var did = delBtn.getAttribute('data-law-id');
-                if (did) {
-                    _confirmDeleteLaw(religion, did, function () {
-                        renderLawsTab(container, religion);
-                    });
-                }
-            }
-        });
-    }
-
-    // =========================================================================
-    // 9. ADD / EDIT / DELETE
-    // =========================================================================
-
-    function _openAddLaw(religion, onDone) {
-        var RC = _getReligionCommands();
-        if (!RC) {
-            _showToast('ReligionCommands not available', 'error');
-            return;
-        }
-
-        var enums = _readLawEnums();
-
-        var typeOpts = _enumOptionsForAdd(enums.types, 'LAW', 'law');
-        var catOpts = _enumOptionsForAdd(enums.categories, 'RELIGIOUS', 'religious');
-        var domOpts = _enumOptionsForAdd(enums.domains, 'BEHAVIOR', 'behavior');
-        var sevOpts = _enumOptionsForAdd(enums.severities, 'MINOR', 'minor');
-
-        // Crime type options: enum, plus a "None" option.
-        var crimeTypeOpts = '<option value="">None</option>';
-        var crimeVals = _enumValues(enums.crimeTypes);
-        if (crimeVals) {
-            for (var i = 0; i < crimeVals.length; i++) {
-                var cv = crimeVals[i];
-                crimeTypeOpts += '<option value="' + _escapeHtml(cv) + '">' +
-                    _escapeHtml(cv.charAt(0).toUpperCase() + cv.slice(1)) +
-                    '</option>';
-            }
-        }
-
-        var content =
-            '<div class="rt-form">' +
-              '<div class="rt-form__grid-2">' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="lawName">Law Name *</label>' +
-                  '<input type="text" id="lawName" placeholder="e.g., No Marriage Outside Faith">' +
-                '</div>' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="lawType">Type</label>' +
-                  '<select id="lawType">' + typeOpts + '</select>' +
-                '</div>' +
-              '</div>' +
-              '<div class="rt-form__grid-2">' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="lawCategory">Category</label>' +
-                  '<select id="lawCategory">' + catOpts + '</select>' +
-                '</div>' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="lawDomain">Domain</label>' +
-                  '<select id="lawDomain">' + domOpts + '</select>' +
-                '</div>' +
-              '</div>' +
-              '<div class="rt-form__group">' +
-                '<label class="rt-form__label" for="lawDescription">Description</label>' +
-                '<textarea id="lawDescription" rows="2" placeholder="Describe the law or taboo..."></textarea>' +
-              '</div>' +
-              '<div class="rt-form__grid-2">' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="lawSeverity">Severity</label>' +
-                  '<select id="lawSeverity">' + sevOpts + '</select>' +
-                '</div>' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="lawCrimeType">Crime Type (for enforcement)</label>' +
-                  '<select id="lawCrimeType">' + crimeTypeOpts + '</select>' +
-                '</div>' +
-              '</div>' +
-              '<div class="rt-form__grid-2">' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__checkbox">' +
-                    '<input type="checkbox" id="lawEnforced">' +
-                    '<span>Is Enforced</span>' +
-                  '</label>' +
-                '</div>' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="lawPunishment">Default Punishment</label>' +
-                  '<input type="text" id="lawPunishment"' +
-                    ' placeholder="e.g., Excommunication, Fine, Execution">' +
-                '</div>' +
-              '</div>' +
-              '<div class="rt-form__group">' +
-                '<label class="rt-form__label" for="lawNotes">Notes</label>' +
-                '<input type="text" id="lawNotes" placeholder="Additional notes...">' +
-              '</div>' +
-            '</div>';
-
-        _openModal({
-            titleHtml: 'Add Law',
-            contentHtml: content,
-            confirmText: 'Add Law',
-            cancelText: 'Cancel',
-            onConfirm: function (root) {
-                var nameInput = root.querySelector('#lawName');
-                var name = nameInput ? nameInput.value.trim() : '';
-                if (!name) {
-                    _showToast('Law name is required', 'error');
-                    return false;
-                }
-
-                var crimeTypeEl = root.querySelector('#lawCrimeType');
-                var crimeTypeVal = crimeTypeEl && crimeTypeEl.value
-                    ? crimeTypeEl.value
-                    : null;
-
-                var enforcedEl = root.querySelector('#lawEnforced');
-
-                var data = {
-                    name: name,
-                    type: _readVal(root, '#lawType'),
-                    lawCategory: _readVal(root, '#lawCategory'),
-                    domain: _readVal(root, '#lawDomain'),
-                    description: _readVal(root, '#lawDescription'),
-                    severity: _readVal(root, '#lawSeverity'),
-                    crimeType: crimeTypeVal,
-                    isEnforced: enforcedEl ? enforcedEl.checked === true : false,
-                    punishment: _readVal(root, '#lawPunishment') || null,
-                    notes: _readVal(root, '#lawNotes')
-                };
-
-                var result = RC.addLaw(religion.id, data);
-                if (result && result.success) {
-                    _showToast('Law added: ' + name, 'success');
-                    if (typeof onDone === 'function') onDone();
-                    return true;
-                }
-                _showToast(
-                    'Failed to add law: ' +
-                    (result && result.reason ? result.reason : 'unknown'),
-                    'error'
-                );
-                return false;
-            }
-        });
-    }
-
-    function _openEditLaw(religion, lawId, onDone) {
-        var RC = _getReligionCommands();
-        var RQ = _getReligionQueries();
-        if (!RC || !RQ) {
-            _showToast('Religion system not available', 'error');
-            return;
-        }
-
-        var laws = RQ.getLawsByReligion(religion.id) || [];
-        var law = null;
-        for (var i = 0; i < laws.length; i++) {
-            if (laws[i] && laws[i].id === lawId) { law = laws[i]; break; }
-        }
-        if (!law) {
-            _showToast('Law not found', 'error');
-            return;
-        }
-
-        var enums = _readLawEnums();
-
-        var typeOpts = _enumOptionsForEdit(enums.types, law.type, 'LAW', 'law');
-        var catOpts = _enumOptionsForEdit(enums.categories, law.lawCategory, 'RELIGIOUS', 'religious');
-        var domOpts = _enumOptionsForEdit(enums.domains, law.domain, 'BEHAVIOR', 'behavior');
-        var sevOpts = _enumOptionsForEdit(enums.severities, law.severity, 'MINOR', 'minor');
-
-        var currentCrimeType = law.crimeMapping && law.crimeMapping.crimeType
-            ? law.crimeMapping.crimeType
-            : '';
-        var currentCrimeSeverity = law.crimeMapping && law.crimeMapping.crimeSeverity
-            ? law.crimeMapping.crimeSeverity
-            : '';
-        var currentPunishment = law.crimeMapping && law.crimeMapping.punishment
-            ? law.crimeMapping.punishment
-            : '';
-        var currentEnforced = !!(law.crimeMapping && law.crimeMapping.isEnforced);
-
-        var crimeTypeOpts = '<option value="">None</option>';
-        var crimeVals = _enumValues(enums.crimeTypes);
-        if (crimeVals) {
-            for (var j = 0; j < crimeVals.length; j++) {
-                var cv = crimeVals[j];
-                var sel = (cv === currentCrimeType) ? ' selected' : '';
-                crimeTypeOpts += '<option value="' + _escapeHtml(cv) + '"' + sel + '>' +
-                    _escapeHtml(cv.charAt(0).toUpperCase() + cv.slice(1)) +
-                    '</option>';
-            }
-        } else if (currentCrimeType) {
-            crimeTypeOpts += '<option value="' + _escapeHtml(currentCrimeType) + '" selected>' +
-                _escapeHtml(currentCrimeType) + ' (enum not loaded)</option>';
-        }
-
-        var content =
-            '<div class="rt-form">' +
-              '<div class="rt-form__grid-2">' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="editLawName">Law Name *</label>' +
-                  '<input type="text" id="editLawName" value="' +
-                    _escapeHtml(law.name || '') + '">' +
-                '</div>' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="editLawType">Type</label>' +
-                  '<select id="editLawType">' + typeOpts + '</select>' +
-                '</div>' +
-              '</div>' +
-              '<div class="rt-form__grid-2">' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="editLawCategory">Category</label>' +
-                  '<select id="editLawCategory">' + catOpts + '</select>' +
-                '</div>' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="editLawDomain">Domain</label>' +
-                  '<select id="editLawDomain">' + domOpts + '</select>' +
-                '</div>' +
-              '</div>' +
-              '<div class="rt-form__group">' +
-                '<label class="rt-form__label" for="editLawDescription">Description</label>' +
-                '<textarea id="editLawDescription" rows="2">' +
-                  _escapeHtml(law.description || '') +
-                '</textarea>' +
-              '</div>' +
-              '<div class="rt-form__grid-2">' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="editLawSeverity">Severity</label>' +
-                  '<select id="editLawSeverity">' + sevOpts + '</select>' +
-                '</div>' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="editLawCrimeType">Crime Type</label>' +
-                  '<select id="editLawCrimeType">' + crimeTypeOpts + '</select>' +
-                '</div>' +
-              '</div>' +
-              '<div class="rt-form__grid-2">' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__checkbox">' +
-                    '<input type="checkbox" id="editLawEnforced"' +
-                      (currentEnforced ? ' checked' : '') + '>' +
-                    '<span>Is Enforced</span>' +
-                  '</label>' +
-                '</div>' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="editLawPunishment">Default Punishment</label>' +
-                  '<input type="text" id="editLawPunishment" value="' +
-                    _escapeHtml(currentPunishment) + '">' +
-                '</div>' +
-              '</div>' +
-              '<div class="rt-form__grid-2">' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="editLawCrimeSeverity">' +
-                    'Crime Severity Override (1-10, optional)' +
-                  '</label>' +
-                  '<input type="number" id="editLawCrimeSeverity" min="1" max="10"' +
-                    ' value="' + _escapeHtml(String(currentCrimeSeverity)) + '">' +
-                '</div>' +
-                '<div class="rt-form__group">' +
-                  '<label class="rt-form__label" for="editLawNotes">Notes</label>' +
-                  '<input type="text" id="editLawNotes" value="' +
-                    _escapeHtml(law.notes || '') + '">' +
-                '</div>' +
-              '</div>' +
-            '</div>';
-
-        _openModal({
-            titleHtml: 'Edit Law',
-            contentHtml: content,
-            confirmText: 'Save',
-            cancelText: 'Cancel',
-            onConfirm: function (root) {
-                var nameInput = root.querySelector('#editLawName');
-                var name = nameInput ? nameInput.value.trim() : '';
-                if (!name) {
-                    _showToast('Law name is required', 'error');
-                    return false;
-                }
-
-                var enforcedEl = root.querySelector('#editLawEnforced');
-                var crimeSeverityEl = root.querySelector('#editLawCrimeSeverity');
-                var crimeSeverityVal = null;
-                if (crimeSeverityEl && crimeSeverityEl.value !== '') {
-                    var parsed = parseInt(crimeSeverityEl.value, 10);
-                    if (!Number.isNaN(parsed)) crimeSeverityVal = parsed;
-                }
-
-                var updates = {
-                    name: name,
-                    type: _readVal(root, '#editLawType'),
-                    lawCategory: _readVal(root, '#editLawCategory'),
-                    domain: _readVal(root, '#editLawDomain'),
-                    description: _readVal(root, '#editLawDescription'),
-                    severity: _readVal(root, '#editLawSeverity'),
-                    notes: _readVal(root, '#editLawNotes'),
-                    crimeMapping: {
-                        crimeType: _readVal(root, '#editLawCrimeType') || null,
-                        crimeSeverity: crimeSeverityVal,
-                        isEnforced: enforcedEl ? enforcedEl.checked === true : false,
-                        punishment: _readVal(root, '#editLawPunishment') || null,
-                        notes: ''
-                    }
-                };
-
-                var result = RC.updateLaw(lawId, updates);
-                if (result && result.success) {
-                    _showToast('Law updated', 'success');
-                    if (typeof onDone === 'function') onDone();
-                    return true;
-                }
-                _showToast(
-                    'Failed to update law: ' +
-                    (result && result.reason ? result.reason : 'unknown'),
-                    'error'
-                );
-                return false;
-            }
-        });
-    }
-
-    function _confirmDeleteLaw(religion, lawId, onDone) {
-        var RC = _getReligionCommands();
-        var RQ = _getReligionQueries();
-        if (!RC || !RQ) return;
-
-        var laws = RQ.getLawsByReligion(religion.id) || [];
-        var law = null;
-        for (var i = 0; i < laws.length; i++) {
-            if (laws[i] && laws[i].id === lawId) { law = laws[i]; break; }
-        }
-        var name = law ? (law.name || 'this law') : 'this law';
-
-        _confirmDialog(
-            'Remove "' + name + '" from the religion?',
-            'Delete Law',
-            function () {
-                var result = RC.removeLaw(religion.id, lawId);
-                if (result && result.success) {
-                    _showToast('Law removed', 'info');
-                    if (typeof onDone === 'function') onDone();
-                } else {
+                if (!did) return;
+                var openDelete = _getOpenDeleteLawModal();
+                if (!openDelete) {
                     _showToast(
-                        'Failed to remove law: ' +
-                        (result && result.reason ? result.reason : 'unknown'),
+                        'Delete Law modal is not available. Load modals-religion.js first.',
                         'error'
                     );
+                    return;
                 }
+                openDelete(religion.id, did, {
+                    onSuccess: function () {
+                        renderLawsTab(container, _freshReligion(religion.id) || religion);
+                    }
+                });
             }
-        );
-    }
-
-    // =========================================================================
-    // 10. SMALL HELPERS
-    // =========================================================================
-
-    function _readVal(root, selector) {
-        var el = root ? root.querySelector(selector) : null;
-        return el ? el.value : '';
+        });
     }
 
     /**
-     * Build <option> list for a "Add" modal. When the enum is present,
-     * iterate its values. When absent, emit a single disabled-ish option
-     * showing the fallback literal so the user sees why the field is
-     * unusable. The command will refuse the save with a clear
-     * "enum not loaded" error, so the form is honest about the state.
+     * Re-fetch the current religion record from Queries. Returns null
+     * if the religion no longer exists (e.g. the caller deleted it from
+     * another tab while this one was open). The caller falls back to the
+     * stale `religion` argument in that case, which will render the
+     * empty laws list — a graceful degradation, not a crash.
+     *
+     * This helper exists because the canonical write modals'
+     * onSuccess payload is NOT the religion record: for addLaw and
+     * updateLaw it is the law record (result.data = law), and for
+     * removeLaw it is undefined. The tab needs the religion, not the
+     * law, to re-render. Rather than thread a different payload shape
+     * through each modal (a modals-religion.js change), the tab
+     * re-fetches.
      */
-    function _enumOptionsForAdd(enumObj, preferredKey, fallbackLiteral) {
-        var vals = _enumValues(enumObj);
-        if (!vals) {
-            return '<option value="' + _escapeHtml(fallbackLiteral) + '">' +
-                _escapeHtml('(enum not loaded — using ' + fallbackLiteral + ')') +
-                '</option>';
-        }
-        var html = '';
-        for (var i = 0; i < vals.length; i++) {
-            var v = vals[i];
-            var sel = (v === fallbackLiteral) ? ' selected' : '';
-            html += '<option value="' + _escapeHtml(v) + '"' + sel + '>' +
-                _escapeHtml(v.charAt(0).toUpperCase() + v.slice(1)) +
-                '</option>';
-        }
-        return html;
-    }
-
-    /**
-     * Build <option> list for an "Edit" modal, selecting `currentValue`.
-     * If currentValue is not in the enum (e.g. source was loaded after
-     * the record was written with a different literal), it is still
-     * rendered as the selected option so the user can see it and correct
-     * it. Validation would reject an invalid value; this is display only.
-     */
-    function _enumOptionsForEdit(enumObj, currentValue, preferredKey, fallbackLiteral) {
-        var vals = _enumValues(enumObj);
-        if (!vals) {
-            return '<option value="' + _escapeHtml(currentValue || fallbackLiteral) +
-                '" selected>' +
-                _escapeHtml((currentValue || fallbackLiteral) + ' (enum not loaded)') +
-                '</option>';
-        }
-        var html = '';
-        var seen = false;
-        for (var i = 0; i < vals.length; i++) {
-            var v = vals[i];
-            var sel = (v === currentValue) ? ' selected' : '';
-            if (v === currentValue) seen = true;
-            html += '<option value="' + _escapeHtml(v) + '"' + sel + '>' +
-                _escapeHtml(v.charAt(0).toUpperCase() + v.slice(1)) +
-                '</option>';
-        }
-        if (!seen && currentValue) {
-            html = '<option value="' + _escapeHtml(currentValue) +
-                '" selected>' + _escapeHtml(currentValue) + ' (unknown)</option>' + html;
-        }
-        return html;
+    function _freshReligion(religionId) {
+        var RQ = _getReligionQueries();
+        if (!RQ) return null;
+        return RQ.getReligion(religionId);
     }
 
     // =========================================================================
-    // 11. TABMANAGER ADAPTER + REGISTRATION
+    // 9. TABMANAGER ADAPTER + REGISTRATION
     // =========================================================================
 
     function renderAdapter(container, context) {
@@ -1108,7 +804,7 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.ReligionLawsTab = {
