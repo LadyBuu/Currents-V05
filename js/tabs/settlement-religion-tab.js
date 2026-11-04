@@ -8,9 +8,9 @@
  *
  * Renders the settlement's religious landscape: the per-religion
  * demographic breakdown, the dominant religion and religious unity (both
- * with reason codes), and the places of worship in the settlement.
- * Hosts the actions that open the create-place modal and route the user
- * to the Religion domain's own modals for place details.
+ * with reason codes), and the places of worship in the settlement. Hosts
+ * the actions that open the create-place modal and route the user to the
+ * Religion domain's own modals for place details.
  *
  * It is a UI module. It:
  *   - reads through SettlementReligionQueries
@@ -26,191 +26,17 @@
  *   - does not use a recursion guard
  *   - does not use setTimeout to guess when the DOM is ready
  *
- * Contract reference: Settlement Architecture Contracts §10 (Query
- * Contract), §14 (Place of Worship Contract), §15 (ViewModel Contract),
- * §16 (UI Contract), §32 (Completion Standard). Religion domain:
- * religion-docs.txt §1 (Ownership Contract), §2 (file layout).
- *
- * RENDERER CONTRACT
- * -----------------
- *   Registered via SettlementTabs.registerTabRenderer('religion', fn).
- *   SettlementTabs invokes fn(container, context):
- *
- *     container  HTMLElement       already emptied by SettlementTabs
- *     context    {
- *       locationId  string|null    selected settlement id
- *       data        Object|null    canonical settlement record
- *       viewModel   Object|null    buildSettlementSummary result
- *     }
- *
- *   SettlementTabs has already validated locationId and data before
- *   calling the renderer.
- *
- * RELIGION OWNERSHIP (settlement-docs §14)
- * ----------------------------------------
- *   The Religion domain owns:
- *     - the religion records (masterData.data.religions)
- *     - the worship-place records (religion.placesOfWorship ids, with
- *       per-place records referenced by ReligionState.getPlaceOfWorshipById)
- *
- *   Settlement owns only its derived religious interpretation:
- *     - dominant religion (via SettlementReligionQueries)
- *     - religious unity (via SettlementReligionQueries)
- *
- *   Settlement does NOT own the worship-place records. The tab reads
- *   them through ReligionQueries, not through a settlement-side
- *   canonical array. There is no settlement.placesOfWorship field under
- *   the new architecture. The prior religion tab called
- *   SettlementState.getPlacesOfWorship and
- *   SettlementCommands.addPlaceOfWorshipToSettlement — neither exists
- *   in the new module set, and the settlement-side path was a §14
- *   violation (Settlement duplicating Religion's ownership).
- *
- * REASON CODES
- * ------------
- *   dominantReligion and religiousUnity are both nullable derived
- *   values carrying a reason code (settlement-docs §4, §14):
- *
- *     religiousUnityReason     'available' | 'no_population' |
- *                              'no_breakdown' | 'settlement_not_found'
- *
- *     dominantReligionReason   'available' | 'no_population' |
- *                              'no_breakdown' | 'unaffiliated_majority' |
- *                              'no_religions' | 'settlement_not_found'
- *
- *   The renderer shows a distinct label for each reason. It does not
- *   collapse the cases into a generic "Unknown." A settlement with
- *   zero population renders "No population" for both; a settlement with
- *   an unaffiliated majority renders "Unaffiliated majority" for
- *   dominant religion; a settlement with no religions at all renders
- *   "No religions"; a settlement whose religion breakdown failed to
- *   compute renders "Unavailable."
- *
- *   The summary comes from context.viewModel
- *   (buildSettlementSummary), which already carries the reason codes
- *   and the value fields. The tab reads them from there; it does not
- *   call getReligiousUnityStatus / getDominantReligionStatus itself.
- *
- * RELIGIOUS BREAKDOWN
- * -------------------
- *   The per-religion count across the settlement's location subtree is
- *   read via SettlementReligionQueries.getReligiousBreakdown, which
- *   wraps ReligionQueries.getReligiousBreakdownForLocations. Shape:
- *
- *     { byReligion: { [religionId]: { count } }, unaffiliated, total }
- *
- *   This is the aggregate-across-subtree shape. The per-location
- *   breakdown (ReligionQueries.getReligiousBreakdown) is a different
- *   shape and different semantics (one location, not a subtree); the
- *   tab uses the aggregate form because a settlement spans multiple
- *   places.
- *
- * PLACES OF WORSHIP
- * -----------------
- *   SettlementReligionQueries.getPlacesOfWorship returns the place-of-
- *   worship records for the settlement's subtree, composed from
- *   ReligionQueries.getPlacesOfWorshipByLocation. Each record is the
- *   Religion-domain place record.
- *
- *   The tab displays:
- *     - place name
- *     - religion name (via ReligionQueries.getReligion)
- *     - place type (church / temple / shrine / etc.)
- *     - active status
- *     - follower count (currentFollowers)
- *
- *   The tab does not mutate place records. Editing, deleting, and
- *   head-clergy management are the Religion domain's responsibility;
- *   the tab opens ReligionModals.openReligionDetailsModal when the user
- *   clicks a place row, which is the only entry point for place
- *   mutations.
- *
- * CREATE PLACE OF WORSHIP
- * -----------------------
- *   Creating a place of worship is a Religion-domain operation. It
- *   requires a religion (a settlement does not create places for a
- *   nonexistent faith), and the modal collects both the religion and the
- *   location. The tab's "Create Place of Worship" button opens
- *   ReligionModals.openCreatePlaceOfWorshipModal with the religion
- *   chosen from a dropdown of active religions.
- *
- *   The modal is a two-step flow: pick a religion, then fill in the
- *   place. Rather than build a settlement-specific place-creation modal
- *   that would duplicate Religion's validation and mutation paths, the
- *   tab delegates.
- *
- *   If the settlement has no active religions (all deprecated, or none
- *   ever created), the tab disables the button and shows a hint: "No
- *   active religions. Create a religion in the Religion manager first."
- *   This is a presentation-only guard; the modal would reject the flow
- *   with a toast anyway, but showing the user why the button is
- *   disabled is better UX than letting them click and get an error.
- *
- * ICON POLICY
- * -----------
- *   No emojis. No inline SVG. Chrome icons come from window.getIcon if
- *   it is loaded; when icons.js is not on the page, the renderer falls
- *   back to plain text labels.
- *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
- *     - Rewritten against the new settlement module set.
- *     - Signature changed from (containerId, locationId, summary) to
- *       (container, context), matching settlement-tabs.js.
- *     - Recursion guard (_rendering) and modal-open flag removed (§20
- *       prohibits recursion guards).
- *     - All reads go through SettlementReligionQueries and
- *       ReligionQueries. The prior implementation called
- *       SettlementState.getPlacesOfWorship,
- *       SettlementState.getDominantReligion,
- *       SettlementState.getReligiousUnity — none of which exist on the
- *       new SettlementState. The dominant religion and unity now come
- *       from context.viewModel (buildSettlementSummary), which is
- *       already the correct source per §14 and §15.
- *     - The place-creation flow delegates to
- *       ReligionModals.openCreatePlaceOfWorshipModal. The prior
- *       implementation called
- *       SettlementCommands.addPlaceOfWorshipToSettlement and
- *       ReligionCommands.createPlaceOfWorship as two separate commands;
- *       that was a §14 violation (settlement duplicating Religion's
- *       ownership) and also a partial-commit hazard (the second command
- *       could fail after the first had succeeded). The Religion modal
- *       calls ReligionCommands.createPlaceOfWorship once, which is the
- *       atomic path.
- *     - The reason-code labels for dominant religion and religious
- *       unity now match the ones in modals-settlement-core.js and
- *       settlement-docs.txt §10 REASON-CODE RENDERING. The prior tab
- *       collapsed all unavailable cases into "None"/"50%" and never
- *       exposed the reason.
- *     - The religious breakdown rendering reads the aggregate shape
- *       (byReligion / unaffiliated / total) returned by
- *       SettlementReligionQueries.getReligiousBreakdown. The prior tab
- *       called ReligionQueries.getReligiousBreakdown directly (single
- *       location, different shape) and, since the location subtree was
- *       the settlement's own location, under-counted characters placed
- *       in sub-locations.
- *     - The dominant-religion highlight in the breakdown uses
- *       context.viewModel.dominantReligion.id, which may be null when
- *       there is no dominant religion. No highlight is applied in that
- *       case; the top religion is still the largest bar but is not
- *       labelled "dominant."
- *     - All numeric values route through _fmtNumber. All percent values
- *       route through _fmtPercent. All text values route through
- *       _fmtText. No raw null/undefined reaches the DOM.
- *     - The "Collect Tithes" button that the prior tab had per place
- *       is removed. Tithe collection is a Religion-domain command
- *       (ReligionCommands.collectTithes), which is documented in
- *       religion-commands.js §13 as "Partial: place records are not
- *       canonically stored." Collecting tithes is a Religion-mutation
- *       concern and belongs in the Religion details modal, not in a
- *       settlement-tab mini-action. If you want a per-place "collect
- *       tithes" button later, that belongs in modals-religion.js.
- *     - window.getCurrentYearSafe is not referenced. window.getCurrentYear
- *       is not called — the tab does not display a year.
- *   Previous revisions:
- *     - Pre-refactor implementation against SettlementState /
- *       SettlementCommands, both of which no longer exist.
+ *   Current revision (Step-1 duplication cleanup):
+ *     - Removed the dead helper _currentLocationIdForPlace. It always
+ *       returned null and caused _openPlaceDetails to run a
+ *       getPlacesOfWorship(null) call as dead code before falling back
+ *       to the real path. The active path — resolve the place's religion
+ *       via ReligionQueries.getPlaceOfWorship(placeId) and open
+ *       ReligionModals.openReligionDetailsModal — is unchanged.
+ *     - No other behavioral change. Every read, mutation-delegation, and
+ *       modal-open path is byte-identical.
  * =============================================================================
  */
 
@@ -325,10 +151,6 @@
     // =========================================================================
     // 3. REASON-CODE LABELS
     // =========================================================================
-    //
-    // Mirrors modals-settlement-core.js::_religiousUnityLabel and
-    // _dominantReligionLabel. Any change to that module's labels must
-    // be mirrored here, and vice versa. See REASON CODES in the header.
 
     function _religiousUnityLabel(reason, value) {
         if (reason === 'available') return _fmtPercent(value);
@@ -378,10 +200,6 @@
 
     function _isPlaceActive(place) {
         if (!place) return false;
-        // religion-docs: place records carry isActive; a missing value
-        // is treated as active because the field's semantics are
-        // "deactivated by explicit flag," not "must be true to be a
-        // real place."
         return place.isActive !== false;
     }
 
@@ -400,10 +218,6 @@
             return;
         }
 
-        // The Religion modal is religion-centric: its first step is
-        // picking a religion. We need to know which religion the user
-        // wants before opening it, because the modal takes a religionId.
-        // Present a small chooser first.
         var religions = _activeReligions();
         if (religions.length === 0) {
             _toast(
@@ -415,7 +229,6 @@
         }
 
         if (religions.length === 1) {
-            // Only one religion: skip the chooser and open directly.
             modals.openCreatePlaceOfWorshipModal(religions[0].id, {
                 onSuccess: function () {
                     _requestRefresh();
@@ -491,28 +304,23 @@
         });
     }
 
+    /**
+     * Opens the Religion-domain details modal for the religion of the
+     * given place of worship.
+     *
+     * There is no dedicated "place details" modal on the public Religion
+     * modal surface; the religion details modal (which shows the
+     * religion's places, including this one) is the correct entry point.
+     *
+     * @param {string} placeId
+     */
     function _openPlaceDetails(placeId) {
         var modals = _getReligionModals();
         if (!modals || typeof modals.openReligionDetailsModal !== 'function') {
             _toast('Religion modals are not loaded.', 'error');
             return;
         }
-        // The place detail is managed by the Religion domain. The
-        // closest public surface is the religion details modal, which
-        // shows the religion's places. There is no dedicated
-        // "place details" modal on the public Religion modal surface.
-        // For a specific place, resolve its religion first, then open
-        // that religion's details.
-        var place;
-        try {
-            place = _getSettlementReligionQueries().getPlacesOfWorship(
-                _currentLocationIdForPlace(placeId)
-            );
-        } catch (err) {
-            place = null;
-        }
-        // Simpler: read the place record via ReligionState / the
-        // religion queries. We need the religion id.
+
         var rq = _getReligionQueries();
         var record = null;
         if (typeof rq.getPlaceOfWorship === 'function') {
@@ -522,25 +330,18 @@
                 record = null;
             }
         }
+
         if (record && record.religionId) {
             modals.openReligionDetailsModal(record.religionId, {
                 onRefresh: function () { _requestRefresh(); }
             });
             return;
         }
+
         _toast(
             'Place details are managed through the Religion manager.',
             'info'
         );
-    }
-
-    // Stub: the place details path is documented above as needing the
-    // religion id. The tab's place row click uses
-    // _openPlaceDetails(placeId); this helper is unused and should be
-    // removed when the place-details path is finalized. Kept as a
-    // placeholder so the current code compiles.
-    function _currentLocationIdForPlace(_placeId) {
-        return null;
     }
 
     // =========================================================================
@@ -640,7 +441,6 @@
                 '</div>';
         }
 
-        // Build sorted list of (religionId, count, name).
         var byReligion = breakdown.byReligion || {};
         var entries = [];
         for (var religionId in byReligion) {
@@ -665,7 +465,6 @@
             });
         }
 
-        // Sort by count descending, then by name for stable order.
         entries.sort(function (a, b) {
             if (b.count !== a.count) return b.count - a.count;
             return a.name.localeCompare(b.name);
@@ -707,7 +506,6 @@
             rows += barRow(entries[i]);
         }
 
-        // Unaffiliated bar (never dominant — it's not a religion).
         var unaffiliatedPct = total > 0
             ? Math.round((unaffiliated / total) * 100)
             : 0;
@@ -911,12 +709,6 @@
     // 8. RENDER
     // =========================================================================
 
-    /**
-     * Renders the religion tab into the container.
-     *
-     * @param {HTMLElement} container
-     * @param {Object} context  { locationId, data, viewModel }
-     */
     function renderSettlementReligion(container, context) {
         if (!container) {
             throw new Error(
