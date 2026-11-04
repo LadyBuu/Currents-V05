@@ -23,6 +23,38 @@
  * Callers decide what to do with errors. Commands return them to the UI.
  * The UI decides whether to toast, highlight, or ignore.
  *
+ * MYTHOLOGY FIELD VOCABULARY (public export)
+ * ------------------------------------------
+ * _validateMythology enforces a fixed set of allowed mythology fields.
+ * That set is exported publicly as:
+ *
+ *     CultureValidation.MYTHOLOGY_TEXT_FIELDS  (string fields)
+ *     CultureValidation.MYTHOLOGY_ARRAY_FIELDS (string-array fields)
+ *
+ * The exports are the same frozen arrays the validator reads; they
+ * cannot drift from the validator because they are the same array
+ * instances. Consumers (culture-mythology-tab.js's cross-check, future
+ * docs generators, migration scripts) use these to know what fields
+ * exist without parsing this file.
+ *
+ * Do NOT mutate the exported arrays. They are frozen; a mutation attempt
+ * throws in strict mode and silently no-ops otherwise, and either way
+ * does not affect the validator.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (A5):
+ *     - Hoisted the two mythology field lists from inline literals
+ *       inside _validateMythology to module-scope frozen arrays
+ *       (MYTHOLOGY_TEXT_FIELDS, MYTHOLOGY_ARRAY_FIELDS).
+ *     - Exported both arrays on window.CultureValidation so consumers
+ *       can read the authoritative field vocabulary. The mythology tab
+ *       uses these to detect cross-file drift.
+ *     - _validateMythology now reads from the hoisted arrays instead of
+ *       its own local literals. Same behavior.
+ *     - No change to any other validator. No change to return shapes.
+ *   Previous revisions:
+ *     - Initial implementation.
  * =============================================================================
  */
 
@@ -30,7 +62,24 @@
     'use strict';
 
     // =========================================================================
-    // 1. PRIMITIVES
+    // 1. MYTHOLOGY FIELD VOCABULARY
+    // =========================================================================
+    //
+    // The canonical list of mythology fields _validateMythology enforces.
+    // Exported publicly as CultureValidation.MYTHOLOGY_TEXT_FIELDS and
+    // CultureValidation.MYTHOLOGY_ARRAY_FIELDS so consumers (the
+    // mythology tab's drift check, future docs generators) can read the
+    // vocabulary without parsing this file.
+    //
+    // Frozen so a consumer cannot mutate them via the public export.
+    // A mutation attempt throws in strict mode and silently no-ops
+    // otherwise; either way the validator's view is unaffected.
+
+    var MYTHOLOGY_TEXT_FIELDS = Object.freeze(['creation', 'afterlife', 'cosmology']);
+    var MYTHOLOGY_ARRAY_FIELDS = Object.freeze(['keyDeities', 'keyEvents', 'symbols', 'themes']);
+
+    // =========================================================================
+    // 2. PRIMITIVES
     // =========================================================================
 
     function _isPlainObject(v) {
@@ -70,7 +119,7 @@
     }
 
     // =========================================================================
-    // 2. FIELD VALIDATORS
+    // 3. FIELD VALIDATORS
     // =========================================================================
     //
     // Each validator takes (value, errors, fieldPath). A value of undefined
@@ -133,7 +182,7 @@
     }
 
     // =========================================================================
-    // 3. APPEARANCE
+    // 4. APPEARANCE
     // =========================================================================
     //
     // Appearance is a weighted-option map:
@@ -234,12 +283,14 @@
     }
 
     // =========================================================================
-    // 4. MYTHOLOGY
+    // 5. MYTHOLOGY
     // =========================================================================
     //
     // Mythology is flavor text. Validation is deliberately permissive:
     // unknown fields are allowed, known fields are type-checked.
     //
+    // The two field lists are hoisted to module scope (see §1) so they
+    // can be exported. Do not inline them here; edit them in §1.
 
     function _validateMythology(value, errors) {
         if (value === undefined) return;
@@ -249,27 +300,25 @@
             return;
         }
 
-        var stringFields = ['creation', 'afterlife', 'cosmology'];
-        for (var i = 0; i < stringFields.length; i++) {
-            var key = stringFields[i];
+        for (var i = 0; i < MYTHOLOGY_TEXT_FIELDS.length; i++) {
+            var key = MYTHOLOGY_TEXT_FIELDS[i];
             if (value[key] === undefined || value[key] === null) continue;
             if (typeof value[key] !== 'string') {
                 errors.push('mythology.' + key, 'mythology.' + key + ' must be a string.');
             }
         }
 
-        var arrayFields = ['keyDeities', 'keyEvents', 'symbols', 'themes'];
-        for (var i = 0; i < arrayFields.length; i++) {
-            var key = arrayFields[i];
-            if (value[key] === undefined || value[key] === null) continue;
-            if (!_isStringArray(value[key])) {
-                errors.push('mythology.' + key, 'mythology.' + key + ' must be an array of strings.');
+        for (var j = 0; j < MYTHOLOGY_ARRAY_FIELDS.length; j++) {
+            var arrKey = MYTHOLOGY_ARRAY_FIELDS[j];
+            if (value[arrKey] === undefined || value[arrKey] === null) continue;
+            if (!_isStringArray(value[arrKey])) {
+                errors.push('mythology.' + arrKey, 'mythology.' + arrKey + ' must be an array of strings.');
             }
         }
     }
 
     // =========================================================================
-    // 5. ID
+    // 6. ID
     // =========================================================================
 
     function _validateIdPresence(value, errors) {
@@ -295,7 +344,7 @@
     }
 
     // =========================================================================
-    // 6. SHARED FIELD SWEEP
+    // 7. SHARED FIELD SWEEP
     // =========================================================================
 
     function _validateCommonFields(candidate, errors) {
@@ -311,7 +360,7 @@
     }
 
     // =========================================================================
-    // 7. CREATE
+    // 8. CREATE
     // =========================================================================
 
     /**
@@ -340,7 +389,7 @@
     }
 
     // =========================================================================
-    // 8. UPDATE
+    // 9. UPDATE
     // =========================================================================
 
     /**
@@ -392,7 +441,7 @@
     }
 
     // =========================================================================
-    // 9. DELETE
+    // 10. DELETE
     // =========================================================================
 
     /**
@@ -430,13 +479,18 @@
     }
 
     // =========================================================================
-    // 10. PUBLIC API
+    // 11. PUBLIC API
     // =========================================================================
 
     window.CultureValidation = {
+        // Validators
         validateCreate: validateCreate,
         validateUpdate: validateUpdate,
-        validateDelete: validateDelete
+        validateDelete: validateDelete,
+
+        // Field vocabulary (read-only; frozen arrays)
+        MYTHOLOGY_TEXT_FIELDS: MYTHOLOGY_TEXT_FIELDS,
+        MYTHOLOGY_ARRAY_FIELDS: MYTHOLOGY_ARRAY_FIELDS
     };
 
     if (typeof module !== 'undefined' && module.exports) {
