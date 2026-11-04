@@ -22,438 +22,185 @@
     <style>
         /* ==================================================================
            SETTLEMENT MANAGER — INLINE STYLES
-           ==================================================================
-           Structurally identical to Location Manager. All color/radius/
-           shadow/font values come from themes.css. The only additions
-           here over Location Manager are the settlement-specific
-           sub-tab body classes (.sct-*) that the eleven tab renderers
-           already emit; no styling block inside any tab renderer is
-           required to change.
            ================================================================== */
-
-        /* ---- App shell ---- */
-        html, body {
-            height: 100%;
-            margin: 0;
-            overflow: hidden;
-        }
+        html, body { height: 100%; margin: 0; overflow: hidden; }
         body {
-            display: flex;
-            flex-direction: column;
-            background: var(--bg);
-            color: var(--text);
-            font-family: var(--f-body);
-            font-size: 16px;
-            line-height: 1.5;
+            display: flex; flex-direction: column;
+            background: var(--bg); color: var(--text);
+            font-family: var(--f-body); font-size: 16px; line-height: 1.5;
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
         }
-
         .topbar {
-            position: relative;
-            z-index: 100;
-            flex-shrink: 0;
-            background: var(--bg2);
-            padding: 8px 16px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
+            position: relative; z-index: 100; flex-shrink: 0;
+            background: var(--bg2); padding: 8px 16px;
+            display: flex; align-items: center; gap: 10px;
             border-bottom: 1px solid var(--border);
-            min-height: 48px;
-            flex-wrap: wrap;
+            min-height: 48px; flex-wrap: wrap;
         }
-
-        .world-app {
-            display: flex;
-            flex-direction: row;
-            flex: 1;
-            min-height: 0;
-            overflow: hidden;
-        }
-
+        .world-app { display: flex; flex-direction: row; flex: 1; min-height: 0; overflow: hidden; }
         .locations-sidebar {
-            flex-shrink: 0;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            background: var(--bg2);
-            border-right: 1px solid var(--border);
-            width: 280px;
+            flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden;
+            background: var(--bg2); border-right: 1px solid var(--border); width: 280px;
         }
-
         .sidebar-header {
-            padding: 12px 16px;
-            border-bottom: 1px solid var(--border);
-            background: var(--bg3);
+            padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg3);
         }
         .sidebar-header h3 {
-            margin: 0;
-            font-family: var(--f-display);
-            font-size: 0.65rem;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            color: var(--accent);
-            display: flex;
-            align-items: center;
-            gap: 6px;
+            margin: 0; font-family: var(--f-display); font-size: 0.65rem;
+            letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent);
+            display: flex; align-items: center; gap: 6px;
         }
-        .sidebar-header h3 svg {
-            width: 1em;
-            height: 1em;
-            fill: currentColor;
-        }
-
-        .place-list {
-            flex: 1;
-            overflow-y: auto;
-            padding: 8px;
-            min-height: 0;
-        }
-
+        .sidebar-header h3 svg { width: 1em; height: 1em; fill: currentColor; }
+        .place-list { flex: 1; overflow-y: auto; padding: 8px; min-height: 0; }
         .main-panel {
-            display: flex;
-            flex-direction: column;
-            flex: 1;
-            min-width: 0;
-            min-height: 0;
-            overflow: hidden;
+            display: flex; flex-direction: column; flex: 1;
+            min-width: 0; min-height: 0; overflow: hidden;
         }
-
         .tab-content-wrapper {
-            flex: 1;
-            min-height: 0;
-            overflow-y: auto;
-            overflow-x: hidden;
-            padding: 20px 24px;
-            background: var(--bg);
+            flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+            padding: 20px 24px; background: var(--bg);
         }
-
-        /* ---- Sidebar tree — indent + border guide ---- */
         .place-list .location-tree-children,
         .locations-sidebar .location-tree-children {
-            margin-left: 0 !important;
-            padding-left: 16px !important;
-            border-left: 1px solid var(--border-light) !important;
-            display: none;
+            margin-left: 0 !important; padding-left: 16px !important;
+            border-left: 1px solid var(--border-light) !important; display: none;
         }
         .place-list .location-tree-children.is-expanded,
-        .locations-sidebar .location-tree-children.is-expanded {
-            display: block;
-        }
+        .locations-sidebar .location-tree-children.is-expanded { display: block; }
         .place-list .location-tree-children .location-tree-children,
-        .locations-sidebar .location-tree-children .location-tree-children {
-            padding-left: 16px !important;
-        }
-
-        /* ---- Sidebar rows (fallback when LocationUI is absent) ---- */
+        .locations-sidebar .location-tree-children .location-tree-children { padding-left: 16px !important; }
         .place-list .place-item {
-            padding: 6px 10px;
-            cursor: pointer;
-            border-radius: var(--radius);
-            font-size: 0.78rem;
-            color: var(--text);
-            margin: 2px 0;
+            padding: 6px 10px; cursor: pointer; border-radius: var(--radius);
+            font-size: 0.78rem; color: var(--text); margin: 2px 0;
             transition: background-color 0.15s, color 0.15s;
         }
-        .place-list .place-item:hover {
-            background: var(--bg4);
-        }
+        .place-list .place-item:hover { background: var(--bg4); }
         .place-list .place-item.selected {
-            background: var(--accent-dim);
-            color: var(--accent-light);
+            background: var(--accent-dim); color: var(--accent-light);
             border-left: 3px solid var(--accent);
         }
-
-        /* ---- Topbar buttons ---- */
         .tb-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 6px 14px;
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--text);
-            font-family: var(--f-body);
-            font-size: 0.7rem;
-            font-weight: 500;
-            cursor: pointer;
-            line-height: 1.2;
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 6px 14px; background: var(--bg2);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            color: var(--text); font-family: var(--f-body); font-size: 0.7rem;
+            font-weight: 500; cursor: pointer; line-height: 1.2;
             transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
         }
-        .tb-btn svg {
-            width: 0.9em;
-            height: 0.9em;
-            fill: currentColor;
-        }
-        .tb-btn:hover {
-            border-color: var(--accent);
-            background: var(--accent-dim);
-            color: var(--accent-light);
-        }
-        .tb-btn.primary {
-            background: var(--accent);
-            border-color: var(--accent);
-            color: var(--accent-fg);
-        }
-        .tb-btn.primary:hover {
-            background: var(--accent-dark);
-            border-color: var(--accent-dark);
-        }
-        .tb-btn:disabled {
-            opacity: 0.45;
-            cursor: not-allowed;
-        }
-        .tb-btn:disabled:hover {
-            background: var(--bg2);
-            border-color: var(--border);
-            color: var(--text);
-        }
-
+        .tb-btn svg { width: 0.9em; height: 0.9em; fill: currentColor; }
+        .tb-btn:hover { border-color: var(--accent); background: var(--accent-dim); color: var(--accent-light); }
+        .tb-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+        .tb-btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+        .tb-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .tb-btn:disabled:hover { background: var(--bg2); border-color: var(--border); color: var(--text); }
         .topbar .title {
-            font-family: var(--f-display);
-            font-weight: 600;
-            font-size: 0.9rem;
-            color: var(--accent);
-            white-space: nowrap;
-            letter-spacing: 0.02em;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
+            font-family: var(--f-display); font-weight: 600; font-size: 0.9rem;
+            color: var(--accent); white-space: nowrap; letter-spacing: 0.02em;
+            display: inline-flex; align-items: center; gap: 6px;
         }
-        .topbar .title svg {
-            width: 1em;
-            height: 1em;
-            fill: currentColor;
-        }
-        .topbar .spacer {
-            flex: 1;
-            min-width: 12px;
-        }
+        .topbar .title svg { width: 1em; height: 1em; fill: currentColor; }
+        .topbar .spacer { flex: 1; min-width: 12px; }
         .topbar .burger-menu {
-            display: none;
-            align-items: center;
-            justify-content: center;
-            padding: 4px 10px;
-            background: transparent;
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--text);
-            cursor: pointer;
+            display: none; align-items: center; justify-content: center;
+            padding: 4px 10px; background: transparent;
+            border: 1px solid var(--border); border-radius: var(--radius);
+            color: var(--text); cursor: pointer;
         }
-        .topbar .burger-menu:hover {
-            border-color: var(--accent);
-            color: var(--accent);
-        }
-
-        /* ---- Year input ---- */
+        .topbar .burger-menu:hover { border-color: var(--accent); color: var(--accent); }
         .year-input {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 3px 10px;
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            font-family: var(--f-body);
-            font-size: 0.7rem;
-            line-height: 1.2;
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 3px 10px; background: var(--bg);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            font-family: var(--f-body); font-size: 0.7rem; line-height: 1.2;
         }
         .year-input label {
-            font-family: var(--f-display);
-            font-size: 0.55rem;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            color: var(--dim);
-            white-space: nowrap;
+            font-family: var(--f-display); font-size: 0.55rem;
+            letter-spacing: 0.06em; text-transform: uppercase;
+            color: var(--dim); white-space: nowrap;
         }
         .year-input input {
-            width: 64px;
-            padding: 3px 6px;
-            background: transparent;
-            border: 1px solid var(--border);
-            border-radius: calc(var(--radius) - 1px);
-            color: var(--text);
-            font-family: var(--f-mono);
-            font-size: 0.7rem;
-            text-align: right;
+            width: 64px; padding: 3px 6px; background: transparent;
+            border: 1px solid var(--border); border-radius: calc(var(--radius) - 1px);
+            color: var(--text); font-family: var(--f-mono); font-size: 0.7rem; text-align: right;
         }
-        .year-input input:focus {
-            outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 2px var(--accent-soft);
-        }
+        .year-input input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
         .year-input input::-webkit-outer-spin-button,
-        .year-input input::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-        }
+        .year-input input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
         .year-input input[type=number] { -moz-appearance: textfield; }
-
-        /* ---- Theme toggle ---- */
         .theme-toggle { position: relative; display: inline-flex; }
         .theme-toggle__btn { gap: 6px; }
         .theme-toggle__menu {
-            position: absolute;
-            top: calc(100% + 4px);
-            right: 0;
-            z-index: 9999;
-            min-width: 160px;
-            max-height: 60vh;
-            padding: 4px;
-            margin: 0;
-            list-style: none;
-            background: var(--surface);
-            border: 1px solid var(--line);
-            border-radius: var(--radius);
-            box-shadow: var(--shadow);
-            overflow-y: auto;
+            position: absolute; top: calc(100% + 4px); right: 0; z-index: 9999;
+            min-width: 160px; max-height: 60vh; padding: 4px; margin: 0;
+            list-style: none; background: var(--surface);
+            border: 1px solid var(--line); border-radius: var(--radius);
+            box-shadow: var(--shadow); overflow-y: auto;
         }
         .theme-toggle__menu[hidden] { display: none; }
         .theme-toggle__menu button {
-            display: block;
-            width: 100%;
-            padding: 6px 12px;
-            text-align: left;
-            background: transparent;
-            border: none;
-            color: var(--text);
-            font-family: var(--f-body);
-            font-size: 0.7rem;
-            border-radius: calc(var(--radius) - 2px);
-            cursor: pointer;
+            display: block; width: 100%; padding: 6px 12px; text-align: left;
+            background: transparent; border: none; color: var(--text);
+            font-family: var(--f-body); font-size: 0.7rem;
+            border-radius: calc(var(--radius) - 2px); cursor: pointer;
             transition: background-color 0.15s ease;
         }
         .theme-toggle__menu button:hover,
         .theme-toggle__menu button:focus-visible {
-            background: var(--accent-dim);
-            color: var(--accent-light);
-            outline: none;
+            background: var(--accent-dim); color: var(--accent-light); outline: none;
         }
-
-        /* ============================================================
-           SUB-TAB STRIP — identical to Location Manager
-           ============================================================ */
         .manager-subtabs {
-            position: sticky;
-            top: 0;
-            display: flex;
-            align-items: stretch;
-            gap: 4px;
-            padding: 8px 4px 0;
-            margin: -20px -24px 20px;
-            padding-left: 24px;
-            padding-right: 24px;
-            background: var(--bg);
-            border-bottom: 1px solid var(--border);
-            flex-wrap: wrap;
-            z-index: 10;
+            position: sticky; top: 0; display: flex; align-items: stretch;
+            gap: 4px; padding: 8px 4px 0; margin: -20px -24px 20px;
+            padding-left: 24px; padding-right: 24px; background: var(--bg);
+            border-bottom: 1px solid var(--border); flex-wrap: wrap; z-index: 10;
         }
         .manager-subtab {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 12px 18px 11px;
-            background: transparent;
-            border: 1px solid transparent;
-            border-bottom: none;
-            border-radius: 6px 6px 0 0;
-            color: var(--dim);
-            font-family: var(--f-display);
-            font-size: 0.78rem;
-            font-weight: 500;
-            letter-spacing: 0.06em;
-            line-height: 1.15;
-            white-space: nowrap;
-            cursor: pointer;
-            transition: color 0.15s ease, background-color 0.15s ease;
+            position: relative; display: inline-flex; align-items: center;
+            gap: 8px; padding: 12px 18px 11px; background: transparent;
+            border: 1px solid transparent; border-bottom: none;
+            border-radius: 6px 6px 0 0; color: var(--dim);
+            font-family: var(--f-display); font-size: 0.78rem; font-weight: 500;
+            letter-spacing: 0.06em; line-height: 1.15; white-space: nowrap;
+            cursor: pointer; transition: color 0.15s ease, background-color 0.15s ease;
         }
         .manager-subtab::after {
-            content: '';
-            position: absolute;
-            left: 0; right: 0; bottom: -1px;
-            height: 2px;
-            background: transparent;
-            border-radius: 2px 2px 0 0;
+            content: ''; position: absolute; left: 0; right: 0; bottom: -1px;
+            height: 2px; background: transparent; border-radius: 2px 2px 0 0;
             transition: background-color 0.15s ease;
         }
-        .manager-subtab:hover {
-            color: var(--accent-light);
-            background: var(--accent-dim);
-        }
-        .manager-subtab:hover::after {
-            background: var(--accent);
-            opacity: 0.35;
-        }
+        .manager-subtab:hover { color: var(--accent-light); background: var(--accent-dim); }
+        .manager-subtab:hover::after { background: var(--accent); opacity: 0.35; }
         .manager-subtab.active {
-            color: var(--accent);
-            background: var(--bg2);
-            border-color: var(--border);
-            border-bottom-color: transparent;
-            font-weight: 600;
+            color: var(--accent); background: var(--bg2);
+            border-color: var(--border); border-bottom-color: transparent; font-weight: 600;
         }
-        .manager-subtab.active::after {
-            background: var(--accent);
-            opacity: 1;
-        }
+        .manager-subtab.active::after { background: var(--accent); opacity: 1; }
         .manager-subtab-icon {
-            display: inline-flex;
-            width: 16px;
-            height: 16px;
-            align-items: center;
-            justify-content: center;
-            color: currentColor;
-            flex-shrink: 0;
-            opacity: 0.9;
+            display: inline-flex; width: 16px; height: 16px;
+            align-items: center; justify-content: center;
+            color: currentColor; flex-shrink: 0; opacity: 0.9;
         }
-        .manager-subtab-icon svg {
-            width: 100%;
-            height: 100%;
-            fill: currentColor;
-        }
-        .manager-subpanel {
-            min-height: 200px;
-            padding-top: 4px;
-        }
-
-        /* ---- Empty / loading (identical to Location Manager) ---- */
+        .manager-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
+        .manager-subpanel { min-height: 200px; padding-top: 4px; }
         .empty-state {
-            padding: 48px 24px;
-            text-align: center;
-            color: var(--dim);
-            font-size: 0.88rem;
-            line-height: 1.6;
+            padding: 48px 24px; text-align: center; color: var(--dim);
+            font-size: 0.88rem; line-height: 1.6;
         }
         .loading {
-            padding: 24px;
-            text-align: center;
-            color: var(--tmut);
-            font-size: 0.85rem;
+            padding: 24px; text-align: center; color: var(--tmut); font-size: 0.85rem;
             animation: pulse 1.5s ease-in-out infinite;
         }
-        @keyframes pulse {
-            0%, 100% { opacity: 0.6; }
-            50% { opacity: 1; }
-        }
-
-        /* ---- Modal chrome overrides (match Location Manager) ---- */
+        @keyframes pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
         .toast { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
         .modal-container { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
         .btn:hover { box-shadow: none !important; }
         .icon-svg { display: inline-block; width: 1em; height: 1em; vertical-align: middle; fill: currentColor; }
-
-        /* ---- Sidebar overlay (mobile) ---- */
         .sidebar-overlay { display: none; }
         .sidebar-overlay.active {
-            display: block;
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.8);
-            z-index: 999;
+            display: block; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8); z-index: 999;
         }
-
-        /* ---- Responsive ---- */
         @media (max-width: 768px) {
             .topbar .burger-menu { display: inline-flex; }
             .topbar { padding: 6px 10px; gap: 6px; min-height: 42px; }
@@ -462,48 +209,31 @@
             .year-input { padding: 2px 6px; }
             .year-input label { display: none; }
             .year-input input { width: 52px; font-size: 0.65rem; }
-
             .world-app { flex-direction: column; }
             .locations-sidebar {
-                position: fixed;
-                top: 0; bottom: 0; left: 0;
-                height: 100vh;
-                width: 85%;
-                max-width: 280px;
-                z-index: 1000;
-                transform: translateX(-100%);
-                transition: transform 0.3s ease;
+                position: fixed; top: 0; bottom: 0; left: 0; height: 100vh;
+                width: 85%; max-width: 280px; z-index: 1000;
+                transform: translateX(-100%); transition: transform 0.3s ease;
                 box-shadow: none;
             }
             .locations-sidebar.visible { transform: translateX(0); }
             .tab-content-wrapper { padding: 16px; }
             .manager-subtabs {
                 margin: -16px -16px 16px;
-                padding-left: 16px;
-                padding-right: 16px;
+                padding-left: 16px; padding-right: 16px;
             }
             .manager-subtab {
-                flex: 1 1 auto;
-                min-width: 0;
-                padding: 10px 14px;
-                font-size: 0.72rem;
+                flex: 1 1 auto; min-width: 0; padding: 10px 14px; font-size: 0.72rem;
             }
         }
-
         @media (prefers-reduced-motion: reduce) {
-            .manager-subtab,
-            .loading {
-                animation: none;
-                transition: none;
-            }
+            .manager-subtab, .loading { animation: none; transition: none; }
         }
     </style>
 </head>
 <body>
 
-<!-- ================================================================== -->
-<!-- TOPBAR                                                              -->
-<!-- ================================================================== -->
+<!-- TOPBAR -->
 <div class="topbar">
     <button id="menuToggle" class="burger-menu" type="button" aria-label="Toggle menu">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
@@ -512,21 +242,16 @@
     </button>
     <div class="title" id="settlementManagerTitle"></div>
     <div class="spacer"></div>
-
     <button id="addLocationBtn" class="tb-btn primary" type="button"></button>
     <button id="addSettlementBtn" class="tb-btn" type="button"></button>
-
     <div class="year-input">
         <label for="yearInput">Year</label>
         <input type="number" id="yearInput" min="1" step="1" />
         <button id="setYearBtn" class="tb-btn" type="button">Set</button>
     </div>
-
     <button id="importBtn" class="tb-btn" type="button"></button>
     <button id="exportBtn" class="tb-btn" type="button"></button>
-
     <input type="file" id="fileInput" accept=".json" style="display:none;" />
-
     <div class="theme-toggle" role="group" aria-label="Theme">
         <button class="tb-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
             <span aria-hidden="true">◐</span>
@@ -536,9 +261,7 @@
     </div>
 </div>
 
-<!-- ================================================================== -->
-<!-- WORLD APP                                                           -->
-<!-- ================================================================== -->
+<!-- WORLD APP -->
 <div class="world-app">
     <div class="locations-sidebar" id="locationsSidebar">
         <div class="sidebar-header"><h3 id="sidebarTitle"></h3></div>
@@ -547,7 +270,6 @@
         </div>
     </div>
     <div id="sidebarOverlay" class="sidebar-overlay"></div>
-
     <div class="main-panel">
         <div class="tab-content-wrapper" id="panelContent">
             <div class="empty-state" id="emptyStateText">Select a location from the sidebar</div>
@@ -606,9 +328,6 @@
 
 <!-- ================================================================
      BLOCK 6 — CORE UI PRIMITIVES
-     (NOTE: js/core/tab-manager.js is NOT loaded. This page uses the
-      same inline sub-tab strip pattern as Location Manager; no tab
-      manager module is required.)
      ================================================================ -->
 <script src="js/core/ui.js"></script>
 <script src="js/core/ui-state.js"></script>
@@ -660,7 +379,12 @@
 <script src="js/character/mortality-statistics.js"></script>
 
 <!-- ================================================================
-     BLOCK 13 — ROLES
+     BLOCK 13 — CHARACTER LIFECYCLE (must precede crime)
+     ================================================================ -->
+<script src="js/character/character-lifecycle.js"></script>
+
+<!-- ================================================================
+     BLOCK 14 — ROLES
      ================================================================ -->
 <script src="js/roles/role-constants.js"></script>
 <script src="js/roles/role-state.js"></script>
@@ -668,7 +392,7 @@
 <script src="js/roles/role-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 14 — RANKS
+     BLOCK 15 — RANKS
      ================================================================ -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
@@ -678,20 +402,12 @@
 <script src="js/ranks/rank-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 15 — NAMES
+     BLOCK 16 — NAMES
      ================================================================ -->
 <script src="js/names/name-queries.js"></script>
 <script src="js/names/name-rules.js"></script>
 <script src="js/names/names-state.js"></script>
 <script src="js/names/name-commands.js"></script>
-
-<!-- ================================================================
-     BLOCK 16 — STATE FACADE
-     (census-state, matchmaker-state, misc-state, core/state.js
-      are NOT required by this page. The settlement manager reads
-      settlement data through SettlementQueries and location data
-      through LocationQueries. js/core/state.js is skipped.)
-     ================================================================ -->
 
 <!-- ================================================================
      BLOCK 17 — RELIGION
@@ -710,28 +426,9 @@
 <script src="js/religion/religion-ui-state.js"></script>
 
 <!-- ================================================================
-     BLOCK 18 — INDUSTRY
-     ================================================================ -->
-<script src="js/industry/industry-constants.js"></script>
-<script src="js/industry/industry-state.js"></script>
-<script src="js/industry/industry-types.js"></script>
-<script src="js/industry/industry-type-defaults.js"></script>
-<script src="js/industry/industry-type-init.js"></script>
-<script src="js/industry/industry-type-commands.js"></script>
-<script src="js/industry/industry-rules.js"></script>
-<script src="js/industry/industry-economics.js"></script>
-<script src="js/industry/industry-migration.js"></script>
-<script src="js/industry/industry-queries.js"></script>
-<script src="js/industry/industry-commands.js"></script>
-<script src="js/industry/industry-processor.js"></script>
-<script src="js/industry/industry-bootstrap.js"></script>
-<script src="js/industry/industry-view-models.js"></script>
-<script src="js/industry/modals-industry.js"></script>
-
-<!-- ================================================================
-     BLOCK 19 — HOUSEHOLDS + RESIDENCE
-     (HouseholdCommands + ResidenceSystem are required by the
-      settlement-residence-tab renderer below.)
+     BLOCK 18 — HOUSEHOLDS + RESIDENCE
+     (Moved BEFORE industry: industry-commands.js and
+      industry-bootstrap.js require HouseholdCommands.)
      ================================================================ -->
 <script src="js/households/household-constants.js"></script>
 <script src="js/households/household-rules.js"></script>
@@ -758,7 +455,37 @@
 <script src="js/households/modals-assign-staff.js"></script>
 <script src="js/households/modals-residence-history.js"></script>
 <script src="js/households/modals-residence-vacancy.js"></script>
-<script src="js/households/modals-residence-snapshot.js"></script>
+<!-- NOTE: modals-residence-snapshot.js is DEPRECATED. Its
+     functionality is now provided by modals-household-snapshot.js
+     (household history/snapshots) and modals-residence.js (residence
+     history/details). Do not add it back. -->
+
+<!-- ================================================================
+     BLOCK 19 — INDUSTRY
+     (Order fixed per industry-doc.txt §4 and the console errors:
+        constants → economics → rules → state → type-defaults →
+        type-init → types → type-commands → migration → commands →
+        queries → processor → view-models → modals → bootstrap.
+      industry-bootstrap.js must load LAST among industry files so
+      its verification finds every module. industry-rules.js must
+      precede industry-type-commands.js. industry-view-models.js must
+      precede industry-bootstrap.js.)
+     ================================================================ -->
+<script src="js/industry/industry-constants.js"></script>
+<script src="js/industry/industry-economics.js"></script>
+<script src="js/industry/industry-rules.js"></script>
+<script src="js/industry/industry-type-defaults.js"></script>
+<script src="js/industry/industry-state.js"></script>
+<script src="js/industry/industry-type-init.js"></script>
+<script src="js/industry/industry-types.js"></script>
+<script src="js/industry/industry-type-commands.js"></script>
+<script src="js/industry/industry-migration.js"></script>
+<script src="js/industry/industry-commands.js"></script>
+<script src="js/industry/industry-queries.js"></script>
+<script src="js/industry/industry-processor.js"></script>
+<script src="js/industry/industry-view-models.js"></script>
+<script src="js/industry/modals-industry.js"></script>
+<script src="js/industry/industry-bootstrap.js"></script>
 
 <!-- ================================================================
      BLOCK 20 — LOCATION (core domain)
@@ -798,8 +525,7 @@
 </script>
 
 <!-- ================================================================
-     BLOCK 21 — SETTLEMENT (definitions → rules → state → commit →
-     queries → commands → factory → processor → view-models → ui-state)
+     BLOCK 21 — SETTLEMENT
      ================================================================ -->
 <script src="js/settlement/settlement-fiscal-definitions.js"></script>
 <script src="js/settlement/settlement-government-definitions.js"></script>
@@ -844,6 +570,7 @@
 
 <script src="js/settlement/settlement-view-models.js"></script>
 <script src="js/settlement/settlement-ui-state.js"></script>
+<script src="js/settlement/settlement-tabs.js"></script>
 
 <!-- ================================================================
      BLOCK 22 — GOVERNMENT
@@ -872,6 +599,8 @@
 
 <!-- ================================================================
      BLOCK 24 — CRIME
+     (character-lifecycle.js was moved to Block 13 so
+      killCharacter is available when crime-commands loads.)
      ================================================================ -->
 <script src="js/crime/crime-constants.js"></script>
 <script src="js/crime/crime-state.js"></script>
@@ -910,21 +639,15 @@
 <script src="js/religion/religion-bootstrap.js"></script>
 
 <!-- ================================================================
-     BLOCK 27 — CHARACTER LIFECYCLE (death dispatch)
-     ================================================================ -->
-<script src="js/character/character-lifecycle.js"></script>
-
-<!-- ================================================================
-     BLOCK 28 — CHARACTER UI MODALS
+     BLOCK 27 — CHARACTER UI MODALS
      ================================================================ -->
 <script src="js/character/character-ui-list.js"></script>
 <script src="js/character/modals-character.js"></script>
 <script src="js/character/modals-death.js"></script>
 
 <!-- ================================================================
-     BLOCK 29 — SETTLEMENT MODALS + UI LIST
-     (settlement-tabs.js is NOT loaded. The inline sub-tab strip
-      replaces it.)
+     BLOCK 28 — SETTLEMENT MODALS + UI LIST
+     (settlement-tabs.js is loaded in Block 21.)
      ================================================================ -->
 <script src="js/settlement/settlement-ui-list.js"></script>
 <script src="js/settlement/modals-settlement-core.js"></script>
@@ -932,11 +655,9 @@
 <script src="js/settlement/modals-settlement-roles.js"></script>
 
 <!-- ================================================================
-     BLOCK 30 — SETTLEMENT TAB RENDERERS
-     (eleven files, loaded after their dependencies per load order.txt
-      Blocks 21–29. Each exposes render(containerId, locationId); two
-      of them — crime and residence — expose free functions instead
-      and are wrapped in the sub-tab registry below.)
+     BLOCK 29 — SETTLEMENT TAB RENDERERS
+     (Each tab file self-registers with SettlementTabs at load.
+      SettlementTabs must be defined first — see Block 21.)
      ================================================================ -->
 <script src="js/tabs/settlement-overview-tab.js"></script>
 <script src="js/tabs/settlement-features-tab.js"></script>
@@ -946,340 +667,11 @@
 <script src="js/tabs/settlement-education-tab.js"></script>
 <script src="js/tabs/settlement-history-tab.js"></script>
 <script src="js/tabs/settlement-roles-tab.js"></script>
-<script src="js/tabs/government-details-tab.js"></script>
 <script src="js/tabs/settlement-crime-tab.js"></script>
 <script src="js/tabs/settlement-residence-tab.js"></script>
 
 <!-- ================================================================
-     BLOCK 31 — SUB-TAB HOST
-     ================================================================
-     Single registry, single dispatch entry point. Exactly the same
-     shape as Location Manager's Block 25, expanded from five tabs
-     to eleven. Each tab is a plain render(containerId, locationId)
-     function.
-     ================================================================ -->
-<script>
-(function () {
-    'use strict';
-
-    // ---- Registry -------------------------------------------------
-    //
-    // Each entry exposes render(containerId, locationId).
-    // Where the underlying module exports a free function (crime,
-    // residence), a thin wrapper adapts it. No global registration
-    // protocol, no `SettlementTabs`, no `TabManager`.
-    //
-    // The `requiresSettlement` flag tells _dispatch whether a missing
-    // settlement record is a legitimate UI state (render "no settlement
-    // yet") or not. Every tab that reads SettlementQueries requires
-    // the record; the residences tab does not (a location can have
-    // residences without a settlement record) so it renders regardless.
-    var SUBTABS = [
-        {
-            id: 'overview',
-            label: 'Overview',
-            icon: 'BOOK',
-            requiresSettlement: true,
-            render: function (containerId, locationId) {
-                if (window.SettlementOverviewTab
-                    && typeof window.SettlementOverviewTab.render === 'function') {
-                    window.SettlementOverviewTab.render(containerId, locationId);
-                }
-            }
-        },
-        {
-            id: 'features',
-            label: 'Features',
-            icon: 'GEAR',
-            requiresSettlement: true,
-            render: function (containerId, locationId) {
-                if (window.SettlementFeaturesTab
-                    && typeof window.SettlementFeaturesTab.render === 'function') {
-                    window.SettlementFeaturesTab.render(containerId, locationId);
-                }
-            }
-        },
-        {
-            id: 'economy',
-            label: 'Economy',
-            icon: 'COIN',
-            requiresSettlement: true,
-            render: function (containerId, locationId) {
-                if (window.SettlementEconomyTab
-                    && typeof window.SettlementEconomyTab.render === 'function') {
-                    window.SettlementEconomyTab.render(containerId, locationId);
-                }
-            }
-        },
-        {
-            id: 'religion',
-            label: 'Religion',
-            icon: 'CIRCLE_DOT',
-            requiresSettlement: true,
-            render: function (containerId, locationId) {
-                if (window.SettlementReligionTab
-                    && typeof window.SettlementReligionTab.render === 'function') {
-                    window.SettlementReligionTab.render(containerId, locationId);
-                }
-            }
-        },
-        {
-            id: 'industry',
-            label: 'Industry',
-            icon: 'GEAR',
-            requiresSettlement: true,
-            render: function (containerId, locationId) {
-                if (window.SettlementIndustryTab
-                    && typeof window.SettlementIndustryTab.render === 'function') {
-                    window.SettlementIndustryTab.render(containerId, locationId);
-                }
-            }
-        },
-        {
-            id: 'education',
-            label: 'Education',
-            icon: 'BOOK',
-            requiresSettlement: true,
-            render: function (containerId, locationId) {
-                if (window.SettlementEducationTab
-                    && typeof window.SettlementEducationTab.render === 'function') {
-                    window.SettlementEducationTab.render(containerId, locationId);
-                }
-            }
-        },
-        {
-            id: 'history',
-            label: 'History',
-            icon: 'CIRCLE_DOT',
-            requiresSettlement: true,
-            render: function (containerId, locationId) {
-                if (window.SettlementHistoryTab
-                    && typeof window.SettlementHistoryTab.render === 'function') {
-                    window.SettlementHistoryTab.render(containerId, locationId);
-                }
-            }
-        },
-        {
-            id: 'roles',
-            label: 'Roles',
-            icon: 'PERSON',
-            requiresSettlement: true,
-            render: function (containerId, locationId) {
-                if (window.SettlementRolesTab
-                    && typeof window.SettlementRolesTab.render === 'function') {
-                    window.SettlementRolesTab.render(containerId, locationId);
-                }
-            }
-        },
-        {
-            id: 'government',
-            label: 'Government',
-            icon: 'HOME',
-            requiresSettlement: true,
-            render: function (containerId, locationId) {
-                if (window.GovernmentDetailsTab
-                    && typeof window.GovernmentDetailsTab.render === 'function') {
-                    window.GovernmentDetailsTab.render(containerId, locationId);
-                }
-            }
-        },
-        {
-            id: 'crime',
-            label: 'Crime',
-            icon: 'WARNING',
-            requiresSettlement: true,
-            // The crime tab exports renderSettlementCrime(containerId, locationId)
-            // as a free function and re-exports it as
-            // window.renderSettlementCrime. The registry adapter calls
-            // that free function. settlement-crime-tab.js also tries to
-            // register itself with SettlementTabs; that attempt is a
-            // no-op here because SettlementTabs is not defined.
-            render: function (containerId, locationId) {
-                if (typeof window.renderSettlementCrime === 'function') {
-                    window.renderSettlementCrime(containerId, locationId);
-                }
-            }
-        },
-        {
-            id: 'residences',
-            label: 'Residences',
-            icon: 'HOME',
-            requiresSettlement: false,
-            // Same pattern as crime: settlement-residence-tab.js
-            // exports renderSettlementResidences(containerId, locationId)
-            // as a free function. Residences can exist at a location
-            // that has no settlement record, so this tab does not gate
-            // on the settlement record.
-            render: function (containerId, locationId) {
-                if (typeof window.renderSettlementResidences === 'function') {
-                    window.renderSettlementResidences(containerId, locationId);
-                }
-            }
-        }
-    ];
-
-    var _activeSubtabId = 'overview';
-    var _currentLocationId = null;
-
-    // ---- Icon helpers (same as Location Manager) ------------------
-    function _icon(name) {
-        if (typeof window.getIcon === 'function') {
-            try {
-                var s = window.getIcon(name);
-                if (typeof s === 'string') return s;
-            } catch (e) { /* ignore */ }
-        }
-        return '';
-    }
-    function _esc(s) {
-        return typeof window.escapeHtml === 'function'
-            ? window.escapeHtml(s)
-            : String(s == null ? '' : s);
-    }
-
-    // ---- Settlement presence check -------------------------------
-    //
-    // A single source of truth for "does this location have a
-    // settlement record". Uses SettlementQueries.getSettlementData
-    // (the canonical accessor). A missing record is a legitimate UI
-    // state; tabs that require it render the "create a settlement"
-    // message instead of throwing or rendering a hollow shell.
-    function _locationHasSettlement(locationId) {
-        if (!locationId) return false;
-        if (!window.SettlementQueries
-            || typeof window.SettlementQueries.getSettlementData !== 'function') {
-            return false;
-        }
-        try {
-            return window.SettlementQueries.getSettlementData(locationId) !== null;
-        } catch (e) {
-            return false;
-        }
-    }
-
-    // ---- Find a sub-tab by id ------------------------------------
-    function _findSubtab(id) {
-        for (var i = 0; i < SUBTABS.length; i++) {
-            if (SUBTABS[i].id === id) return SUBTABS[i];
-        }
-        return null;
-    }
-
-    // ---- Render the sub-tab strip and dispatch -------------------
-    //
-    // Idempotent and reentrant. Rebuilds container.innerHTML from
-    // scratch on every call, so an in-flight render from a prior
-    // click cannot leave DOM behind. Exactly the same shape as
-    // renderLocationManagerTab.
-    function renderSubtabStrip(containerId, locationId) {
-        var container = document.getElementById(containerId);
-        if (!container) return;
-
-        _currentLocationId = locationId || null;
-
-        if (!locationId) {
-            container.innerHTML =
-                '<div class="empty-state">Select a location from the sidebar</div>';
-            return;
-        }
-
-        var hasSettlement = _locationHasSettlement(locationId);
-
-        // ---- Strip HTML ----
-        var stripHtml = '<div class="manager-subtabs" role="tablist">';
-        for (var i = 0; i < SUBTABS.length; i++) {
-            var t = SUBTABS[i];
-            var isActive = (t.id === _activeSubtabId);
-            var cls = 'manager-subtab' + (isActive ? ' active' : '');
-            var iconHtml = _icon(t.icon)
-                ? '<span class="manager-subtab-icon">' + _icon(t.icon) + '</span>'
-                : '';
-            stripHtml +=
-                '<button type="button" class="' + cls + '" ' +
-                'data-subtab-id="' + _esc(t.id) + '" ' +
-                'role="tab" aria-selected="' + (isActive ? 'true' : 'false') + '">' +
-                iconHtml +
-                '<span>' + _esc(t.label) + '</span>' +
-                '</button>';
-        }
-        stripHtml += '</div>';
-        stripHtml += '<div id="' + _esc(containerId) + '-subpanel" ' +
-            'class="manager-subpanel" role="tabpanel"></div>';
-
-        container.innerHTML = stripHtml;
-
-        // ---- Strip click wiring ----
-        var buttons = container.querySelectorAll('.manager-subtab');
-        for (var b = 0; b < buttons.length; b++) {
-            (function (btn) {
-                btn.addEventListener('click', function () {
-                    var id = btn.getAttribute('data-subtab-id');
-                    if (!id || id === _activeSubtabId) return;
-                    _activeSubtabId = id;
-                    renderSubtabStrip(containerId, _currentLocationId);
-                });
-            })(buttons[b]);
-        }
-
-        // ---- Dispatch the active tab ----
-        var activeTab = _findSubtab(_activeSubtabId);
-        var subpanel = document.getElementById(containerId + '-subpanel');
-        if (!subpanel) return;
-
-        if (!activeTab) {
-            subpanel.innerHTML = '<div class="empty-state">This tab is not available.</div>';
-            return;
-        }
-
-        // The only precondition is "the location has a settlement
-        // record, or the tab does not need one". This mirrors the
-        // Location Manager's implicit precondition (a place exists).
-        if (activeTab.requiresSettlement && !hasSettlement) {
-            subpanel.innerHTML =
-                '<div class="empty-state">' +
-                'This location has no settlement yet. ' +
-                'Click <strong>Add Settlement</strong> in the topbar to create one.' +
-                '</div>';
-            return;
-        }
-
-        try {
-            activeTab.render(containerId + '-subpanel', locationId);
-        } catch (err) {
-            if (typeof console !== 'undefined' && console.error) {
-                console.error(
-                    '[settlement-manager] tab "' + activeTab.id + '" threw:', err
-                );
-            }
-            subpanel.innerHTML =
-                '<div class="empty-state">' +
-                'Could not render this tab. See console for details.' +
-                '</div>';
-        }
-    }
-
-    // ---- Public entry point used by the manager init block ------
-    window.renderSettlementManagerTab = function (containerId, locationId) {
-        renderSubtabStrip(containerId, locationId);
-    };
-
-    // ---- Public "activate a specific tab then render" -----------
-    //
-    // Used by the topbar Add Settlement button to jump to Overview
-    // after creating a settlement.
-    window.activateSettlementSubtab = function (tabId, containerId, locationId) {
-        if (!_findSubtab(tabId)) return;
-        _activeSubtabId = tabId;
-        renderSubtabStrip(containerId, locationId);
-    };
-})();
-</script>
-
-<!-- ================================================================
-     BLOCK 32 — MANAGER INIT
-     (mirrors Location Manager's init: setupUIText, setupYearControl,
-      setupSidebar, setupTopBarActions, pickInitialSelection,
-      selectLocation with in-place selection toggle, theme switcher)
+     BLOCK 30 — MANAGER INIT
      ================================================================ -->
 <script>
 (function () {
@@ -1300,45 +692,31 @@
     var currentPlaceId = null;
     var isInitialized = false;
 
-    // =========================================================================
-    // 1. TOPBAR TEXT
-    // =========================================================================
-
+    // ---- 1. TOPBAR TEXT ----
     function setupUIText() {
         var title = document.getElementById('settlementManagerTitle');
         if (title) title.innerHTML = iconWithText(getIcon('HOME'), ' SETTLEMENT MANAGER');
-
         var sidebarTitle = document.getElementById('sidebarTitle');
         if (sidebarTitle) sidebarTitle.innerHTML = iconWithText(getIcon('LOCATION'), ' LOCATIONS');
-
         var addLoc = document.getElementById('addLocationBtn');
         if (addLoc) addLoc.innerHTML = iconWithText(getIcon('PLUS'), ' Add Location');
-
         var addSet = document.getElementById('addSettlementBtn');
         if (addSet) addSet.innerHTML = iconWithText(getIcon('PLUS'), ' Add Settlement');
-
         var importBtn = document.getElementById('importBtn');
         if (importBtn) importBtn.innerHTML = iconWithText(getIcon('ARROW_RIGHT'), ' Import');
-
         var exportBtn = document.getElementById('exportBtn');
         if (exportBtn) exportBtn.innerHTML = iconWithText(getIcon('ARROW_RIGHT'), ' Export');
-
         var loadingText = document.getElementById('loadingText');
         if (loadingText) loadingText.textContent = 'Loading locations…';
-
         var emptyState = document.getElementById('emptyStateText');
         if (emptyState) emptyState.textContent = 'Select a location from the sidebar';
     }
 
-    // =========================================================================
-    // 2. YEAR CONTROL
-    // =========================================================================
-
+    // ---- 2. YEAR CONTROL ----
     function setupYearControl() {
         var input = document.getElementById('yearInput');
         var btn = document.getElementById('setYearBtn');
         if (!input || !btn) return;
-
         function syncFromCanonical() {
             try {
                 var y = (typeof window.getCurrentYear === 'function')
@@ -1346,40 +724,26 @@
                     : (window.masterData && window.masterData.data
                         ? window.masterData.data.currentYear
                         : null);
-                if (typeof y === 'number' && isFinite(y)) {
-                    input.value = String(y);
-                }
+                if (typeof y === 'number' && isFinite(y)) input.value = String(y);
             } catch (e) { /* ignore */ }
         }
         syncFromCanonical();
-
         function applyYear() {
             var raw = input.value;
             var y = parseInt(raw, 10);
-            if (!isFinite(y)) {
-                showToast('Enter a valid year', 'error');
-                return;
-            }
+            if (!isFinite(y)) { showToast('Enter a valid year', 'error'); return; }
             if (typeof window.isValidYear === 'function' && window.isValidYear(y) !== true) {
                 showToast('Year out of range', 'error');
                 return;
             }
-
             var applied = false;
             if (typeof window.setCurrentYear === 'function') {
                 try {
                     var result = window.setCurrentYear(y);
-                    if (result === false) {
-                        showToast('Could not set year', 'error');
-                        return;
-                    }
+                    if (result === false) { showToast('Could not set year', 'error'); return; }
                     applied = true;
-                } catch (e) {
-                    showToast('Set year failed: ' + (e.message || 'unknown'), 'error');
-                    return;
-                }
+                } catch (e) { showToast('Set year failed: ' + (e.message || 'unknown'), 'error'); return; }
             }
-
             if (!applied) {
                 if (!window.masterData || !window.masterData.data) {
                     showToast('Storage not initialized', 'error');
@@ -1394,36 +758,26 @@
                 }
                 applied = true;
             }
-
             if (applied) {
                 showToast('Year set to ' + y, 'success');
                 syncFromCanonical();
-                if (typeof window.renderSettlementManagerTab === 'function'
-                    && currentPlaceId) {
+                if (typeof window.renderSettlementManagerTab === 'function' && currentPlaceId) {
                     try { window.renderSettlementManagerTab('panelContent', currentPlaceId); }
                     catch (e) { /* ignore */ }
                 }
                 setupSidebar();
             }
         }
-
         btn.addEventListener('click', applyYear);
         input.addEventListener('keydown', function (e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                applyYear();
-            }
+            if (e.key === 'Enter') { e.preventDefault(); applyYear(); }
         });
     }
 
-    // =========================================================================
-    // 3. SIDEBAR
-    // =========================================================================
-
+    // ---- 3. SIDEBAR ----
     function setupSidebar() {
         var container = document.getElementById('placeList');
         if (!container) return;
-
         if (window.LocationUI && typeof window.LocationUI.renderLocationList === 'function') {
             try {
                 window.LocationUI.renderLocationList('placeList', {
@@ -1441,7 +795,6 @@
                 console.error('[settlement-manager] renderLocationList failed:', e);
             }
         }
-
         var places = (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
         if (places && places.length > 0) {
             var html = '';
@@ -1471,41 +824,29 @@
     function _applySidebarSelection(previousId, nextId) {
         var container = document.getElementById('placeList');
         if (!container) return;
-
         var newRow = container.querySelector(
             '.location-tree-item[data-node-id="' + _cssEscape(nextId) + '"]'
         );
-
-        if (!newRow) {
-            setupSidebar();
-            return;
-        }
-
+        if (!newRow) { setupSidebar(); return; }
         if (previousId) {
             var prevRow = container.querySelector(
                 '.location-tree-item[data-node-id="' + _cssEscape(previousId) + '"]'
             );
             if (prevRow) prevRow.classList.remove('is-selected');
         }
-
         newRow.classList.add('is-selected');
     }
 
     function _cssEscape(s) {
-        if (typeof window.CSS !== 'undefined' &&
-            typeof window.CSS.escape === 'function') {
+        if (typeof window.CSS !== 'undefined' && typeof window.CSS.escape === 'function') {
             return window.CSS.escape(s);
         }
         return String(s).replace(/([^A-Za-z0-9_-])/g, '\\$1');
     }
 
-    // =========================================================================
-    // 4. SELECT LOCATION
-    // =========================================================================
-
+    // ---- 4. SELECT LOCATION ----
     function selectLocation(id) {
         if (!id) return;
-
         if (id === currentPlaceId) {
             if (typeof window.renderSettlementManagerTab === 'function') {
                 try { window.renderSettlementManagerTab('panelContent', id); }
@@ -1513,23 +854,17 @@
             }
             return;
         }
-
         var previousId = currentPlaceId;
         currentPlaceId = id;
-
-        if (window.SettlementUIState &&
-            typeof window.SettlementUIState.setSelectedLocationId === 'function') {
+        if (window.SettlementUIState && typeof window.SettlementUIState.setSelectedLocationId === 'function') {
             try { window.SettlementUIState.setSelectedLocationId(id); }
             catch (e) { /* ignore */ }
         }
-
         _applySidebarSelection(previousId, id);
-
         if (typeof window.renderSettlementManagerTab === 'function') {
             try { window.renderSettlementManagerTab('panelContent', id); }
             catch (e) { console.error(e); }
         }
-
         if (window.innerWidth <= 768) closeSidebar();
     }
 
@@ -1563,16 +898,12 @@
         }
     }
 
-    // =========================================================================
-    // 5. TOPBAR ACTIONS
-    // =========================================================================
-
+    // ---- 5. TOPBAR ACTIONS ----
     function setupTopBarActions() {
         var addLocBtn = document.getElementById('addLocationBtn');
         if (addLocBtn) addLocBtn.onclick = function () {
             if (typeof window.openAddPlaceModal !== 'function') {
-                showToast('Add modal unavailable', 'error');
-                return;
+                showToast('Add modal unavailable', 'error'); return;
             }
             window.openAddPlaceModal(null, function (newId) {
                 setupSidebar();
@@ -1582,13 +913,9 @@
 
         var addSetBtn = document.getElementById('addSettlementBtn');
         if (addSetBtn) addSetBtn.onclick = function () {
-            if (!currentPlaceId) {
-                showToast('Select a location first', 'warning');
-                return;
-            }
+            if (!currentPlaceId) { showToast('Select a location first', 'warning'); return; }
             if (!window.SettlementFactory || typeof window.SettlementFactory.ensureSettlement !== 'function') {
-                showToast('SettlementFactory not loaded', 'error');
-                return;
+                showToast('SettlementFactory not loaded', 'error'); return;
             }
             try {
                 var result = window.SettlementFactory.ensureSettlement(currentPlaceId);
@@ -1597,17 +924,14 @@
                         (result && result.code ? result.code : 'unknown'), 'error');
                     return;
                 }
-                // After creation, jump to the Overview tab. The strip
-                // re-renders; the user sees the fresh overview rather
-                // than whichever tab happened to be active before.
-                if (typeof window.activateSettlementSubtab === 'function') {
-                    window.activateSettlementSubtab('overview', 'panelContent', currentPlaceId);
-                } else if (typeof window.renderSettlementManagerTab === 'function') {
+                if (typeof window.SettlementTabs === 'object'
+                    && typeof window.SettlementTabs.activate === 'function') {
+                    window.SettlementTabs.activate('overview');
+                }
+                if (typeof window.renderSettlementManagerTab === 'function') {
                     window.renderSettlementManagerTab('panelContent', currentPlaceId);
                 }
-                if (result.created === true) {
-                    showToast('Settlement created', 'success');
-                }
+                if (result.created === true) showToast('Settlement created', 'success');
             } catch (e) {
                 console.error('[settlement-manager] createSettlement failed:', e);
                 showToast('Could not create settlement: ' + (e.message || 'unknown'), 'error');
@@ -1617,10 +941,7 @@
         var importBtn = document.getElementById('importBtn');
         var fileInput = document.getElementById('fileInput');
         if (importBtn && fileInput) {
-            importBtn.onclick = function () {
-                fileInput.value = '';
-                fileInput.click();
-            };
+            importBtn.onclick = function () { fileInput.value = ''; fileInput.click(); };
             fileInput.onchange = function () {
                 var file = this.files && this.files[0];
                 if (!file) return;
@@ -1632,15 +953,10 @@
                         if (parsed && parsed.data && parsed.data.places !== undefined) dataToInstall = parsed.data;
                         else if (parsed && parsed.places !== undefined) dataToInstall = parsed;
                         else if (parsed && parsed.data) dataToInstall = parsed.data;
-                        if (!dataToInstall) {
-                            showToast('Unrecognized import format', 'error');
-                            return;
-                        }
+                        if (!dataToInstall) { showToast('Unrecognized import format', 'error'); return; }
                         if (typeof window.normalizeMasterData !== 'function') {
-                            showToast('Schema module not available', 'error');
-                            return;
+                            showToast('Schema module not available', 'error'); return;
                         }
-
                         window.masterData = window.normalizeMasterData({
                             schemaVersion: window.STORAGE_SCHEMA_VERSION,
                             savedAt: new Date().toISOString(),
@@ -1649,8 +965,7 @@
                         if (typeof window.invalidateAccessorCaches === 'function') window.invalidateAccessorCaches();
                         if (typeof window.markDataDirty === 'function') window.markDataDirty();
                         if (typeof window.saveMasterData === 'function' && !window.saveMasterData()) {
-                            showToast('Save failed after import', 'error');
-                            return;
+                            showToast('Save failed after import', 'error'); return;
                         }
                         if (window.LocationBootstrap && typeof window.LocationBootstrap.init === 'function') {
                             try { window.LocationBootstrap.init(); } catch (e) { /* ignore */ }
@@ -1682,13 +997,9 @@
         var exportBtn = document.getElementById('exportBtn');
         if (exportBtn) exportBtn.onclick = function () {
             if (typeof window.exportToJSON !== 'function') {
-                showToast('Export module not available', 'error');
-                return;
+                showToast('Export module not available', 'error'); return;
             }
-            if (!window.masterData) {
-                showToast('No data to export', 'error');
-                return;
-            }
+            if (!window.masterData) { showToast('No data to export', 'error'); return; }
             try {
                 window.exportToJSON(window.masterData, 'stillwaters');
                 showToast('Export started', 'success');
@@ -1698,10 +1009,7 @@
         };
     }
 
-    // =========================================================================
-    // 6. BOOTSTRAP
-    // =========================================================================
-
+    // ---- 6. BOOTSTRAP ----
     function bootstrap() {
         if (isInitialized) return;
         isInitialized = true;
@@ -1751,7 +1059,6 @@
             if (overlay) overlay.addEventListener('click', closeSidebar);
         }, 150);
 
-        // React to masterData updates.
         if (typeof window.addEventListener === 'function') {
             window.addEventListener('masterDataUpdated', function () {
                 setupSidebar();
@@ -1760,30 +1067,6 @@
                     catch (e) { /* ignore */ }
                 }
             });
-
-            // Crime events refresh the tab when it's the active sub-tab.
-            // The check is against the SUBTABS registry's active id,
-            // which is exposed via the strip's aria-selected state.
-            // Read it from the DOM to avoid adding a second state var.
-            var _crimeEvents = [
-                'crimeRecorded', 'crimeSolved', 'crimeDeleted',
-                'vendettaCreated', 'vendettaDeath', 'vendettaEscalated',
-                'vendettaResolved', 'vendettaDeleted'
-            ];
-            for (var ci = 0; ci < _crimeEvents.length; ci++) {
-                (function (eventName) {
-                    window.addEventListener(eventName, function () {
-                        var active = document.querySelector('.manager-subtab.active');
-                        if (!active) return;
-                        var activeId = active.getAttribute('data-subtab-id');
-                        if (activeId !== 'crime') return;
-                        if (typeof window.renderSettlementManagerTab === 'function') {
-                            try { window.renderSettlementManagerTab('panelContent', currentPlaceId); }
-                            catch (e) { /* ignore */ }
-                        }
-                    });
-                })(_crimeEvents[ci]);
-            }
         }
     }
 
@@ -1796,7 +1079,7 @@
 </script>
 
 <!-- ================================================================
-     BLOCK 33 — THEME SWITCHER UI
+     BLOCK 31 — THEME SWITCHER UI
      ================================================================ -->
 <script>
 (function () {
@@ -1806,7 +1089,6 @@
     var themeName = document.getElementById('themeName');
     var switcher = window.ThemeSwitcher;
     if (!switcher) return;
-
     function updateLabel(id) {
         var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
         if (themeName) themeName.textContent = label;
@@ -1822,7 +1104,6 @@
     }
     function openMenu()  { if (!themeMenu) return; themeMenu.hidden = false; themeBtn.setAttribute('aria-expanded', 'true'); }
     function closeMenu() { if (!themeMenu) return; themeMenu.hidden = true; themeBtn.setAttribute('aria-expanded', 'false'); }
-
     if (themeBtn) themeBtn.addEventListener('click', function (e) {
         e.stopPropagation();
         if (themeMenu.hidden) openMenu(); else closeMenu();
@@ -1843,7 +1124,6 @@
     document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape' && themeMenu && !themeMenu.hidden) closeMenu();
     });
-
     buildMenu();
     var saved = switcher.getSaved();
     if (saved) updateLabel(saved);
