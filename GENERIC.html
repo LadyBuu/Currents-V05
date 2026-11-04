@@ -1,522 +1,955 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Still Waters · Location Manager</title>
-    <!-- external CSS (common.css) is linked; styles are applied from that file -->
-    <link rel="stylesheet" href="css/common.css" />
-    <!-- minimal overrides to remove sidebar and adjust layout -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
+    <title><!-- EDIT: PAGE TITLE --></title>
+
+    <link rel="icon" href="data:,">
+
+    <script src="js/core/theme-boot.js"></script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap" rel="stylesheet">
+
+    <!-- SHARED (external) -->
+    <link rel="stylesheet" href="css/themes.css">
+    <link rel="stylesheet" href="css/common.css">
+
     <style>
-        /* ----- remove sidebar completely ----- */
-        .app-layout {
-            display: block;
-            padding: 0 16px 16px 16px;
+        /* ============================================================
+           MANAGER SHELL — NO SIDEBAR
+           ============================================================
+           Same visual language as the sidebar manager shell, but the
+           main panel occupies the full viewport width. Tabs at the
+           top, content below, everything scrolls inside the content
+           pane rather than the page. */
+
+        /* ---- App shell ---- */
+        html, body { height: 100%; margin: 0; overflow: hidden; }
+        body { display: flex; flex-direction: column; }
+        .topbar { position: relative; z-index: 100; flex-shrink: 0; }
+
+        .world-app {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
         }
+
         .main-panel {
-            margin-left: 0;
-            width: 100%;
-            border-radius: 10px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-width: 0;
+            min-height: 0;
+            overflow: hidden;
         }
-        .sidebar {
-            display: none !important;
+
+        .tab-content-wrapper {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 20px 24px;
         }
-        .topbar .burger-btn {
-            display: none !important;
+
+        /* ---- Topbar buttons ---- */
+        .tb-btn {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 6px 14px; background: var(--bg2);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            color: var(--text); font-family: var(--f-body); font-size: 0.7rem;
+            font-weight: 500; cursor: pointer; line-height: 1.2;
+            flex-shrink: 0;
+            transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
         }
-        .topbar .title {
-            margin-left: 0;
+        .tb-btn:hover { border-color: var(--accent); background: var(--accent-dim); color: var(--accent-light); }
+        .tb-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+        .tb-btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+
+        /* ---- Year input (topbar) ----
+           flex-shrink: 0 on the group and every child so the control
+           never collapses into the Import button. */
+        .year-input {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 3px 10px; background: var(--bg);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            font-family: var(--f-body); font-size: 0.7rem; line-height: 1.2;
+            flex-shrink: 0;
+            flex-grow: 0;
+            min-width: max-content;
+            max-width: 260px;
+            margin-right: 6px;
         }
-        /* ensure tabs and content use the dark theme from common.css */
-        .panel-tabs {
-            background: var(--bg2);
+        .year-input label {
+            font-family: var(--f-display); font-size: 0.55rem;
+            letter-spacing: 0.06em; text-transform: uppercase;
+            color: var(--dim); white-space: nowrap;
+            flex-shrink: 0;
         }
-        .tab-pane {
+        .year-input input {
+            width: 64px; min-width: 52px;
+            padding: 3px 6px;
+            background: transparent; border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 1px); color: var(--text);
+            font-family: var(--f-mono); font-size: 0.7rem; text-align: right;
+            flex-shrink: 0;
+        }
+        .year-input input:focus {
+            outline: none; border-color: var(--accent);
+            box-shadow: 0 0 0 2px var(--accent-soft);
+        }
+        .year-input input::-webkit-outer-spin-button,
+        .year-input input::-webkit-inner-spin-button {
+            -webkit-appearance: none; margin: 0;
+        }
+        .year-input input[type=number] { -moz-appearance: textfield; }
+        .year-input .set-btn {
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 1px);
+            padding: 3px 10px;
+            font-size: 0.65rem;
+            font-weight: 500;
+            color: var(--text);
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+        }
+        .year-input .set-btn:hover {
+            background: var(--accent-dim);
+            border-color: var(--accent);
+            color: var(--accent-light);
+        }
+
+        /* ---- Theme toggle ---- */
+        .theme-toggle { position: relative; display: inline-flex; flex-shrink: 0; }
+        .theme-toggle__btn { gap: 6px; }
+        .theme-toggle__menu {
+            position: absolute; top: calc(100% + 4px); right: 0; z-index: 9999;
+            min-width: 160px; max-height: 60vh; padding: 4px; margin: 0;
+            list-style: none; background: var(--surface);
+            border: 1px solid var(--line); border-radius: var(--radius);
+            box-shadow: var(--shadow); overflow-y: auto;
+        }
+        .theme-toggle__menu[hidden] { display: none; }
+        .theme-toggle__menu button {
+            display: block; width: 100%; padding: 6px 12px; text-align: left;
+            background: transparent; border: none; color: var(--text);
+            font-family: var(--f-body); font-size: 0.7rem;
+            border-radius: calc(var(--radius) - 2px); cursor: pointer;
+            transition: background-color 0.15s ease;
+        }
+        .theme-toggle__menu button:hover,
+        .theme-toggle__menu button:focus-visible {
+            background: var(--accent-dim); color: var(--accent-light); outline: none;
+        }
+
+        /* ---- Sub-tab strip ---- */
+        .manager-subtabs {
+            position: sticky; top: 0;
+            display: flex; align-items: stretch;
+            gap: 4px;
+            padding: 8px 4px 0;
+            margin: -20px -24px 20px;
+            padding-left: 24px;
+            padding-right: 24px;
             background: var(--bg);
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+            z-index: 10;
         }
-        .detail-card {
+
+        .manager-subtab {
+            position: relative;
+            display: inline-flex; align-items: center; gap: 8px;
+            padding: 12px 18px 11px;
+            background: transparent;
+            border: 1px solid transparent;
+            border-bottom: none;
+            border-radius: 6px 6px 0 0;
+            color: var(--dim);
+            font-family: var(--f-display);
+            font-size: 0.78rem;
+            font-weight: 500;
+            letter-spacing: 0.06em;
+            line-height: 1.15;
+            white-space: nowrap;
+            cursor: pointer;
+            transition: color 0.15s ease, background-color 0.15s ease;
+        }
+        .manager-subtab::after {
+            content: '';
+            position: absolute; left: 0; right: 0; bottom: -1px;
+            height: 2px;
+            background: transparent;
+            border-radius: 2px 2px 0 0;
+            transition: background-color 0.15s ease;
+        }
+        .manager-subtab:hover {
+            color: var(--accent-light);
+            background: var(--accent-dim);
+        }
+        .manager-subtab:hover::after {
+            background: var(--accent);
+            opacity: 0.35;
+        }
+        .manager-subtab.active {
+            color: var(--accent);
             background: var(--bg2);
+            border-color: var(--border);
+            border-bottom-color: transparent;
+            font-weight: 600;
         }
-        .detail-notes {
-            background: var(--bg2);
+        .manager-subtab.active::after {
+            background: var(--accent);
+            opacity: 1;
         }
-        /* preserve placeholder styling */
-        .placeholder {
-            color: var(--tmut);
+
+        .manager-subtab-icon {
+            display: inline-flex;
+            width: 16px; height: 16px;
+            align-items: center; justify-content: center;
+            color: currentColor;
+            flex-shrink: 0;
+            opacity: 0.9;
+        }
+        .manager-subtab-icon svg {
+            width: 100%; height: 100%;
+            fill: currentColor;
+        }
+
+        .manager-subpanel {
+            min-height: 200px;
+            padding-top: 4px;
+        }
+
+        /* ---- Empty / loading states ---- */
+        .empty-state {
+            padding: 60px 24px;
             text-align: center;
-            padding: 60px 20px;
+            color: var(--dim);
             font-size: 0.9rem;
+            line-height: 1.6;
         }
-        /* hide file input */
-        #fileInput {
-            display: none;
+        .loading {
+            padding: 24px;
+            text-align: center;
+            color: var(--tmut);
+            font-size: 0.85rem;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
+        }
+
+        /* ---- Mobile ---- */
+        @media (max-width: 768px) {
+            .tab-content-wrapper { padding: 16px; }
+            .manager-subtabs {
+                margin: -16px -16px 16px;
+                padding-left: 16px;
+                padding-right: 16px;
+            }
+            .manager-subtab {
+                flex: 1 1 auto;
+                min-width: 0;
+                padding: 10px 14px;
+                font-size: 0.72rem;
+            }
+            .year-input label { display: none; }
+            .year-input input { width: 52px; min-width: 44px; }
         }
     </style>
 </head>
 <body>
 
-    <!-- TOP BAR -->
-    <div class="topbar">
-        <!-- burger hidden via css -->
-        <span class="title"> Still Waters · Location Manager</span>
-        <span class="spacer"></span>
+<div class="topbar">
+    <div class="title" id="managerTitle"></div>
+    <div class="spacer"></div>
 
-        <!-- 5 placeholder buttons (do nothing) -->
-        <button class="btn" id="placeholder1">Action 1</button>
-        <button class="btn" id="placeholder2">Action 2</button>
-        <button class="btn" id="placeholder3">Action 3</button>
-        <button class="btn" id="placeholder4">Action 4</button>
-        <button class="btn" id="placeholder5">Action 5</button>
-
+    <div class="year-input">
         <label for="yearInput">Year</label>
-        <input type="number" class="year-input" id="yearInput" value="1250" />
-        <button class="btn" id="setYearBtn">Set</button>
-        <button class="btn" id="exportBtn">Export</button>
-        <button class="btn" id="importBtn">Import</button>
-        <input type="file" id="fileInput" accept=".json" />
+        <input type="number" id="yearInput" min="1" step="1">
+        <button id="setYearBtn" class="set-btn" type="button">Set</button>
     </div>
 
-    <!-- APP LAYOUT (no sidebar) -->
-    <div class="app-layout">
-        <!-- MAIN PANEL WITH TABS -->
-        <div class="main-panel" id="mainPanel">
-            <div class="panel-tabs" id="panelTabs">
-                <button class="tab-btn active" data-tab="details">
-                    <span class="tab-icon">◈</span> Details
-                </button>
-                <button class="tab-btn" data-tab="census">
-                    <span class="tab-icon">▦</span> Census
-                </button>
-                <button class="tab-btn" data-tab="history">
-                    <span class="tab-icon">◉</span> History
-                </button>
-                <button class="tab-btn" data-tab="relations">
-                    <span class="tab-icon">⚿</span> Relations
-                </button>
-                <button class="tab-btn" data-tab="settings">
-                    <span class="tab-icon">⚙</span> Settings
-                </button>
-            </div>
+    <button id="importBtn" class="tb-btn" type="button"></button>
+    <button id="exportBtn" class="tb-btn primary" type="button"></button>
+    <button id="refreshBtn" class="tb-btn" type="button"></button>
 
-            <div class="tab-content" id="tabContent">
-                <div class="tab-pane active" id="tab-details">
-                    <div class="placeholder">Select a location from the sidebar</div>
-                </div>
-                <div class="tab-pane" id="tab-census">
-                    <div style="color:var(--dim); text-align:center; padding:40px; font-size:0.9rem;">
-                        <span style="font-size:2rem; display:block; margin-bottom:12px;">▦</span>
-                        Census data will appear here
-                    </div>
-                </div>
-                <div class="tab-pane" id="tab-history">
-                    <div style="color:var(--dim); text-align:center; padding:40px; font-size:0.9rem;">
-                        <span style="font-size:2rem; display:block; margin-bottom:12px;">◉</span>
-                        Historical records will appear here
-                    </div>
-                </div>
-                <div class="tab-pane" id="tab-relations">
-                    <div style="color:var(--dim); text-align:center; padding:40px; font-size:0.9rem;">
-                        <span style="font-size:2rem; display:block; margin-bottom:12px;">⚿</span>
-                        Relationship data will appear here
-                    </div>
-                </div>
-                <div class="tab-pane" id="tab-settings">
-                    <div style="color:var(--dim); text-align:center; padding:40px; font-size:0.9rem;">
-                        <span style="font-size:2rem; display:block; margin-bottom:12px;">⚙</span>
-                        Settings will appear here
-                    </div>
-                </div>
-            </div>
+    <div class="theme-toggle" role="group" aria-label="Theme">
+        <button class="tb-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+            <span aria-hidden="true">◐</span>
+            <span id="themeName">Dark</span>
+        </button>
+        <ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden></ul>
+    </div>
+</div>
+
+<div class="world-app">
+    <div class="main-panel">
+        <div class="tab-content-wrapper" id="panelContent">
+            <div class="empty-state" id="emptyStateText">Loading...</div>
         </div>
     </div>
+</div>
 
-    <!-- ============================================================ -->
-    <!-- LOAD LOCALSTORAGE DATA FIRST (BEFORE ANY SYSTEMS)            -->
-    <!-- ============================================================ -->
-    <script>
-        (function() {
-            'use strict';
+<input type="file" id="fileInput" accept=".json" style="display:none;">
+
+
+<!-- ================================================================
+     BLOCK 1 — CORE CONSTANTS
+     ================================================================ -->
+<script src="js/core/constants/constants.js"></script>
+<script src="js/core/constants/age-constants.js"></script>
+<script src="js/core/constants/character-constants.js"></script>
+<script src="js/core/constants/character-traits.js"></script>
+<script src="js/core/constants/location-constants.js"></script>
+<script src="js/core/constants/relationship-constants.js"></script>
+
+<!-- ================================================================
+     BLOCK 2 — CORE UTILITIES
+     ================================================================ -->
+<script src="js/core/formatting.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/randomness.js"></script>
+
+<!-- ================================================================
+     BLOCK 3 — CORE TIME
+     ================================================================ -->
+<script src="js/core/time.js"></script>
+
+<!-- ================================================================
+     BLOCK 4 — CORE STORAGE
+     ================================================================ -->
+<script src="js/core/storage-schema.js"></script>
+<script src="js/core/storage.js"></script>
+<script>
+    (function () {
+        try {
+            if (typeof window.initializeStorage === 'function') window.initializeStorage();
+        } catch (e) { console.error('[boot] initializeStorage failed:', e); }
+    })();
+</script>
+<script src="js/core/accessors.js"></script>
+
+<!-- ================================================================
+     BLOCK 5 — CORE VALIDATION, WORLD, NAMES
+     ================================================================ -->
+<script src="js/core/validation.js"></script>
+<script src="js/core/world.js"></script>
+<script src="js/core/names.js"></script>
+
+<!-- ================================================================
+     BLOCK 6 — CORE UI PRIMITIVES
+     ================================================================ -->
+<script src="js/core/ui.js"></script>
+<script src="js/core/ui-state.js"></script>
+<script src="js/core/modals-core.js"></script>
+<script src="js/core/responsive.js"></script>
+<script src="js/core/collapsible.js"></script>
+<script src="js/core/exportUtils.js"></script>
+
+<!-- ================================================================
+     BLOCK 7 — SKILL TAXONOMY
+     ================================================================ -->
+<script src="js/roles/skill-utils.js"></script>
+
+<!-- ================================================================
+     BLOCK 8 — CHARACTER PURE POLICY
+     ================================================================ -->
+<script src="js/character/family-rules.js"></script>
+<script src="js/character/children-rules.js"></script>
+<script src="js/character/mortality-rules.js"></script>
+
+<!-- ================================================================
+     BLOCK 9 — CHARACTER STATE
+     ================================================================ -->
+<script src="js/character/character-state.js"></script>
+<script src="js/character/family-state.js"></script>
+
+<!-- ================================================================
+     BLOCK 10 — CHARACTER COMMANDS & QUERIES
+     ================================================================ -->
+<script src="js/character/character-commands.js"></script>
+<script src="js/character/character-queries.js"></script>
+<script src="js/character/family-queries.js"></script>
+<script src="js/character/family-commands.js"></script>
+
+<!-- ================================================================
+     BLOCK 11 — CHARACTER FACTORY & CREATION
+     ================================================================ -->
+<script src="js/character/character-factory.js"></script>
+<script src="js/character/character-creation-commands.js"></script>
+<script src="js/character/character-deletion-commands.js"></script>
+<script src="js/character/mortality-queries.js"></script>
+<script src="js/character/mortality-statistics.js"></script>
+
+<!-- ================================================================
+     BLOCK 12 — ROLES
+     ================================================================ -->
+<script src="js/roles/role-constants.js"></script>
+<script src="js/roles/role-state.js"></script>
+<script src="js/roles/role-queries.js"></script>
+<script src="js/roles/role-commands.js"></script>
+
+<!-- ================================================================
+     BLOCK 13 — RANKS
+     ================================================================ -->
+<script src="js/ranks/rank-constants.js"></script>
+<script src="js/ranks/rank-rules.js"></script>
+<script src="js/ranks/rank-state.js"></script>
+<script src="js/ranks/rank-queries.js"></script>
+<script src="js/ranks/rank-assignment.js"></script>
+<script src="js/ranks/rank-commands.js"></script>
+
+<!-- ================================================================
+     BLOCK 14 — RELIGION
+     ================================================================ -->
+<script src="js/religion/religion-constants.js"></script>
+<script src="js/religion/religion-format.js"></script>
+<script src="js/religion/religion-validation.js"></script>
+<script src="js/religion/religion-state.js"></script>
+<script src="js/religion/religion-queries.js"></script>
+<script src="js/religion/religion-rules.js"></script>
+<script src="js/religion/religion-commands.js"></script>
+<script src="js/religion/religion-laws.js"></script>
+<script src="js/religion/religion-inheritance.js"></script>
+<script src="js/religion/religion-view-models.js"></script>
+<script src="js/religion/religion-render.js"></script>
+<script src="js/religion/religion-ui-state.js"></script>
+
+<!-- ================================================================
+     BLOCK 15 — INDUSTRY
+     ================================================================ -->
+<script src="js/industry/industry-constants.js"></script>
+<script src="js/industry/industry-economics.js"></script>
+<script src="js/industry/industry-type-defaults.js"></script>
+<script src="js/industry/industry-rules.js"></script>
+<script src="js/industry/industry-state.js"></script>
+<script src="js/industry/industry-type-init.js"></script>
+<script src="js/industry/industry-types.js"></script>
+<script src="js/industry/industry-migration.js"></script>
+<script src="js/industry/industry-type-commands.js"></script>
+<script src="js/industry/industry-commands.js"></script>
+<script src="js/industry/industry-queries.js"></script>
+
+<!-- ================================================================
+     BLOCK 16 — HOUSEHOLDS
+     ================================================================ -->
+<script src="js/households/household-constants.js"></script>
+<script src="js/households/household-rules.js"></script>
+<script src="js/households/household-state.js"></script>
+<script src="js/households/household-queries.js"></script>
+<script src="js/households/household-commands.js"></script>
+
+<!-- ================================================================
+     BLOCK 17 — LOCATION
+     ================================================================ -->
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
+<script src="js/location/location-commands.js"></script>
+<script src="js/location/location-queries.js"></script>
+<script src="js/location/location-movement.js"></script>
+<script src="js/location/location-view-models.js"></script>
+<script src="js/location/location-ui-state.js"></script>
+<script src="js/location/location-ui-list.js"></script>
+<script src="js/location/location-bootstrap.js"></script>
+
+<!-- PlaceQueries façade (settlement factory + view models + modals) -->
+<script>
+    (function () {
+        'use strict';
+        if (!window.LocationState || typeof window.LocationState.getPlaceById !== 'function') {
+            throw new Error('place-queries shim: location-state.js must load first.');
+        }
+        window.PlaceQueries = {
+            getPlaceById: function (id) {
+                return window.LocationState.getPlaceById(id);
+            },
+            getPlaceSummaries: function () {
+                return (window.LocationQueries && typeof window.LocationQueries.getPlaceSummaries === 'function')
+                    ? window.LocationQueries.getPlaceSummaries()
+                    : [];
+            }
+        };
+    })();
+</script>
+
+<!-- ================================================================
+     BLOCK 18 — SETTLEMENT
+     ================================================================ -->
+<script src="js/settlement/settlement-fiscal-definitions.js"></script>
+<script src="js/settlement/settlement-government-definitions.js"></script>
+<script src="js/settlement/settlement-rank-definitions.js"></script>
+<script src="js/settlement/settlement-law-definitions.js"></script>
+<script src="js/settlement/settlement-finance-definitions.js"></script>
+<script src="js/settlement/settlement-prosperity-definitions.js"></script>
+<script src="js/settlement/settlement-feature-definitions.js"></script>
+<script src="js/settlement/settlement-education-definitions.js"></script>
+
+<script src="js/settlement/settlement-rank-rules.js"></script>
+<script src="js/settlement/settlement-fiscal-rules.js"></script>
+<script src="js/settlement/settlement-government-rules.js"></script>
+<script src="js/settlement/settlement-feature-rules.js"></script>
+<script src="js/settlement/settlement-law-rules.js"></script>
+
+<script src="js/settlement/settlement-state.js"></script>
+<script src="js/settlement/settlement-command-commit.js"></script>
+
+<script src="js/settlement/settlement-rank-queries.js"></script>
+<script src="js/settlement/settlement-queries.js"></script>
+<script src="js/settlement/settlement-feature-queries.js"></script>
+<script src="js/settlement/settlement-law-queries.js"></script>
+<script src="js/settlement/settlement-education-queries.js"></script>
+<script src="js/settlement/settlement-religion-queries.js"></script>
+<script src="js/settlement/settlement-employment-queries.js"></script>
+<script src="js/settlement/settlement-economy-queries.js"></script>
+<script src="js/settlement/settlement-crime-queries.js"></script>
+<script src="js/settlement/settlement-prosperity-queries.js"></script>
+
+<script src="js/settlement/settlement-feature-commands.js"></script>
+<script src="js/settlement/settlement-government-commands.js"></script>
+<script src="js/settlement/settlement-fiscal-commands.js"></script>
+<script src="js/settlement/settlement-law-commands.js"></script>
+<script src="js/settlement/settlement-wealth-commands.js"></script>
+<script src="js/settlement/settlement-debt-commands.js"></script>
+<script src="js/settlement/settlement-rank-commands.js"></script>
+<script src="js/settlement/settlement-specialization-commands.js"></script>
+
+<script src="js/settlement/settlement-factory.js"></script>
+<script src="js/settlement/settlement-annual-processor.js"></script>
+
+<script src="js/settlement/settlement-view-models.js"></script>
+<script src="js/settlement/settlement-ui-state.js"></script>
+
+<!-- ================================================================
+     BLOCK 19 — GOVERNMENT
+     ================================================================ -->
+<script src="js/government/government-constants.js"></script>
+<script src="js/government/government-state.js"></script>
+<script src="js/government/government-rules.js"></script>
+<script src="js/government/government-queries.js"></script>
+<script src="js/government/government-commands.js"></script>
+<script src="js/government/government-economy.js"></script>
+<script src="js/government/government-bootstrap.js"></script>
+<script src="js/government/government-view-models.js"></script>
+<script src="js/government/government-ui-list.js"></script>
+<script src="js/government/modals-government.js"></script>
+<script src="js/government/modals-government-departments.js"></script>
+<script src="js/government/modals-government-positions.js"></script>
+<script src="js/government/modals-government-assign.js"></script>
+<script src="js/government/modals-government-economy.js"></script>
+<script src="js/government/settlement-law-formatters.js"></script>
+
+<!-- ================================================================
+     BLOCK 20 — CHARACTER LIFECYCLE
+     ================================================================ -->
+<script src="js/character/character-lifecycle.js"></script>
+
+<!-- ================================================================
+     BLOCK 21 — SELECTORS
+     ================================================================ -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script>
+    if (typeof window.getFilteredLocationOptions !== 'function') {
+        window.getFilteredLocationOptions = function (selectedId) {
+            if (typeof window.buildLocationDropdown === 'function') {
+                return window.buildLocationDropdown(selectedId, null, true);
+            }
+            return '<option value="">All locations</option>';
+        };
+    }
+</script>
+<script src="js/selectors/modals-char-selector.js"></script>
+
+<!-- ================================================================
+     BLOCK 22 — RELIGION MODALS
+     ================================================================ -->
+<script src="js/religion/modals-religion.js"></script>
+<script src="js/religion/religion-bootstrap.js"></script>
+
+<!-- ================================================================
+     BLOCK 23 — CHARACTER UI MODALS
+     ================================================================ -->
+<script src="js/character/character-ui-list.js"></script>
+<script src="js/character/modals-character.js"></script>
+<script src="js/character/modals-death.js"></script>
+
+<!-- ================================================================
+     BLOCK 24 — SETTLEMENT UI
+     ================================================================ -->
+<script src="js/settlement/settlement-tabs.js"></script>
+<script src="js/settlement/settlement-ui-list.js"></script>
+<script src="js/settlement/modals-settlement-core.js"></script>
+<script src="js/settlement/modals-settlement-economy.js"></script>
+<script src="js/settlement/modals-settlement-roles.js"></script>
+
+<!-- ================================================================
+     BLOCK 25 — PAGE-SPECIFIC TABS
+     EDIT ME: replace with the tabs this manager page needs.
+     Every tab script must be safe to load given Blocks 1–24.
+
+     Example for a Location-type manager page with no sidebar:
+         <script src="js/tabs/location-tab.js"></script>
+         <script src="js/tabs/location-type-manager-tab.js"></script>
+     ================================================================ -->
+<!-- EDIT: TAB SCRIPTS GO HERE -->
+
+
+<!-- ================================================================
+     SUB-TAB HOST
+     EDIT ME: replace SUBTABS with the page's tab definitions.
+     Each entry: { id, label, icon, render(containerId, entityId) }.
+     The host renders the strip and dispatches to the active tab's
+     render function.
+
+     Pages without a sidebar pass `null` or `undefined` as the
+     entityId — the render function receives whatever the page
+     provides. If the page has no per-entity context, the render
+     function ignores the second argument.
+     ================================================================ -->
+<script>
+    (function () {
+        'use strict';
+        var SUBTABS = [
+            // EDIT: replace with this page's tabs.
+            // { id: 'overview', label: 'Overview', icon: 'CROWN',
+            //   render: function (c, p) { if (window.OverviewTab) window.OverviewTab.render(c, p); } }
+        ];
+        var _activeSubtabId = SUBTABS.length > 0 ? SUBTABS[0].id : null;
+
+        function _icon(name) {
+            return (window.Icons && typeof window.Icons[name] === 'string') ? window.Icons[name] : '';
+        }
+        function _esc(s) {
+            return typeof window.escapeHtml === 'function'
+                ? window.escapeHtml(s)
+                : String(s == null ? '' : s);
+        }
+
+        function renderSubtabStrip(containerId, entityId) {
+            var container = document.getElementById(containerId);
+            if (!container) return;
+
+            if (SUBTABS.length === 0) {
+                container.innerHTML = '<div class="empty-state">No tabs configured for this page.</div>';
+                return;
+            }
+
+            var stripHtml = '<div class="manager-subtabs" role="tablist">';
+            for (var i = 0; i < SUBTABS.length; i++) {
+                var t = SUBTABS[i];
+                var active = t.id === _activeSubtabId ? ' active' : '';
+                stripHtml += '<button type="button" class="manager-subtab' + active + '" data-subtab-id="' + _esc(t.id) + '">' +
+                    (_icon(t.icon) ? '<span class="manager-subtab-icon">' + _icon(t.icon) + '</span>' : '') +
+                    '<span>' + _esc(t.label) + '</span></button>';
+            }
+            stripHtml += '</div>';
+            var panelHtml = '<div id="' + _esc(containerId) + '-subpanel" class="manager-subpanel" role="tabpanel"></div>';
+            container.innerHTML = stripHtml + panelHtml;
+
+            var buttons = container.querySelectorAll('.manager-subtab');
+            for (var b = 0; b < buttons.length; b++) {
+                (function (btn) {
+                    btn.addEventListener('click', function () {
+                        var id = btn.getAttribute('data-subtab-id');
+                        if (id && id !== _activeSubtabId) {
+                            _activeSubtabId = id;
+                            renderSubtabStrip(containerId, entityId);
+                        }
+                    });
+                })(buttons[b]);
+            }
+
+            var activeTab = null;
+            for (var j = 0; j < SUBTABS.length; j++) {
+                if (SUBTABS[j].id === _activeSubtabId) { activeTab = SUBTABS[j]; break; }
+            }
+            if (activeTab) activeTab.render(containerId + '-subpanel', entityId);
+        }
+
+        window.renderManagerTab = function (containerId, entityId) {
+            renderSubtabStrip(containerId, entityId);
+        };
+    })();
+</script>
+
+<!-- ================================================================
+     MANAGER INIT — NO SIDEBAR
+     EDIT ME: page-specific title, initial entity, bootstrap.
+     ================================================================ -->
+<script>
+(function () {
+    'use strict';
+
+    // EDIT: replace with this page's icons and titles.
+    var PAGE_ICON = 'CROWN';
+    var PAGE_TITLE = 'MANAGER';
+    var BOOTSTRAP = null;  // EDIT: set to e.g. window.GovernmentBootstrap
+
+    // EDIT: if this page needs an entity to render, set it here.
+    // If the page is entity-less (e.g. a pure "types" manager), leave
+    // this as null and the tab render functions will receive null.
+    var initialEntityId = null;
+
+    var currentEntityId = null;
+    var isInitialized = false;
+
+    function getIcon(name) { return (window.Icons && window.Icons[name]) ? window.Icons[name] : ''; }
+    function iconWithText(icon, text) {
+        if (!icon) return text || '';
+        return '<span style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">' + icon + '<span>' + (text || '') + '</span></span>';
+    }
+    function showToast(msg, type) { if (typeof window.showToast === 'function') window.showToast(msg, type); }
+
+    function setupUIText() {
+        var title = document.getElementById('managerTitle');
+        if (title) title.innerHTML = iconWithText(getIcon(PAGE_ICON), ' ' + PAGE_TITLE);
+        var importBtn = document.getElementById('importBtn');
+        if (importBtn) importBtn.innerHTML = iconWithText(getIcon('ARROW_RIGHT'), ' Import');
+        var exportBtn = document.getElementById('exportBtn');
+        if (exportBtn) exportBtn.innerHTML = iconWithText(getIcon('ARROW_RIGHT'), ' Export');
+        var refreshBtn = document.getElementById('refreshBtn');
+        if (refreshBtn) refreshBtn.innerHTML = iconWithText(getIcon('REFRESH'), ' Refresh');
+        var emptyState = document.getElementById('emptyStateText');
+        if (emptyState) emptyState.textContent = '';
+    }
+
+    // ---- Set Year control ---------------------------------------------
+    function setupYearControl() {
+        var input = document.getElementById('yearInput');
+        var btn = document.getElementById('setYearBtn');
+        if (!input || !btn) return;
+
+        function syncFromCanonical() {
             try {
-                var STORAGE_KEY = 'stillwaters_master';
-                var stored = localStorage.getItem(STORAGE_KEY);
-                if (stored) {
-                    var parsed = JSON.parse(stored);
-                    if (parsed && parsed.data) {
-                        window.masterData = parsed;
-                        console.log('[PRELOAD] Loaded from localStorage:',
-                            parsed.data.places?.length || 0, 'places,',
-                            parsed.data.characters?.length || 0, 'characters');
-                    }
+                var y = (typeof window.getCurrentYear === 'function')
+                    ? window.getCurrentYear()
+                    : (window.masterData && window.masterData.data
+                        ? window.masterData.data.currentYear
+                        : null);
+                if (typeof y === 'number' && isFinite(y)) {
+                    input.value = String(y);
                 }
-            } catch(e) {
-                console.warn('[PRELOAD] Failed to load from localStorage:', e.message);
+            } catch (e) { /* ignore */ }
+        }
+        syncFromCanonical();
+
+        function applyYear() {
+            var raw = input.value;
+            var y = parseInt(raw, 10);
+            if (!isFinite(y)) {
+                showToast('Enter a valid year', 'error');
+                return;
+            }
+            if (typeof window.isValidYear === 'function' && window.isValidYear(y) !== true) {
+                showToast('Year out of range', 'error');
+                return;
             }
 
-            if (!window.masterData || !window.masterData.data) {
-                window.masterData = {
-                    version: '2.0',
-                    lastUpdated: new Date().toISOString(),
-                    data: {
-                        characters: [],
-                        places: [],
-                        ranks: [],
-                        roles: [],
-                        locationTypes: [],
-                        governmentTypes: [],
-                        households: [],
-                        residences: [],
-                        currentYear: 1250
-                    }
-                };
-                console.log('[PRELOAD] Created empty masterData');
-            }
-        })();
-    </script>
+            var applied = false;
 
-    <!-- ============================================================ -->
-    <!-- CORE - NO SYSTEM DEPENDENCIES                                 -->
-    <!-- ============================================================ -->
-
-    <script src="js/core/constants.js"></script>
-    <script src="js/core/randomness.js"></script>
-    <script src="js/core/collections.js"></script>
-    <script src="js/core/validation.js"></script>
-    <script src="js/core/formatting.js"></script>
-    <script src="js/core/time.js"></script>
-    <script src="js/core/ids.js"></script>
-    <script src="js/core/storage.js"></script>
-    <script src="js/core/accessors.js"></script>
-    <script src="js/core/world.js"></script>
-    <script src="js/core/names.js"></script>
-    <script src="js/core/state.js"></script>
-    <script src="js/core/integrity.js"></script>
-    <script src="js/core/icons.js"></script>
-    <script src="js/core/ui.js"></script>
-    <script src="js/core/collapsible.js"></script>
-    <script src="js/core/responsive.js"></script>
-    <script src="js/core/modals-core.js"></script>
-    <script src="js/core/exportUtils.js"></script>
-    <script src="js/core/query-helpers.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- SELECTORS                                                    -->
-    <!-- ============================================================ -->
-
-    <script src="js/selectors/selector-base.js"></script>
-    <script src="js/selectors/locationDropdown.js"></script>
-    <script src="js/selectors/modals-char-selector.js"></script>
-    <script src="js/selectors/modals-household-selector.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- LOCATION SYSTEM                                              -->
-    <!-- ============================================================ -->
-
-    <script src="js/location/location-state.js"></script>
-    <script src="js/location/location-commands.js"></script>
-    <script src="js/location/location-queries.js"></script>
-    <script src="js/location/location-hierarchy.js"></script>
-    <script src="js/location/location-movement.js"></script>
-    <script src="js/location/location-ui-list.js"></script>
-    <script src="js/location/modals-location.js"></script>
-    <script src="js/location/modals-moves.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- SETTLEMENT SYSTEM                                            -->
-    <!-- ============================================================ -->
-
-    <script src="js/settlement/settlement-state.js"></script>
-    <script src="js/settlement/settlement-commands-core.js"></script>
-    <script src="js/settlement/settlement-ranks.js"></script>
-    <script src="js/settlement/settlement-features.js"></script>
-    <script src="js/settlement/settlement-economy-core.js"></script>
-    <script src="js/settlement/settlement-prosperity.js"></script>
-    <script src="js/settlement/settlement-enterprises.js"></script>
-    <script src="js/settlement/settlement-government.js"></script>
-    <script src="js/settlement/settlement-budget.js"></script>
-    <script src="js/settlement/settlement-commands-writes.js"></script>
-    <script src="js/settlement/settlement-commands-annual.js"></script>
-    <script src="js/settlement/settlement-queries.js"></script>
-    <script src="js/settlement/settlement-crud.js"></script>
-    <script src="js/settlement/settlement-ui-list.js"></script>
-    <script src="js/settlement/modals-settlement-core.js"></script>
-    <script src="js/settlement/modals-settlement-economy.js"></script>
-    <script src="js/settlement/modals-settlement-roles.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- ORCHESTRATOR (sidebar removed)                               -->
-    <!-- ============================================================ -->
-
-    <script>
-        (function() {
-            'use strict';
-
-            var exportBtn = document.getElementById('exportBtn');
-            var importBtn = document.getElementById('importBtn');
-            var fileInput = document.getElementById('fileInput');
-            var yearInput = document.getElementById('yearInput');
-            var setYearBtn = document.getElementById('setYearBtn');
-
-            var selectedId = null;
-            var isInitialized = false;
-
-            // placeholder buttons (do nothing)
-            document.getElementById('placeholder1').addEventListener('click', function() {});
-            document.getElementById('placeholder2').addEventListener('click', function() {});
-            document.getElementById('placeholder3').addEventListener('click', function() {});
-            document.getElementById('placeholder4').addEventListener('click', function() {});
-            document.getElementById('placeholder5').addEventListener('click', function() {});
-
-            // ============================================================
-            // TAB SWITCHING
-            // ============================================================
-            var tabButtons = document.querySelectorAll('.tab-btn');
-            var tabPanes = {
-                details: document.getElementById('tab-details'),
-                census: document.getElementById('tab-census'),
-                history: document.getElementById('tab-history'),
-                relations: document.getElementById('tab-relations'),
-                settings: document.getElementById('tab-settings')
-            };
-
-            function switchTab(tabId) {
-                tabButtons.forEach(function(btn) {
-                    btn.classList.toggle('active', btn.dataset.tab === tabId);
-                });
-
-                Object.keys(tabPanes).forEach(function(key) {
-                    tabPanes[key].classList.toggle('active', key === tabId);
-                });
-
-                if (tabId === 'details' && selectedId) {
-                    var LS = window.LocationState;
-                    if (LS) {
-                        var place = LS.getPlace(selectedId);
-                        if (place) showLocationDetail(place);
-                    }
-                }
-            }
-
-            tabButtons.forEach(function(btn) {
-                btn.addEventListener('click', function() {
-                    switchTab(this.dataset.tab);
-                });
-            });
-
-            // ============================================================
-            // GET/SET FULL DATA
-            // ============================================================
-            function getFullData() {
-                if (typeof window.masterData !== 'undefined' && window.masterData) {
-                    return window.masterData;
-                }
-                return null;
-            }
-
-            function setFullData(data) {
-                if (data && data.data) {
-                    window.masterData = data;
-                } else if (data && data.places) {
-                    window.masterData = {
-                        version: '2.0',
-                        lastUpdated: new Date().toISOString(),
-                        data: data
-                    };
-                } else {
-                    return false;
-                }
-
+            if (typeof window.setCurrentYear === 'function') {
                 try {
-                    localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData));
-                } catch(e) {}
+                    var result = window.setCurrentYear(y);
+                    if (result === false) {
+                        showToast('Could not set year', 'error');
+                        return;
+                    }
+                    applied = true;
+                } catch (e) {
+                    showToast('Set year failed: ' + (e.message || 'unknown'), 'error');
+                    return;
+                }
+            }
 
+            if (!applied) {
+                if (!window.masterData || !window.masterData.data) {
+                    showToast('Storage not initialized', 'error');
+                    return;
+                }
+                window.masterData.data.currentYear = y;
+                if (typeof window.markDataDirty === 'function') {
+                    try { window.markDataDirty(); } catch (e) { /* ignore */ }
+                }
                 if (typeof window.saveMasterData === 'function') {
-                    window.saveMasterData(true);
+                    try { window.saveMasterData(); } catch (e) { /* ignore */ }
                 }
-                if (typeof window.invalidateAccessorCaches === 'function') {
-                    window.invalidateAccessorCaches();
-                }
-                if (typeof window.LocationState !== 'undefined' &&
-                    typeof window.LocationState.invalidateCache === 'function') {
-                    window.LocationState.invalidateCache();
-                }
-                if (typeof window.SettlementState !== 'undefined' &&
-                    typeof window.SettlementState.invalidateCache === 'function') {
-                    window.SettlementState.invalidateCache();
-                }
-
-                return true;
+                applied = true;
             }
 
-            // ============================================================
-            // SHOW LOCATION DETAIL
-            // ============================================================
-            function showLocationDetail(place) {
-                if (!place) {
-                    document.getElementById('tab-details').innerHTML = '<div class="placeholder">Select a location from the sidebar</div>';
+            if (applied) {
+                showToast('Year set to ' + y, 'success');
+                syncFromCanonical();
+                if (typeof window.renderManagerTab === 'function') {
+                    try { window.renderManagerTab('panelContent', currentEntityId); }
+                    catch (e) { /* ignore */ }
+                }
+            }
+        }
+
+        btn.addEventListener('click', applyYear);
+        input.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                applyYear();
+            }
+        });
+    }
+
+    // EDIT: replace with the page's initial-entity selection logic.
+    // The default uses initialEntityId if set, otherwise picks the
+    // first non-root location.
+    function pickInitialEntity() {
+        if (initialEntityId) {
+            currentEntityId = initialEntityId;
+            return;
+        }
+        if (!window.LocationState) return;
+        var places = (typeof window.getPlaces === 'function')
+            ? window.getPlaces()
+            : (window.LocationState.getAllPlaces ? window.LocationState.getAllPlaces({}) : []);
+        if (places && places.length > 0) {
+            for (var i = 0; i < places.length; i++) {
+                if (places[i].variableKey && places[i].variableKey !== 'world_root') {
+                    currentEntityId = places[i].id;
                     return;
                 }
-
-                var LS = window.LocationState;
-                var population = LS ? LS.getPopulationCount(place.id, false) : 0;
-                var ownPopulation = LS ? LS.getOwnPopulation(place.id, false) : 0;
-                var typeName = LS ? LS.getLocationTypeName(place.typeId) : 'Unknown';
-                var parentName = 'None';
-                if (place.parentId) {
-                    var parent = LS ? LS.getPlace(place.parentId) : null;
-                    if (parent) parentName = parent.displayName;
-                }
-                var children = LS ? LS.getPlaceChildren(place.id, false) : [];
-                var hierarchy = LS ? LS.getPlaceHierarchy(place.id) : [];
-
-                var breadcrumb = hierarchy.map(function(p) {
-                    return p.displayName;
-                }).join(' → ') || 'Root';
-
-                document.getElementById('tab-details').innerHTML =
-                    '<div class="detail-container">' +
-                        '<div class="detail-card">' +
-                            '<h2 class="detail-title">' + place.displayName + '</h2>' +
-                            '<div class="detail-subtitle">' + typeName + (place.isCapital ? ' · Capital' : '') + '</div>' +
-                            '<div class="detail-grid">' +
-                                '<span class="detail-label">ID</span><span class="detail-value">' + place.id + '</span>' +
-                                '<span class="detail-label">Type</span><span class="detail-value">' + typeName + '</span>' +
-                                '<span class="detail-label">Parent</span><span class="detail-value">' + parentName + '</span>' +
-                                '<span class="detail-label">Status</span><span class="detail-value">' + (place.status || 'active') + '</span>' +
-                                '<span class="detail-label">Total Population</span><span class="detail-value">' + population.toLocaleString() + '</span>' +
-                                '<span class="detail-label">Direct Population</span><span class="detail-value">' + ownPopulation.toLocaleString() + '</span>' +
-                                '<span class="detail-label">Children</span><span class="detail-value">' + children.length + '</span>' +
-                                '<span class="detail-label">Hierarchy Depth</span><span class="detail-value">' + hierarchy.length + '</span>' +
-                                '<span class="detail-label">Variable Key</span><span class="detail-value">' + (place.variableKey || '—') + '</span>' +
-                            '</div>' +
-                            '<div class="detail-breadcrumb">' + breadcrumb + '</div>' +
-                        '</div>' +
-                        (place.notes ? '<div class="detail-notes"><div class="notes-label">Notes</div><p>' + place.notes + '</p></div>' : '') +
-                    '</div>';
             }
+            currentEntityId = places[0].id;
+        }
+    }
 
-            // ============================================================
-            // PICK FIRST LOCATION (auto-select)
-            // ============================================================
-            function pickFirstLocation() {
-                var LS = window.LocationState;
-                if (!LS) return;
-                var places = LS.getAllPlaces({ includeDeprecated: false });
-                if (places && places.length > 0) {
-                    selectedId = places[0].id;
-                    var place = LS.getPlace(selectedId);
-                    if (place) {
-                        switchTab('details');
-                        showLocationDetail(place);
+    function renderTab() {
+        var panel = document.getElementById('panelContent');
+        if (!panel) return;
+
+        if (!currentEntityId) {
+            pickInitialEntity();
+        }
+
+        if (typeof window.renderManagerTab === 'function') {
+            window.renderManagerTab('panelContent', currentEntityId);
+        }
+    }
+
+    function setupTopBarActions() {
+        var importBtn = document.getElementById('importBtn');
+        if (importBtn) importBtn.onclick = function () {
+            if (typeof window.importData !== 'function') { showToast('Import not available', 'error'); return; }
+            window.importData()
+                .then(function () {
+                    if (BOOTSTRAP && BOOTSTRAP.reinit) {
+                        try { BOOTSTRAP.reinit(); } catch (e) { /* ignore */ }
                     }
-                } else {
-                    document.getElementById('tab-details').innerHTML = '<div class="placeholder">No locations found in data</div>';
-                }
-            }
+                    renderTab();
+                    showToast('Import successful', 'success');
+                })
+                .catch(function (err) {
+                    showToast('Import failed: ' + (err && err.message ? err.message : 'unknown'), 'error');
+                });
+        };
 
-            // ============================================================
-            // IMPORT / EXPORT
-            // ============================================================
-            exportBtn.addEventListener('click', function() {
-                var data = getFullData();
-                if (!data) {
-                    alert('No data to export');
-                    return;
-                }
-                var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-                var url = URL.createObjectURL(blob);
-                var a = document.createElement('a');
-                a.href = url;
-                a.download = 'stillwaters_export_' + Date.now() + '.json';
-                a.click();
-                URL.revokeObjectURL(url);
-            });
+        var exportBtn = document.getElementById('exportBtn');
+        if (exportBtn) exportBtn.onclick = function () {
+            if (typeof window.exportData !== 'function') { showToast('Export not available', 'error'); return; }
+            try { window.exportData(); showToast('Export started', 'success'); }
+            catch (e) { showToast('Export failed: ' + (e.message || 'unknown'), 'error'); }
+        };
 
-            importBtn.addEventListener('click', function() {
-                fileInput.value = '';
-                fileInput.click();
-            });
+        var refreshBtn = document.getElementById('refreshBtn');
+        if (refreshBtn) refreshBtn.onclick = function () {
+            if (typeof window.loadMasterData === 'function') window.loadMasterData();
+            setTimeout(function () { renderTab(); showToast('Refreshed', 'success'); }, 100);
+        };
+    }
 
-            fileInput.addEventListener('change', function() {
-                var file = this.files[0];
-                if (!file) return;
+    function init() {
+        if (isInitialized) return;
+        isInitialized = true;
 
-                var reader = new FileReader();
-                reader.onload = function(e) {
-                    try {
-                        var imported = JSON.parse(e.target.result);
-                        var dataToImport = null;
+        setupUIText();
 
-                        if (imported.data && imported.version) {
-                            dataToImport = imported;
-                        } else if (imported.places || imported.characters) {
-                            dataToImport = {
-                                version: '2.0',
-                                lastUpdated: new Date().toISOString(),
-                                data: imported
-                            };
-                        } else if (imported.data) {
-                            dataToImport = {
-                                version: '2.0',
-                                lastUpdated: new Date().toISOString(),
-                                data: imported.data
-                            };
-                        }
+        if (typeof window.loadMasterData === 'function') window.loadMasterData();
 
-                        if (!dataToImport) {
-                            alert('Invalid format: Could not recognize data structure.');
-                            return;
-                        }
+        if (BOOTSTRAP && typeof BOOTSTRAP.init === 'function') {
+            try { BOOTSTRAP.init(); }
+            catch (e) { console.error('Bootstrap init failed:', e); }
+        }
 
-                        if (setFullData(dataToImport)) {
-                            pickFirstLocation();
-                        } else {
-                            alert('Import failed');
-                        }
-                    } catch(err) {
-                        alert('Invalid JSON: ' + err.message);
-                    }
-                };
-                reader.readAsText(file);
-                this.value = '';
-            });
+        setTimeout(function () {
+            setupTopBarActions();
+            setupYearControl();
+            pickInitialEntity();
+            renderTab();
+        }, 150);
+    }
 
-            // ============================================================
-            // YEAR SETTER
-            // ============================================================
-            setYearBtn.addEventListener('click', function() {
-                var val = parseInt(yearInput.value, 10);
-                if (!isNaN(val) && window.masterData) {
-                    window.masterData.data.currentYear = val;
-                    try {
-                        localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData));
-                    } catch(e) {}
-                    if (typeof window.saveMasterData === 'function') {
-                        window.saveMasterData(true);
-                    }
-                }
-            });
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+</script>
 
-            // ============================================================
-            // INIT
-            // ============================================================
-            function init() {
-                if (isInitialized) return;
-                isInitialized = true;
+<!-- ================================================================
+     THEME SWITCHER
+     ================================================================ -->
+<script>
+(function () {
+    'use strict';
+    var themeBtn = document.getElementById('themeBtn');
+    var themeMenu = document.getElementById('themeMenu');
+    var themeName = document.getElementById('themeName');
+    var switcher = window.ThemeSwitcher;
+    if (!switcher) return;
 
-                setTimeout(function() {
-                    pickFirstLocation();
-                }, 120);
-            }
-
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', init);
-            } else {
-                setTimeout(init, 50);
-            }
-
-        })();
-    </script>
+    function updateLabel(id) {
+        var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+        if (themeName) themeName.textContent = label;
+    }
+    function buildMenu() {
+        var html = '';
+        for (var i = 0; i < switcher.themes.length; i++) {
+            var id = switcher.themes[i];
+            var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+            html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' + id + '">' + label + '</button></li>';
+        }
+        if (themeMenu) themeMenu.innerHTML = html;
+    }
+    function openMenu() { if (themeMenu) { themeMenu.hidden = false; themeBtn.setAttribute('aria-expanded', 'true'); } }
+    function closeMenu() { if (themeMenu) { themeMenu.hidden = true; themeBtn.setAttribute('aria-expanded', 'false'); } }
+    if (themeBtn) themeBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (themeMenu.hidden) openMenu(); else closeMenu();
+    });
+    if (themeMenu) themeMenu.addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-theme-id]'); if (!btn) return;
+        var id = btn.getAttribute('data-theme-id');
+        switcher.apply(id); updateLabel(id); closeMenu();
+    });
+    document.addEventListener('click', function (e) {
+        if (themeMenu && !themeMenu.hidden) {
+            if (themeMenu.contains(e.target)) return;
+            if (e.target === themeBtn) return;
+            closeMenu();
+        }
+    });
+    buildMenu();
+    var saved = switcher.getSaved();
+    if (saved) updateLabel(saved);
+})();
+</script>
 
 </body>
 </html>
