@@ -14,8 +14,9 @@
  * OWNERSHIP MODEL
  * ---------------
  * This module does NOT own the canonical service relationship. The
- * relationship system owns it (via createRelationship / endRelationship /
- * updateRelationship on window).
+ * relationship system owns it (via RelationshipCommands.createRelationship
+ * / endRelationship / updateRelationship and the corresponding queries
+ * on RelationshipQueries).
  *
  * This module does NOT own household membership. HouseholdCommands does.
  *
@@ -23,7 +24,7 @@
  *
  *   createServiceRelationship()
  *       → validate
- *       → create canonical relationship (RelationshipSystem)
+ *       → create canonical relationship (RelationshipCommands)
  *       → add household membership (HouseholdCommands)
  *       → close batch (household persist + relationship persist)
  *       → return structured result
@@ -36,8 +37,7 @@
  * ----------------------------
  * Result builders (ok, fail), year resolution, dispatch, and the
  * household-persist close come from household-orchestration.js. This
- * module does NOT redefine them. That keeps the dispatch-then-persist
- * ordering in one place.
+ * module does NOT redefine them.
  *
  * CONSTANTS AND RULES
  * -------------------
@@ -48,9 +48,6 @@
  * calculateServiceQuality / calculateRecommendation live in
  * household-rules.js.
  *
- * This module DOES NOT redefine any of them. It DOES NOT assign to
- * window.SERVICE_TYPES, window.SERVICE_QUALITY, etc.
- *
  * CROSS-DOMAIN PERSISTENCE
  * ------------------------
  * The relationship system is an independent domain with its own
@@ -59,14 +56,50 @@
  * system's canonical state. This module must ensure the change is
  * flushed.
  *
- * The relationship system is expected to expose one of:
+ * The relationship system exposes:
  *
  *   window.RelationshipCommands.persist()   ->  { success, reason? }
- *   window.RelationshipSystem.persist()     ->  { success, reason? }
+ *
+ * (older surface: window.RelationshipSystem.persist())
  *
  * If neither is present, this module completes the orchestration (the
  * household side saves; the relationship side is in-memory only) and
  * reports `relationshipPersisted: false` in the result.
+ *
+ * RELATIONSHIP DOMAIN RESOLUTION
+ * ------------------------------
+ * Six relationship-domain functions are used by this module:
+ *
+ *   createRelationship
+ *   endRelationship
+ *   updateRelationship
+ *   getRelationshipBetween
+ *   getRelationshipsForCharacter
+ *   getRelationshipById
+ *
+ * These are NOT flat globals. The relationship domain exports them on
+ * a namespace:
+ *
+ *   window.RelationshipCommands   { createRelationship, endRelationship,
+ *                                   updateRelationship, ..., persist }
+ *   window.RelationshipQueries    { getRelationshipBetween,
+ *                                   getRelationshipsForCharacter,
+ *                                   getRelationshipById, ... }
+ *
+ * (An older surface, window.RelationshipSystem, combined both. It is
+ * still honoured as a fallback so this module works in either
+ * configuration.)
+ *
+ * Prior revisions resolved these via load-time _requireFunction(name,
+ * window.name) calls, which threw on load because window.name is never
+ * assigned. This revision resolves them at CALL time against the
+ * namespaces, so:
+ *
+ *   - a missing relationship domain fails at the first command that
+ *     needs it, with a clear error naming the function and the
+ *     namespace it was looked up on, and
+ *   - the module still loads cleanly when the relationship domain
+ *     loads first (which it does under the documented order).
  *
  * SERVICE RELATIONSHIP FIELD CONTRACT
  * -----------------------------------
@@ -113,17 +146,41 @@
  *   - household-commands.js     (addMember, removeMember, updateMember)
  *   - household-queries.js      (getCharacterHousehold, getHouseholdStaff)
  *   - accessors.js              (getCharacterById)
- *   - relationship domain       (createRelationship, endRelationship,
- *                                updateRelationship, getRelationshipBetween,
- *                                getRelationshipsForCharacter,
- *                                getRelationshipById)
+ *
+ * DEPENDENCIES (RESOLVED AT CALL TIME):
+ *   - RelationshipCommands / RelationshipQueries (or older
+ *     RelationshipSystem). See RELATIONSHIP DOMAIN RESOLUTION.
  *
  * DEPENDENCIES (OPTIONAL, checked at call time):
- *   - RelationshipCommands / RelationshipSystem persist()
+ *   - RelationshipCommands.persist / RelationshipSystem.persist
  *   - modifyTrust / modifyLoyalty
+ *   - time.js getCurrentYear (falls back to masterData.data.currentYear)
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - The six relationship-domain functions (createRelationship,
+ *       endRelationship, updateRelationship, getRelationshipBetween,
+ *       getRelationshipsForCharacter, getRelationshipById) are now
+ *       resolved at CALL time against window.RelationshipCommands /
+ *       window.RelationshipQueries, with window.RelationshipSystem as
+ *       a fallback. Prior revisions resolved them at LOAD time against
+ *       flat globals that no module assigns, so household-servant.js
+ *       threw at load ("HouseholdServant: createRelationship is
+ *       required") and never defined window.HouseholdServant. See
+ *       RELATIONSHIP DOMAIN RESOLUTION.
+ *     - Added _getCurrentYearSafe(), an internal helper used by the
+ *       three call sites that previously referenced an undefined
+ *       _getCurrentYearSafe global. The helper prefers
+ *       window.getCurrentYear (time.js) and falls back to
+ *       masterData.data.currentYear when time.js is not loaded.
+ *       Behaviour at those three sites (generateServiceReference,
+ *       updateServiceQuality, ...) is unchanged when time.js is
+ *       present, which it is under the documented load order.
+ *     - No change to any command's logic, any query, the finisher,
+ *       the flat aliases, or the exports shape.
  * =============================================================================
  */
 
@@ -190,18 +247,86 @@
     var _getCharacterById = _requireFunction('getCharacterById',
         window.getCharacterById);
 
-    var _createRelationship = _requireFunction('createRelationship',
-        window.createRelationship);
-    var _endRelationship = _requireFunction('endRelationship',
-        window.endRelationship);
-    var _updateRelationship = _requireFunction('updateRelationship',
-        window.updateRelationship);
-    var _getRelationshipBetween = _requireFunction('getRelationshipBetween',
-        window.getRelationshipBetween);
-    var _getRelationshipsForCharacter = _requireFunction(
-        'getRelationshipsForCharacter', window.getRelationshipsForCharacter);
-    var _getRelationshipById = _requireFunction('getRelationshipById',
-        window.getRelationshipById);
+    // =========================================================================
+    // 0b. RELATIONSHIP DOMAIN RESOLVERS
+    // =========================================================================
+    //
+    // See RELATIONSHIP DOMAIN RESOLUTION in the module header.
+    //
+    // Every relationship call goes through one of these helpers. Each
+    // helper checks the namespace at CALL time, throws a clear error
+    // naming the function and both namespaces if it is missing, and
+    // otherwise returns the wrapped call.
+    //
+    // The lookup order matches how the relationship domain can appear:
+    //
+    //   1. RelationshipCommands  (commands: create, end, update, persist)
+    //      RelationshipQueries   (queries:  get-by-id, get-between,
+    //                                        get-for-character)
+    //   2. RelationshipSystem    (older combined surface, still honoured)
+    //
+    // Under the documented load order, relationship-commands.js and
+    // relationship-queries.js load before household-servant.js, so the
+    // primary path resolves. The fallback exists so a page that loads
+    // the older combined surface continues to work.
+
+    function _resolveRelationshipCommandsFn(fnName) {
+        var rc = window.RelationshipCommands;
+        if (rc && typeof rc[fnName] === 'function') {
+            return rc[fnName];
+        }
+        var rs = window.RelationshipSystem;
+        if (rs && typeof rs[fnName] === 'function') {
+            return rs[fnName];
+        }
+        throw new Error(
+            'HouseholdServant: ' + fnName + ' is required. ' +
+            'Looked for window.RelationshipCommands.' + fnName +
+            ' and window.RelationshipSystem.' + fnName + '. ' +
+            'Load relationship-commands.js before calling ' +
+            'this function.'
+        );
+    }
+
+    function _resolveRelationshipQueriesFn(fnName) {
+        var rq = window.RelationshipQueries;
+        if (rq && typeof rq[fnName] === 'function') {
+            return rq[fnName];
+        }
+        var rs = window.RelationshipSystem;
+        if (rs && typeof rs[fnName] === 'function') {
+            return rs[fnName];
+        }
+        throw new Error(
+            'HouseholdServant: ' + fnName + ' is required. ' +
+            'Looked for window.RelationshipQueries.' + fnName +
+            ' and window.RelationshipSystem.' + fnName + '. ' +
+            'Load relationship-queries.js before calling ' +
+            'this function.'
+        );
+    }
+
+    // Command wrappers.
+    function _createRelationship(a, b, options) {
+        return _resolveRelationshipCommandsFn('createRelationship')(a, b, options);
+    }
+    function _endRelationship(id, year, reason) {
+        return _resolveRelationshipCommandsFn('endRelationship')(id, year, reason);
+    }
+    function _updateRelationship(id, patch) {
+        return _resolveRelationshipCommandsFn('updateRelationship')(id, patch);
+    }
+
+    // Query wrappers.
+    function _getRelationshipBetween(a, b) {
+        return _resolveRelationshipQueriesFn('getRelationshipBetween')(a, b);
+    }
+    function _getRelationshipsForCharacter(characterId) {
+        return _resolveRelationshipQueriesFn('getRelationshipsForCharacter')(characterId);
+    }
+    function _getRelationshipById(relationshipId) {
+        return _resolveRelationshipQueriesFn('getRelationshipById')(relationshipId);
+    }
 
     // Aliased helpers — used throughout, imported once.
     var _ok = O.ok;
@@ -214,16 +339,35 @@
     var _loyaltyPresent = typeof window.modifyLoyalty === 'function';
 
     // =========================================================================
-    // 1. CROSS-DOMAIN PERSISTENCE
+    // 0c. CURRENT YEAR
     // =========================================================================
     //
-    // The relationship domain owns its own canonical state and its own
-    // persistence boundary. This module calls into the relationship
-    // domain's commands, so it must ensure those commands' changes are
-    // flushed.
-    //
-    // Returns:
-    //   { attempted: boolean, persisted: boolean, reason: string|null }
+    // Used by updateServiceQuality and generateServiceReference. Prefers
+    // time.js's getCurrentYear, falls back to masterData.data.currentYear.
+    // Returns null if neither is available — callers treat null as
+    // "year unknown" and store null in the metadata field, which matches
+    // the prior behaviour of the (previously undefined) helper.
+
+    function _getCurrentYearSafe() {
+        if (typeof window.getCurrentYear === 'function') {
+            try {
+                var y = window.getCurrentYear();
+                if (typeof y === 'number' && isFinite(y)) return y;
+            } catch (e) {
+                // Fall through to masterData.
+            }
+        }
+        if (window.masterData && window.masterData.data
+            && typeof window.masterData.data.currentYear === 'number'
+            && isFinite(window.masterData.data.currentYear)) {
+            return window.masterData.data.currentYear;
+        }
+        return null;
+    }
+
+    // =========================================================================
+    // 1. CROSS-DOMAIN PERSISTENCE
+    // =========================================================================
 
     function _persistRelationshipSystem() {
         // Try RelationshipCommands first (the usual write boundary).
@@ -280,26 +424,10 @@
     // =========================================================================
     // 2. SERVANT-SPECIFIC FINISHER
     // =========================================================================
-    //
-    // Wraps HouseholdOrchestration.finish (which dispatches + persists
-    // household) with relationship-system persistence.
-    //
-    // Outcomes:
-    //   - both saved:                   success, both flags true
-    //   - household saved, rel. missing: success, rel. attempted: false
-    //   - household saved, rel. failed:  failure, partial: true
-    //   - household failed:              failure, partial depends on rel.
 
     function _finish(eventName, payload) {
-        // Household side: dispatch + persist.
         var householdResult = O.finish(eventName, payload);
-
-        // Relationship side: persist (independent of household outcome —
-        // the relationship system is not "rolled back" by a household
-        // persist failure, because the relationship change is in that
-        // system's memory and needs to be flushed on its own merit).
         var rel = _persistRelationshipSystem();
-
         var householdOk = householdResult && householdResult.success !== false;
 
         if (!householdOk) {
@@ -378,20 +506,6 @@
     // 5. SERVICE RELATIONSHIP COMMANDS
     // =========================================================================
 
-    /**
-     * Creates a service relationship between an employer and a servant.
-     *
-     * Orchestrates:
-     *   1. Validate
-     *   2. Create canonical relationship (RelationshipSystem)
-     *   3. Add household membership (HouseholdCommands)
-     *   4. Apply trust / loyalty effects (best-effort)
-     *   5. _finish → dispatch + persist household + persist relationship
-     *
-     * If step 3 fails, step 2 is rolled back (endRelationship). If step
-     * 5's persistence fails, both domains' in-memory state has been
-     * modified; the failure is surfaced with partial: true.
-     */
     function createServiceRelationship(employerId, servantId, options) {
         options = options || {};
 
@@ -427,7 +541,6 @@
             return _fail('INVALID_WAGE', 'Wage must be a non-negative number');
         }
 
-        // Step 1: create canonical relationship.
         var relationship = _createRelationship(employerId, servantId, {
             type: 'service',
             status: 'ongoing',
@@ -450,7 +563,6 @@
                 'Failed to create service relationship');
         }
 
-        // Step 2: household membership.
         var householdId = null;
         if (options.addToHousehold !== false) {
             var employerHousehold = _householdQueries.getCharacterHousehold(employerId);
@@ -468,7 +580,6 @@
                 );
 
                 if (!addResult.success) {
-                    // Roll back relationship creation.
                     try {
                         _endRelationship(relationship.id, startYear,
                             'Rollback: household membership failed');
@@ -488,7 +599,6 @@
             }
         }
 
-        // Step 3: trust/loyalty effects (best-effort, optional).
         if (_trustPresent) {
             try {
                 window.modifyTrust(servantId, employerId, 15,
@@ -510,7 +620,6 @@
             }
         }
 
-        // Step 4: close orchestration.
         var finish = _finish('serviceRelationshipCreated', {
             employerId: employerId,
             servantId: servantId,
@@ -549,9 +658,6 @@
         });
     }
 
-    /**
-     * Terminates a service relationship.
-     */
     function terminateService(employerId, servantId, options) {
         options = options || {};
 
@@ -634,9 +740,6 @@
         });
     }
 
-    /**
-     * Promotes a servant to a new service type.
-     */
     function promoteServant(employerId, servantId, newServiceTypeId, options) {
         options = options || {};
 
@@ -831,10 +934,6 @@
         });
     }
 
-    /**
-     * Records employer satisfaction. Recomputes quality in the same
-     * batch.
-     */
     function recordEmployerSatisfaction(relationshipId, satisfaction, reason, options) {
         options = options || {};
         if (typeof satisfaction !== 'number' || !isFinite(satisfaction)) {
@@ -909,10 +1008,6 @@
         });
     }
 
-    /**
-     * Recomputes the service quality tier from current satisfaction
-     * values.
-     */
     function updateServiceQuality(relationshipId) {
         var relationship = _getRelationshipById(relationshipId);
         if (!relationship || relationship.type !== 'service') {
@@ -1151,15 +1246,6 @@
         });
     }
 
-    /**
-     * Transfers a servant to a new employer.
-     *
-     * Sequence (deliberately non-atomic across the two orchestrations):
-     *   1. Validate
-     *   2. Create new service FIRST
-     *   3. Terminate old service
-     *   4. If termination fails, best-effort roll back the new service
-     */
     function transferServantToHousehold(currentEmployerId, servantId,
                                         newEmployerId, options) {
         options = options || {};
@@ -1190,7 +1276,6 @@
         var oldWage = (typeof metadata.wage === 'number') ? metadata.wage : 0;
         var newWage = (options.newWage !== undefined) ? options.newWage : oldWage;
 
-        // Step 1: create new service.
         var newRelationshipResult = createServiceRelationship(
             newEmployerId,
             servantId,
@@ -1214,7 +1299,6 @@
         var newRelationshipId = newRelationshipResult.data.relationshipId;
         var newHouseholdId = newRelationshipResult.data.householdId;
 
-        // Step 2: terminate old service.
         var terminateResult = terminateService(currentEmployerId, servantId, {
             endYear: transferYear,
             reason: 'Transferred to ' + newEmployer.name + "'s household",
@@ -1288,19 +1372,15 @@
     // =========================================================================
 
     var api = {
-        // Constant re-exports (point at the frozen HouseholdConstants
-        // objects — no shadow copy).
         SERVICE_TYPES: C.SERVICE_TYPES,
         SERVICE_STATUS: C.SERVICE_STATUS,
         SERVICE_QUALITY: C.SERVICE_QUALITY,
         SERVICE_QUALITY_ORDER: C.SERVICE_QUALITY_ORDER,
         SERVICE_CONTRACT_TERMS: C.SERVICE_CONTRACT_TERMS,
 
-        // Pure calculations (delegates)
         calculateServiceQuality: calculateServiceQuality,
         calculateRecommendation: calculateRecommendation,
 
-        // Commands
         createServiceRelationship: createServiceRelationship,
         terminateService: terminateService,
         promoteServant: promoteServant,
@@ -1308,7 +1388,6 @@
         recordEmployerSatisfaction: recordEmployerSatisfaction,
         updateServiceQuality: updateServiceQuality,
 
-        // Queries
         getServiceBetween: getServiceBetween,
         getServants: getServants,
         getEmployer: getEmployer,
@@ -1318,7 +1397,6 @@
         generateServiceReference: generateServiceReference,
         getStaffByDepartment: getStaffByDepartment,
 
-        // Household integration
         assignServantToDepartment: assignServantToDepartment,
         transferServantToHousehold: transferServantToHousehold
     };
@@ -1328,10 +1406,6 @@
     // =========================================================================
     // 9. LEGACY FLAT ALIASES
     // =========================================================================
-    //
-    // Guarded: only assign if undefined. The constants module loads
-    // first and owns the frozen catalogs. This block will be removed
-    // once callers migrate to window.HouseholdConstants.* directly.
 
     if (typeof window.SERVICE_TYPES === 'undefined') {
         window.SERVICE_TYPES = C.SERVICE_TYPES;
