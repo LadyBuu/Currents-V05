@@ -15,15 +15,63 @@
  * Culture tabs are SECTIONS OF ONE FORM, unlike religion tabs (which are
  * independent tab-pane surfaces). Switching tabs does not commit anything.
  * "Save" merges every tab's save() result and calls
- * CultureCommands.updateCulture(...) ONCE. Either the whole culture
- * updates, or nothing does.
+ * CultureCommands.updateCulture(...) ONCE for the culture record. Either
+ * every culture-record field updates, or none does.
  *
  * This file is intentionally the ONLY host. The four tabs
  * (appearance, mythology, characters, names) call
  * CultureEditorTabs.registerTab(...) at load. This file must load FIRST.
  *
+ * SAVE IS ATOMIC FOR CULTURE-RECORD FIELDS ONLY
+ * ---------------------------------------------
+ * Two of the four tabs do not write to the culture record at all:
+ *
+ *   - culture-characters-tab.js writes to character.cultureId and
+ *     character.appearance via CharacterCommands. Those writes are
+ *     IMMEDIATE, happen on the tab's own event handlers, and are NOT
+ *     undone by the editor's Cancel.
+ *
+ *   - culture-names-tab.js writes to masterData.data.nameLists via
+ *     NameCommands. Same immediate-commit contract, same Cancel-does-
+ *     not-undo behavior.
+ *
+ * "Save" in this editor therefore commits the composite of any tabs
+ * that produce culture-record fields (appearance, mythology). It does
+ * NOT roll back characters-tab or names-tab writes. Those tabs' own
+ * headers document this and their UI hints surface it to the user.
+ *
+ * TAB-SWITCH PRESERVATION CONTRACT
+ * --------------------------------
+ * Switching tabs re-renders the tab from `_state.culture`. Any input the
+ * user has typed is present in `_state.culture` ONLY IF the tab's own
+ * input/change handlers wrote it there. All four tabs do this for
+ * text/number input. The one gap:
+ *
+ *   - A row that has been ADDED to a list (e.g. an empty appearance
+ *     option row) but not yet TYPED INTO does not survive a tab switch.
+ *     It has no representation in `_state.culture` because the reader
+ *     skips empty values. On switch-back, the row is gone and must be
+ *     re-added. This is documented and accepted.
+ *
+ * There is no tab-data cache. Prior revisions carried one that was
+ * written on switch, read once, and unconditionally discarded before
+ * `tab.render(...)` ran — it never preserved anything. It has been
+ * deleted rather than fixed; making it work would require every tab to
+ * expose a `rehydrate(root, culture)` hook that re-attaches listeners
+ * to cached DOM, and that is a larger change than the value it
+ * delivers. The honest contract above is what the tabs actually do.
+ *
  * WHAT CHANGED FROM THE PREVIOUS VERSION
  * --------------------------------------
+ *   - _state.tabDataCache is deleted. _switchTab no longer caches the
+ *     pane's innerHTML; _renderTab no longer reads from a cache. The
+ *     cache was never consulted on switch-back; removing it removes
+ *     dead code and a misleading header claim.
+ *   - Header SAVE IS ATOMIC FOR CULTURE-RECORD FIELDS ONLY section
+ *     added. The prior "Either the whole culture updates, or nothing
+ *     does" claim was false for the characters and names tabs.
+ *   - Header TAB-SWITCH PRESERVATION CONTRACT section added. The
+ *     prior "cache preserves unsaved edits" claim was false.
  *   - openEditor now reads via CultureQueries.getCultureById (was:
  *     CultureState.getCulture, which does not exist).
  *   - _saveCulture no longer touches masterData or saveMasterData
@@ -32,10 +80,7 @@
  *     save. No bypassing the domain save contract.
  *   - Every inline style="" is gone. Classes live in
  *     css/culture-tabs.css.
- *   - Tab-switching preserves unsaved edits per tab via _tabDataCache
- *     (was: cache was set but never consulted on switch back — see
- *     _renderTab).
- *   - The build-in 'details' tab is REMOVED. Details are edited through
+ *   - The built-in 'details' tab is REMOVED. Details are edited through
  *     the standard culture modals (culture-modals.js::openEditCultureModal).
  *     The editor is for the domain-specific content (appearance,
  *     mythology, characters, names).
@@ -123,7 +168,6 @@
         cultureId: null,
         culture: null,          // working copy (deep-cloned from canonical)
         activeTabId: null,
-        tabDataCache: Object.create(null),
         onSaveCallback: null,
         modal: null,
         root: null,             // the modal element (root.querySelector scoped reads)
@@ -262,7 +306,6 @@
         // Reset per-editor state.
         _state.cultureId = cultureId;
         _state.culture = _clone(canonical);
-        _state.tabDataCache = Object.create(null);
         _state.onSaveCallback = typeof options.onSave === 'function' ? options.onSave : null;
         _state.listeners = [];
 
@@ -351,7 +394,6 @@
                 _cleanup();
                 _state.culture = null;
                 _state.cultureId = null;
-                _state.tabDataCache = Object.create(null);
                 if (typeof options.onCancel === 'function') {
                     try { options.onCancel(); }
                     catch (e) {
@@ -418,11 +460,12 @@
     // 7. TAB SWITCHING
     // =========================================================================
     //
-    // Before switching, the current tab's rendered DOM is captured into
-    // _tabDataCache so unsaved input survives a switch away. Switching
-    // back restores from the cache rather than re-invoking the tab's
-    // render() function (which would reset the input to the canonical
-    // state).
+    // Switching tabs re-renders the target tab from _state.culture. Every
+    // tab writes its user input into _state.culture on its own input/
+    // change handlers, so typed values survive a switch. The one gap is
+    // a list row that has been ADDED but not yet TYPED INTO — it has no
+    // representation in _state.culture and does not survive a switch.
+    // See TAB-SWITCH PRESERVATION CONTRACT in the header.
 
     function _switchTab(tabId) {
         if (!_state.root || !_tabRegistry[tabId]) return;
@@ -437,12 +480,6 @@
                     console.error('[culture-editor] onDeactivate for "' + current + '" threw:', e);
                 }
             }
-        }
-
-        // Cache the current pane's DOM.
-        var currentPane = _state.root.querySelector('#ct_pane_' + current);
-        if (currentPane) {
-            _state.tabDataCache[current] = currentPane.innerHTML;
         }
 
         _state.activeTabId = tabId;
@@ -463,7 +500,7 @@
             pane.classList.toggle('ct-pane--active', pane.getAttribute('data-tab') === tabId);
         }
 
-        // Render the newly active tab (from cache if available).
+        // Render the newly active tab from the working culture.
         _renderTab(tabId);
 
         // Activate hook.
@@ -485,29 +522,6 @@
         var pane = _state.root.querySelector('#ct_pane_' + tabId);
         if (!pane) return;
 
-        // Restore from cache if the tab was rendered before and has
-        // unsaved edits.
-        if (_state.tabDataCache[tabId]) {
-            pane.innerHTML = _state.tabDataCache[tabId];
-            // Cached DOM already carries its listeners? No — innerHTML
-            // does not restore listeners. Re-attach by re-rendering on
-            // the detached content. Simplest correct approach: replay
-            // the tab's render with the working culture (which produces
-            // fresh DOM the tab is expected to re-hydrate from the
-            // working culture). The tab's render is required to be
-            // idempotent.
-            //
-            // Simpler and more robust: discard the cache and re-render.
-            // The tab's render reads from _state.culture, not the DOM,
-            // so unsaved edits must be reflected in _state.culture for
-            // them to survive. Tabs that keep transient input in the
-            // DOM only (not in _state.culture) lose that input on a
-            // switch. This is a documented contract: tabs must write
-            // their user input into _state.culture via their own change
-            // handlers if it needs to survive a tab switch.
-            _state.tabDataCache[tabId] = null;
-        }
-
         try {
             tab.render(pane, _state.culture);
         } catch (e) {
@@ -527,12 +541,17 @@
     // =========================================================================
     //
     // Iterates every REGISTERED tab (not just the visible ones; a tab
-    // that is hidden by options.tabs may still have edited data).
-    // Each tab's save() returns a partial culture object; the results
-    // are shallow-merged into a candidate. Each tab's validate() is then
-    // run against the candidate. Only if every tab validates does the
+    // that is hidden by options.tabs may still have edited data). Each
+    // tab's save() returns a partial culture object; the results are
+    // shallow-merged into a candidate. Each tab's validate() is then run
+    // against the candidate. Only if every tab validates does the
     // candidate go to CultureCommands.updateCulture — one call, one
     // persist.
+    //
+    // Scope of "atomic": culture-record fields only. Characters-tab and
+    // names-tab writes happen on their own handlers and are NOT rolled
+    // back by this path. See SAVE IS ATOMIC FOR CULTURE-RECORD FIELDS
+    // ONLY in the header.
 
     function _saveCulture() {
         var commands = _getCommands();
