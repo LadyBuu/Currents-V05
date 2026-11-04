@@ -1108,7 +1108,11 @@
 </div>
 
 <!-- ================================================================
-     SCRIPTS — load order follows the load-order file.
+     SCRIPTS — load order follows the load-order file, with one
+     exception: the name subsystem is moved to load AFTER the culture
+     subsystem, because name-queries.js hard-requires
+     CultureQueries.getCultureForCharacter at load time. The load-order
+     file predates that dependency.
      ================================================================ -->
 
 <!-- Core constants -->
@@ -1234,14 +1238,6 @@
 <script src="js/character/children-commands.js"></script>
 <script src="js/character/children-statistics.js"></script>
 
-<!-- Names (Block 17 of the load-order file) -->
-<script src="js/names/name-queries.js"></script>
-<script src="js/names/name-rules.js"></script>
-<script src="js/names/names-state.js"></script>
-<script src="js/names/name-commands.js"></script>
-<script src="js/names/name-system.js"></script>
-<script src="js/names/modals-name.js"></script>
-
 <!-- Ranks -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
@@ -1295,7 +1291,7 @@
 <script src="js/location/modals-moves.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
-<!-- Culture subsystem -->
+<!-- Culture subsystem (before names — name-queries.js requires CultureQueries at load) -->
 <script src="js/culture/culture-constants.js"></script>
 <script src="js/culture/culture-validation.js"></script>
 <script src="js/culture/culture-state.js"></script>
@@ -1307,6 +1303,15 @@
 <script src="js/culture/culture-ui-list.js"></script>
 <script src="js/culture/modals-culture.js"></script>
 <script src="js/culture/culture-bootstrap.js"></script>
+
+<!-- Names (Block 17 of the load-order file, moved here so name-queries.js
+     can see CultureQueries.getCultureForCharacter at load time) -->
+<script src="js/names/name-queries.js"></script>
+<script src="js/names/name-rules.js"></script>
+<script src="js/names/names-state.js"></script>
+<script src="js/names/name-commands.js"></script>
+<script src="js/names/name-system.js"></script>
+<script src="js/names/modals-name.js"></script>
 
 <!-- Character UI modals (need culture-queries for projections) -->
 <script src="js/character/character-ui-list.js"></script>
