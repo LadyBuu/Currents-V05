@@ -22,72 +22,91 @@
  *   It does NOT decide what a punishment is. It executes the consequences
  *   returned by CrimeLawIntegration.evaluateAction().
  *
+ * COMMAND SURFACE:
+ *
+ *   recordCrime(locationId, data)
+ *       Generic crime recording. Records a NON-murder, NON-execution
+ *       crime unsolved (or optionally solved via data.solved). Applies
+ *       law evaluation, household side effects, and settlement crime
+ *       impact. Does NOT kill anyone. Does NOT start a vendetta.
+ *
+ *       Murder and execution are REJECTED:
+ *         type === 'murder'    → { code: 'MURDER_USES_TRIGGER' }
+ *             Murder has mandatory side effects (kill, vendetta,
+ *             household effects, law consequence execution). A
+ *             "murder" crime whose victim is still alive would be a
+ *             data-integrity hole. Use triggerMurder.
+ *         type === 'execution' → { code: 'EXECUTION_IS_A_CONSEQUENCE' }
+ *             Execution is a consequence emitted by the law layer
+ *             inside triggerMurder (via _executeConsequence →
+ *             triggerExecution). It is not created by the user.
+ *
+ *   triggerMurder(victimId, killerId, options)
+ *       Murder-specific. Records the murder, kills the victim, starts
+ *       a vendetta if the two households differ, applies household
+ *       and settlement effects, and executes whatever law consequence
+ *       the evaluation returned (which may include execution via
+ *       triggerExecution).
+ *
+ *   triggerExecution(condemnedId, options)
+ *       Execution-specific. INTERNAL. Called only by triggerMurder's
+ *       _executeConsequence path. Public export retained for the
+ *       consequence-execution chain, not for user-initiated
+ *       execution recording (there is no such action).
+ *
+ *   escalateVendetta(vendettaId, options)
+ *       Explicit vendetta escalation. Also fires automatically inside
+ *       recordVendettaDeath when the threshold is reached.
+ *
+ *   createBloodFeud(victimId, killerId, options)
+ *       Creates or extends a blood feud between the victim and killer
+ *       households. Called by triggerMurder; also exposed for manual
+ *       bookkeeping.
+ *
+ *   persist()
+ *       The single saveMasterData site in this domain.
+ *
  * RESULT CONTRACT:
  *   { success: true, data: {...} }
  *   { success: false, reason: string, code?: string }
  *
  * COMMIT TAIL (_commit):
- *   1. CrimeState.hydrateFromMasterData(true)   — rebuild indexes over mutations
- *   2. markDataDirty()                          — flag for the next save
- *   3. CrimeState.publish()                     — in-process subscribers
- *   4. dispatchEvent(CustomEvent)               — cross-domain consumers
+ *   1. CrimeState.hydrateFromMasterData(true)
+ *   2. markDataDirty()
+ *   3. CrimeState.publish()
+ *   4. dispatchEvent(CustomEvent)
  *
- *   No saveMasterData inside a command. Persistence is CrimeCommands.persist(),
- *   called by the UI once per modal action.
+ *   No saveMasterData inside a command. Persistence is
+ *   CrimeCommands.persist(), called by the UI once per modal action.
  *
  * DEATH SIGNATURE CONTRACT:
- *   This module is a KILL CHARACTER CALLER. It calls
- *   window.killCharacter — the global exported by
- *   js/character/character-lifecycle.js. That function's signature is:
- *
- *     killCharacter(characterId, deathData)
- *
- *   where deathData is the markDeceased payload documented in
- *   character-commands.js (deathYear, deathCause, deathCauseDetail,
- *   deathNotes, isMurder, killerId, murderMotive, murderMethod,
- *   isExecution, executionReason, executionMethod, executionLocation).
- *
- *   The pre-refactor signature killCharacter(character, year, cause,
- *   options) is NOT supported. character-system.js's DELETED ALIASES
- *   section explicitly states that callers passing the old signature
- *   must migrate; the shim does not silently transform it. Prior
- *   revisions of this file called killCharacter with the old signature,
- *   which passed a character object in the characterId slot — the call
- *   failed with 'characterId is required.' on every invocation, the
- *   crime record was rolled back, and every triggerMurder /
- *   triggerExecution returned { success: false, reason: 'Failed to
- *   kill victim: characterId is required.' }. Fixed at all call sites.
+ *   killCharacter calls use the two-argument form
+ *   killCharacter(characterId, deathData) matching markDeceased's
+ *   payload contract. See triggerMurder and triggerExecution.
  *
  * PERSISTENCE CONTRACT:
- *   persist() inspects the boolean return value of
- *   window.saveMasterData(). saveMasterData does NOT throw on write
- *   failure — it returns false and records the failure for
- *   getLastSaveError(). Prior revisions of persist() called
- *   saveMasterData() inside a try/catch and returned success
- *   unconditionally, which reported { success: true } on every failed
- *   save (quota exceeded, localStorage disabled, JSON serialization
- *   failure). This is Pattern C in storage.js's DOMAIN PERSIST
- *   CONTRACT. The current persist() uses Pattern A: it inspects the
- *   return value and surfaces the recorded error via getLastSaveError().
+ *   persist() inspects the boolean return value of saveMasterData().
+ *   On false, reads getLastSaveError(). Pattern A from storage.js's
+ *   DOMAIN PERSIST CONTRACT. Pattern C (discard, report success) is
+ *   banned.
  *
  * OWNERSHIP:
- *   - triggerMurder, triggerExecution, escalateVendetta, createBloodFeud
- *   - orchestration of character death, relationship termination, vendetta
- *     creation, and household side effects
+ *   - recordCrime, triggerMurder, triggerExecution, escalateVendetta,
+ *     createBloodFeud
+ *   - orchestration of character death, relationship termination,
+ *     vendetta creation, and household side effects
  *   - the persist boundary
  *
  * WHAT THIS MODULE DOES NOT DO:
  *   - It does not decide legal consequences. (CrimeLawIntegration)
  *   - It does not own crime or vendetta records. (CrimeState)
  *   - It does not compute statistics. (CrimeQueries)
- *   - It does not reach into another domain's private state. All cross-
- *     domain effects go through that domain's public command API.
- *   - It does not use a module-wide recursion guard. Commands compose freely.
- *   - It does not unwrap results into bare objects. Everything structured.
+ *   - It does not reach into another domain's private state.
+ *   - It does not use a module-wide recursion guard.
+ *   - It does not unwrap results into bare objects.
  *
  * TIME CONTRACT:
- *   Uses window.getCurrentYear from js/core/time.js. The deprecated
- *   window.getCurrentYearSafe alias is NOT used.
+ *   Uses window.getCurrentYear from js/core/time.js.
  *
  * DEPENDENCIES (required, verified at load):
  *   - CrimeConstants, CrimeState, CrimeLawIntegration
@@ -99,53 +118,49 @@
  *   - SettlementGovernmentCommands.recordCrimeImpact (optional; absence
  *     warns once and skips settlement effects)
  *
+ * KNOWN HAZARD (external, not fixable from this file):
+ *   CrimeLawIntegration._getCivilLaws resolves through
+ *   SettlementLawQueries.getCivilLaws(locationId). That function
+ *   returns null when the settlement record does not exist (see
+ *   settlement-law-queries.js::_getLawsArray →
+ *   SettlementQueries.getSettlementData → null → getCivilLaws
+ *   returns null). CrimeLawIntegration.getApplicableLaws does
+ *   civilLaws.length without a null guard, so evaluateAction throws
+ *   TypeError when the locationId resolves to a place that has no
+ *   settlement record. The try/catch that wraps every command here
+ *   catches that, and the command returns { success: false, reason:
+ *   'Cannot read ...' }. The fix belongs in crime-law-integration.js
+ *   (return [] instead of null, or guard the caller) and is out of
+ *   scope for this file.
+ *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (P1-8):
- *     - triggerMurder now calls window.killCharacter(victim.id,
- *       deathData) — the correct signature. Prior revisions called
- *       window.killCharacter(victim, year, 'Murdered', {...}), which
- *       passed a character object in the characterId slot; every
- *       invocation returned { success: false, reason: 'characterId is
- *       required.' } and triggerMurder rolled back the crime record
- *       and returned _fail. The death data now passes deathCause:
- *       'murder', isMurder: true, killerId, and the (optional)
- *       murderMotive / murderMethod fields that markDeceased writes
- *       to the character record. mortality-rules.js::validateDeath
- *       requires killerId when isMurder === true; crime supplies it
- *       from the resolved killer.
- *     - triggerExecution now calls window.killCharacter(condemned.id,
- *       deathData) — the correct signature. Same class of failure as
- *       triggerMurder before the fix. Death data now passes
- *       deathCause: 'execution', isExecution: true, executionReason,
- *       executionMethod, and (optional) executionLocation.
- *       mortality-rules.js::validateDeath requires executionReason
- *       when isExecution === true; crime supplies it from the resolved
- *       reason.
- *     - persist() now inspects the boolean return value of
- *       window.saveMasterData(). Prior revisions called
- *       saveMasterData() inside a try/catch and returned
- *       { success: true } unconditionally, which reported success on
- *       every failed save. This is Pattern C in storage.js's DOMAIN
- *       PERSIST CONTRACT. The current persist() uses Pattern A: it
- *       returns { success: true } only when saveMasterData returned
- *       true, and reads getLastSaveError() to surface the failure
- *       reason otherwise. Matches culture-commands.js::persist and
- *       religion-commands.js::persist.
- *     - Header DEATH SIGNATURE CONTRACT and PERSISTENCE CONTRACT
- *       sections added, documenting the two classes of bug fixed
- *       and pointing future maintainers at the correct contracts.
- *     - Header REFACTOR HISTORY entry added.
- *     - No behavioural change to _executeConsequence,
- *       escalateVendetta, createBloodFeud, the commit tail, the
- *       household side-effect helpers, the settlement side-effect
- *       helper, the violation summarisers, or the random helpers.
- *   Previous revision:
+ *   Current revision:
+ *     - Added recordCrime(locationId, data). Generic crime recording
+ *       for every crime type that is not murder and not execution.
+ *       Rejects type === 'murder' (MURDER_USES_TRIGGER) and
+ *       type === 'execution' (EXECUTION_IS_A_CONSEQUENCE). Runs
+ *       CrimeLawIntegration.evaluateAction against the perpetrator
+ *       (when supplied); records unsolved via CrimeState.recordCrime;
+ *       optionally solves via CrimeState.solveCrime when
+ *       data.solved === true; applies household side effects through
+ *       the same helpers triggerMurder uses; applies settlement crime
+ *       impact; commits via _commit.
+ *     - Added _domainForCrimeType and _humanizeCrimeType helpers.
+ *       Pure; used by recordCrime only.
+ *     - triggerMurder and triggerExecution unchanged. They still call
+ *       killCharacter with the two-argument form and still use
+ *       _executeConsequence → triggerExecution for law-prescribed
+ *       execution.
+ *     - persist() unchanged (Pattern A + getLastSaveError).
+ *     - No other behavioural change to any command.
+ *   Previous revisions:
+ *     - triggerMurder / triggerExecution migrated to the two-argument
+ *       killCharacter form (P1-8).
+ *     - persist() migrated to Pattern A (P1-8).
  *     - escalateVendetta added as a first-class command.
- *     - createBloodFeud, escalateVendetta, and the rest of the
- *       orchestration wired to the current State surface.
  * =============================================================================
  */
 
@@ -192,7 +207,6 @@
         throw new Error('crime-commands.js requires endRelationship');
     }
 
-    // HouseholdCommands.apply* are hard requirements under the refactor.
     if (typeof window.HouseholdCommands === 'undefined') {
         throw new Error('crime-commands.js requires HouseholdCommands');
     }
@@ -206,8 +220,6 @@
         throw new Error('crime-commands.js requires HouseholdCommands.applyExecutionToHousehold');
     }
 
-    // SettlementGovernmentCommands.recordCrimeImpact is optional. Warn once
-    // on first use if it's absent so the skipped side effect is visible.
     var _warnedSettlement = false;
     function _getSettlementRecordImpact() {
         if (typeof window.SettlementGovernmentCommands !== 'undefined' &&
@@ -257,14 +269,6 @@
     // in-process event, and dispatches a CustomEvent for cross-domain
     // consumers.
     //
-    // CrimeState._markDirty now syncs the in-memory indexes back to
-    // masterData.data.crimes / masterData.data.vendettas before flagging
-    // dirty (see crime-state.js). So the hydrateFromMasterData(true) call
-    // below reads the just-written canonical arrays and rebuilds indexes
-    // identically. Prior revisions of crime-state.js did not perform that
-    // sync, and hydrateFromMasterData(true) silently discarded the
-    // mutation by rebuilding from the pre-mutation canonical arrays.
-    //
     // This is the transaction boundary. It does NOT save. Callers that
     // need persistence call CrimeCommands.persist() once after the command
     // returns.
@@ -295,17 +299,6 @@
     // See PERSISTENCE CONTRACT in the header. Pattern A from storage.js's
     // DOMAIN PERSIST CONTRACT: inspect the boolean return value; on
     // failure, read getLastSaveError() for the reason.
-    //
-    // The historical error to avoid:
-    //
-    //   try {
-    //       window.saveMasterData();   // return value discarded
-    //       return _ok(null);          // always "success"
-    //   } catch (e) { ... }            // unreachable: saveMasterData
-    //                                  // does not throw on write failure
-    //
-    // That pattern reports success on every failed save. saveMasterData
-    // returns true only when the write succeeded, false otherwise.
 
     function persist() {
         if (typeof window.saveMasterData !== 'function') {
@@ -454,23 +447,312 @@
     }
 
     // =========================================================================
-    // 9. PUBLIC COMMANDS
+    // 9. GENERIC CRIME RECORDING
     // =========================================================================
+    //
+    // recordCrime(locationId, data) — the generic path. Records a
+    // non-murder, non-execution crime unsolved (or optionally solved via
+    // data.solved). Applies law evaluation, household side effects, and
+    // settlement crime impact. Does NOT kill anyone. Does NOT start a
+    // vendetta.
+    //
+    // Murder and execution are rejected:
+    //   murder    → use triggerMurder (kill + vendetta + household +
+    //               law consequences are mandatory for murder)
+    //   execution → use triggerMurder, which emits the execution as a
+    //               law consequence (execution is not created by the
+    //               user)
+    //
+    // The locationId is the settlement location the tab is scoped to.
+    // It is used for:
+    //   - the crime record's locationId field
+    //   - the settlement crime impact
+    // It is NOT used to resolve the perpetrator's own current location
+    // (that is separate context); the caller is expected to supply
+    // data.locationId when the crime happened somewhere other than the
+    // settlement's own location.
+    //
+    // Returns { success: true, data: { crime, legalEvaluation,
+    //           consequenceResults, householdUpdates } } or
+    //         { success: false, reason, code }.
+
+    function recordCrime(locationId, data) {
+        try {
+            if (typeof locationId !== 'string' || locationId.length === 0) {
+                return _fail(
+                    'locationId is required',
+                    C.CODES.VALIDATION
+                );
+            }
+
+            data = _normaliseOptions(data);
+
+            if (typeof data.type !== 'string' || data.type.length === 0) {
+                return _fail(
+                    'Crime type is required',
+                    C.CODES.VALIDATION
+                );
+            }
+
+            var knownTypes = C.getAllCrimeTypes();
+            if (knownTypes.indexOf(data.type) === -1) {
+                return _fail(
+                    'Unknown crime type: ' + data.type,
+                    C.CODES.VALIDATION
+                );
+            }
+
+            if (data.type === C.CRIME_TYPES.MURDER) {
+                return _fail(
+                    'Murder must use CrimeCommands.triggerMurder so the ' +
+                    'kill, vendetta, household effects, and law consequences ' +
+                    'are applied.',
+                    'MURDER_USES_TRIGGER'
+                );
+            }
+
+            if (data.type === C.CRIME_TYPES.EXECUTION) {
+                return _fail(
+                    'Execution is a consequence emitted by the law layer ' +
+                    'inside triggerMurder, not a creatable crime type.',
+                    'EXECUTION_IS_A_CONSEQUENCE'
+                );
+            }
+
+            var year = (typeof data.year === 'number') ? data.year : _now();
+            if (!isFinite(year)) {
+                return _fail('Invalid year', C.CODES.VALIDATION);
+            }
+
+            var perpetrator = data.perpetratorId
+                ? window.getCharacterById(data.perpetratorId)
+                : null;
+            if (data.perpetratorId && !perpetrator) {
+                return _fail(
+                    'Perpetrator not found',
+                    C.CODES.NOT_FOUND
+                );
+            }
+
+            var victim = data.victimId
+                ? window.getCharacterById(data.victimId)
+                : null;
+            if (data.victimId && !victim) {
+                return _fail(
+                    'Victim not found',
+                    C.CODES.NOT_FOUND
+                );
+            }
+
+            var crimeLocationId = data.locationId
+                ? data.locationId
+                : locationId;
+
+            var reason = data.reason || 'Unknown reason';
+
+            // ---- Law evaluation (optional perpetrator) -----------------
+            var evaluation;
+            if (perpetrator) {
+                var action = {
+                    type: data.type,
+                    domain: _domainForCrimeType(data.type),
+                    details: {
+                        victimId: data.victimId || null,
+                        perpetratorId: data.perpetratorId || null,
+                        reason: reason
+                    }
+                };
+                var context = {
+                    locationId: crimeLocationId,
+                    victim: victim,
+                    killer: perpetrator,
+                    year: year
+                };
+                evaluation = Law.evaluateAction(perpetrator.id, action, context);
+            } else {
+                evaluation = {
+                    lawful: true,
+                    violations: [],
+                    civil: [],
+                    religious: [],
+                    governingLaw: null,
+                    consequences: []
+                };
+            }
+
+            // ---- Record crime ------------------------------------------
+            var crimeData = {
+                type: data.type,
+                perpetratorId: data.perpetratorId || null,
+                victimId: data.victimId || null,
+                year: year,
+                reason: reason,
+                locationId: crimeLocationId,
+                method: data.method || null,
+                notes: data.notes || null,
+                civilViolation: evaluation.civil.length > 0
+                    ? _summariseViolation(evaluation.civil[0], 'civil', crimeLocationId)
+                    : null,
+                religiousViolation: evaluation.religious.length > 0
+                    ? _summariseViolation(evaluation.religious[0], 'religious', null)
+                    : null,
+                religionId: perpetrator && perpetrator.religionId
+                    ? perpetrator.religionId
+                    : null,
+                violatedLaws: evaluation.violations.map(_summariseViolationItem)
+            };
+
+            var recordResult = State.recordCrime(crimeData);
+            if (!recordResult.success) {
+                return _fail(
+                    'Failed to record crime: ' + recordResult.reason,
+                    C.CODES.VALIDATION
+                );
+            }
+            var crime = recordResult.data;
+
+            // ---- Optional solve ----------------------------------------
+            if (data.solved === true) {
+                var solution = (typeof data.solution === 'string' && data.solution.length > 0)
+                    ? data.solution
+                    : 'Solved';
+                var solveResult = State.solveCrime(crime.id, solution, year);
+                if (!solveResult.success) {
+                    State.deleteCrime(crime.id);
+                    return _fail(
+                        'Failed to solve crime: ' + solveResult.reason,
+                        C.CODES.VALIDATION
+                    );
+                }
+                crime = solveResult.data;
+            }
+
+            // ---- Household side effects --------------------------------
+            var vHouseholdId = _getHouseholdIdForCharacter(victim);
+            var kHouseholdId = _getHouseholdIdForCharacter(perpetrator);
+
+            if (vHouseholdId) {
+                _applyVictimHouseholdEffects(vHouseholdId, {
+                    eventType: data.type,
+                    perpetratorId: data.perpetratorId || null,
+                    victimId: data.victimId || null,
+                    year: year,
+                    prestigeLoss: 5
+                });
+            }
+            if (kHouseholdId && kHouseholdId !== vHouseholdId) {
+                _applyPerpetratorHouseholdEffects(kHouseholdId, {
+                    eventType: data.type,
+                    perpetratorId: data.perpetratorId || null,
+                    victimId: data.victimId || null,
+                    year: year,
+                    prestigeLoss: 5
+                });
+            }
+
+            // ---- Settlement side effects -------------------------------
+            _recordSettlementCrimeImpact(crimeLocationId, {
+                type: data.type,
+                victimId: data.victimId || null,
+                killerId: data.perpetratorId || null,
+                year: year,
+                reason: reason,
+                solved: data.solved === true,
+                lawViolations: evaluation.violations.length
+            });
+
+            // ---- Logging -----------------------------------------------
+            var subjects = [];
+            if (perpetrator) subjects.push(perpetrator);
+            if (victim) subjects.push(victim);
+            var typeLabel = _humanizeCrimeType(data.type);
+            var description = typeLabel;
+            if (victim && victim.name) {
+                description += ' against ' + victim.name;
+            }
+            if (perpetrator && perpetrator.name) {
+                description += ' by ' + perpetrator.name;
+            }
+            _log('crime', typeLabel, description + ' (' + reason + ')', subjects);
+
+            _commit(C.EVENTS.CRIME_RECORDED, {
+                crimeId: crime.id,
+                type: data.type,
+                victimId: data.victimId || null,
+                killerId: data.perpetratorId || null
+            });
+
+            return _ok({
+                crime: crime,
+                year: year,
+                locationId: crimeLocationId,
+                legalEvaluation: evaluation,
+                householdUpdates: {
+                    victimHouseholdId: vHouseholdId,
+                    perpetratorHouseholdId: kHouseholdId
+                }
+            });
+
+        } catch (e) {
+            return _fail(e.message || String(e), C.CODES.VALIDATION);
+        }
+    }
 
     /**
-     * Triggers a murder with full law evaluation.
-     *
-     * DEATH SIGNATURE:
-     *   Calls window.killCharacter(victim.id, deathData) — the two-argument
-     *   form documented in DEATH SIGNATURE CONTRACT. Prior revisions
-     *   called the pre-refactor four-argument form, which every invocation
-     *   failed with 'characterId is required.'.
-     *
-     * @param {string} victimId
-     * @param {string} killerId
-     * @param {Object} [options]
-     * @returns {{success: true, data: Object}|{success: false, reason: string, code?: string}}
+     * Maps a crime type to a Law domain for evaluation. Best-effort;
+     * the mapping is a hint, not a validator. Unknown crime types map
+     * to VIOLENCE (the catch-all).
      */
+    function _domainForCrimeType(type) {
+        if (!type) return C.LAW_DOMAINS.VIOLENCE;
+        var domains = C.LAW_DOMAINS;
+        switch (type) {
+            case C.CRIME_TYPES.MURDER:
+            case C.CRIME_TYPES.ASSAULT:
+            case C.CRIME_TYPES.VIOLENCE:
+            case C.CRIME_TYPES.ROBBERY:
+            case C.CRIME_TYPES.VENDETTA:
+            case C.CRIME_TYPES.CRIME_OF_PASSION:
+                return domains.VIOLENCE;
+            case C.CRIME_TYPES.ADULTERY:
+                return domains.SEXUAL;
+            case C.CRIME_TYPES.TREASON:
+            case C.CRIME_TYPES.ESPIONAGE:
+                return domains.POLITICAL;
+            case C.CRIME_TYPES.THEFT:
+            case C.CRIME_TYPES.FRAUD:
+            case C.CRIME_TYPES.FORGERY:
+            case C.CRIME_TYPES.SMUGGLING:
+                return domains.ECONOMIC;
+            case C.CRIME_TYPES.HERESY:
+            case C.CRIME_TYPES.BLASPHEMY:
+            case C.CRIME_TYPES.APOSTASY:
+            case C.CRIME_TYPES.SACRILEGE:
+            case C.CRIME_TYPES.WITCHCRAFT:
+            case C.CRIME_TYPES.IDOLATRY:
+            case C.CRIME_TYPES.SCHISM:
+            case C.CRIME_TYPES.EXCOMMUNICATION_VIOLATION:
+            case C.CRIME_TYPES.RELIGIOUS_IMPERSONATION:
+            case C.CRIME_TYPES.FALSE_PROPHECY:
+            case C.CRIME_TYPES.DESECRATION:
+                return domains.WORSHIP;
+            default:
+                return domains.VIOLENCE;
+        }
+    }
+
+    function _humanizeCrimeType(type) {
+        if (!type) return 'Crime';
+        return String(type)
+            .split('_')
+            .map(function (word) { return word.charAt(0).toUpperCase() + word.slice(1); })
+            .join(' ');
+    }
+
+    // =========================================================================
+    // 10. MURDER
+    // =========================================================================
+
     function triggerMurder(victimId, killerId, options) {
         options = _normaliseOptions(options);
 
@@ -495,7 +777,6 @@
                 : true;
             var locationId = _resolveLocation(options, victim, killer);
 
-            // ---- Law evaluation -----------------------------------------
             var action = {
                 type: C.CRIME_TYPES.MURDER,
                 domain: C.LAW_DOMAINS.VIOLENCE,
@@ -516,7 +797,6 @@
 
             var evaluation = Law.evaluateAction(killerId, action, context);
 
-            // ---- Record crime (unsolved) --------------------------------
             var crimeData = {
                 type: C.CRIME_TYPES.MURDER,
                 perpetratorId: killer.id,
@@ -541,7 +821,6 @@
             }
             var crime = recordResult.data;
 
-            // ---- Solve if the killer was apprehended -------------------
             if (!killerGotAway) {
                 var solveResult = State.solveCrime(crime.id, 'Killer apprehended', year);
                 if (!solveResult.success) {
@@ -551,22 +830,8 @@
                 crime = solveResult.data;
             }
 
-            // ---- Kill victim -------------------------------------------
             // CORRECT SIGNATURE (see DEATH SIGNATURE CONTRACT):
             //   killCharacter(characterId, deathData)
-            //
-            // The old signature was killCharacter(victim, year, 'Murdered', {...}),
-            // which passed a character object in the characterId slot and a
-            // year number in the deathData slot. Every invocation returned
-            // { success: false, reason: 'characterId is required.' }, causing
-            // the crime record to be rolled back and the murder to fail.
-            //
-            // deathData uses the markDeceased contract documented in
-            // character-commands.js. isMurder requires killerId (validated by
-            // mortality-rules.js::validateDeath). murderMotive and murderMethod
-            // are optional; the crime modal does not currently collect a
-            // method, so 'unknown' is passed as a placeholder. Callers that
-            // have a specific method should pass options.murderMethod.
             var killResult = window.killCharacter(victim.id, {
                 deathYear: year,
                 deathCause: 'murder',
@@ -589,7 +854,6 @@
                 );
             }
 
-            // ---- Execute legal consequences ----------------------------
             var consequenceResults = [];
             var executionResult = null;
             if (!killerGotAway && !killer.isDeceased) {
@@ -609,7 +873,6 @@
                 }
             }
 
-            // ---- Vendetta ----------------------------------------------
             var vendettaResult = null;
             if (startVendetta) {
                 var victimHouseholdId = _getHouseholdIdForCharacter(victim);
@@ -625,7 +888,6 @@
                 }
             }
 
-            // ---- Household side effects --------------------------------
             var vHouseholdId = _getHouseholdIdForCharacter(victim);
             var kHouseholdId = _getHouseholdIdForCharacter(killer);
 
@@ -648,7 +910,6 @@
                 });
             }
 
-            // ---- Settlement side effects -------------------------------
             if (locationId) {
                 _recordSettlementCrimeImpact(locationId, {
                     type: 'murder',
@@ -661,7 +922,6 @@
                 });
             }
 
-            // ---- Logging + commit --------------------------------------
             _log('murder', 'Murder',
                 (victim.name || 'Unknown') + ' was murdered by ' +
                 (killer.name || 'Unknown') + ' (' + reason + ')' +
@@ -702,17 +962,10 @@
         }
     }
 
-    /**
-     * Triggers an execution with law evaluation. Records the crime unsolved,
-     * solves it immediately (the outcome is legally determined), then kills
-     * the condemned.
-     *
-     * DEATH SIGNATURE:
-     *   Calls window.killCharacter(condemned.id, deathData) — the two-argument
-     *   form documented in DEATH SIGNATURE CONTRACT. Prior revisions used the
-     *   old four-argument form; every invocation failed with 'characterId is
-     *   required.' and the crime record was rolled back.
-     */
+    // =========================================================================
+    // 11. EXECUTION
+    // =========================================================================
+
     function triggerExecution(condemnedId, options) {
         options = _normaliseOptions(options);
 
@@ -728,7 +981,6 @@
             var executionerId = options.executionerId || null;
             var locationId = options.locationId || window.getCurrentLocationId(condemned) || null;
 
-            // ---- Law evaluation -----------------------------------------
             var action = {
                 type: C.CRIME_TYPES.EXECUTION,
                 domain: C.LAW_DOMAINS.DEATH,
@@ -756,7 +1008,6 @@
                     consequences: []
                 };
 
-            // ---- Record crime (unsolved) --------------------------------
             var crimeData = {
                 type: C.CRIME_TYPES.EXECUTION,
                 perpetratorId: executionerId || 'state',
@@ -787,7 +1038,6 @@
             }
             var crime = recordResult.data;
 
-            // ---- Solve immediately -------------------------------------
             var solveResult = State.solveCrime(crime.id, 'Legal execution', year);
             if (!solveResult.success) {
                 State.deleteCrime(crime.id);
@@ -795,19 +1045,8 @@
             }
             crime = solveResult.data;
 
-            // ---- Kill condemned ----------------------------------------
             // CORRECT SIGNATURE (see DEATH SIGNATURE CONTRACT):
             //   killCharacter(characterId, deathData)
-            //
-            // deathData uses the markDeceased contract documented in
-            // character-commands.js. isExecution requires executionReason
-            // (validated by mortality-rules.js::validateDeath). The crime
-            // reason (from options.reason) is passed as executionReason.
-            // executionMethod and executionLocation are optional; both are
-            // populated from the resolved method and options.
-            //
-            // executionerId is not a markDeceased field — it is recorded
-            // only in the crime record's metadata (already captured above).
             var killResult = window.killCharacter(condemned.id, {
                 deathYear: year,
                 deathCause: 'execution',
@@ -830,7 +1069,6 @@
                 );
             }
 
-            // ---- End relationships -------------------------------------
             if (options.endRelationships !== false) {
                 try {
                     var relationships = window.getRelationshipsForCharacter(condemned.id);
@@ -851,7 +1089,6 @@
                 }
             }
 
-            // ---- Household side effects --------------------------------
             var householdId = _getHouseholdIdForCharacter(condemned);
             if (householdId) {
                 _applyExecutionHouseholdEffects(householdId, {
@@ -860,7 +1097,6 @@
                 });
             }
 
-            // ---- Settlement side effects -------------------------------
             if (locationId) {
                 _recordSettlementCrimeImpact(locationId, {
                     type: 'execution',
@@ -900,9 +1136,10 @@
         }
     }
 
-    /**
-     * Explicitly escalates a vendetta. See header for details.
-     */
+    // =========================================================================
+    // 12. VENDETTA ESCALATION
+    // =========================================================================
+
     function escalateVendetta(vendettaId, options) {
         options = _normaliseOptions(options);
 
@@ -946,8 +1183,6 @@
                 return _ok({ vendetta: setResult.data, escalated: true });
             }
 
-            // Non-force path: retry automatic escalation if the vendetta
-            // has reached the threshold but is still ACTIVE.
             var threshold = C.VENDETTA_ESCALATION_THRESHOLD;
             var deathCount = Array.isArray(vendetta.deaths) ? vendetta.deaths.length : 0;
             if (deathCount < threshold) {
@@ -982,10 +1217,10 @@
         }
     }
 
-    /**
-     * Creates a blood feud between the households of the victim and killer.
-     * Called by triggerMurder. Safe to call directly for manual bookkeeping.
-     */
+    // =========================================================================
+    // 13. BLOOD FEUD CREATION
+    // =========================================================================
+
     function createBloodFeud(victimId, killerId, options) {
         options = _normaliseOptions(options);
 
@@ -1014,7 +1249,6 @@
                 ('Blood feud from murder of ' + (victim.name || 'Unknown') +
                  ' by ' + (killer.name || 'Unknown'));
 
-            // Existing vendetta? Record the death on the existing one.
             var existing = State.getActiveVendettaBetween(victimHouseholdId, killerHouseholdId);
             if (existing) {
                 var deathResult = State.recordVendettaDeath(existing.id, {
@@ -1035,7 +1269,6 @@
                 return _ok(deathResult.data);
             }
 
-            // New vendetta.
             var vendettaResult = State.createVendetta({
                 householdAId: victimHouseholdId,
                 householdBId: killerHouseholdId,
@@ -1051,7 +1284,6 @@
                 return _fail(vendettaResult.reason, vendettaResult.code);
             }
 
-            // First death on the new vendetta.
             var firstDeath = State.recordVendettaDeath(vendettaResult.data.id, {
                 victimId: victimId,
                 killerId: killerId,
@@ -1083,7 +1315,7 @@
     }
 
     // =========================================================================
-    // 10. VIOLATION SUMMARISATION
+    // 14. VIOLATION SUMMARISATION
     // =========================================================================
 
     function _summariseViolationItem(violation) {
@@ -1111,7 +1343,7 @@
     }
 
     // =========================================================================
-    // 11. HELPERS
+    // 15. RANDOM HELPERS
     // =========================================================================
 
     function getRandomMurderReason(category) {
@@ -1153,11 +1385,12 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 16. EXPORTS
     // =========================================================================
 
     window.CrimeCommands = {
         // Workflows
+        recordCrime: recordCrime,
         triggerMurder: triggerMurder,
         triggerExecution: triggerExecution,
         escalateVendetta: escalateVendetta,
