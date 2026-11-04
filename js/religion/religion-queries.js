@@ -107,6 +107,11 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - getReligionById alias added to the export block. culture-
+ *       bootstrap.js (and other cross-domain consumers) expect the
+ *       getXById naming convention (cf. getCharacterById,
+ *       getPlaceById). The alias is the same function as getReligion;
+ *       no behavioral change, no new code path.
  *     - getReligiousBreakdownForLocations(locationIds) added. Returns
  *       { byReligion: { [id]: { count } }, unaffiliated, total }.
  *       settlement-religion-queries.js requires this function; prior
@@ -1117,6 +1122,10 @@
     window.ReligionQueries = {
         // Basic
         getReligion: getReligion,
+        // Alias: culture-bootstrap.js and other cross-domain consumers
+        // expect the getXById naming convention (cf. getCharacterById,
+        // getPlaceById). Same function, no behavior change.
+        getReligionById: getReligion,
         getAllReligions: getAllReligions,
         getActiveReligions: getActiveReligions,
         getDeprecatedReligions: getDeprecatedReligions,
