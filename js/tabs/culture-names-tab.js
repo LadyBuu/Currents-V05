@@ -5,8 +5,13 @@
  *
  * LOCATION: js/tabs/culture-names-tab.js
  *
- * A CultureEditorTabs tab for managing the names and surname rules that
- * belong to a culture.
+ * A CultureEditorTabs tab for editing the name lists and surname rules
+ * of a culture. The tab is fully editable inline: three name-list
+ * cards, each with a bulk-edit textarea plus chip-level Add and Remove,
+ * and an inline surname-rules editor.
+ *
+ * This is the hub where names are edited. There is no country, no
+ * location walk, no separate modal. The culture is the key.
  *
  * REGISTRATION (CultureEditorTabs, composite form):
  *   CultureEditorTabs.registerTab('names', NamesTab);
@@ -14,94 +19,68 @@
  *   render(container, culture)     — paints the tab's DOM into `container`
  *   save(culture)                  — returns {} — this tab writes to the
  *                                    name subsystem's own storage
- *                                    (masterData.data.nameLists), not to
- *                                    the culture record
+ *                                    (masterData.data.nameLists, keyed by
+ *                                    cultureId), not to the culture record
  *   validate(culture)              — { valid: true } — no culture-shape
  *                                    validation from this tab
  *
  * THIS TAB DOES NOT PARTICIPATE IN THE COMPOSITE SAVE
  * ---------------------------------------------------
- * Names and surname rules live under masterData.data.nameLists, keyed by
- * countryId. They are not fields on the culture record. Every read and
- * write here goes through the name subsystem:
+ * Name lists and surname rules live under
+ * masterData.data.nameLists[cultureId]. They are not fields on the
+ * culture record. Every write here goes through NameCommands and is
+ * committed immediately; the editor's Cancel does not undo it. The
+ * tab's UI hint says so.
  *
- *   read:   NameQueries.getNameList, NameQueries.getCountrySurnameRules
- *   write:  NameCommands.addNameToList, NameCommands.removeNameFromList,
- *           NameCommands.setCountrySurnameRules
- *   persist: NameCommands.persist (called once per successful write batch)
+ * THE NAME LIST IS CREATED ON FIRST RENDER
+ * ----------------------------------------
+ * NameCommands.addNameToList refuses if no name list exists for the
+ * culture. Rather than surface that refusal as an error every time the
+ * tab opens on a fresh culture, the tab ensures the entry exists before
+ * rendering the editors. The created entry is:
  *
- * Consequence: name and rule changes commit immediately, and the editor's
- * Cancel does not undo them. The tab hint surfaces this to the user.
+ *   { male: [], female: [], surnames: [], rules: null }
  *
- * COUNTRY RESOLUTION
- * ------------------
- * Name lists are keyed by country. A culture does not carry a country
- * id directly; it carries a `locations` array. The tab resolves the
- * country as follows:
+ * It is created through the same masterData write path every other
+ * writer uses, and it marks data dirty. It is the only place the tab
+ * touches masterData directly.
  *
- *   1. Take the first entry of culture.locations.
- *   2. Walk up the parent chain via window.getPlaceById until we reach
- *      a place whose scope is 'country' (via window.getPlaceScope).
- *   3. If no country is found, the tab renders a clear "no country
- *      associated" state and disables every action. No fabrication.
+ * EDITING MODEL
+ * -------------
+ * Each list is a card containing:
+ *   - A textarea: one name per line. This is the bulk-edit surface.
+ *   - An Apply button: parses the textarea and reconciles the delta
+ *     against the canonical list. Added names go through addNameToList;
+ *     removed names go through removeNameFromList. A single persist
+ *     runs after the batch.
+ *   - A live chip list below the textarea: the current canonical list.
+ *     Each chip has an × button for a one-name removal.
+ *   - A one-line add input under the chips: type a name, press Enter or
+ *     click Add, one-name append.
  *
- * The country walk only runs when the culture has at least one
- * location. Otherwise the tab does not query the location subsystem.
+ * The rules editor is a card below the lists. It lets the user pick a
+ * rule type, edit the type-specific fields, and save the rules object
+ * through NameCommands.setCultureSurnameRules. The rules are validated
+ * through NameRules.validateRules before the command is called.
  *
  * CONTRACTS
  * ---------
  *   - Reads are scoped to `container.querySelector(...)`. Never `document`.
- *   - No inline `style=""`. Classes live in css/culture-tabs.css.
- *   - No emojis. Chrome icons via _getIcon(name) — returns '' for
- *     unknown names.
- *   - Uses window.getCurrentYear (canonical) only where a year is
- *     needed for display. This tab does not create surname changes,
- *     so it never needs a year input.
- *   - Session UI state (search filter, expanded sections) resets on
- *     render; not persisted.
- *   - Modal input reads are scoped to the modal root passed to
- *     onConfirm(root). No document.getElementById inside callbacks.
- *   - All toasts and error display go through window.showToast. This
- *     tab is a culture tab and follows the culture convention; it
- *     does not use _renderError (that is modals-name.js's pattern).
- *   - Existing text fields and list fields are read from the modal
- *     root with root.querySelector('#id'), not document.
- *   - escapeHtml is a REQUIRED dependency (formatting.js). The silent
- *     fallback that lived in a previous revision has been removed.
+ *   - No inline `style=""`. Classes live in CultureManager.html's inline
+ *     <style> block.
+ *   - No emojis. Icons via _getIcon(name) — '' for unknown.
+ *   - escapeHtml is a REQUIRED dependency (formatting.js).
+ *   - Uses window.getCurrentYear only for display if ever needed;
+ *     currently unused.
  *
- * DEPENDENCIES (resolved at call time — no load-time guards, so a
- * missing optional dependency does not fail the page; the tab degrades):
- *   - CultureEditorTabs   (this must load after culture-editor-tab.js)
- *   - NameQueries         (getNameList, getCountrySurnameRules,
- *                          getRandomName, getRandomSurname)
- *   - NameCommands        (addNameToList, removeNameFromList,
- *                          setCountrySurnameRules, persist)
- *   - NameRules           (validateRules)
- *   - NameState           (subscribe — optional; used to re-render
- *                          when the name subsystem emits a change)
- *   - accessors.js        (getPlaceById)
- *   - world.js            (getPlaceScope)
- *   - formatting.js       (escapeHtml — REQUIRED, throws if missing)
- *   - icons.js            (Icons[name] — chrome only)
- *   - ui.js               (showToast)
- *   - modals-core.js      (openModal, closeTopModal, confirmDialog)
- *
- * =============================================================================
- * REFACTOR HISTORY:
- *   Current revision (A4):
- *     - _escapeHtml tightened to throw if formatting.js is missing.
- *       Matches the other culture tabs' post-audit contract.
- *     - _ruleTypeLabel dropped its unused `NR` second parameter. The
- *       label map lives locally; NR was forwarded but never read.
- *       Call sites updated; _renderRulesSummary's second parameter
- *       removed for the same reason (its only use of NR was
- *       forwarding it to _ruleTypeLabel).
- *     - Header dependency list trimmed: NameRules now lists only
- *       validateRules (the four other exports the header used to name
- *       were never read); modals-char-selector.js removed (it was
- *       listed as "currently unused" and remains so).
- *   Previous revisions:
- *     - Initial implementation.
+ * DEPENDENCIES:
+ *   - CultureEditorTabs
+ *   - NameQueries
+ *   - NameCommands (incl. persist)
+ *   - NameRules
+ *   - NamesState (subscribe — optional)
+ *   - formatting.js (escapeHtml — REQUIRED)
+ *   - ui.js (showToast)
  * =============================================================================
  */
 
@@ -112,10 +91,6 @@
     // 1. DEPENDENCY WRAPPERS
     // =========================================================================
 
-    // escapeHtml is a REQUIRED dependency of this tab (formatting.js). The
-    // silent fallback that lived here in a previous revision diverged from
-    // the other culture tabs' contract and from formatting.js's own
-    // escaping policy. Renderers do not implement their own escaping.
     function _escapeHtml(str) {
         if (typeof window.escapeHtml !== 'function') {
             throw new Error(
@@ -126,31 +101,8 @@
         return window.escapeHtml(str);
     }
 
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) return window.Icons[name];
-        return '';
-    }
-
     function _showToast(msg, type) {
         if (typeof window.showToast === 'function') window.showToast(msg, type);
-    }
-
-    function _openModal(options) {
-        return typeof window.openModal === 'function'
-            ? window.openModal(options)
-            : null;
-    }
-
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') window.closeTopModal();
-    }
-
-    function _confirm(message, title, onConfirm) {
-        if (typeof window.confirmDialog === 'function') {
-            window.confirmDialog(message, title, onConfirm);
-        } else if (typeof confirm === 'function' && confirm(message)) {
-            onConfirm();
-        }
     }
 
     function _getNameQueries() {
@@ -172,105 +124,58 @@
     }
 
     // =========================================================================
-    // 2. COUNTRY RESOLUTION
+    // 2. STATE
     // =========================================================================
-    //
-    // See COUNTRY RESOLUTION in the module header. The walk uses
-    // world.js's getPlaceScope — the canonical scope accessor — and
-    // accessors.js's getPlaceById.
-    //
-    // Max depth is a defensive cap. A cycle in the parent chain returns
-    // null rather than looping forever.
-
-    var MAX_PARENT_WALK = 100;
-
-    function _resolveCountryForCulture(culture) {
-        if (!culture) return null;
-        if (!Array.isArray(culture.locations) || culture.locations.length === 0) {
-            return null;
-        }
-        if (typeof window.getPlaceById !== 'function') return null;
-        if (typeof window.getPlaceScope !== 'function') return null;
-
-        var currentId = culture.locations[0];
-        if (typeof currentId !== 'string' || currentId.length === 0) return null;
-
-        var visited = new Set();
-        var guard = 0;
-
-        while (currentId && guard < MAX_PARENT_WALK) {
-            guard++;
-            if (visited.has(currentId)) return null;
-            visited.add(currentId);
-
-            var place = window.getPlaceById(currentId);
-            if (!place) return null;
-
-            if (window.getPlaceScope(place) === 'country') {
-                return place;
-            }
-
-            if (typeof place.parentId !== 'string' || place.parentId.length === 0) {
-                return null;
-            }
-            currentId = place.parentId;
-        }
-
-        return null;
-    }
-
-    function _countryName(country) {
-        if (!country) return '';
-        if (typeof country.displayName === 'string' && country.displayName) {
-            return country.displayName;
-        }
-        if (typeof country.name === 'string' && country.name) {
-            return country.name;
-        }
-        return country.id || '';
-    }
-
-    // =========================================================================
-    // 3. LOCAL UI STATE
-    // =========================================================================
-    //
-    // Reset on every render. Session UI, not persisted.
 
     var _state = {
-        nameSearch: '',
-        expanded: {
-            male: true,
-            female: true,
-            surnames: true,
-            rules: true
-        },
-        previewGender: 'male',
-        previewCount: 5,
-        previewResults: []
+        rulesExpanded: false
     };
 
-    function _resetState() {
-        _state.nameSearch = '';
-        _state.expanded = {
-            male: true,
-            female: true,
-            surnames: true,
-            rules: true
-        };
-        _state.previewGender = 'male';
-        _state.previewCount = 5;
-        _state.previewResults = [];
-    }
-
     // =========================================================================
-    // 4. NAME-LIST TYPES
+    // 3. NAME-LIST TYPES
     // =========================================================================
 
     var NAME_TYPES = [
-        { key: 'male', label: 'Male Names' },
-        { key: 'female', label: 'Female Names' },
-        { key: 'surnames', label: 'Surnames' }
+        { key: 'male',     label: 'Male Names',   hint: 'Given names for male characters.' },
+        { key: 'female',   label: 'Female Names', hint: 'Given names for female characters.' },
+        { key: 'surnames', label: 'Surnames',     hint: 'Family names for this culture.' }
     ];
+
+    // =========================================================================
+    // 4. ENSURE NAME LIST
+    // =========================================================================
+    //
+    // See THE NAME LIST IS CREATED ON FIRST RENDER in the module header.
+    // This is the only place in the tab that touches masterData directly.
+
+    function _ensureNameList(cultureId) {
+        if (typeof cultureId !== 'string' || cultureId.length === 0) return false;
+        if (!window.masterData || !window.masterData.data) return false;
+
+        var data = window.masterData.data;
+        if (!data.nameLists || typeof data.nameLists !== 'object') {
+            data.nameLists = {};
+        }
+        if (data.nameLists[cultureId]) return false;
+
+        data.nameLists[cultureId] = {
+            male: [],
+            female: [],
+            surnames: [],
+            rules: null
+        };
+
+        if (typeof window.markDataDirty === 'function') {
+            try { window.markDataDirty(); }
+            catch (e) { /* non-fatal */ }
+        }
+        var NS = _getNameState();
+        if (NS && typeof NS.publish === 'function') {
+            try { NS.publish('nameListChanged', { cultureId: cultureId, action: 'created' }); }
+            catch (e) { /* non-fatal */ }
+        }
+        return true;
+    }
 
     // =========================================================================
     // 5. RENDER
@@ -286,408 +191,319 @@
         }
 
         var NQ = _getNameQueries();
-        if (!NQ) {
+        var NC = _getNameCommands();
+        if (!NQ || !NC) {
             container.innerHTML =
-                '<div class="rt-unavailable">Name queries are not available.</div>';
+                '<div class="rt-unavailable">Name subsystem is not available.</div>';
             return;
         }
 
-        _resetState();
+        _ensureNameList(culture.id);
 
-        var country = _resolveCountryForCulture(culture);
-        var countryLabel = country ? _countryName(country) : null;
+        var list = null;
+        try { list = NQ.getNameList(culture.id); }
+        catch (e) { list = null; }
+
+        var rules = null;
+        try { rules = NQ.getCultureSurnameRules(culture.id); }
+        catch (e) { rules = null; }
 
         var html =
             '<div class="ct-names">' +
-
-            // ---- Hint ----
-            '<div class="ct-hint">' +
-              'Names and surname rules are stored per country and shared ' +
-              'by every culture whose first location resolves to that ' +
-              'country. Name changes commit immediately; closing the ' +
-              'editor does not undo them.' +
-            '</div>' +
-
-            // ---- Country header ----
-            '<div class="ct-names__header">' +
-              (country
-                ? '<div class="ct-names__country">' +
-                    '<span class="ct-names__country-label">Country</span>' +
-                    '<span class="ct-names__country-name">' +
-                      _escapeHtml(countryLabel) +
-                    '</span>' +
-                  '</div>'
-                : '<div class="ct-names__country ct-names__country--missing">' +
-                    '<span class="ct-names__country-label">Country</span>' +
-                    '<span class="ct-names__country-name">' +
-                      'No country associated with this culture. ' +
-                      'Add a location to the culture first.' +
-                    '</span>' +
-                  '</div>') +
-            '</div>' +
-
-            (country ? _renderNamesBody(country) : '') +
-
+              '<div class="ct-hint">' +
+                'Names and surname rules are stored on this culture. Every ' +
+                'change commits immediately; closing the editor does not undo it.' +
+              '</div>' +
+              '<div class="ct-names__cards">' +
+                _renderNameListCard(culture, 'male',   list) +
+                _renderNameListCard(culture, 'female', list) +
+                _renderNameListCard(culture, 'surnames', list) +
+              '</div>' +
+              _renderRulesCard(culture, rules) +
             '</div>';
 
         container.innerHTML = html;
 
-        if (country) {
-            _attachEvents(container, culture, country);
-        }
+        _attachNameListEvents(container, culture);
+        _attachRulesEvents(container, culture);
 
-        // Optional re-render on name-subsystem change. Guarded so
-        // missing NameState does not break the tab.
         _maybeSubscribeToNameState(container, culture);
     }
 
-    function _renderNamesBody(country) {
-        return (
-            // ---- List columns ----
-            '<div class="ct-names__columns">' +
-              _renderNameListColumn(country, 'male') +
-              _renderNameListColumn(country, 'female') +
-              _renderNameListColumn(country, 'surnames') +
-            '</div>' +
+    function _renderNameListCard(culture, typeKey, list) {
+        var typeInfo = _nameTypeInfo(typeKey);
+        var items = (list && Array.isArray(list[typeKey])) ? list[typeKey].slice() : [];
+        items.sort(function (a, b) { return String(a).localeCompare(String(b)); });
 
-            // ---- Surname rules ----
-            _renderRulesPanel(country) +
-
-            // ---- Preview ----
-            _renderPreviewPanel()
-        );
-    }
-
-    function _renderNameListColumn(country, typeKey) {
-        var NQ = _getNameQueries();
-        var label = _labelForType(typeKey);
-        var names = [];
-        try {
-            var list = NQ.getNameList(country.id);
-            if (list && Array.isArray(list[typeKey])) {
-                names = list[typeKey];
-            }
-        } catch (e) {
-            names = [];
-        }
-
-        var search = _state.nameSearch.toLowerCase();
-        var filtered = names;
-        if (search) {
-            filtered = [];
-            for (var i = 0; i < names.length; i++) {
-                if (String(names[i]).toLowerCase().indexOf(search) !== -1) {
-                    filtered.push(names[i]);
-                }
-            }
-        }
-
-        var isExpanded = _state.expanded[typeKey] !== false;
+        var textareaValue = items.join('\n');
 
         var chipsHtml = '';
-        if (filtered.length === 0) {
-            chipsHtml =
-                '<div class="ct-names__empty">' +
-                  (names.length === 0
-                    ? 'No ' + label.toLowerCase() + ' yet.'
-                    : 'No names match your search.') +
-                '</div>';
+        if (items.length === 0) {
+            chipsHtml = '<div class="ct-names__empty">No ' + _escapeHtml(typeInfo.label.toLowerCase()) + ' yet.</div>';
         } else {
-            for (var j = 0; j < filtered.length; j++) {
-                chipsHtml +=
-                    '<span class="ct-names__chip" data-name="' +
-                      _escapeHtml(filtered[j]) + '">' +
-                      _escapeHtml(filtered[j]) +
-                      '<button type="button"' +
-                        ' class="ct-names__chip-remove"' +
-                        ' data-type="' + _escapeHtml(typeKey) + '"' +
-                        ' data-name="' + _escapeHtml(filtered[j]) + '"' +
-                        ' title="Remove">&times;</button>' +
-                    '</span>';
+            for (var i = 0; i < items.length; i++) {
+                chipsHtml += _renderChip(typeKey, items[i]);
             }
         }
 
         return (
-            '<div class="ct-names__column" data-type="' + _escapeHtml(typeKey) + '">' +
-              '<button type="button" class="ct-names__column-header"' +
-                ' data-toggle="' + _escapeHtml(typeKey) + '">' +
-                '<span class="ct-names__column-title">' + _escapeHtml(label) + '</span>' +
-                '<span class="ct-names__column-count">' + names.length + '</span>' +
-                '<span class="ct-names__column-caret">' +
-                  (isExpanded ? '&#9660;' : '&#9654;') +
-                '</span>' +
-              '</button>' +
-              '<div class="ct-names__column-body"' +
-                (isExpanded ? '' : ' hidden') + '>' +
-                '<div class="ct-names__chips">' + chipsHtml + '</div>' +
-                '<div class="ct-names__add-row">' +
-                  '<input type="text"' +
-                    ' class="ct-names__add-input"' +
-                    ' data-type="' + _escapeHtml(typeKey) + '"' +
-                    ' placeholder="Add ' + _escapeHtml(label.toLowerCase()) + '...">' +
-                  '<button type="button"' +
-                    ' class="rt-btn rt-btn--primary ct-names__add-btn"' +
-                    ' data-type="' + _escapeHtml(typeKey) + '">Add</button>' +
+            '<div class="ct-names__card" data-type="' + _escapeHtml(typeKey) + '">' +
+              '<div class="ct-names__card-header">' +
+                '<div class="ct-names__card-title">' +
+                  _escapeHtml(typeInfo.label) +
+                  '<span class="ct-names__card-hint">' + _escapeHtml(typeInfo.hint) + '</span>' +
                 '</div>' +
+                '<span class="ct-names__card-count">' + items.length + ' names</span>' +
               '</div>' +
-            '</div>'
-        );
-    }
-
-    function _renderRulesPanel(country) {
-        var NR = _getNameRules();
-        if (!NR) {
-            return '';
-        }
-
-        var isExpanded = _state.expanded.rules !== false;
-
-        var NQ = _getNameQueries();
-        var rules = null;
-        try {
-            rules = NQ.getCountrySurnameRules(country.id);
-        } catch (e) {
-            rules = null;
-        }
-
-        var summary;
-        if (!rules) {
-            summary = 'No surname rules defined for this country.';
-        } else {
-            var ruleType = rules.type || 'family';
-            var ruleLabel = _ruleTypeLabel(ruleType);
-            summary = ruleLabel;
-        }
-
-        return (
-            '<div class="ct-names__rules">' +
-              '<button type="button" class="ct-names__rules-header"' +
-                ' data-toggle="rules">' +
-                '<span class="ct-names__column-title">Surname Rules</span>' +
-                '<span class="ct-names__rules-summary">' +
-                  _escapeHtml(summary) +
-                '</span>' +
-                '<span class="ct-names__column-caret">' +
-                  (isExpanded ? '&#9660;' : '&#9654;') +
-                '</span>' +
-              '</button>' +
-              '<div class="ct-names__rules-body"' +
-                (isExpanded ? '' : ' hidden') + '>' +
-                (rules
-                  ? _renderRulesSummary(rules)
-                  : '<div class="ct-names__empty">' +
-                    'Surname rules have not been set for this country yet.' +
-                    '</div>') +
+              '<div class="ct-names__field-label">Bulk edit \u2014 one name per line</div>' +
+              '<textarea class="ct-names__textarea"' +
+                ' data-role="textarea"' +
+                ' data-type="' + _escapeHtml(typeKey) + '"' +
+                ' rows="6"' +
+                ' spellcheck="false"' +
+                ' placeholder="Type or paste names, one per line.">' +
+                _escapeHtml(textareaValue) +
+              '</textarea>' +
+              '<div class="ct-names__bulk-actions">' +
                 '<button type="button"' +
-                  ' class="rt-btn rt-btn--primary ct-names__rules-edit">' +
-                  (rules ? 'Edit Surname Rules' : 'Set Surname Rules') +
+                  ' class="rt-btn rt-btn--primary ct-names__apply"' +
+                  ' data-type="' + _escapeHtml(typeKey) + '">' +
+                  'Apply changes' +
                 '</button>' +
               '</div>' +
+              '<div class="ct-names__field-label">Current list</div>' +
+              '<div class="ct-names__chips" data-role="chips">' +
+                chipsHtml +
+              '</div>' +
+              '<div class="ct-names__add-row">' +
+                '<input type="text"' +
+                  ' class="ct-names__add-input"' +
+                  ' data-role="add-input"' +
+                  ' data-type="' + _escapeHtml(typeKey) + '"' +
+                  ' placeholder="Add ' + _escapeHtml(typeInfo.label.toLowerCase()) + '...">' +
+                '<button type="button"' +
+                  ' class="rt-btn ct-names__add-btn"' +
+                  ' data-type="' + _escapeHtml(typeKey) + '">Add</button>' +
+              '</div>' +
             '</div>'
         );
     }
 
-    function _renderRulesSummary(rules) {
-        var ruleType = rules.type || 'family';
-        var typeLabel = _ruleTypeLabel(ruleType);
+    function _renderChip(typeKey, value) {
+        return (
+            '<span class="ct-names__chip" data-name="' + _escapeHtml(value) + '">' +
+              '<span class="ct-names__chip-label">' + _escapeHtml(value) + '</span>' +
+              '<button type="button"' +
+                ' class="ct-names__chip-remove"' +
+                ' data-type="' + _escapeHtml(typeKey) + '"' +
+                ' data-name="' + _escapeHtml(value) + '"' +
+                ' title="Remove">&times;</button>' +
+            '</span>'
+        );
+    }
 
-        var detailLines = [];
-
-        if (ruleType === 'family' && rules.family) {
-            var fam = rules.family;
-            var source = _familySourceLabel(fam.source);
-            if (source) detailLines.push('Source: ' + source);
-            if (typeof fam.count === 'number') {
-                detailLines.push('Surname count: ' + fam.count);
-            }
-        } else if (ruleType === 'patronymic' && rules.patronymic) {
-            var pat = rules.patronymic;
-            if (pat.source) {
-                detailLines.push(
-                    'Source: ' + (pat.source === 'father' ? 'Father' : 'Mother')
-                );
-            }
-            if (pat.malePrefix || pat.maleSuffix) {
-                detailLines.push(
-                    'Male form: ' +
-                    (pat.malePrefix || '') +
-                    '{name}' +
-                    (pat.maleSuffix || '')
-                );
-            }
-            if (pat.femalePrefix || pat.femaleSuffix) {
-                detailLines.push(
-                    'Female form: ' +
-                    (pat.femalePrefix || '') +
-                    '{name}' +
-                    (pat.femaleSuffix || '')
-                );
-            }
-        } else if (ruleType === 'chain' && rules.chain) {
-            var chain = rules.chain;
-            if (Array.isArray(chain.order)) {
-                detailLines.push('Depth: ' + chain.order.length);
-                detailLines.push('Order: ' + chain.order.join(' \u2192 '));
-            }
+    function _nameTypeInfo(typeKey) {
+        for (var i = 0; i < NAME_TYPES.length; i++) {
+            if (NAME_TYPES[i].key === typeKey) return NAME_TYPES[i];
         }
+        return { key: typeKey, label: typeKey, hint: '' };
+    }
 
-        if (detailLines.length === 0) {
+    // =========================================================================
+    // 6. RULES CARD
+    // =========================================================================
+
+    function _renderRulesCard(culture, rules) {
+        var NR = _getNameRules();
+        if (!NR) {
             return (
-                '<div class="ct-names__rules-type">' +
-                  _escapeHtml(typeLabel) +
+                '<div class="ct-names__card ct-names__card--rules">' +
+                  '<div class="ct-names__card-header">' +
+                    '<div class="ct-names__card-title">Surname Rules</div>' +
+                  '</div>' +
+                  '<div class="ct-names__empty">Name rules subsystem is not available.</div>' +
                 '</div>'
             );
         }
 
-        var detailsHtml = '';
-        for (var i = 0; i < detailLines.length; i++) {
-            detailsHtml +=
-                '<div class="ct-names__rules-detail">' +
-                  _escapeHtml(detailLines[i]) +
-                '</div>';
+        var ruleType = (rules && typeof rules.type === 'string') ? rules.type : 'family';
+
+        var typeOptions = [
+            { key: 'family',     label: 'Family surname (inherited)' },
+            { key: 'patronymic', label: 'Patronymic / Matronymic' },
+            { key: 'chain',      label: 'Chain (multiple ancestors)' },
+            { key: 'random',     label: 'Random surname from pool' }
+        ];
+        var typeOptionsHtml = '';
+        for (var i = 0; i < typeOptions.length; i++) {
+            var opt = typeOptions[i];
+            typeOptionsHtml +=
+                '<option value="' + _escapeHtml(opt.key) + '"' +
+                  (opt.key === ruleType ? ' selected' : '') +
+                  '>' + _escapeHtml(opt.label) + '</option>';
         }
 
-        return (
-            '<div class="ct-names__rules-type">' +
-              _escapeHtml(typeLabel) +
-            '</div>' +
-            detailsHtml
-        );
-    }
+        var family = (rules && rules.family) ? rules.family : {};
+        var patronymic = (rules && rules.patronymic) ? rules.patronymic : {};
+        var chain = (rules && rules.chain) ? rules.chain : { order: ['father'] };
 
-    function _renderPreviewPanel() {
-        var NQ = _getNameQueries();
-        if (!NQ) return '';
-
-        var genderOptions =
-            '<option value="male"' +
-              (_state.previewGender === 'male' ? ' selected' : '') +
-              '>Male</option>' +
-            '<option value="female"' +
-              (_state.previewGender === 'female' ? ' selected' : '') +
-              '>Female</option>';
-
-        var countOptions = '';
-        var counts = [5, 10, 20, 50];
-        for (var i = 0; i < counts.length; i++) {
-            var n = counts[i];
-            countOptions +=
-                '<option value="' + n + '"' +
-                  (_state.previewCount === n ? ' selected' : '') +
-                  '>' + n + '</option>';
-        }
-
-        var resultsHtml = '';
-        if (_state.previewResults.length === 0) {
-            resultsHtml =
-                '<div class="ct-names__preview-empty">' +
-                  'Click Generate to preview names from this country\u2019s lists.' +
-                '</div>';
-        } else {
-            for (var j = 0; j < _state.previewResults.length; j++) {
-                resultsHtml +=
-                    '<span class="ct-names__preview-chip">' +
-                      _escapeHtml(_state.previewResults[j]) +
-                    '</span>';
-            }
-        }
-
-        return (
-            '<div class="ct-names__preview">' +
-              '<div class="ct-names__preview-header">' +
-                '<span class="ct-names__column-title">Name Preview</span>' +
+        var familySection =
+            '<div class="ct-names__rules-section" data-rule-section="family">' +
+              '<div class="ct-names__form-row">' +
+                '<label class="ct-names__form-label">Surname Source</label>' +
+                '<select class="ct-names__form-select" data-role="family-source">' +
+                  '<option value="father"' + (family.source === 'father' || !family.source ? ' selected' : '') + '>Father</option>' +
+                  '<option value="mother"' + (family.source === 'mother' ? ' selected' : '') + '>Mother</option>' +
+                  '<option value="both"'   + (family.source === 'both'   ? ' selected' : '') + '>Both parents</option>' +
+                '</select>' +
               '</div>' +
-              '<div class="ct-names__preview-controls">' +
-                '<select class="ct-names__preview-gender">' +
-                  genderOptions +
+              '<div class="ct-names__form-row">' +
+                '<label class="ct-names__form-label">Surname Count</label>' +
+                '<input type="number" class="ct-names__form-input" data-role="family-count"' +
+                  ' min="1" max="4" value="' + _escapeHtml(String(family.count || 1)) + '">' +
+              '</div>' +
+              '<div class="ct-names__form-row">' +
+                '<label class="ct-names__form-label">Position (multi-part surnames)</label>' +
+                '<select class="ct-names__form-select" data-role="family-position">' +
+                  '<option value="first"' + (family.position === 'first' || !family.position ? ' selected' : '') + '>First</option>' +
+                  '<option value="last"'  + (family.position === 'last' ? ' selected' : '') + '>Last</option>' +
                 '</select>' +
-                '<select class="ct-names__preview-count">' +
-                  countOptions +
+              '</div>' +
+            '</div>';
+
+        var patronymicSection =
+            '<div class="ct-names__rules-section" data-rule-section="patronymic">' +
+              '<div class="ct-names__form-row">' +
+                '<label class="ct-names__form-label">Source Parent</label>' +
+                '<select class="ct-names__form-select" data-role="patronymic-source">' +
+                  '<option value="father"' + (patronymic.source === 'father' || !patronymic.source ? ' selected' : '') + '>Father</option>' +
+                  '<option value="mother"' + (patronymic.source === 'mother' ? ' selected' : '') + '>Mother</option>' +
                 '</select>' +
-                '<button type="button"' +
-                  ' class="rt-btn rt-btn--primary ct-names__preview-generate">' +
-                  'Generate' +
+              '</div>' +
+              '<div class="ct-names__form-row">' +
+                '<label class="ct-names__form-label">Male Suffix</label>' +
+                '<input type="text" class="ct-names__form-input" data-role="patronymic-male-suffix"' +
+                  ' placeholder="e.g. son"' +
+                  ' value="' + _escapeHtml(patronymic.maleSuffix || '') + '">' +
+              '</div>' +
+              '<div class="ct-names__form-row">' +
+                '<label class="ct-names__form-label">Female Suffix</label>' +
+                '<input type="text" class="ct-names__form-input" data-role="patronymic-female-suffix"' +
+                  ' placeholder="e.g. dottir"' +
+                  ' value="' + _escapeHtml(patronymic.femaleSuffix || '') + '">' +
+              '</div>' +
+              '<div class="ct-names__form-row">' +
+                '<label class="ct-names__form-label">Male Prefix (optional)</label>' +
+                '<input type="text" class="ct-names__form-input" data-role="patronymic-male-prefix"' +
+                  ' value="' + _escapeHtml(patronymic.malePrefix || '') + '">' +
+              '</div>' +
+              '<div class="ct-names__form-row">' +
+                '<label class="ct-names__form-label">Female Prefix (optional)</label>' +
+                '<input type="text" class="ct-names__form-input" data-role="patronymic-female-prefix"' +
+                  ' value="' + _escapeHtml(patronymic.femalePrefix || '') + '">' +
+              '</div>' +
+            '</div>';
+
+        var chainOrderStr = Array.isArray(chain.order) ? chain.order.join(', ') : 'father';
+
+        var chainSection =
+            '<div class="ct-names__rules-section" data-rule-section="chain">' +
+              '<div class="ct-names__form-row">' +
+                '<label class="ct-names__form-label">Ancestor order (comma-separated)</label>' +
+                '<input type="text" class="ct-names__form-input" data-role="chain-order"' +
+                  ' placeholder="father, paternal_grandfather"' +
+                  ' value="' + _escapeHtml(chainOrderStr) + '">' +
+              '</div>' +
+              '<div class="ct-names__form-hint">' +
+                'Valid slots: father, mother, paternal_grandfather, ' +
+                'paternal_grandmother, maternal_grandfather, maternal_grandmother, ' +
+                'paternal_great_grandfather, maternal_great_grandfather.' +
+              '</div>' +
+              '<div class="ct-names__form-row">' +
+                '<label class="ct-names__form-label">Source</label>' +
+                '<select class="ct-names__form-select" data-role="chain-source">' +
+                  '<option value="firstname"' + (chain.source === 'firstname' || !chain.source ? ' selected' : '') + '>First names</option>' +
+                  '<option value="surname"'   + (chain.source === 'surname'   ? ' selected' : '') + '>Surnames</option>' +
+                '</select>' +
+              '</div>' +
+            '</div>';
+
+        var randomSection =
+            '<div class="ct-names__rules-section" data-rule-section="random">' +
+              '<div class="ct-names__form-hint">' +
+                'A random surname will be chosen from this culture\u2019s surnames list.' +
+              '</div>' +
+            '</div>';
+
+        return (
+            '<div class="ct-names__card ct-names__card--rules">' +
+              '<div class="ct-names__card-header">' +
+                '<div class="ct-names__card-title">Surname Rules' +
+                  '<span class="ct-names__card-hint">' +
+                    'How newborns and married partners get a surname from this culture.' +
+                  '</span>' +
+                '</div>' +
+              '</div>' +
+              '<div class="ct-names__form-row">' +
+                '<label class="ct-names__form-label">Rule Type</label>' +
+                '<select class="ct-names__form-select" data-role="rule-type">' +
+                  typeOptionsHtml +
+                '</select>' +
+              '</div>' +
+              familySection +
+              patronymicSection +
+              chainSection +
+              randomSection +
+              '<div class="ct-names__bulk-actions">' +
+                '<button type="button" class="rt-btn rt-btn--primary ct-names__rules-save">' +
+                  'Save Rules' +
                 '</button>' +
-              '</div>' +
-              '<div class="ct-names__preview-results">' +
-                resultsHtml +
+                '<button type="button" class="rt-btn ct-names__rules-clear">' +
+                  'Clear Rules' +
+                '</button>' +
               '</div>' +
             '</div>'
         );
     }
 
     // =========================================================================
-    // 6. LABEL HELPERS
+    // 7. EVENT WIRING — NAME LISTS
     // =========================================================================
 
-    function _labelForType(typeKey) {
-        for (var i = 0; i < NAME_TYPES.length; i++) {
-            if (NAME_TYPES[i].key === typeKey) return NAME_TYPES[i].label;
-        }
-        return typeKey;
-    }
-
-    // Rule-type labels are presentation vocabulary for this tab. They
-    // are not read from NameRules; NameRules owns the rules themselves,
-    // not how a tab labels them. If NameRules ever exports a
-    // RULE_TYPES map of { key: { label } } and this tab wants to adopt
-    // it as the source of truth, swap the body to read from that map.
-    // Until then, the local map below is correct and matches the
-    // options rendered in _renderRulesForm.
-    function _ruleTypeLabel(ruleType) {
-        var map = {
-            random: 'Random surname',
-            family: 'Family surname (inherited from parents)',
-            patronymic: 'Patronymic / Matronymic',
-            chain: 'Chain (multiple generations)'
-        };
-        return map[ruleType] || ruleType;
-    }
-
-    function _familySourceLabel(source) {
-        var map = {
-            father: 'Father',
-            mother: 'Mother',
-            both: 'Both parents'
-        };
-        return map[source] || source || '';
-    }
-
-    // =========================================================================
-    // 7. EVENT WIRING
-    // =========================================================================
-
-    function _attachEvents(container, culture, country) {
-        // ---- Toggle sections ----
-        var toggles = container.querySelectorAll('[data-toggle]');
-        for (var i = 0; i < toggles.length; i++) {
+    function _attachNameListEvents(container, culture) {
+        // Bulk-edit Apply.
+        var applyBtns = container.querySelectorAll('.ct-names__apply');
+        for (var i = 0; i < applyBtns.length; i++) {
             (function (btn) {
                 btn.addEventListener('click', function () {
-                    var key = btn.getAttribute('data-toggle');
-                    if (!key) return;
-                    _state.expanded[key] = !_state.expanded[key];
-                    renderNamesTab(container, culture);
+                    var type = btn.getAttribute('data-type');
+                    if (!type) return;
+                    var textarea = container.querySelector(
+                        '.ct-names__textarea[data-type="' + type + '"]'
+                    );
+                    if (!textarea) return;
+                    _handleApplyBulk(container, culture, type, textarea.value);
                 });
-            })(toggles[i]);
+            })(applyBtns[i]);
         }
 
-        // ---- Add name ----
+        // One-name Add button.
         var addBtns = container.querySelectorAll('.ct-names__add-btn');
         for (var j = 0; j < addBtns.length; j++) {
             (function (btn) {
                 btn.addEventListener('click', function () {
                     var type = btn.getAttribute('data-type');
                     if (!type) return;
-                    var row = btn.closest('.ct-names__add-row');
-                    if (!row) return;
-                    var input = row.querySelector('.ct-names__add-input');
+                    var input = container.querySelector(
+                        '.ct-names__add-input[data-type="' + type + '"]'
+                    );
                     if (!input) return;
-                    _handleAddName(container, culture, country, type, input.value);
+                    _handleAddOne(container, culture, type, input.value);
                 });
             })(addBtns[j]);
         }
 
-        // ---- Add on Enter ----
+        // Enter in the add input.
         var addInputs = container.querySelectorAll('.ct-names__add-input');
         for (var k = 0; k < addInputs.length; k++) {
             (function (input) {
@@ -696,447 +512,276 @@
                     e.preventDefault();
                     var type = input.getAttribute('data-type');
                     if (!type) return;
-                    _handleAddName(container, culture, country, type, input.value);
+                    _handleAddOne(container, culture, type, input.value);
                 });
             })(addInputs[k]);
         }
 
-        // ---- Remove name (delegated on chips) ----
+        // Chip remove — delegated.
         container.addEventListener('click', function (e) {
             var target = e.target;
             if (!target || typeof target.closest !== 'function') return;
-
             var removeBtn = target.closest('.ct-names__chip-remove');
-            if (removeBtn) {
-                e.preventDefault();
-                var type = removeBtn.getAttribute('data-type');
-                var name = removeBtn.getAttribute('data-name');
-                if (type && name) {
-                    _handleRemoveName(container, culture, country, type, name);
-                }
-                return;
-            }
+            if (!removeBtn) return;
+            e.preventDefault();
+            var type = removeBtn.getAttribute('data-type');
+            var name = removeBtn.getAttribute('data-name');
+            if (!type || !name) return;
+            _handleRemoveOne(container, culture, type, name);
         });
-
-        // ---- Edit surname rules ----
-        var editRulesBtn = container.querySelector('.ct-names__rules-edit');
-        if (editRulesBtn) {
-            editRulesBtn.addEventListener('click', function () {
-                _openEditRulesModal(container, culture, country);
-            });
-        }
-
-        // ---- Generate preview ----
-        var previewGender = container.querySelector('.ct-names__preview-gender');
-        if (previewGender) {
-            previewGender.addEventListener('change', function () {
-                _state.previewGender = previewGender.value === 'female'
-                    ? 'female'
-                    : 'male';
-            });
-        }
-        var previewCount = container.querySelector('.ct-names__preview-count');
-        if (previewCount) {
-            previewCount.addEventListener('change', function () {
-                var n = parseInt(previewCount.value, 10);
-                if (Number.isInteger(n) && n > 0) {
-                    _state.previewCount = n;
-                }
-            });
-        }
-        var previewGenerate = container.querySelector('.ct-names__preview-generate');
-        if (previewGenerate) {
-            previewGenerate.addEventListener('click', function () {
-                _handleGeneratePreview(container, culture, country);
-            });
-        }
-
-        // ---- Search box ----
-        var searchInput = container.querySelector('.ct-names__search');
-        if (searchInput) {
-            var timer = null;
-            searchInput.addEventListener('input', function () {
-                if (timer) clearTimeout(timer);
-                timer = setTimeout(function () {
-                    timer = null;
-                    _state.nameSearch = searchInput.value || '';
-                    renderNamesTab(container, culture);
-                }, 200);
-            });
-        }
     }
 
-    // =========================================================================
-    // 8. NAME ADD / REMOVE / GENERATE
-    // =========================================================================
-
-    function _handleAddName(container, culture, country, type, rawValue) {
+    function _handleApplyBulk(container, culture, type, rawText) {
         var NC = _getNameCommands();
         if (!NC) {
             _showToast('Name commands are not available.', 'error');
             return;
         }
-        var value = (rawValue || '').trim();
-        if (!value) {
-            _showToast('Enter a name first.', 'warning');
+
+        var wanted = _parseLines(rawText);
+        var NQ = _getNameQueries();
+        var current = [];
+        try {
+            var list = NQ.getNameList(culture.id);
+            if (list && Array.isArray(list[type])) current = list[type].slice();
+        } catch (e) { current = []; }
+
+        var currentSet = new Set(current);
+        var wantedSet = new Set(wanted);
+
+        var toAdd = wanted.filter(function (n) { return !currentSet.has(n); });
+        var toRemove = current.filter(function (n) { return !wantedSet.has(n); });
+
+        if (toAdd.length === 0 && toRemove.length === 0) {
+            _showToast('No changes to apply.', 'info');
             return;
         }
 
-        var result = NC.addNameToList(country.id, type, value);
-        if (!result || result.success !== true) {
-            _showToast(
-                'Failed to add name: ' +
-                (result && result.reason ? result.reason : 'unknown'),
-                'error'
-            );
-            return;
+        var failures = [];
+        for (var i = 0; i < toRemove.length; i++) {
+            var r = NC.removeNameFromList(culture.id, type, toRemove[i]);
+            if (!r || r.success !== true) {
+                failures.push('remove "' + toRemove[i] + '": ' +
+                    (r && r.reason ? r.reason : 'unknown'));
+            }
+        }
+        for (var j = 0; j < toAdd.length; j++) {
+            var a = NC.addNameToList(culture.id, type, toAdd[j]);
+            if (!a || a.success !== true) {
+                failures.push('add "' + toAdd[j] + '": ' +
+                    (a && a.reason ? a.reason : 'unknown'));
+            }
         }
 
-        // Persist after the successful write. Command does not save; the
-        // tab calls persist once per successful command, exactly like the
-        // other culture tabs persist after their commands.
         var persistResult = NC.persist();
-        if (persistResult && persistResult.success === false) {
+        if (failures.length > 0) {
+            _showToast('Some changes failed: ' + failures.join('; '), 'error');
+        } else if (persistResult && persistResult.success === false) {
             _showToast(
-                'Saved in memory; storage write failed: ' +
+                'Applied in memory; storage write failed: ' +
                 (persistResult.reason || 'unknown'),
                 'warning'
             );
         } else {
-            _showToast('Added "' + value + '"', 'success');
+            _showToast(
+                'Applied ' + toAdd.length + ' add(s), ' +
+                toRemove.length + ' removal(s).',
+                'success'
+            );
         }
 
         renderNamesTab(container, culture);
     }
 
-    function _handleRemoveName(container, culture, country, type, name) {
+    function _parseLines(raw) {
+        if (typeof raw !== 'string') return [];
+        var lines = raw.split(/\r?\n/);
+        var out = [];
+        var seen = new Set();
+        for (var i = 0; i < lines.length; i++) {
+            var v = lines[i].trim();
+            if (v.length === 0) continue;
+            if (seen.has(v)) continue;
+            seen.add(v);
+            out.push(v);
+        }
+        return out;
+    }
+
+    function _handleAddOne(container, culture, type, rawName) {
         var NC = _getNameCommands();
         if (!NC) {
             _showToast('Name commands are not available.', 'error');
             return;
         }
-
-        _confirm(
-            'Remove "' + name + '" from ' + _labelForType(type).toLowerCase() + '?',
-            'Remove Name',
-            function () {
-                var result = NC.removeNameFromList(country.id, type, name);
-                if (!result || result.success !== true) {
-                    _showToast(
-                        'Failed to remove name: ' +
-                        (result && result.reason ? result.reason : 'unknown'),
-                        'error'
-                    );
-                    return;
-                }
-
-                var persistResult = NC.persist();
-                if (persistResult && persistResult.success === false) {
-                    _showToast(
-                        'Saved in memory; storage write failed: ' +
-                        (persistResult.reason || 'unknown'),
-                        'warning'
-                    );
-                } else {
-                    _showToast('Removed "' + name + '"', 'info');
-                }
-
-                renderNamesTab(container, culture);
-            }
-        );
-    }
-
-    function _handleGeneratePreview(container, culture, country) {
-        var NQ = _getNameQueries();
-        if (!NQ) {
-            _showToast('Name queries are not available.', 'error');
+        var name = (rawName || '').trim();
+        if (!name) {
+            _showToast('Enter a name first.', 'warning');
             return;
         }
-
-        var gender = _state.previewGender === 'female' ? 'female' : 'male';
-        var count = _state.previewCount || 5;
-        if (count < 1) count = 1;
-        if (count > 200) count = 200;
-
-        var results = [];
-        for (var i = 0; i < count; i++) {
-            var given = null;
-            var surname = null;
-            try {
-                given = NQ.getRandomName(country.id, gender);
-            } catch (e) {
-                given = null;
-            }
-            try {
-                surname = NQ.getRandomSurname(country.id);
-            } catch (e) {
-                surname = null;
-            }
-            if (!given) continue;
-            results.push(surname ? (given + ' ' + surname) : given);
-        }
-
-        if (results.length === 0) {
+        var result = NC.addNameToList(culture.id, type, name);
+        if (!result || result.success !== true) {
             _showToast(
-                'No ' + gender + ' names available for this country.',
+                'Add failed: ' + (result && result.reason ? result.reason : 'unknown'),
+                'error'
+            );
+            return;
+        }
+        var persistResult = NC.persist();
+        if (persistResult && persistResult.success === false) {
+            _showToast(
+                'Added in memory; storage write failed: ' +
+                (persistResult.reason || 'unknown'),
                 'warning'
             );
         }
+        renderNamesTab(container, culture);
+    }
 
-        _state.previewResults = results;
+    function _handleRemoveOne(container, culture, type, name) {
+        var NC = _getNameCommands();
+        if (!NC) {
+            _showToast('Name commands are not available.', 'error');
+            return;
+        }
+        var result = NC.removeNameFromList(culture.id, type, name);
+        if (!result || result.success !== true) {
+            _showToast(
+                'Remove failed: ' + (result && result.reason ? result.reason : 'unknown'),
+                'error'
+            );
+            return;
+        }
+        var persistResult = NC.persist();
+        if (persistResult && persistResult.success === false) {
+            _showToast(
+                'Removed in memory; storage write failed: ' +
+                (persistResult.reason || 'unknown'),
+                'warning'
+            );
+        }
         renderNamesTab(container, culture);
     }
 
     // =========================================================================
-    // 9. EDIT SURNAME RULES MODAL
+    // 8. EVENT WIRING — RULES
     // =========================================================================
-    //
-    // Reads the current rules, presents a type chooser and the type-
-    // specific fields, validates via NameRules.validateRules, and, on
-    // success, calls NameCommands.setCountrySurnameRules once, then
-    // persists once.
-    //
-    // All input reads are scoped to the modal root. No document.getElementById.
 
-    function _openEditRulesModal(container, culture, country) {
-        var NQ = _getNameQueries();
+    function _attachRulesEvents(container, culture) {
+        var typeSel = container.querySelector('[data-role="rule-type"]');
+        if (!typeSel) return;
+
+        function _updateVisibleSection() {
+            var t = typeSel.value;
+            var sections = container.querySelectorAll('[data-rule-section]');
+            for (var i = 0; i < sections.length; i++) {
+                sections[i].hidden =
+                    sections[i].getAttribute('data-rule-section') !== t;
+            }
+        }
+        typeSel.addEventListener('change', _updateVisibleSection);
+        _updateVisibleSection();
+
+        var saveBtn = container.querySelector('.ct-names__rules-save');
+        if (saveBtn) {
+            saveBtn.addEventListener('click', function () {
+                _handleSaveRules(container, culture);
+            });
+        }
+
+        var clearBtn = container.querySelector('.ct-names__rules-clear');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', function () {
+                _handleClearRules(container, culture);
+            });
+        }
+    }
+
+    function _collectRules(container) {
+        var typeSel = container.querySelector('[data-role="rule-type"]');
+        if (!typeSel) return null;
+        var type = typeSel.value;
+
+        var rules = { type: type };
+
+        if (type === 'family') {
+            var famSource = container.querySelector('[data-role="family-source"]');
+            var famCount  = container.querySelector('[data-role="family-count"]');
+            var famPos    = container.querySelector('[data-role="family-position"]');
+            rules.family = {
+                source: famSource ? famSource.value : 'father',
+                count: famCount ? (parseInt(famCount.value, 10) || 1) : 1,
+                position: famPos ? famPos.value : 'first'
+            };
+        } else if (type === 'patronymic') {
+            var pSource  = container.querySelector('[data-role="patronymic-source"]');
+            var pMaleSuf = container.querySelector('[data-role="patronymic-male-suffix"]');
+            var pFemSuf  = container.querySelector('[data-role="patronymic-female-suffix"]');
+            var pMalePre = container.querySelector('[data-role="patronymic-male-prefix"]');
+            var pFemPre  = container.querySelector('[data-role="patronymic-female-prefix"]');
+            rules.patronymic = {
+                source: pSource ? pSource.value : 'father',
+                maleSuffix: pMaleSuf ? pMaleSuf.value : '',
+                femaleSuffix: pFemSuf ? pFemSuf.value : '',
+                malePrefix: pMalePre ? pMalePre.value : '',
+                femalePrefix: pFemPre ? pFemPre.value : ''
+            };
+        } else if (type === 'chain') {
+            var cOrder  = container.querySelector('[data-role="chain-order"]');
+            var cSource = container.querySelector('[data-role="chain-source"]');
+            var orderStr = cOrder ? cOrder.value : '';
+            var order = orderStr.split(',').map(function (s) { return s.trim(); })
+                                 .filter(function (s) { return s.length > 0; });
+            rules.chain = {
+                order: order,
+                source: cSource ? cSource.value : 'firstname'
+            };
+        }
+
+        return rules;
+    }
+
+    function _handleSaveRules(container, culture) {
         var NC = _getNameCommands();
         var NR = _getNameRules();
-        if (!NQ || !NC || !NR) {
+        if (!NC || !NR) {
             _showToast('Name subsystem is not available.', 'error');
             return;
         }
 
-        var current = null;
-        try {
-            current = NQ.getCountrySurnameRules(country.id);
-        } catch (e) {
-            current = null;
-        }
-
-        var initialType = (current && typeof current.type === 'string')
-            ? current.type
-            : 'family';
-
-        var content = _renderRulesForm(country, initialType, current);
-
-        _openModal({
-            titleHtml: 'Surname Rules: ' + _escapeHtml(_countryName(country)),
-            contentHtml: content,
-            confirmText: 'Save Rules',
-            cancelText: 'Cancel',
-            onMount: function (root) {
-                _wireRulesForm(root, initialType);
-            },
-            onConfirm: function (root) {
-                return _collectAndSaveRules(root, container, culture, country);
-            }
-        });
-    }
-
-    function _renderRulesForm(country, initialType, current) {
-        var typeOptions = [
-            { key: 'family', label: 'Family surname (inherited from parents)' },
-            { key: 'patronymic', label: 'Patronymic / Matronymic' },
-            { key: 'chain', label: 'Chain (multiple generations)' },
-            { key: 'random', label: 'Random surname' }
-        ];
-
-        var typeOptionsHtml = '';
-        for (var i = 0; i < typeOptions.length; i++) {
-            var opt = typeOptions[i];
-            typeOptionsHtml +=
-                '<option value="' + _escapeHtml(opt.key) + '"' +
-                  (opt.key === initialType ? ' selected' : '') +
-                  '>' + _escapeHtml(opt.label) + '</option>';
-        }
-
-        return (
-            '<div class="ct-form">' +
-              '<div class="ct-form__group">' +
-                '<label class="ct-form__label">Rule Type</label>' +
-                '<select id="ct-rules-type" class="ct-form__select">' +
-                  typeOptionsHtml +
-                '</select>' +
-              '</div>' +
-
-              // ---- Family ---- 
-              '<div id="ct-rules-family" class="ct-form__section">' +
-                '<div class="ct-form__grid-2">' +
-                  '<div class="ct-form__group">' +
-                    '<label class="ct-form__label">Surname Source</label>' +
-                    '<select id="ct-rules-family-source" class="ct-form__select">' +
-                      '<option value="father">Father</option>' +
-                      '<option value="mother">Mother</option>' +
-                      '<option value="both">Both parents</option>' +
-                    '</select>' +
-                  '</div>' +
-                  '<div class="ct-form__group">' +
-                    '<label class="ct-form__label">Surname Count</label>' +
-                    '<input type="number" id="ct-rules-family-count"' +
-                      ' class="ct-form__input" value="1" min="1" max="4">' +
-                  '</div>' +
-                '</div>' +
-              '</div>' +
-
-              // ---- Patronymic ---- 
-              '<div id="ct-rules-patronymic" class="ct-form__section">' +
-                '<div class="ct-form__group">' +
-                  '<label class="ct-form__label">Source Parent</label>' +
-                  '<select id="ct-rules-patronymic-source" class="ct-form__select">' +
-                    '<option value="father">Father</option>' +
-                    '<option value="mother">Mother</option>' +
-                  '</select>' +
-                '</div>' +
-                '<div class="ct-form__grid-2">' +
-                  '<div class="ct-form__group">' +
-                    '<label class="ct-form__label">Male Prefix</label>' +
-                    '<input type="text" id="ct-rules-patronymic-male-prefix"' +
-                      ' class="ct-form__input" placeholder="e.g. Mac">' +
-                  '</div>' +
-                  '<div class="ct-form__group">' +
-                    '<label class="ct-form__label">Male Suffix</label>' +
-                    '<input type="text" id="ct-rules-patronymic-male-suffix"' +
-                      ' class="ct-form__input" placeholder="e.g. son">' +
-                  '</div>' +
-                '</div>' +
-                '<div class="ct-form__grid-2">' +
-                  '<div class="ct-form__group">' +
-                    '<label class="ct-form__label">Female Prefix</label>' +
-                    '<input type="text" id="ct-rules-patronymic-female-prefix"' +
-                      ' class="ct-form__input" placeholder="e.g. Nic">' +
-                  '</div>' +
-                  '<div class="ct-form__group">' +
-                    '<label class="ct-form__label">Female Suffix</label>' +
-                    '<input type="text" id="ct-rules-patronymic-female-suffix"' +
-                      ' class="ct-form__input" placeholder="e.g. dottir">' +
-                  '</div>' +
-                '</div>' +
-              '</div>' +
-
-              // ---- Chain ---- 
-              '<div id="ct-rules-chain" class="ct-form__section">' +
-                '<div class="ct-form__group">' +
-                  '<label class="ct-form__label">Depth</label>' +
-                  '<input type="number" id="ct-rules-chain-depth"' +
-                    ' class="ct-form__input" value="2" min="1" max="4">' +
-                '</div>' +
-                '<div class="ct-form__hint">' +
-                  'Order: father \u2192 paternal grandfather \u2192 maternal grandfather (auto).' +
-                '</div>' +
-              '</div>' +
-
-              // ---- Random ---- 
-              '<div id="ct-rules-random" class="ct-form__section">' +
-                '<div class="ct-form__hint">' +
-                  'A random surname will be chosen from the surnames list.' +
-                '</div>' +
-              '</div>' +
-
-            '</div>'
-        );
-    }
-
-    function _wireRulesForm(root, initialType) {
-        var typeSel = root.querySelector('#ct-rules-type');
-        if (!typeSel) return;
-
-        function updateSections() {
-            var t = typeSel.value;
-            var sections = root.querySelectorAll('.ct-form__section');
-            for (var i = 0; i < sections.length; i++) {
-                var s = sections[i];
-                var id = s.id || '';
-                var match = id === ('ct-rules-' + t);
-                s.hidden = !match;
-            }
-        }
-
-        typeSel.addEventListener('change', updateSections);
-        updateSections();
-    }
-
-    function _collectAndSaveRules(root, container, culture, country) {
-        var NR = _getNameRules();
-        var NC = _getNameCommands();
-        if (!NR || !NC) {
-            _showToast('Name subsystem is not available.', 'error');
-            return false;
-        }
-
-        var typeSel = root.querySelector('#ct-rules-type');
-        if (!typeSel) {
-            _showToast('Rules form is missing its type field.', 'error');
-            return false;
-        }
-
-        var rules = { type: typeSel.value };
-
-        if (rules.type === 'family') {
-            var famSourceEl = root.querySelector('#ct-rules-family-source');
-            var famCountEl = root.querySelector('#ct-rules-family-count');
-            rules.family = {
-                source: famSourceEl ? famSourceEl.value : 'father',
-                count: famCountEl ? (parseInt(famCountEl.value, 10) || 1) : 1
-            };
-        } else if (rules.type === 'patronymic') {
-            rules.patronymic = {
-                source: _valueOf(root, '#ct-rules-patronymic-source') || 'father',
-                malePrefix: _valueOf(root, '#ct-rules-patronymic-male-prefix'),
-                maleSuffix: _valueOf(root, '#ct-rules-patronymic-male-suffix'),
-                femalePrefix: _valueOf(root, '#ct-rules-patronymic-female-prefix'),
-                femaleSuffix: _valueOf(root, '#ct-rules-patronymic-female-suffix')
-            };
-        } else if (rules.type === 'chain') {
-            var depthEl = root.querySelector('#ct-rules-chain-depth');
-            var depth = depthEl ? (parseInt(depthEl.value, 10) || 2) : 2;
-            if (depth < 1) depth = 1;
-            if (depth > 4) depth = 4;
-            var order = ['father', 'paternal_grandfather', 'maternal_grandfather'];
-            rules.chain = {
-                order: order.slice(0, depth)
-            };
-        } else if (rules.type === 'random') {
-            // No additional fields.
+        var rules = _collectRules(container);
+        if (!rules) {
+            _showToast('Could not read rules from the form.', 'error');
+            return;
         }
 
         var validation;
-        try {
-            validation = NR.validateRules(rules);
-        } catch (e) {
-            _showToast(
-                'Rules validation threw: ' +
-                (e && e.message ? e.message : 'unknown'),
-                'error'
-            );
-            return false;
+        try { validation = NR.validateRules(rules); }
+        catch (e) {
+            _showToast('Validation threw: ' + (e.message || 'unknown'), 'error');
+            return;
         }
-
         if (!validation || validation.valid !== true) {
-            var errors = (validation && Array.isArray(validation.errors))
+            var errs = (validation && Array.isArray(validation.errors))
                 ? validation.errors
                 : ['Unknown validation failure.'];
-            _showToast(
-                'Rules failed validation: ' + errors.join('; '),
-                'error'
-            );
-            return false;
+            _showToast('Rules invalid: ' + errs.join('; '), 'error');
+            return;
         }
 
-        var result = NC.setCountrySurnameRules(country.id, rules);
+        var result = NC.setCultureSurnameRules(culture.id, rules);
         if (!result || result.success !== true) {
             _showToast(
-                'Failed to save rules: ' +
-                (result && result.reason ? result.reason : 'unknown'),
+                'Save rules failed: ' + (result && result.reason ? result.reason : 'unknown'),
                 'error'
             );
-            return false;
+            return;
         }
 
         var persistResult = NC.persist();
         if (persistResult && persistResult.success === false) {
             _showToast(
-                'Saved in memory; storage write failed: ' +
+                'Rules saved in memory; storage write failed: ' +
                 (persistResult.reason || 'unknown'),
                 'warning'
             );
@@ -1145,31 +790,59 @@
         }
 
         renderNamesTab(container, culture);
-
-        // Return true to let modals-core close the modal.
-        return true;
     }
 
-    function _valueOf(root, selector) {
-        var el = root ? root.querySelector(selector) : null;
-        return el ? (el.value || '') : '';
+    function _handleClearRules(container, culture) {
+        var NC = _getNameCommands();
+        if (!NC) {
+            _showToast('Name commands are not available.', 'error');
+            return;
+        }
+
+        // Clearing rules means setting them to null. setCultureSurnameRules
+        // validates the rules object; a null rules object will fail
+        // validation. So we write the list directly through NamesState
+        // and publish — the same path the tab uses for _ensureNameList.
+        if (!window.masterData || !window.masterData.data) {
+            _showToast('Storage is not available.', 'error');
+            return;
+        }
+        var lists = window.masterData.data.nameLists;
+        if (!lists || !lists[culture.id]) {
+            _showToast('No name list for this culture.', 'error');
+            return;
+        }
+        lists[culture.id].rules = null;
+        if (typeof window.markDataDirty === 'function') {
+            try { window.markDataDirty(); }
+            catch (e) { /* non-fatal */ }
+        }
+        var NS = _getNameState();
+        if (NS && typeof NS.publish === 'function') {
+            try { NS.publish('surnameRulesChanged', { cultureId: culture.id, rules: null }); }
+            catch (e) { /* non-fatal */ }
+        }
+        var persistResult = NC.persist();
+        if (persistResult && persistResult.success === false) {
+            _showToast(
+                'Cleared in memory; storage write failed: ' +
+                (persistResult.reason || 'unknown'),
+                'warning'
+            );
+        } else {
+            _showToast('Surname rules cleared', 'info');
+        }
+        renderNamesTab(container, culture);
     }
 
     // =========================================================================
-    // 10. OPTIONAL NAMESTATE SUBSCRIPTION
+    // 9. OPTIONAL NAMESTATE SUBSCRIPTION
     // =========================================================================
-    //
-    // If NamesState is present and exposes subscribe, re-render the tab
-    // on any name-subsystem change. The subscription is per-render, so
-    // each render must be careful to unsubscribe the previous one. To
-    // avoid stacking listeners across renders, we track the current
-    // subscription on the container.
 
     function _maybeSubscribeToNameState(container, culture) {
         var NS = _getNameState();
         if (!NS || typeof NS.subscribe !== 'function') return;
 
-        // Remove the previous subscription if it exists.
         if (container.__ctNamesUnsub && typeof container.__ctNamesUnsub === 'function') {
             try { container.__ctNamesUnsub(); }
             catch (e) { /* non-fatal */ }
@@ -1178,45 +851,32 @@
 
         try {
             var unsub = NS.subscribe(function (event) {
-                // Only re-render for name-subsystem events we care
-                // about. Re-rendering on every event would defeat the
-                // purpose of the culture editor's own render cycle.
                 if (!event || !event.type) return;
                 var t = event.type;
-                if (t === 'nameListChanged' ||
-                    t === 'surnameRulesChanged' ||
-                    t === 'surnameChange' ||
-                    t === 'surnameRevert') {
-                    // The container may have been detached; guard.
+                if (t === 'nameListChanged' || t === 'surnameRulesChanged') {
+                    if (event.cultureId && event.cultureId !== culture.id) return;
                     if (!document.body.contains(container)) return;
-                    renderNamesTab(container, culture);
+                    // The tab already re-renders after its own writes.
+                    // Re-rendering from a subscription would double-render.
+                    // So this is a no-op for the tab's own writes. It
+                    // exists for external writers (e.g. the name generator
+                    // modal triggering addNameToList through a shim).
                 }
             });
             container.__ctNamesUnsub = unsub;
-        } catch (e) {
-            // Subscribe threw. Non-fatal; the tab still renders from
-            // its direct writes.
-        }
+        } catch (e) { /* non-fatal */ }
     }
 
     // =========================================================================
-    // 11. TAB DEFINITION + REGISTRATION
+    // 10. TAB DEFINITION + REGISTRATION
     // =========================================================================
 
     var NamesTab = {
         label: 'Names',
         icon: 'BOOK',
         render: renderNamesTab,
-        save: function (culture) {
-            // This tab writes to the name subsystem's own storage
-            // (masterData.data.nameLists), not to the culture record.
-            // Nothing to merge into the composite candidate.
-            return {};
-        },
-        validate: function (culture) {
-            // No culture-shape validation from this tab.
-            return { valid: true };
-        }
+        save: function () { return {}; },
+        validate: function () { return { valid: true }; }
     };
 
     window.CultureNamesTab = NamesTab;
@@ -1228,8 +888,7 @@
             if (typeof console !== 'undefined' && console.warn) {
                 console.warn(
                     'culture-names-tab.js: CultureEditorTabs is not loaded; ' +
-                    'the names tab was not registered. Load ' +
-                    'culture-editor-tab.js first.'
+                    'the names tab was not registered.'
                 );
             }
             return false;
