@@ -1,67 +1,30 @@
 /**
  * =============================================================================
- * STILL WATERS - NAME COMMANDS (js/modules/names/name-commands.js)
+ * STILL WATERS - NAME COMMANDS (name-commands.js)
  * =============================================================================
  *
  * LOCATION: js/modules/names/name-commands.js
  *
  * Write boundary for the name subsystem.
  *
+ * CULTURE KEY
+ * -----------
+ * Name-list mutations and surname-rule mutations are keyed by culture.id.
+ * The country concept is absent. See name-queries.js's header.
+ *
  * SCOPE:
- *   - recordSurnameChange          explicit character surname change
- *   - recordBirthSurname           initial birth surname
- *   - applyMarriageSurnames        atomic pair surname update
- *   - revertLastSurnameChange      undo the most recent change
- *   - clearSurnameHistory          wipe the character's surname timeline
- *   - addNameToList                name-list append
- *   - removeNameFromList           name-list remove
- *   - setCountrySurnameRules       REPLACE the surname rules for a country
- *   - calculateMarriageSurnames    pure helper (delegates to NameRules)
- *   - persist                      the ONLY saveMasterData call site
+ *   - recordSurnameChange
+ *   - recordBirthSurname
+ *   - applyMarriageSurnames
+ *   - revertLastSurnameChange
+ *   - clearSurnameHistory
+ *   - addNameToList(cultureId, type, name)
+ *   - removeNameFromList(cultureId, type, name)
+ *   - setCultureSurnameRules(cultureId, rules)
+ *   - calculateMarriageSurnames (delegates to NameRules)
+ *   - persist
  *
- * OUT OF SCOPE:
- *   - Reading name lists / rules    -> NameQueries
- *   - Rule application / validation -> NameRules
- *   - Cache / UI state              -> NamesState
- *   - Modal rendering               -> modals-name.js
- *   - Cross-domain cleanup          -> character-lifecycle / deletion
- *
- * CHARACTER MUTATION CONTRACT:
- *   Every character-field write routes through
- *   CharacterCommands.updateCharacter(characterId, patch). CharacterState
- *   projections returned by getCharacterById are defensive copies;
- *   mutating them does NOT affect canonical data. The surname fields
- *   (surname, surnameSource, surnameRules, surnameHistory) are listed in
- *   CharacterState._CHARACTER_OWNED_FIELDS, so updateCharacter (not
- *   applyDomainFieldPatch) is the correct write channel.
- *
- * NAME-LIST MUTATION CONTRACT:
- *   Name lists and surname rules live in masterData.data.nameLists,
- *   keyed by countryId. NamesState.getMutableNameList returns a LIVE
- *   reference into that collection. Mutating through it updates canonical
- *   data. The setCountrySurnameRules command writes the same collection
- *   through the same NamesState reference, following the same contract as
- *   addNameToList and removeNameFromList.
- *
- * PERSISTENCE:
- *   Commands do NOT save. Every command marks data dirty, publishes
- *   in-process via NamesState.publish, and dispatches a cross-domain
- *   CustomEvent. The caller calls persist() once per successful command
- *   batch.
- *
- * ATOMICITY:
- *   applyMarriageSurnames is a single logical mutation. Both surnames
- *   are validated BEFORE either is applied. The inline rollback via
- *   _undoSurnameChange is provably unreachable given the
- *   validate-both-then-apply-both structure; it is retained as
- *   defense-in-depth.
- *
- * YEAR HANDLING:
- *   Year 0 is valid and accepted. Missing years are rejected by
- *   recordSurnameChange. NO 1250 fallback. getCurrentYearSafe is NOT
- *   used.
- *
- * DEPENDENCIES (REQUIRED, verified at load):
+ * DEPENDENCIES (REQUIRED):
  *   - accessors.js:        getCharacterById
  *   - storage.js:          saveMasterData
  *   - time.js:             getCurrentYear
@@ -69,60 +32,16 @@
  *   - name-rules.js:       NameRules
  *   - character-commands:  CharacterCommands.updateCharacter
  *
- * DEPENDENCIES (OPTIONAL, checked per call):
- *   - storage.js:          markDataDirty (typeof-guarded)
- *   - storage.js:          getLastSaveError (typeof-guarded, in
- *                          persist() failure path)
- *   - eventLogger.js:      logEvent (typeof-guarded)
- *   - browser globals:     CustomEvent, dispatchEvent
- *
- * ICON POLICY: No emojis. No icons.
- *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
- *     - Added setCountrySurnameRules(countryId, rules). Closes a
- *       command-surface gap: prior to this revision, NameCommands
- *       exposed readers via NameQueries but no writer for the
- *       country-level surname rules block, so UI callers (notably the
- *       culture names tab) wrote through masterData.data.nameLists
- *       directly and bypassed both validation and the event dispatch
- *       that invalidates NamesState caches.
- *
- *       The new command follows the same transaction shape as
- *       addNameToList / removeNameFromList:
- *         1. validateCountryId (non-empty string)
- *         2. validateRules via NameRules.validateRules (throws on
- *            invalid — matches generateSurnameFromRules's contract)
- *         3. read the live nameList via
- *            NamesState.getMutableNameList (fails with a structured
- *            error if the countryId has no list entry)
- *         4. write nameList.rules = clone(rules)
- *         5. _commit('surnameRulesChanged', payload)
- *
- *       Return shape matches other commands:
- *         { success: true, rules: <clone> }
- *         { success: false, reason: string }
- *
- *       Notes:
- *         - The countryId must already have a nameList entry. The
- *           command refuses rather than silently creating the list,
- *           because creating the list would raise the question "what
- *           are the default rules for this country" — a policy decision
- *           that NameRules owns, not NameCommands.
- *         - The write is a full replacement (not a patch). Callers
- *           submit the complete rules object.
- *         - Validation runs first, so an invalid rules object leaves
- *           the existing rules untouched.
- *         - The surnameRulesChanged event fires after the write and
- *           after markDataDirty. NamesState subscribes to the event via
- *           its normal invalidation cycle.
- *     - No behavioural change to any other command. Every other
- *       export keeps the same name and behavior.
- *   Previous revisions:
- *     - getCurrentYearSafe references replaced with getCurrentYear.
- *     - _undoSurnameChange retained as defense-in-depth (unreachable
- *       given the validate-both-then-apply-both structure).
+ *   Current revision (culture-keyed):
+ *     - addNameToList, removeNameFromList, setCultureSurnameRules take a
+ *       cultureId. The old country-keyed signatures are REMOVED.
+ *     - setCountrySurnameRules renamed to setCultureSurnameRules.
+ *     - _commit publishes nameListChanged with { cultureId, ... }
+ *       instead of { countryId, ... }.
+ *   Previous revision:
+ *     - Added setCountrySurnameRules (now setCultureSurnameRules).
  * =============================================================================
  */
 
@@ -232,9 +151,6 @@
     // =========================================================================
     // 3. TRANSACTION BOUNDARY
     // =========================================================================
-    //
-    // Commands mark data dirty, publish in-process, and dispatch a
-    // cross-domain CustomEvent. They do NOT save.
 
     function _commit(eventName, payload) {
         if (typeof window.markDataDirty === 'function') {
@@ -263,10 +179,6 @@
     // =========================================================================
     // 4. PERSIST
     // =========================================================================
-    //
-    // The ONLY saveMasterData call site in this module. Inspects the
-    // boolean return and surfaces the failure reason via
-    // getLastSaveError when available (Pattern A + getLastSaveError).
 
     function persist() {
         try {
@@ -294,14 +206,6 @@
     // =========================================================================
     // 5. YEAR RESOLUTION
     // =========================================================================
-    //
-    // recordSurnameChange REQUIRES an explicit year. Missing year is
-    // REJECTED. Year 0 is valid. This matches the documented contract
-    // (PART 7 §6 of name-docs.txt). CharacterCommands's
-    // recordCharacterSurnameChange is a SUPERSET that accepts a missing
-    // year and defaults to getCurrentYear — but this module does not
-    // delegate to it, because doing so would silently approve a surname
-    // change this module's contract says must be rejected.
 
     function _requireYear(value, context) {
         if (!_isValidYear(value)) {
@@ -485,19 +389,6 @@
         return NR.calculateMarriageSurnames(groom, bride, rule);
     }
 
-    /**
-     * Applies the couple's marriage surnames atomically.
-     *
-     * Both surnames are validated BEFORE either is applied. If validation
-     * fails for either, neither is touched.
-     *
-     * @param {string} characterAId
-     * @param {string} characterBId
-     * @param {string} ruleId       One of NameRules.MARRIAGE_RULES
-     * @param {number} year         Valid world year
-     * @param {Object} [options]
-     * @returns {{ success: boolean, reason?: string, updates?: Object }}
-     */
     function applyMarriageSurnames(characterAId, characterBId, ruleId, year, options) {
         if (_isMissing(options)) options = {};
         if (!_isPlainObject(options)) {
@@ -515,7 +406,8 @@
         if (!NR.MARRIAGE_RULES || typeof NR.MARRIAGE_RULES !== 'object') {
             return _fail('NameRules.MARRIAGE_RULES is required.');
         }
-        if (!Object.prototype.hasOwnProperty.call(NR.MARRIAGE_RULES, ruleId)) {
+        if (!Object.prototype.hasOwnProperty.call(NR.MARRIAGE_RULES, ruleId)
+            && NR.MARRIAGE_RULES.indexOf(ruleId) === -1) {
             return _fail('Unknown marriage rule: ' + String(ruleId));
         }
 
@@ -547,15 +439,12 @@
             return _ok({ updates: null });
         }
 
-        // Build the two patches BEFORE applying either. Both must be
-        // valid plans; if either would fail, neither is applied.
         var patchA = _buildMarriageSurnamePatch(characterA, updates[characterAId], year, characterBId);
         var patchB = _buildMarriageSurnamePatch(characterB, updates[characterBId], year, characterAId);
 
         if (!patchA.ok) return _fail('Character A: ' + patchA.reason);
         if (!patchB.ok) return _fail('Character B: ' + patchB.reason);
 
-        // Apply A.
         var writeA = CC.updateCharacter(characterAId, patchA.patch);
         if (!writeA || writeA.success !== true) {
             return _fail(writeA && writeA.reason
@@ -563,9 +452,6 @@
                 : 'CharacterCommands refused Character A.');
         }
 
-        // Apply B. If B fails, undo A (defense-in-depth; per the header
-        // this branch is unreachable in normal operation because
-        // validate-both-then-apply-both guarantees B was pre-validated).
         var writeB = CC.updateCharacter(characterBId, patchB.patch);
         if (!writeB || writeB.success !== true) {
             _undoSurnameChange(characterAId, patchA.previousSurname, patchA.previousHistory);
@@ -597,8 +483,6 @@
             ? character.surname
             : '';
         if (newSurname === previousSurname) {
-            // No-op: the rule produced the character's existing surname.
-            // Skip the write, return a patch with no fields to apply.
             return {
                 ok: true,
                 patch: { updatedAt: Date.now() },
@@ -631,7 +515,6 @@
     }
 
     function _undoSurnameChange(characterId, previousSurname, previousHistory) {
-        // Defense-in-depth. See ATOMICITY in the module header.
         if (!_hasId(characterId)) return;
         CC.updateCharacter(characterId, {
             surname: previousSurname,
@@ -755,18 +638,14 @@
     }
 
     // =========================================================================
-    // 11. NAME-LIST MUTATIONS
+    // 11. NAME-LIST MUTATIONS (culture-keyed)
     // =========================================================================
-    //
-    // Name lists live in masterData.data.nameLists keyed by countryId.
-    // NamesState.getMutableNameList returns a LIVE reference into that
-    // collection; mutating through it updates canonical data.
 
     var VALID_NAME_TYPES = { male: true, female: true, surnames: true };
 
-    function _requireCountryId(countryId, context) {
-        if (!_hasId(countryId)) {
-            return { ok: false, reason: context + ': countryId is required.' };
+    function _requireCultureId(cultureId, context) {
+        if (!_hasId(cultureId)) {
+            return { ok: false, reason: context + ': cultureId is required.' };
         }
         return { ok: true };
     }
@@ -791,18 +670,18 @@
         return { ok: true, value: name.trim() };
     }
 
-    function addNameToList(countryId, type, name) {
-        var countryCheck = _requireCountryId(countryId, 'addNameToList');
-        if (!countryCheck.ok) return _fail(countryCheck.reason);
+    function addNameToList(cultureId, type, name) {
+        var cultureCheck = _requireCultureId(cultureId, 'addNameToList');
+        if (!cultureCheck.ok) return _fail(cultureCheck.reason);
         var typeCheck = _requireNameType(type, 'addNameToList');
         if (!typeCheck.ok) return _fail(typeCheck.reason);
         var nameCheck = _requireNameValue(name, 'addNameToList');
         if (!nameCheck.ok) return _fail(nameCheck.reason);
         var trimmed = nameCheck.value;
 
-        var list = NS.getMutableNameList(countryId);
+        var list = NS.getMutableNameList(cultureId);
         if (!list) {
-            return _fail('No name list for country: ' + countryId);
+            return _fail('No name list for culture: ' + cultureId);
         }
         if (!Array.isArray(list[type])) {
             list[type] = [];
@@ -814,7 +693,7 @@
         list[type].sort();
 
         _commit('nameListChanged', {
-            countryId: countryId,
+            cultureId: cultureId,
             type: type,
             action: 'added',
             name: trimmed
@@ -823,18 +702,18 @@
         return _ok({ unchanged: false, name: trimmed, type: type });
     }
 
-    function removeNameFromList(countryId, type, name) {
-        var countryCheck = _requireCountryId(countryId, 'removeNameFromList');
-        if (!countryCheck.ok) return _fail(countryCheck.reason);
+    function removeNameFromList(cultureId, type, name) {
+        var cultureCheck = _requireCultureId(cultureId, 'removeNameFromList');
+        if (!cultureCheck.ok) return _fail(cultureCheck.reason);
         var typeCheck = _requireNameType(type, 'removeNameFromList');
         if (!typeCheck.ok) return _fail(typeCheck.reason);
         var nameCheck = _requireNameValue(name, 'removeNameFromList');
         if (!nameCheck.ok) return _fail(nameCheck.reason);
         var trimmed = nameCheck.value;
 
-        var list = NS.getMutableNameList(countryId);
+        var list = NS.getMutableNameList(cultureId);
         if (!list) {
-            return _fail('No name list for country: ' + countryId);
+            return _fail('No name list for culture: ' + cultureId);
         }
         if (!Array.isArray(list[type])) {
             return _ok({ unchanged: true, name: trimmed, type: type });
@@ -846,7 +725,7 @@
         list[type].splice(idx, 1);
 
         _commit('nameListChanged', {
-            countryId: countryId,
+            cultureId: cultureId,
             type: type,
             action: 'removed',
             name: trimmed
@@ -856,36 +735,17 @@
     }
 
     // =========================================================================
-    // 12. COUNTRY SURNAME RULES
+    // 12. CULTURE SURNAME RULES
     // =========================================================================
-    //
-    // Replaces the entire rules block for a country. See the module
-    // header's REFACTOR HISTORY for why this command exists and what
-    // gap it closes.
-    //
-    // The countryId must already have a nameList entry. The command
-    // refuses rather than silently creating the list — creating a
-    // nameList entry would raise the question "what are the default
-    // rules for this country," a policy decision owned by NameRules,
-    // not NameCommands.
-    //
-    // Validation runs first (via NameRules.validateRules), so an
-    // invalid rules object leaves the existing rules untouched.
 
-    function setCountrySurnameRules(countryId, rules) {
-        var countryCheck = _requireCountryId(countryId, 'setCountrySurnameRules');
-        if (!countryCheck.ok) return _fail(countryCheck.reason);
+    function setCultureSurnameRules(cultureId, rules) {
+        var cultureCheck = _requireCultureId(cultureId, 'setCultureSurnameRules');
+        if (!cultureCheck.ok) return _fail(cultureCheck.reason);
 
         if (!_isPlainObject(rules)) {
-            return _fail('setCountrySurnameRules: rules must be a plain object.');
+            return _fail('setCultureSurnameRules: rules must be a plain object.');
         }
 
-        // NameRules.validateRules is the canonical validator. It returns
-        // { valid, errors } — the older contract used by the culture
-        // names tab. Modern NameRules also exports a throwing variant,
-        // but validateRules is the stable, non-throwing shape that UI
-        // callers expect. Use it here so the tab can surface errors
-        // without a try/catch.
         if (typeof NR.validateRules !== 'function') {
             return _fail('NameRules.validateRules is required.');
         }
@@ -911,18 +771,18 @@
             };
         }
 
-        var list = NS.getMutableNameList(countryId);
+        var list = NS.getMutableNameList(cultureId);
         if (!list) {
             return _fail(
-                'No name list for country: ' + countryId +
-                '. Create a name list for the country before setting rules.'
+                'No name list for culture: ' + cultureId +
+                '. Create a name list for the culture before setting rules.'
             );
         }
 
         list.rules = _clone(rules);
 
         _commit('surnameRulesChanged', {
-            countryId: countryId,
+            cultureId: cultureId,
             rules: _clone(rules)
         });
 
@@ -942,7 +802,7 @@
 
         addNameToList: addNameToList,
         removeNameFromList: removeNameFromList,
-        setCountrySurnameRules: setCountrySurnameRules,
+        setCultureSurnameRules: setCultureSurnameRules,
 
         calculateMarriageSurnames: calculateMarriageSurnames,
 
