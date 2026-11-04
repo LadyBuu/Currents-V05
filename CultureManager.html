@@ -4,65 +4,57 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover" />
     <title>Culture Manager</title>
-
     <link rel="icon" href="data:," />
 
-    <!-- 1. Theme bootstrapper (MUST LOAD FIRST — matches load-order Block 1) -->
+    <!--
+      Theme bootstrap runs first, reading data-theme from localStorage.
+      It writes data-theme to <html>. common.css styles against that.
+      If your tree loads themes.css as a token source, add it here;
+      otherwise common.css is the only stylesheet.
+    -->
     <script src="js/core/theme-boot.js"></script>
 
-    <!-- 2. Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-
-    <!-- 3. Shared stylesheets -->
-    <link rel="stylesheet" href="css/themes.css">
     <link rel="stylesheet" href="css/common.css">
 
     <style>
-        /* ==================================================================
-           CULTURE MANAGER — INLINE STYLES
-           ==================================================================
-           Structural layout only. Every color, radius, shadow, and font
-           value comes from themes.css. Every culture-specific class lives
-           in this file so the manager is self-contained, matching
-           LocationManager.html's pattern.
-           ================================================================== */
+        /* ============================================================
+           Culture Manager — inline CSS
+           Every class the four tabs emit is defined here.
+           Structural layout uses common.css tokens.
+           ============================================================ */
 
         html, body { height: 100%; margin: 0; overflow: hidden; }
         body {
             display: flex;
             flex-direction: column;
-            background: var(--bg);
-            color: var(--text);
-            font-family: var(--f-body);
+            background: var(--bg, #1a1a1a);
+            color: var(--text, #e5e5e5);
+            font-family: var(--f-body, system-ui, sans-serif);
             font-size: 16px;
             line-height: 1.5;
             -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
         }
 
-        /* ---- Topbar (matches LocationManager) ---- */
+        /* ---- Topbar ---- */
         .topbar {
             position: relative;
             z-index: 100;
             flex-shrink: 0;
-            background: var(--bg2);
+            background: var(--bg2, #222);
             padding: 8px 16px;
             display: flex;
             align-items: center;
             gap: 10px;
-            border-bottom: 1px solid var(--border);
+            border-bottom: 1px solid var(--border, #333);
             min-height: 48px;
             flex-wrap: wrap;
         }
         .topbar .title {
-            font-family: var(--f-display);
+            font-family: var(--f-display, var(--f-body, system-ui));
             font-weight: 600;
             font-size: 0.9rem;
-            color: var(--accent);
+            color: var(--accent, #7aa2f7);
             white-space: nowrap;
-            letter-spacing: 0.02em;
             display: inline-flex;
             align-items: center;
             gap: 6px;
@@ -75,14 +67,10 @@
             justify-content: center;
             padding: 4px 10px;
             background: transparent;
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--text);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            color: var(--text, #e5e5e5);
             cursor: pointer;
-        }
-        .topbar .burger-menu:hover {
-            border-color: var(--accent);
-            color: var(--accent);
         }
 
         /* ---- Topbar buttons ---- */
@@ -91,89 +79,103 @@
             align-items: center;
             gap: 5px;
             padding: 6px 14px;
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--text);
-            font-family: var(--f-body);
+            background: var(--bg2, #222);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            color: var(--text, #e5e5e5);
+            font-family: var(--f-body, system-ui);
             font-size: 0.7rem;
             font-weight: 500;
             cursor: pointer;
             line-height: 1.2;
-            transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
         }
         .tb-btn svg { width: 0.9em; height: 0.9em; fill: currentColor; }
         .tb-btn:hover {
-            border-color: var(--accent);
-            background: var(--accent-dim);
-            color: var(--accent-light);
+            border-color: var(--accent, #7aa2f7);
+            background: var(--accent-dim, rgba(122, 162, 247, 0.1));
+            color: var(--accent-light, #a8c1f8);
         }
         .tb-btn.primary {
-            background: var(--accent);
-            border-color: var(--accent);
-            color: var(--accent-fg);
+            background: var(--accent, #7aa2f7);
+            border-color: var(--accent, #7aa2f7);
+            color: var(--accent-fg, #111);
         }
-        .tb-btn.primary:hover {
-            background: var(--accent-dark);
-            border-color: var(--accent-dark);
+        .tb-btn.primary:hover { background: var(--accent-dark, #5a82d7); }
+        .tb-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+        /* ---- Generic rt-btn (tabs use this) ---- */
+        .rt-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 5px 12px;
+            background: var(--bg3, #2a2a2a);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            color: var(--text, #e5e5e5);
+            font-family: var(--f-body, system-ui);
+            font-size: 0.7rem;
+            font-weight: 500;
+            cursor: pointer;
+            line-height: 1.2;
         }
-        .tb-btn:disabled {
-            opacity: 0.45;
-            cursor: not-allowed;
+        .rt-btn:hover {
+            border-color: var(--accent, #7aa2f7);
+            color: var(--accent-light, #a8c1f8);
         }
-        .tb-btn:disabled:hover {
-            background: var(--bg2);
-            border-color: var(--border);
-            color: var(--text);
+        .rt-btn--primary {
+            background: var(--accent, #7aa2f7);
+            border-color: var(--accent, #7aa2f7);
+            color: var(--accent-fg, #111);
+        }
+        .rt-btn--primary:hover { background: var(--accent-dark, #5a82d7); }
+        .rt-btn--danger {
+            border-color: var(--danger-lt, #f7768e);
+            color: var(--danger-lt, #f7768e);
+        }
+        .rt-btn--danger:hover {
+            background: var(--danger-soft, rgba(247, 118, 142, 0.1));
         }
 
-        /* ---- Year input (matches LocationManager) ---- */
+        /* ---- Year input ---- */
         .year-input {
             display: inline-flex;
             align-items: center;
             gap: 5px;
             padding: 3px 10px;
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            font-family: var(--f-body);
+            background: var(--bg, #1a1a1a);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            font-family: var(--f-body, system-ui);
             font-size: 0.7rem;
             line-height: 1.2;
         }
         .year-input label {
-            font-family: var(--f-display);
+            font-family: var(--f-display, var(--f-body, system-ui));
             font-size: 0.55rem;
             letter-spacing: 0.06em;
             text-transform: uppercase;
-            color: var(--dim);
+            color: var(--dim, #888);
             white-space: nowrap;
         }
         .year-input input {
             width: 64px;
             padding: 3px 6px;
             background: transparent;
-            border: 1px solid var(--border);
-            border-radius: calc(var(--radius) - 1px);
-            color: var(--text);
-            font-family: var(--f-mono);
+            border: 1px solid var(--border, #333);
+            border-radius: 3px;
+            color: var(--text, #e5e5e5);
+            font-family: var(--f-mono, ui-monospace, monospace);
             font-size: 0.7rem;
             text-align: right;
         }
         .year-input input:focus {
             outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 2px var(--accent-soft);
+            border-color: var(--accent, #7aa2f7);
         }
-        .year-input input::-webkit-outer-spin-button,
-        .year-input input::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-        }
-        .year-input input[type=number] { -moz-appearance: textfield; }
 
-        /* ---- Theme toggle (matches LocationManager) ---- */
+        /* ---- Theme toggle ---- */
         .theme-toggle { position: relative; display: inline-flex; }
-        .theme-toggle__btn { gap: 6px; }
         .theme-toggle__menu {
             position: absolute;
             top: calc(100% + 4px);
@@ -184,10 +186,9 @@
             padding: 4px;
             margin: 0;
             list-style: none;
-            background: var(--surface);
-            border: 1px solid var(--line);
-            border-radius: var(--radius);
-            box-shadow: var(--shadow);
+            background: var(--surface, var(--bg2, #222));
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
             overflow-y: auto;
         }
         .theme-toggle__menu[hidden] { display: none; }
@@ -198,18 +199,15 @@
             text-align: left;
             background: transparent;
             border: none;
-            color: var(--text);
-            font-family: var(--f-body);
+            color: var(--text, #e5e5e5);
+            font-family: var(--f-body, system-ui);
             font-size: 0.7rem;
-            border-radius: calc(var(--radius) - 2px);
+            border-radius: 3px;
             cursor: pointer;
-            transition: background-color 0.15s ease;
         }
-        .theme-toggle__menu button:hover,
-        .theme-toggle__menu button:focus-visible {
-            background: var(--accent-dim);
-            color: var(--accent-light);
-            outline: none;
+        .theme-toggle__menu button:hover {
+            background: var(--accent-dim, rgba(122, 162, 247, 0.1));
+            color: var(--accent-light, #a8c1f8);
         }
 
         /* ---- App shell ---- */
@@ -225,35 +223,32 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            background: var(--bg2);
-            border-right: 1px solid var(--border);
+            background: var(--bg2, #222);
+            border-right: 1px solid var(--border, #333);
             width: 280px;
         }
         .sidebar-header {
             padding: 12px 16px;
-            border-bottom: 1px solid var(--border);
-            background: var(--bg3);
+            border-bottom: 1px solid var(--border, #333);
+            background: var(--bg3, #2a2a2a);
         }
         .sidebar-header h3 {
             margin: 0;
-            font-family: var(--f-display);
+            font-family: var(--f-display, var(--f-body, system-ui));
             font-size: 0.65rem;
             letter-spacing: 0.1em;
             text-transform: uppercase;
-            color: var(--accent);
+            color: var(--accent, #7aa2f7);
             display: flex;
             align-items: center;
             gap: 6px;
         }
-        .sidebar-header h3 svg { width: 1em; height: 1em; fill: currentColor; }
-
         .sidebar-list {
             flex: 1;
             overflow-y: auto;
             padding: 8px;
             min-height: 0;
         }
-
         .main-panel {
             display: flex;
             flex-direction: column;
@@ -263,19 +258,17 @@
             overflow: hidden;
         }
 
-        /* ---- Sub-tab strip (culture manager's main tabs, matches LocationManager) ---- */
+        /* ---- Sub-tab strip ---- */
         .manager-subtabs {
             position: sticky;
             top: 0;
             display: flex;
             align-items: stretch;
             gap: 4px;
-            padding: 8px 4px 0;
+            padding: 8px 24px 0;
             margin: 0 0 20px;
-            padding-left: 24px;
-            padding-right: 24px;
-            background: var(--bg2);
-            border-bottom: 1px solid var(--border);
+            background: var(--bg2, #222);
+            border-bottom: 1px solid var(--border, #333);
             flex-wrap: wrap;
             z-index: 10;
         }
@@ -289,43 +282,21 @@
             border: 1px solid transparent;
             border-bottom: none;
             border-radius: 6px 6px 0 0;
-            color: var(--dim);
-            font-family: var(--f-display);
+            color: var(--dim, #888);
+            font-family: var(--f-display, var(--f-body, system-ui));
             font-size: 0.78rem;
             font-weight: 500;
-            letter-spacing: 0.06em;
-            line-height: 1.15;
-            white-space: nowrap;
             cursor: pointer;
-            transition: color 0.15s ease, background-color 0.15s ease;
-        }
-        .manager-subtab::after {
-            content: '';
-            position: absolute;
-            left: 0; right: 0; bottom: -1px;
-            height: 2px;
-            background: transparent;
-            border-radius: 2px 2px 0 0;
-            transition: background-color 0.15s ease;
         }
         .manager-subtab:hover {
-            color: var(--accent-light);
-            background: var(--accent-dim);
-        }
-        .manager-subtab:hover::after {
-            background: var(--accent);
-            opacity: 0.35;
+            color: var(--accent-light, #a8c1f8);
+            background: var(--accent-dim, rgba(122, 162, 247, 0.1));
         }
         .manager-subtab.active {
-            color: var(--accent);
-            background: var(--bg2);
-            border-color: var(--border);
-            border-bottom-color: transparent;
+            color: var(--accent, #7aa2f7);
+            background: var(--bg2, #222);
+            border-color: var(--border, #333);
             font-weight: 600;
-        }
-        .manager-subtab.active::after {
-            background: var(--accent);
-            opacity: 1;
         }
         .manager-subtab-icon {
             display: inline-flex;
@@ -334,8 +305,6 @@
             align-items: center;
             justify-content: center;
             color: currentColor;
-            flex-shrink: 0;
-            opacity: 0.9;
         }
         .manager-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
 
@@ -345,137 +314,718 @@
             overflow-y: auto;
             overflow-x: hidden;
             padding: 20px 24px;
-            background: var(--bg);
+            background: var(--bg, #1a1a1a);
         }
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
 
-        /* ---- Details view ---- */
-        .culture-card {
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 16px 20px;
+        /* ============================================================
+           SHARED — hint, empty, loading
+           ============================================================ */
+        .ct-hint {
+            background: var(--bg2, #222);
+            border-left: 3px solid var(--accent, #7aa2f7);
+            padding: 10px 14px;
             margin-bottom: 16px;
-        }
-        .culture-card__header {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 12px;
-        }
-        .culture-card__icon {
-            font-size: 1.6rem;
-            line-height: 1;
-            color: var(--accent);
-            width: 2rem;
-            text-align: center;
-        }
-        .culture-card__label {
-            font-family: var(--f-display);
-            font-size: 1rem;
-            font-weight: 600;
-            color: var(--accent-light);
-        }
-        .culture-card__desc {
-            font-size: 0.8rem;
-            color: var(--text);
-            line-height: 1.55;
-            margin: 0 0 12px;
-        }
-        .culture-card__relations {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            margin: 12px 0;
-        }
-        .culture-card__relation {
-            display: flex;
-            gap: 8px;
-            align-items: baseline;
-            font-size: 0.75rem;
-        }
-        .culture-card__relation-label {
-            color: var(--dim);
-            font-family: var(--f-display);
-            font-size: 0.6rem;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            min-width: 80px;
-        }
-        .culture-card__relation-values { color: var(--text); }
-        .culture-card__notes {
-            margin-top: 12px;
-            padding-top: 12px;
-            border-top: 1px solid var(--border-light);
             font-size: 0.7rem;
-            color: var(--dim);
-            line-height: 1.6;
-            white-space: pre-wrap;
+            color: var(--dim, #888);
+            line-height: 1.55;
+            border-radius: 0 4px 4px 0;
         }
-        .ct-details__list {
-            margin: 0;
-            padding-left: 18px;
-            font-size: 0.75rem;
-            color: var(--text);
-            line-height: 1.7;
-        }
+        .ct-hint--footer { margin-top: 16px; margin-bottom: 0; }
 
-        /* ---- Empty / loading ---- */
-        .empty-state {
-            padding: 48px 24px;
+        .ct-empty,
+        .rt-empty {
+            padding: 24px;
             text-align: center;
-            color: var(--dim);
-            font-size: 0.88rem;
-            line-height: 1.6;
+            color: var(--dim, #888);
+            font-size: 0.8rem;
         }
-        .empty-state .message { font-weight: 500; color: var(--text); }
-        .empty-state .sub-message {
+        .ct-empty__sub,
+        .rt-empty__sub {
             display: block;
             margin-top: 6px;
-            font-size: 0.75rem;
-            color: var(--dim);
+            font-size: 0.7rem;
+            color: var(--dim, #888);
+        }
+        .rt-unavailable {
+            padding: 24px;
+            text-align: center;
+            color: var(--danger-lt, #f7768e);
+            font-size: 0.8rem;
         }
         .loading {
             padding: 24px;
             text-align: center;
-            color: var(--tmut);
+            color: var(--dim, #888);
             font-size: 0.85rem;
-            animation: pulse 1.5s ease-in-out infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 0.6; }
-            50% { opacity: 1; }
         }
 
-        /* ---- Toast / modal chrome overrides (matches LocationManager) ---- */
-        .toast { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-        .modal-container { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-        .btn:hover { box-shadow: none !important; }
-        .icon-svg { display: inline-block; width: 1em; height: 1em; vertical-align: middle; fill: currentColor; }
+        /* ============================================================
+           SHARED — cards, badges, form controls
+           Used across all four tabs.
+           ============================================================ */
+        .ct-card {
+            background: var(--bg2, #222);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            padding: 14px 16px;
+            margin-bottom: 16px;
+        }
+        .ct-card__header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
+        .ct-card__title {
+            font-family: var(--f-display, var(--f-body, system-ui));
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--accent-light, #a8c1f8);
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .ct-card__hint {
+            font-family: var(--f-body, system-ui);
+            font-size: 0.6rem;
+            color: var(--dim, #888);
+            font-weight: 400;
+        }
+        .ct-card__count {
+            font-size: 0.65rem;
+            color: var(--dim, #888);
+            font-family: var(--f-mono, ui-monospace, monospace);
+        }
 
-        /* ---- Sidebar overlay ---- */
-        .sidebar-overlay { display: none; }
-        .sidebar-overlay.active {
+        .ct-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.6rem;
+            font-family: var(--f-mono, ui-monospace, monospace);
+            background: var(--accent-dim, rgba(122, 162, 247, 0.1));
+            color: var(--accent-light, #a8c1f8);
+            white-space: nowrap;
+        }
+        .ct-badge--muted { background: var(--bg3, #2a2a2a); color: var(--dim, #888); }
+        .ct-badge--accent { background: var(--accent, #7aa2f7); color: var(--accent-fg, #111); }
+
+        .ct-form__group { margin-bottom: 12px; }
+        .ct-form__label {
             display: block;
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.8);
-            z-index: 999;
+            font-size: 0.65rem;
+            color: var(--dim, #888);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-bottom: 4px;
+            font-family: var(--f-display, var(--f-body, system-ui));
+        }
+        .ct-form__input,
+        .ct-form__select,
+        .ct-form__textarea {
+            width: 100%;
+            padding: 6px 10px;
+            background: var(--bg, #1a1a1a);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            color: var(--text, #e5e5e5);
+            font-family: var(--f-body, system-ui);
+            font-size: 0.75rem;
+            box-sizing: border-box;
+        }
+        .ct-form__textarea {
+            font-family: var(--f-mono, ui-monospace, monospace);
+            font-size: 0.72rem;
+            resize: vertical;
+        }
+        .ct-form__input:focus,
+        .ct-form__select:focus,
+        .ct-form__textarea:focus {
+            outline: none;
+            border-color: var(--accent, #7aa2f7);
         }
 
-        /* ---- Responsive (matches LocationManager) ---- */
+        .ct-hint {
+            font-size: 0.7rem;
+            color: var(--dim, #888);
+            line-height: 1.55;
+            margin-bottom: 12px;
+            padding: 8px 12px;
+            background: var(--bg2, #222);
+            border-left: 3px solid var(--accent, #7aa2f7);
+            border-radius: 0 4px 4px 0;
+        }
+        .ct-hint--footer { margin-top: 12px; margin-bottom: 0; }
+
+        .ct-search input {
+            width: 100%;
+            padding: 6px 10px;
+            background: var(--bg, #1a1a1a);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            color: var(--text, #e5e5e5);
+            font-family: var(--f-body, system-ui);
+            font-size: 0.75rem;
+            box-sizing: border-box;
+        }
+        .ct-search input:focus {
+            outline: none;
+            border-color: var(--accent, #7aa2f7);
+        }
+
+        .ct-details__list {
+            margin: 6px 0 0;
+            padding-left: 18px;
+            font-size: 0.75rem;
+            color: var(--text, #e5e5e5);
+            line-height: 1.6;
+        }
+
+        /* ============================================================
+           APPEARANCE TAB
+           ============================================================ */
+        .ct-appearance { width: 100%; }
+        .ct-appearance__grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        .ct-appearance-card { margin-bottom: 0; }
+        .ct-appearance-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 10px;
+            max-height: 320px;
+            overflow-y: auto;
+        }
+        .ct-appearance-empty {
+            padding: 12px;
+            text-align: center;
+            color: var(--dim, #888);
+            font-size: 0.7rem;
+            font-style: italic;
+        }
+        .ct-appearance-row {
+            display: grid;
+            grid-template-columns: 1fr 70px auto auto;
+            gap: 6px;
+            align-items: center;
+        }
+        .ct-appearance-row__value,
+        .ct-appearance-row__weight {
+            padding: 5px 8px;
+            background: var(--bg, #1a1a1a);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            color: var(--text, #e5e5e5);
+            font-family: var(--f-body, system-ui);
+            font-size: 0.72rem;
+            box-sizing: border-box;
+            width: 100%;
+        }
+        .ct-appearance-row__weight {
+            font-family: var(--f-mono, ui-monospace, monospace);
+            text-align: right;
+        }
+        .ct-appearance-row__value:focus,
+        .ct-appearance-row__weight:focus {
+            outline: none;
+            border-color: var(--accent, #7aa2f7);
+        }
+        .ct-appearance-row__weight-label {
+            font-size: 0.6rem;
+            color: var(--dim, #888);
+        }
+        .ct-appearance-add {
+            width: 100%;
+            padding: 6px 10px;
+            background: var(--bg3, #2a2a2a);
+            border: 1px dashed var(--border, #333);
+            border-radius: var(--radius, 4px);
+            color: var(--dim, #888);
+            font-family: var(--f-body, system-ui);
+            font-size: 0.7rem;
+            cursor: pointer;
+        }
+        .ct-appearance-add:hover {
+            color: var(--accent, #7aa2f7);
+            border-color: var(--accent, #7aa2f7);
+        }
+        .ct-appearance-count {
+            font-size: 0.65rem;
+            color: var(--dim, #888);
+            font-family: var(--f-mono, ui-monospace, monospace);
+        }
+
+        .ct-appearance-height { grid-column: 1 / -1; }
+        .ct-appearance-height-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        .ct-appearance-height-group { display: flex; flex-direction: column; gap: 4px; }
+        .ct-appearance-height-label {
+            font-size: 0.65rem;
+            color: var(--dim, #888);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-family: var(--f-display, var(--f-body, system-ui));
+        }
+        .ct-appearance-height-inputs {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .ct-appearance-height-inputs input {
+            flex: 1;
+            padding: 5px 8px;
+            background: var(--bg, #1a1a1a);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            color: var(--text, #e5e5e5);
+            font-family: var(--f-mono, ui-monospace, monospace);
+            font-size: 0.72rem;
+            text-align: right;
+            width: 70px;
+            box-sizing: border-box;
+        }
+        .ct-appearance-height-inputs input:focus {
+            outline: none;
+            border-color: var(--accent, #7aa2f7);
+        }
+        .ct-appearance-height-sep {
+            color: var(--dim, #888);
+            font-size: 0.7rem;
+        }
+        .ct-appearance-height-unit {
+            color: var(--dim, #888);
+            font-size: 0.65rem;
+            font-family: var(--f-mono, ui-monospace, monospace);
+        }
+
+        /* ============================================================
+           MYTHOLOGY TAB
+           ============================================================ */
+        .ct-mythology { width: 100%; }
+        .ct-mythology__overview {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            background: var(--bg2, #222);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            margin-bottom: 16px;
+        }
+        .ct-mythology__overview-label {
+            font-family: var(--f-display, var(--f-body, system-ui));
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--accent, #7aa2f7);
+            font-weight: 600;
+        }
+        .ct-mythology__overview-summary {
+            font-size: 0.72rem;
+            color: var(--dim, #888);
+        }
+        .ct-mythology__text-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        .ct-mythology__list-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+        }
+        .ct-mythology-textarea {
+            width: 100%;
+            padding: 8px 10px;
+            background: var(--bg, #1a1a1a);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            color: var(--text, #e5e5e5);
+            font-family: var(--f-body, system-ui);
+            font-size: 0.75rem;
+            line-height: 1.55;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+        .ct-mythology-textarea:focus {
+            outline: none;
+            border-color: var(--accent, #7aa2f7);
+        }
+        .ct-mythology-wordcount,
+        .ct-mythology-count {
+            font-size: 0.6rem;
+            color: var(--dim, #888);
+            font-family: var(--f-mono, ui-monospace, monospace);
+        }
+        .ct-mythology-tag-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            min-height: 36px;
+            padding: 8px;
+            background: var(--bg, #1a1a1a);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            margin-bottom: 10px;
+        }
+        .ct-mythology-empty {
+            color: var(--dim, #888);
+            font-size: 0.7rem;
+            font-style: italic;
+            align-self: center;
+        }
+        .ct-mythology-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 4px 3px 10px;
+            background: var(--accent-dim, rgba(122, 162, 247, 0.15));
+            color: var(--accent-light, #a8c1f8);
+            border-radius: 12px;
+            font-size: 0.7rem;
+        }
+        .ct-mythology-tag__label { padding: 1px 0; }
+        .ct-mythology-tag__remove {
+            background: transparent;
+            border: none;
+            color: inherit;
+            padding: 0 6px;
+            font-size: 0.65rem;
+            cursor: pointer;
+            opacity: 0.7;
+        }
+        .ct-mythology-tag__remove:hover { opacity: 1; color: var(--danger-lt, #f7768e); }
+        .ct-mythology-add-row {
+            display: flex;
+            gap: 6px;
+        }
+        .ct-mythology-add-input {
+            flex: 1;
+            padding: 6px 10px;
+            background: var(--bg, #1a1a1a);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            color: var(--text, #e5e5e5);
+            font-family: var(--f-body, system-ui);
+            font-size: 0.72rem;
+            box-sizing: border-box;
+        }
+        .ct-mythology-add-input:focus {
+            outline: none;
+            border-color: var(--accent, #7aa2f7);
+        }
+
+        /* ============================================================
+           CHARACTERS TAB
+           ============================================================ */
+        .ct-characters { width: 100%; }
+        .ct-characters__header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+        .ct-characters__stats { display: flex; gap: 8px; }
+        .ct-characters__actions { display: flex; gap: 8px; }
+        .ct-characters__filters {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+        .ct-characters__filters .ct-search { flex: 1; min-width: 200px; }
+        .ct-characters__filters select {
+            padding: 6px 10px;
+            background: var(--bg, #1a1a1a);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            color: var(--text, #e5e5e5);
+            font-family: var(--f-body, system-ui);
+            font-size: 0.72rem;
+        }
+        .ct-characters__list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .ct-character-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            background: var(--bg2, #222);
+            border: 1px solid var(--border, #333);
+            border-left: 3px solid var(--accent, #7aa2f7);
+            border-radius: var(--radius, 4px);
+        }
+        .ct-character-row--deceased {
+            border-left-color: var(--danger-lt, #f7768e);
+            opacity: 0.75;
+        }
+        .ct-character-row__body { flex: 1; min-width: 0; }
+        .ct-character-row__top {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 4px;
+        }
+        .ct-character-row__name {
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: var(--text, #e5e5e5);
+        }
+        .ct-character-row__meta {
+            font-size: 0.65rem;
+            color: var(--dim, #888);
+        }
+        .ct-character-row__sub {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            font-size: 0.65rem;
+            color: var(--dim, #888);
+        }
+        .ct-character-row__appearance {
+            color: var(--accent-light, #a8c1f8);
+            font-family: var(--f-mono, ui-monospace, monospace);
+        }
+        .ct-character-row__appearance--none { color: var(--dim, #888); font-style: italic; }
+        .ct-character-row__actions {
+            display: flex;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+        .ct-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.6rem;
+            font-family: var(--f-mono, ui-monospace, monospace);
+            background: var(--accent-dim, rgba(122, 162, 247, 0.1));
+            color: var(--accent-light, #a8c1f8);
+            white-space: nowrap;
+        }
+        .ct-badge--muted { background: var(--bg3, #2a2a2a); color: var(--dim, #888); }
+        .ct-badge--accent { background: var(--accent, #7aa2f7); color: var(--accent-fg, #111); }
+        .ct-clear {
+            padding: 6px 12px;
+            background: transparent;
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            color: var(--dim, #888);
+            font-family: var(--f-body, system-ui);
+            font-size: 0.72rem;
+            cursor: pointer;
+        }
+        .ct-clear:hover { color: var(--text, #e5e5e5); border-color: var(--accent, #7aa2f7); }
+
+        /* ============================================================
+           NAMES TAB
+           ============================================================ */
+        .ct-names { width: 100%; }
+        .ct-names__cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        .ct-names__card {
+            background: var(--bg2, #222);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            padding: 14px 16px;
+        }
+        .ct-names__card--rules {
+            grid-column: 1 / -1;
+        }
+        .ct-names__card-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
+        .ct-names__card-title {
+            font-family: var(--f-display, var(--f-body, system-ui));
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--accent-light, #a8c1f8);
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .ct-names__card-hint {
+            font-family: var(--f-body, system-ui);
+            font-size: 0.6rem;
+            color: var(--dim, #888);
+            font-weight: 400;
+        }
+        .ct-names__card-count {
+            font-size: 0.65rem;
+            color: var(--dim, #888);
+            font-family: var(--f-mono, ui-monospace, monospace);
+            white-space: nowrap;
+        }
+        .ct-names__field-label {
+            font-size: 0.6rem;
+            color: var(--dim, #888);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin: 8px 0 4px;
+            font-family: var(--f-display, var(--f-body, system-ui));
+        }
+        .ct-names__textarea {
+            width: 100%;
+            padding: 8px 10px;
+            background: var(--bg, #1a1a1a);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            color: var(--text, #e5e5e5);
+            font-family: var(--f-mono, ui-monospace, monospace);
+            font-size: 0.72rem;
+            line-height: 1.5;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+        .ct-names__textarea:focus {
+            outline: none;
+            border-color: var(--accent, #7aa2f7);
+        }
+        .ct-names__bulk-actions {
+            display: flex;
+            gap: 6px;
+            margin: 8px 0 12px;
+            flex-wrap: wrap;
+        }
+        .ct-names__chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            min-height: 36px;
+            padding: 8px;
+            background: var(--bg, #1a1a1a);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            margin-bottom: 10px;
+        }
+        .ct-names__chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 4px 3px 10px;
+            background: var(--accent-dim, rgba(122, 162, 247, 0.15));
+            color: var(--accent-light, #a8c1f8);
+            border-radius: 12px;
+            font-size: 0.7rem;
+        }
+        .ct-names__chip-label { padding: 1px 0; }
+        .ct-names__chip-remove {
+            background: transparent;
+            border: none;
+            color: inherit;
+            padding: 0 6px;
+            font-size: 0.7rem;
+            cursor: pointer;
+            opacity: 0.7;
+        }
+        .ct-names__chip-remove:hover {
+            opacity: 1;
+            color: var(--danger-lt, #f7768e);
+        }
+        .ct-names__empty {
+            color: var(--dim, #888);
+            font-size: 0.7rem;
+            font-style: italic;
+            align-self: center;
+        }
+        .ct-names__add-row {
+            display: flex;
+            gap: 6px;
+        }
+        .ct-names__add-input {
+            flex: 1;
+            padding: 6px 10px;
+            background: var(--bg, #1a1a1a);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            color: var(--text, #e5e5e5);
+            font-family: var(--f-body, system-ui);
+            font-size: 0.72rem;
+            box-sizing: border-box;
+        }
+        .ct-names__add-input:focus {
+            outline: none;
+            border-color: var(--accent, #7aa2f7);
+        }
+
+        .ct-names__form-row {
+            display: grid;
+            grid-template-columns: 180px 1fr;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .ct-names__form-label {
+            font-size: 0.65rem;
+            color: var(--dim, #888);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-family: var(--f-display, var(--f-body, system-ui));
+        }
+        .ct-names__form-input,
+        .ct-names__form-select {
+            padding: 6px 10px;
+            background: var(--bg, #1a1a1a);
+            border: 1px solid var(--border, #333);
+            border-radius: var(--radius, 4px);
+            color: var(--text, #e5e5e5);
+            font-family: var(--f-body, system-ui);
+            font-size: 0.75rem;
+            box-sizing: border-box;
+            width: 100%;
+        }
+        .ct-names__form-input:focus,
+        .ct-names__form-select:focus {
+            outline: none;
+            border-color: var(--accent, #7aa2f7);
+        }
+        .ct-names__form-hint {
+            font-size: 0.65rem;
+            color: var(--dim, #888);
+            margin: 4px 0 8px;
+            line-height: 1.5;
+        }
+        .ct-names__rules-section { margin: 12px 0; }
+        .ct-names__rules-section[hidden] { display: none; }
+
+        /* ============================================================
+           RESPONSIVE
+           ============================================================ */
         @media (max-width: 768px) {
             .topbar .burger-menu { display: inline-flex; }
-            .topbar {
-                padding: 6px 10px;
-                gap: 6px;
-                min-height: 42px;
-            }
+            .topbar { padding: 6px 10px; gap: 6px; min-height: 42px; }
             .topbar .title { font-size: 0.75rem; }
             .topbar .tb-btn { padding: 3px 10px; font-size: 0.65rem; }
             .year-input { padding: 2px 6px; }
             .year-input label { display: none; }
             .year-input input { width: 52px; font-size: 0.65rem; }
-
             .app-layout { flex-direction: column; }
             .sidebar {
                 position: fixed;
@@ -486,41 +1036,41 @@
                 z-index: 1000;
                 transform: translateX(-100%);
                 transition: transform 0.3s ease;
-                box-shadow: none;
             }
             .sidebar.visible { transform: translateX(0); }
             .tab-content-wrapper { padding: 16px; }
-            .manager-subtabs {
-                margin: 0 0 16px;
-                padding-left: 16px;
-                padding-right: 16px;
-            }
-            .manager-subtab {
-                flex: 1 1 auto;
-                min-width: 0;
-                padding: 10px 14px;
-                font-size: 0.72rem;
-            }
+            .manager-subtabs { padding-left: 16px; padding-right: 16px; }
+            .manager-subtab { flex: 1 1 auto; min-width: 0; padding: 10px 14px; font-size: 0.72rem; }
+            .ct-names__form-row { grid-template-columns: 1fr; }
+            .ct-appearance__grid { grid-template-columns: 1fr; }
+            .ct-mythology__list-grid { grid-template-columns: 1fr; }
+        }
+
+        /* ---- Sidebar overlay ---- */
+        .sidebar-overlay { display: none; }
+        .sidebar-overlay.active {
+            display: block;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 999;
         }
     </style>
 </head>
 <body>
 
-<!-- ============================================================
-     TOPBAR
-     ============================================================ -->
 <div class="topbar">
     <button id="menuToggle" class="burger-menu" type="button" aria-label="Toggle menu">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M3 6h18M3 12h18M3 18h18"/>
         </svg>
     </button>
-    <div class="title" id="cultureManagerTitle"></div>
+    <div class="title" id="cultureManagerTitle">Culture Manager</div>
     <div class="spacer"></div>
 
-    <button id="createCultureBtn" class="tb-btn primary" type="button"></button>
-    <button id="editCultureBtn" class="tb-btn" type="button" disabled></button>
-    <button id="deleteCultureBtn" class="tb-btn" type="button" disabled></button>
+    <button id="createCultureBtn" class="tb-btn primary" type="button">+ Culture</button>
+    <button id="editCultureBtn" class="tb-btn" type="button" disabled>Edit</button>
+    <button id="deleteCultureBtn" class="tb-btn" type="button" disabled>Delete</button>
 
     <div class="year-input">
         <label for="yearInput">Year</label>
@@ -528,9 +1078,9 @@
         <button id="setYearBtn" class="tb-btn" type="button">Set</button>
     </div>
 
-    <button id="importBtn" class="tb-btn" type="button"></button>
-    <button id="exportBtn" class="tb-btn" type="button"></button>
-    <button id="refreshBtn" class="tb-btn" type="button"></button>
+    <button id="importBtn" class="tb-btn" type="button">Import</button>
+    <button id="exportBtn" class="tb-btn" type="button">Export</button>
+    <button id="refreshBtn" class="tb-btn" type="button">Refresh</button>
 
     <input type="file" id="fileInput" accept=".json" style="display:none;" />
 
@@ -543,12 +1093,9 @@
     </div>
 </div>
 
-<!-- ============================================================
-     APP SHELL
-     ============================================================ -->
 <div class="app-layout">
     <div class="sidebar" id="cultureSidebar">
-        <div class="sidebar-header"><h3 id="sidebarTitle"></h3></div>
+        <div class="sidebar-header"><h3 id="sidebarTitle">Cultures</h3></div>
         <div class="sidebar-list" id="cultureListContainer">
             <div class="loading">Loading cultures…</div>
         </div>
@@ -590,8 +1137,13 @@
 </div>
 
 <!-- ================================================================
-     BLOCK 1 — CORE CONSTANTS (load-order Block 1)
+     SCRIPTS
+     Order follows the load-order file, adjusted for the culture
+     subsystem's actual dependencies. See the "Order of application"
+     section in the delivery message before applying.
      ================================================================ -->
+
+<!-- Core constants -->
 <script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
 <script src="js/core/constants/character-constants.js"></script>
@@ -599,24 +1151,17 @@
 <script src="js/core/constants/location-constants.js"></script>
 <script src="js/core/constants/relationship-constants.js"></script>
 
-<!-- ================================================================
-     BLOCK 2 — CORE UTILITIES (load-order Block 2)
-     ================================================================ -->
+<!-- Core utilities -->
 <script src="js/core/formatting.js"></script>
 <script src="js/core/icons.js"></script>
 <script src="js/core/collections.js"></script>
 <script src="js/core/ids.js"></script>
 <script src="js/core/randomness.js"></script>
 
-<!-- ================================================================
-     BLOCK 3 — CORE TIME (load-order Block 3)
-     ================================================================ -->
+<!-- Core time -->
 <script src="js/core/time.js"></script>
 
-<!-- ================================================================
-     BLOCK 4 — CORE STORAGE + PlaceQueries façade
-     (load-order Block 4, verbatim)
-     ================================================================ -->
+<!-- Core storage + PlaceQueries façade -->
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
 <script>
@@ -627,7 +1172,6 @@
     })();
 </script>
 <script src="js/core/accessors.js"></script>
-
 <script>
     (function () {
         'use strict';
@@ -652,16 +1196,12 @@
     })();
 </script>
 
-<!-- ================================================================
-     BLOCK 5 — CORE VALIDATION, WORLD, NAMES (load-order Block 5)
-     ================================================================ -->
+<!-- Core validation, world, names (core's, not the name subsystem) -->
 <script src="js/core/validation.js"></script>
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
 
-<!-- ================================================================
-     BLOCK 6 — CORE UI PRIMITIVES (load-order Block 6)
-     ================================================================ -->
+<!-- Core UI primitives -->
 <script src="js/core/ui.js"></script>
 <script src="js/core/ui-state.js"></script>
 <script src="js/core/modals-core.js"></script>
@@ -670,69 +1210,40 @@
 <script src="js/core/tab-manager.js"></script>
 <script src="js/core/exportUtils.js"></script>
 
-<!-- ================================================================
-     BLOCK 7 — CORE INTEGRITY / MAINTENANCE (load-order Block 7)
-     ================================================================ -->
-<script src="js/core/integrity.js"></script>
-<script src="js/core/maintenance.js"></script>
-
-<!-- ================================================================
-     BLOCK 8 — CORE SIMULATION GENERATORS (load-order Block 8)
-     ================================================================ -->
-<script src="js/core/simulation-generators.js"></script>
-
-<!-- ================================================================
-     BLOCK 9 — SKILL TAXONOMY (load-order Block 9)
-     ================================================================ -->
+<!-- Skill taxonomy -->
 <script src="js/roles/skill-utils.js"></script>
 
-<!-- ================================================================
-     BLOCK 9b — EVENT LOGGER (load-order Block 9b)
-     ================================================================ -->
+<!-- Event logger + events -->
 <script src="js/events/eventLogger.js"></script>
-
-<!-- ================================================================
-     BLOCK 10 — EVENTS (load-order Block 10)
-     ================================================================ -->
 <script src="js/events/timeline-core.js"></script>
 <script src="js/events/census-core.js"></script>
 <script src="js/events/annualProcessing.js"></script>
 <script src="js/events/social-events-system.js"></script>
 
-<!-- ================================================================
-     BLOCK 11 — CHARACTER PURE POLICY (load-order Block 11)
-     ================================================================ -->
+<!-- Character pure policy -->
 <script src="js/character/family-rules.js"></script>
 <script src="js/character/children-rules.js"></script>
 <script src="js/character/mortality-rules.js"></script>
 
-<!-- ================================================================
-     BLOCK 12 — CHARACTER STATE (load-order Block 12)
-     ================================================================ -->
+<!-- Character state -->
 <script src="js/character/character-state.js"></script>
 <script src="js/character/family-state.js"></script>
 <script src="js/character/children-state.js"></script>
 
-<!-- ================================================================
-     BLOCK 13 — CHARACTER COMMANDS & QUERIES (load-order Block 13)
-     ================================================================ -->
+<!-- Character commands & queries -->
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
 <script src="js/character/family-queries.js"></script>
 <script src="js/character/family-commands.js"></script>
 
-<!-- ================================================================
-     BLOCK 14 — CHARACTER AGGREGATION + LIFECYCLE (load-order Block 14)
-     ================================================================ -->
+<!-- Character aggregation + lifecycle -->
 <script src="js/character/mortality-queries.js"></script>
 <script src="js/character/mortality-statistics.js"></script>
 <script src="js/character/family-statistics.js"></script>
 <script src="js/character/character-statistics.js"></script>
 <script src="js/character/character-lifecycle.js"></script>
 
-<!-- ================================================================
-     BLOCK 14b — CHARACTER SELECTOR (load-order Block 14b)
-     ================================================================ -->
+<!-- Selectors -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
 <script>
@@ -747,37 +1258,19 @@
 </script>
 <script src="js/selectors/modals-char-selector.js"></script>
 
-<!-- ================================================================
-     BLOCK 15 — CHARACTER FACTORY & CREATION (load-order Block 15)
-     ================================================================ -->
+<!-- Character factory & creation -->
 <script src="js/character/character-factory.js"></script>
 <script src="js/character/character-generator.js"></script>
 <script src="js/character/character-creation-commands.js"></script>
 <script src="js/character/character-deletion-commands.js"></script>
 
-<!-- ================================================================
-     BLOCK 16 — CHARACTER CHILDREN (load-order Block 16)
-     ================================================================ -->
+<!-- Character children -->
 <script src="js/character/children-queries.js"></script>
 <script src="js/character/children-generator.js"></script>
 <script src="js/character/children-commands.js"></script>
 <script src="js/character/children-statistics.js"></script>
 
-<!-- ================================================================
-     BLOCK 17 — NAME SUBSYSTEM (load-order Block 17)
-     culture-names-tab.js needs NameQueries, NameCommands, NameRules,
-     NameState.
-     ================================================================ -->
-<script src="js/names/name-queries.js"></script>
-<script src="js/names/name-rules.js"></script>
-<script src="js/names/names-state.js"></script>
-<script src="js/names/name-commands.js"></script>
-<script src="js/names/name-system.js"></script>
-<script src="js/names/modals-name.js"></script>
-
-<!-- ================================================================
-     BLOCK 18 — RANK SUBSYSTEM (load-order Block 18)
-     ================================================================ -->
+<!-- Ranks -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
 <script src="js/ranks/rank-state.js"></script>
@@ -789,9 +1282,7 @@
 <script src="js/ranks/modals-rank.js"></script>
 <script src="js/ranks/rank-bootstrap.js"></script>
 
-<!-- ================================================================
-     BLOCK 19 — ROLE SUBSYSTEM (load-order Block 19)
-     ================================================================ -->
+<!-- Roles -->
 <script src="js/roles/role-constants.js"></script>
 <script src="js/roles/role-state.js"></script>
 <script src="js/roles/role-queries.js"></script>
@@ -801,10 +1292,7 @@
 <script src="js/roles/modals-roles.js"></script>
 <script src="js/roles/modals-role-select.js"></script>
 
-<!-- ================================================================
-     BLOCK 20 — RELIGION SUBSYSTEM (load-order Block 20)
-     culture-queries.js HARD-depends on ReligionQueries.
-     ================================================================ -->
+<!-- Religion -->
 <script src="js/religion/religion-constants.js"></script>
 <script src="js/religion/religion-format.js"></script>
 <script src="js/religion/religion-validation.js"></script>
@@ -820,72 +1308,7 @@
 <script src="js/religion/modals-religion.js"></script>
 <script src="js/religion/religion-bootstrap.js"></script>
 
-<!-- ================================================================
-     BLOCK 35 — SETTLEMENT SUBSYSTEM (load-order Block 35)
-     Culture reads settlement-queries.js's projections via
-     settlement-queries.js and its siblings. The commands and the
-     annual processor are not read by culture and are omitted here;
-     index.html still loads them.
-     ================================================================ -->
-<script src="js/settlement/settlement-fiscal-definitions.js"></script>
-<script src="js/settlement/settlement-government-definitions.js"></script>
-<script src="js/settlement/settlement-rank-definitions.js"></script>
-<script src="js/settlement/settlement-law-definitions.js"></script>
-<script src="js/settlement/settlement-finance-definitions.js"></script>
-<script src="js/settlement/settlement-prosperity-definitions.js"></script>
-<script src="js/settlement/settlement-feature-definitions.js"></script>
-<script src="js/settlement/settlement-education-definitions.js"></script>
-
-<script src="js/settlement/settlement-rank-rules.js"></script>
-<script src="js/settlement/settlement-fiscal-rules.js"></script>
-<script src="js/settlement/settlement-government-rules.js"></script>
-<script src="js/settlement/settlement-feature-rules.js"></script>
-<script src="js/settlement/settlement-law-rules.js"></script>
-
-<script src="js/settlement/settlement-state.js"></script>
-<script src="js/settlement/settlement-command-commit.js"></script>
-
-<script src="js/settlement/settlement-rank-queries.js"></script>
-<script src="js/settlement/settlement-queries.js"></script>
-<script src="js/settlement/settlement-feature-queries.js"></script>
-<script src="js/settlement/settlement-law-queries.js"></script>
-<script src="js/settlement/settlement-education-queries.js"></script>
-<script src="js/settlement/settlement-religion-queries.js"></script>
-<script src="js/settlement/settlement-employment-queries.js"></script>
-<script src="js/settlement/settlement-economy-queries.js"></script>
-<script src="js/settlement/settlement-crime-queries.js"></script>
-<script src="js/settlement/settlement-prosperity-queries.js"></script>
-
-<script src="js/settlement/settlement-factory.js"></script>
-<script src="js/settlement/settlement-view-models.js"></script>
-<script src="js/settlement/settlement-ui-state.js"></script>
-
-<!-- ================================================================
-     BLOCK 21 — CULTURE SUBSYSTEM (load-order Block 21)
-     Order preserved verbatim from the load-order file:
-       constants → validation → state → rules → commands → queries
-       → generation → view-models → ui-list → modals → bootstrap
-     culture-rules.js is in the load-order file at this exact slot.
-     ================================================================ -->
-<script src="js/culture/culture-constants.js"></script>
-<script src="js/culture/culture-validation.js"></script>
-<script src="js/culture/culture-state.js"></script>
-<script src="js/culture/culture-rules.js"></script>
-<script src="js/culture/culture-commands.js"></script>
-<script src="js/culture/culture-queries.js"></script>
-<script src="js/culture/culture-generation.js"></script>
-<script src="js/culture/culture-view-models.js"></script>
-<script src="js/culture/culture-ui-list.js"></script>
-<script src="js/culture/modals-culture.js"></script>
-<script src="js/culture/culture-bootstrap.js"></script>
-
-<!-- ================================================================
-     BLOCK 34 — LOCATION SUBSYSTEM (load-order Block 34)
-     Culture's PlaceQueries façade resolves through LocationState
-     and LocationQueries at call time; loading this block after
-     culture is correct per the load-order file (Block 34 follows
-     Block 21).
-     ================================================================ -->
+<!-- Location (needed before culture; PlaceQueries reads through LocationState) -->
 <script src="js/location/location-state.js"></script>
 <script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-commands.js"></script>
@@ -900,11 +1323,27 @@
 <script src="js/location/modals-moves.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
-<!-- ================================================================
-     BLOCK 39 — CHARACTER UI MODALS + character-system (load-order Block 39)
-     character-system.js re-installs window.getCharacterById with the
-     projection override that culture-queries.js's header documents.
-     ================================================================ -->
+<!-- Culture subsystem (the whole point of this file) -->
+<script src="js/culture/culture-constants.js"></script>
+<script src="js/culture/culture-validation.js"></script>
+<script src="js/culture/culture-state.js"></script>
+<script src="js/culture/culture-commands.js"></script>
+<script src="js/culture/culture-queries.js"></script>
+<script src="js/culture/culture-generation.js"></script>
+<script src="js/culture/culture-view-models.js"></script>
+<script src="js/culture/culture-ui-list.js"></script>
+<script src="js/culture/modals-culture.js"></script>
+<script src="js/culture/culture-bootstrap.js"></script>
+
+<!-- Name subsystem (culture-keyed) -->
+<script src="js/modules/names/name-queries.js"></script>
+<script src="js/modules/names/name-rules.js"></script>
+<script src="js/modules/names/name-state.js"></script>
+<script src="js/modules/names/name-commands.js"></script>
+<script src="js/modules/names/name-system.js"></script>
+<script src="js/modules/names/modals-name.js"></script>
+
+<!-- Character UI modals (need culture-queries for projections) -->
 <script src="js/character/character-ui-list.js"></script>
 <script src="js/character/modals-character.js"></script>
 <script src="js/character/modals-children-birth.js"></script>
@@ -913,11 +1352,7 @@
 <script src="js/character/modals-death.js"></script>
 <script src="js/character/character-system.js"></script>
 
-<!-- ================================================================
-     BLOCK 40 (culture subset) — CULTURE EDITOR HOST + TABS
-     culture-editor-tab.js installs window.CultureEditorTabs. The
-     four tab files register themselves against it.
-     ================================================================ -->
+<!-- Culture editor + tabs -->
 <script src="js/tabs/culture-editor-tab.js"></script>
 <script src="js/tabs/culture-appearance-tab.js"></script>
 <script src="js/tabs/culture-mythology-tab.js"></script>
@@ -931,7 +1366,6 @@
 (function () {
     'use strict';
 
-    // ---- DOM handles ----
     var cultureContainer = document.getElementById('cultureListContainer');
     var sidebar          = document.getElementById('cultureSidebar');
     var sidebarOverlay   = document.getElementById('sidebarOverlay');
@@ -950,44 +1384,30 @@
         document.querySelectorAll('.manager-subtabs .manager-subtab')
     );
 
-    // ---- Per-session state ----
     var selectedCultureId = null;
     var activeTabId        = 'details';
     var isInitialized      = false;
 
-    // =================================================================
-    // Bootstrap
-    // =================================================================
     function bootstrap() {
         if (isInitialized) return;
         isInitialized = true;
-
-        setupUIText();
 
         if (typeof window.loadMasterData === 'function') {
             try { window.loadMasterData(); }
             catch (e) { console.error('[culture-manager] loadMasterData failed:', e); }
         }
 
-        // Cross-domain indexes that culture reads (PlaceQueries,
-        // CharacterQueries, ReligionQueries). Order matches the
-        // application bootstrap block at the bottom of the load-order
-        // file, minus the subsystems CultureManager does not render.
         if (window.RankBootstrap && typeof window.RankBootstrap.init === 'function') {
-            try { window.RankBootstrap.init(); }
-            catch (e) { console.error('[culture-manager] RankBootstrap failed:', e); }
+            try { window.RankBootstrap.init(); } catch (e) { console.error(e); }
         }
         if (window.ReligionBootstrap && typeof window.ReligionBootstrap.init === 'function') {
-            try { window.ReligionBootstrap.init(); }
-            catch (e) { console.error('[culture-manager] ReligionBootstrap failed:', e); }
+            try { window.ReligionBootstrap.init(); } catch (e) { console.error(e); }
         }
         if (window.LocationBootstrap && typeof window.LocationBootstrap.init === 'function') {
-            try { window.LocationBootstrap.init(); }
-            catch (e) { console.error('[culture-manager] LocationBootstrap failed:', e); }
+            try { window.LocationBootstrap.init(); } catch (e) { console.error(e); }
         }
         if (window.CultureBootstrap && typeof window.CultureBootstrap.init === 'function') {
-            try { window.CultureBootstrap.init(); }
-            catch (e) { console.error('[culture-manager] CultureBootstrap failed:', e); }
+            try { window.CultureBootstrap.init(); } catch (e) { console.error(e); }
         }
 
         injectIcons();
@@ -997,9 +1417,6 @@
         syncTabButtons(activeTabId);
     }
 
-    // =================================================================
-    // Icons
-    // =================================================================
     function injectIcons() {
         if (typeof window.Icons === 'undefined') {
             setTimeout(injectIcons, 100);
@@ -1014,51 +1431,18 @@
         }
     }
 
-    function setupUIText() {
-        var title = document.getElementById('cultureManagerTitle');
-        if (title) title.innerHTML = iconWithText(getIcon('CULTURE'), ' CULTURE MANAGER');
-
-        var sidebarTitle = document.getElementById('sidebarTitle');
-        if (sidebarTitle) sidebarTitle.innerHTML = iconWithText(getIcon('CULTURE'), ' CULTURES');
-
-        if (createCultureBtn) createCultureBtn.innerHTML = iconWithText(getIcon('PLUS'), ' Add Culture');
-        if (editCultureBtn)   editCultureBtn.innerHTML   = iconWithText(getIcon('EDIT'), ' Edit');
-        if (deleteCultureBtn) deleteCultureBtn.innerHTML = iconWithText(getIcon('TRASH'), ' Delete');
-        if (importBtn)        importBtn.innerHTML        = iconWithText(getIcon('ARROW_RIGHT'), ' Import');
-        if (exportBtn)        exportBtn.innerHTML        = iconWithText(getIcon('ARROW_RIGHT'), ' Export');
-        if (refreshBtn)       refreshBtn.innerHTML       = iconWithText(getIcon('REFRESH'), ' Refresh');
-    }
-
-    function getIcon(name) {
-        return (window.Icons && window.Icons[name]) ? window.Icons[name] : '';
-    }
-    function iconWithText(icon, text) {
-        if (!icon) return text || '';
-        return '<span style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">' +
-               icon + '<span>' + (text || '') + '</span></span>';
-    }
-
-    // =================================================================
-    // Sidebar rendering
-    // =================================================================
     function renderCultureList() {
         if (!cultureContainer) return;
 
-        var UI = window.CultureUIList || window.CultureUI;
+        var UI = window.CultureUI || window.CultureUIList;
         var Queries = window.CultureQueries;
-
         var cultures = [];
         try {
             cultures = Queries ? Queries.getAllCultures() : [];
-        } catch (e) {
-            console.error('[culture-manager] getAllCultures failed:', e);
-            cultures = [];
-        }
+        } catch (e) { cultures = []; }
 
         if (UI && typeof UI.renderCultureList === 'function') {
             try {
-                // Correct signature: renderCultureList(containerId, options),
-                // where options carries `cultures` and `onSelect`.
                 UI.renderCultureList(cultureContainer, {
                     cultures: cultures,
                     selectedId: selectedCultureId,
@@ -1067,9 +1451,7 @@
                     }
                 });
                 return;
-            } catch (e) {
-                console.error('[culture-manager] renderCultureList failed:', e);
-            }
+            } catch (e) { console.error(e); }
         }
         renderCultureListFallback(cultures);
     }
@@ -1078,29 +1460,25 @@
         if (!cultureContainer) return;
         if (!cultures || cultures.length === 0) {
             cultureContainer.innerHTML =
-                '<div class="empty-state">' +
-                '<div class="message">No cultures found</div>' +
-                '<div class="sub-message">Click "+ Culture" to add one</div>' +
+                '<div class="ct-empty">' +
+                '<div>No cultures found</div>' +
+                '<div class="ct-empty__sub">Click "+ Culture" to add one</div>' +
                 '</div>';
             return;
         }
-        var html = '<div class="culture-list">';
+        var html = '';
         for (var i = 0; i < cultures.length; i++) {
             var c = cultures[i];
             var sel = c.id === selectedCultureId ? ' is-selected' : '';
-            html += '<div class="culture-row' + sel + '" data-culture-id="' + c.id + '">' +
-                '<div class="culture-row__icon">' + (c.icon || '✦') + '</div>' +
-                '<div class="culture-row__main">' +
-                '<div class="culture-row__label">' + escapeHtml(c.displayName || c.name) + '</div>' +
-                (c.description
-                    ? '<div class="culture-row__desc">' + escapeHtml(c.description) + '</div>'
-                    : '') +
-                '</div></div>';
+            html += '<div class="culture-row' + sel + '" data-culture-id="' + c.id + '"' +
+                ' style="padding:8px;border-radius:4px;cursor:pointer;margin:2px 0;background:' +
+                (sel ? 'var(--accent-dim)' : 'transparent') + ';">' +
+                '<div style="font-size:0.78rem;color:var(--text)">' +
+                escapeHtml(c.displayName || c.name) + '</div>' +
+                '</div>';
         }
-        html += '</div>';
         cultureContainer.innerHTML = html;
-
-        var rows = cultureContainer.querySelectorAll('.culture-row');
+        var rows = cultureContainer.querySelectorAll('[data-culture-id]');
         for (var j = 0; j < rows.length; j++) {
             (function (row) {
                 row.addEventListener('click', function () {
@@ -1127,16 +1505,13 @@
     function selectCulture(id) {
         if (!id) return;
         selectedCultureId = id;
-        if (editCultureBtn)   editCultureBtn.disabled   = false;
+        if (editCultureBtn) editCultureBtn.disabled = false;
         if (deleteCultureBtn) deleteCultureBtn.disabled = false;
         renderCultureList();
         renderActiveTab();
         if (window.innerWidth <= 768) closeSidebar();
     }
 
-    // =================================================================
-    // Tab dispatch
-    // =================================================================
     function activateTab(tabId) {
         activeTabId = tabId;
         syncTabButtons(tabId);
@@ -1182,216 +1557,106 @@
             culture = window.CultureQueries
                 ? window.CultureQueries.getCultureById(selectedCultureId)
                 : null;
-        } catch (e) {
-            console.error('[culture-manager] getCultureById failed:', e);
-        }
+        } catch (e) { /* ignore */ }
         if (!culture) {
             setEmptyState(container, 'Culture not found');
             return;
         }
 
-        if (activeTabId === 'details') {
-            renderDetailsView(container, culture);
+        // Render the tab's real content, not a preview.
+        // The CultureEditorTabs registry holds the render functions;
+        // we call them directly against the tab pane.
+        var tab = _getRegisteredTab(activeTabId);
+        if (tab && typeof tab.render === 'function') {
+            try { tab.render(container, culture); }
+            catch (e) {
+                container.innerHTML =
+                    '<div class="rt-unavailable">' +
+                    'Error rendering tab: ' + escapeHtml(e.message || 'unknown') +
+                    '</div>';
+                console.error('[culture-manager] tab render threw:', e);
+            }
             return;
         }
-        renderTabPreview(container, culture, activeTabId);
+
+        // Fall back to details if the tab isn't registered.
+        if (activeTabId === 'details') {
+            renderDetailsView(container, culture);
+        } else {
+            setEmptyState(container, 'Tab not available.');
+        }
+    }
+
+    function _getRegisteredTab(tabId) {
+        // CultureEditorTabs exposes the registry but not the render fns.
+        // The tab files expose their tab objects directly on window
+        // (AppearanceTab, MythologyTab, etc.) and also register them.
+        // We prefer the window globals so the manager can call render
+        // without opening the editor modal.
+        if (tabId === 'appearance' && window.AppearanceTab) return window.AppearanceTab;
+        if (tabId === 'mythology' && window.MythologyTab) return window.MythologyTab;
+        if (tabId === 'characters' && window.CharactersTab) return window.CharactersTab;
+        if (tabId === 'names' && window.CultureNamesTab) return window.CultureNamesTab;
+        return null;
     }
 
     function renderDetailsView(container, culture) {
         var desc = culture.description
-            ? '<p class="culture-card__desc">' + escapeHtml(culture.description) + '</p>'
+            ? '<p class="ct-hint">' + escapeHtml(culture.description) + '</p>'
             : '';
         var notes = culture.notes
-            ? '<div class="culture-card__notes">' + escapeHtml(culture.notes) + '</div>'
+            ? '<p class="ct-hint">' + escapeHtml(culture.notes) + '</p>'
             : '';
-        var locations = (culture.locations && culture.locations.length > 0)
-            ? '<div class="culture-card__relation">' +
-              '<span class="culture-card__relation-label">Locations</span>' +
-              '<span class="culture-card__relation-values">' +
-              culture.locations.length + ' linked</span></div>'
-            : '';
-
-        var html =
-            '<div class="culture-card">' +
-            '<div class="culture-card__header">' +
-            '<div class="culture-card__icon">' + escapeHtml(culture.icon || '✦') + '</div>' +
-            '<div class="culture-card__label">' +
-            escapeHtml(culture.displayName || culture.name) + '</div>' +
-            '</div>' +
-            desc +
-            '<div class="culture-card__relations">' + locations + '</div>' +
-            notes +
-            '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">' +
-            '<button type="button" class="tb-btn primary" id="ct_details_edit">Edit Details</button>' +
-            '<button type="button" class="tb-btn" id="ct_details_open_editor">Open Full Editor</button>' +
-            '</div>' +
+        var stats = '<div class="ct-card"><div class="ct-card__header">' +
+            '<div class="ct-card__title">' + escapeHtml(culture.displayName || culture.name) + '</div>' +
+            '</div>' + desc + notes +
+            '<button type="button" class="rt-btn rt-btn--primary" id="ct_details_edit">Edit Details</button>' +
             '</div>';
-
-        container.innerHTML = html;
-
-        var editBtn = container.querySelector('#ct_details_edit');
-        if (editBtn) {
-            editBtn.addEventListener('click', function () {
-                openEditCulture(culture.id);
-            });
-        }
-        var openBtn = container.querySelector('#ct_details_open_editor');
-        if (openBtn) {
-            openBtn.addEventListener('click', function () {
-                openEditor(culture.id, 'details');
-            });
-        }
-    }
-
-    function renderTabPreview(container, culture, tabId) {
-        var labelMap = {
-            appearance: 'Appearance',
-            mythology:  'Mythology',
-            characters: 'Characters',
-            names:      'Names'
-        };
-        var tabLabel = labelMap[tabId] || tabId;
-
-        var summary = '';
-        if (tabId === 'appearance') {
-            var ap = culture.appearance || {};
-            var cats = ['skinTones', 'eyeColors', 'hairColors', 'hairTypes', 'buildTypes', 'commonFeatures'];
-            var parts = [];
-            for (var i = 0; i < cats.length; i++) {
-                var list = ap[cats[i]];
-                if (Array.isArray(list) && list.length > 0) {
-                    parts.push(cats[i] + ': ' + list.length + ' options');
-                }
-            }
-            summary = parts.length > 0
-                ? '<ul class="ct-details__list">' +
-                  parts.map(function (p) { return '<li>' + escapeHtml(p) + '</li>'; }).join('') +
-                  '</ul>'
-                : '<p class="culture-card__desc">No appearance options defined.</p>';
-        } else if (tabId === 'mythology') {
-            var my = culture.mythology || {};
-            var sections = ['creation', 'afterlife', 'cosmology'];
-            var sParts = [];
-            for (var j = 0; j < sections.length; j++) {
-                if (my[sections[j]]) {
-                    sParts.push('<li><strong>' + sections[j] + ':</strong> ' +
-                        escapeHtml(String(my[sections[j]]).substring(0, 80)) +
-                        (String(my[sections[j]]).length > 80 ? '…' : '') + '</li>');
-                }
-            }
-            summary = sParts.length > 0
-                ? '<ul class="ct-details__list">' + sParts.join('') + '</ul>'
-                : '<p class="culture-card__desc">No mythology defined.</p>';
-        } else if (tabId === 'characters') {
-            var chars = [];
-            try {
-                chars = window.CultureQueries
-                    ? window.CultureQueries.getCharactersForCulture(culture.id)
-                    : [];
-            } catch (e) { /* ignore */ }
-            summary = chars.length > 0
-                ? '<p class="culture-card__desc">' + chars.length + ' character(s) assigned.</p>'
-                : '<p class="culture-card__desc">No characters assigned.</p>';
-        } else if (tabId === 'names') {
-            summary = '<p class="culture-card__desc">' +
-                'Names are managed through the culture editor modal. ' +
-                'Open the editor to add male names, female names, surnames, ' +
-                'and surname rules.</p>';
-        }
-
-        container.innerHTML =
-            '<div class="culture-card">' +
-            '<div class="culture-card__header">' +
-            '<div class="culture-card__label">' + escapeHtml(tabLabel) + '</div>' +
-            '</div>' +
-            summary +
-            '<div style="display:flex;gap:8px;margin-top:12px;">' +
-            '<button type="button" class="tb-btn primary" id="ct_preview_edit">' +
-            'Open ' + escapeHtml(tabLabel) + ' Editor</button>' +
-            '</div>' +
-            '</div>';
-
-        var editBtn = container.querySelector('#ct_preview_edit');
-        if (editBtn) {
-            editBtn.addEventListener('click', function () {
-                openEditor(culture.id, tabId);
-            });
-        }
+        container.innerHTML = stats;
+        var btn = container.querySelector('#ct_details_edit');
+        if (btn) btn.addEventListener('click', function () { openEditCulture(culture.id); });
     }
 
     function setEmptyState(container, message) {
-        container.innerHTML = '<div class="empty-state">' +
-            '<div class="message">' + escapeHtml(message) + '</div>' +
-            '</div>';
+        container.innerHTML = '<div class="ct-empty">' + escapeHtml(message) + '</div>';
     }
 
-    // =================================================================
-    // Composite editor launcher
-    // =================================================================
-    function openEditor(cultureId, initialTab) {
-        if (!window.CultureEditorTabs
-            || typeof window.CultureEditorTabs.openEditor !== 'function') {
-            window.alert('Culture editor is not loaded. Check that ' +
-                'js/tabs/culture-editor-tab.js and the four tab files loaded.');
-            return;
-        }
-        window.CultureEditorTabs.openEditor(cultureId, {
-            initialTab: initialTab || 'appearance',
-            onSave: function (updated) {
-                renderCultureList();
-                if (updated && updated.id === selectedCultureId) {
-                    renderActiveTab();
-                }
-            },
-            onCancel: function () {
-                // Editor discarded its working copy; nothing to do.
-            }
-        });
-    }
-
-    // =================================================================
-    // Create / edit / delete culture (modals-culture.js)
-    // =================================================================
     function openCreateCulture() {
         if (typeof window.openCreateCultureModal !== 'function') {
-            window.alert('Create Culture modal not loaded (modals-culture.js).');
+            window.alert('Create Culture modal not loaded.');
             return;
         }
         window.openCreateCultureModal({
             onSuccess: function (newCulture) {
                 renderCultureList();
-                if (newCulture && newCulture.id) {
-                    selectCulture(newCulture.id);
-                }
+                if (newCulture && newCulture.id) selectCulture(newCulture.id);
             }
         });
     }
 
     function openEditCulture(id) {
         if (typeof window.openEditCultureModal !== 'function') {
-            window.alert('Edit Culture modal not loaded (modals-culture.js).');
+            window.alert('Edit Culture modal not loaded.');
             return;
         }
         window.openEditCultureModal(id, {
-            onSuccess: function (updated) {
+            onSuccess: function () {
                 renderCultureList();
-                if (updated && updated.id === selectedCultureId) {
-                    renderActiveTab();
-                }
+                renderActiveTab();
             }
         });
     }
 
     function openDeleteCulture(id) {
         if (typeof window.openDeleteCultureModal !== 'function') {
-            window.alert('Delete Culture modal not loaded (modals-culture.js).');
+            window.alert('Delete Culture modal not loaded.');
             return;
         }
         window.openDeleteCultureModal(id, {
             onSuccess: function () {
                 if (selectedCultureId === id) {
                     selectedCultureId = null;
-                    if (editCultureBtn)   editCultureBtn.disabled   = true;
+                    if (editCultureBtn) editCultureBtn.disabled = true;
                     if (deleteCultureBtn) deleteCultureBtn.disabled = true;
                 }
                 renderCultureList();
@@ -1401,16 +1666,13 @@
     }
 
     if (createCultureBtn) createCultureBtn.addEventListener('click', openCreateCulture);
-    if (editCultureBtn)   editCultureBtn.addEventListener('click', function () {
+    if (editCultureBtn) editCultureBtn.addEventListener('click', function () {
         if (selectedCultureId) openEditCulture(selectedCultureId);
     });
     if (deleteCultureBtn) deleteCultureBtn.addEventListener('click', function () {
         if (selectedCultureId) openDeleteCulture(selectedCultureId);
     });
 
-    // =================================================================
-    // Sidebar toggle (matches LocationManager)
-    // =================================================================
     function openSidebar() {
         if (sidebar) sidebar.classList.add('visible');
         if (sidebarOverlay) sidebarOverlay.classList.add('active');
@@ -1424,19 +1686,12 @@
         if (sidebar.classList.contains('visible')) closeSidebar();
         else openSidebar();
     }
-
     if (menuToggle) menuToggle.addEventListener('click', toggleSidebar);
     if (sidebarOverlay) sidebarOverlay.addEventListener('click', closeSidebar);
-    document.addEventListener('keydown', function (e) {
+    window.addEventListener('keydown', function (e) {
         if (e.key === 'Escape') closeSidebar();
     });
-    window.addEventListener('resize', function () {
-        if (window.innerWidth > 768) closeSidebar();
-    });
 
-    // =================================================================
-    // Year control (matches LocationManager)
-    // =================================================================
     function syncYearInput() {
         if (!yearInput) return;
         try {
@@ -1450,76 +1705,34 @@
             }
         } catch (e) { /* ignore */ }
     }
-
-    function applyYear() {
-        if (!yearInput) return;
+    if (setYearBtn) setYearBtn.addEventListener('click', function () {
         var val = parseInt(yearInput.value, 10);
-        if (!isFinite(val)) {
-            window.alert('Enter a valid year.');
-            return;
-        }
-        if (typeof window.isValidYear === 'function' && window.isValidYear(val) !== true) {
-            window.alert('Year is outside the allowed range.');
-            return;
-        }
+        if (!isFinite(val)) { window.alert('Enter a valid year.'); return; }
         if (typeof window.setCurrentYear === 'function') {
             try {
-                var result = window.setCurrentYear(val);
-                if (result === false) {
-                    window.alert('Could not set year.');
-                    return;
+                if (window.setCurrentYear(val) === false) {
+                    window.alert('Could not set year.'); return;
                 }
-            } catch (e) {
-                window.alert('Set year failed: ' + (e.message || 'unknown'));
-                return;
-            }
-        } else {
-            if (!window.masterData || !window.masterData.data) {
-                window.alert('Storage not initialized.');
-                return;
-            }
+            } catch (e) { window.alert('Set year failed.'); return; }
+        } else if (window.masterData && window.masterData.data) {
             window.masterData.data.currentYear = val;
-            if (typeof window.markDataDirty === 'function') {
-                try { window.markDataDirty(); } catch (e) { /* ignore */ }
-            }
-            if (typeof window.saveMasterData === 'function') {
-                try { window.saveMasterData(); } catch (e) { /* ignore */ }
-            }
+            if (typeof window.markDataDirty === 'function') window.markDataDirty();
+            if (typeof window.saveMasterData === 'function') window.saveMasterData();
         }
         syncYearInput();
         renderActiveTab();
-    }
-
-    if (setYearBtn) setYearBtn.addEventListener('click', applyYear);
-    if (yearInput) yearInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') { e.preventDefault(); applyYear(); }
     });
 
-    // =================================================================
-    // Export / import (matches LocationManager's flow)
-    // =================================================================
-    if (exportBtn) {
-        exportBtn.addEventListener('click', function () {
-            if (typeof window.exportData === 'function') {
-                try { window.exportData(); }
-                catch (e) { window.alert('Export failed: ' + (e.message || 'unknown')); }
-                return;
-            }
-            if (typeof window.exportToJSON === 'function' && window.masterData) {
-                try { window.exportToJSON(window.masterData, 'stillwaters'); }
-                catch (e) { window.alert('Export failed: ' + (e.message || 'unknown')); }
-                return;
-            }
-            window.alert('Export module not available.');
-        });
-    }
+    if (exportBtn) exportBtn.addEventListener('click', function () {
+        if (typeof window.exportData === 'function') { window.exportData(); return; }
+        if (typeof window.exportToJSON === 'function' && window.masterData) {
+            window.exportToJSON(window.masterData, 'stillwaters'); return;
+        }
+        window.alert('Export module not available.');
+    });
 
     if (importBtn && fileInput) {
-        importBtn.addEventListener('click', function () {
-            fileInput.value = '';
-            fileInput.click();
-        });
-
+        importBtn.addEventListener('click', function () { fileInput.value = ''; fileInput.click(); });
         fileInput.addEventListener('change', function () {
             var file = this.files && this.files[0];
             if (!file) return;
@@ -1528,42 +1741,28 @@
                 try {
                     var parsed = JSON.parse(ev.target.result);
                     var dataToInstall = null;
-                    if (parsed && parsed.data && parsed.data.cultures !== undefined) {
-                        dataToInstall = parsed.data;
-                    } else if (parsed && parsed.cultures !== undefined) {
-                        dataToInstall = parsed;
-                    } else if (parsed && parsed.data) {
-                        dataToInstall = parsed.data;
-                    }
+                    if (parsed && parsed.data && parsed.data.cultures !== undefined) dataToInstall = parsed.data;
+                    else if (parsed && parsed.cultures !== undefined) dataToInstall = parsed;
+                    else if (parsed && parsed.data) dataToInstall = parsed.data;
                     if (!dataToInstall) { window.alert('Unrecognized import format.'); return; }
 
                     if (typeof window.normalizeMasterData !== 'function') {
                         window.alert('Schema module not available; cannot import.'); return;
                     }
-
                     window.masterData = window.normalizeMasterData({
                         schemaVersion: window.STORAGE_SCHEMA_VERSION,
                         savedAt: new Date().toISOString(),
                         data: dataToInstall
                     });
-
-                    if (typeof window.invalidateAccessorCaches === 'function') {
-                        window.invalidateAccessorCaches();
-                    }
+                    if (typeof window.invalidateAccessorCaches === 'function') window.invalidateAccessorCaches();
                     if (typeof window.markDataDirty === 'function') window.markDataDirty();
                     if (typeof window.saveMasterData === 'function' && !window.saveMasterData()) {
                         window.alert('Save failed after import.'); return;
                     }
-
-                    if (window.CultureBootstrap && typeof window.CultureBootstrap.init === 'function') {
-                        try { window.CultureBootstrap.init(); } catch (e) {}
-                    }
-                    if (window.ReligionBootstrap && typeof window.ReligionBootstrap.init === 'function') {
-                        try { window.ReligionBootstrap.init(); } catch (e) {}
-                    }
-                    if (window.LocationBootstrap && typeof window.LocationBootstrap.init === 'function') {
-                        try { window.LocationBootstrap.init(); } catch (e) {}
-                    }
+                    if (window.CultureBootstrap) window.CultureBootstrap.init();
+                    if (window.ReligionBootstrap) window.ReligionBootstrap.init();
+                    if (window.LocationBootstrap) window.LocationBootstrap.init();
+                    if (window.NamesState && window.NamesState.clearAllCaches) window.NamesState.clearAllCaches();
 
                     selectedCultureId = null;
                     syncYearInput();
@@ -1574,64 +1773,45 @@
                     window.alert('Invalid JSON: ' + err.message);
                 }
             };
-            reader.onerror = function () { window.alert('Failed to read file.'); };
             reader.readAsText(file);
             this.value = '';
         });
     }
 
-    if (refreshBtn) {
-        refreshBtn.addEventListener('click', function () {
-            if (typeof window.loadMasterData === 'function') window.loadMasterData();
-            setTimeout(function () {
-                if (window.CultureBootstrap && typeof window.CultureBootstrap.init === 'function') {
-                    try { window.CultureBootstrap.init(); } catch (e) {}
-                }
-                renderCultureList();
-                if (selectedCultureId) renderActiveTab();
-            }, 100);
-        });
-    }
+    if (refreshBtn) refreshBtn.addEventListener('click', function () {
+        if (typeof window.loadMasterData === 'function') window.loadMasterData();
+        if (window.NamesState && window.NamesState.clearAllCaches) window.NamesState.clearAllCaches();
+        setTimeout(function () {
+            if (window.CultureBootstrap) window.CultureBootstrap.init();
+            renderCultureList();
+            if (selectedCultureId) renderActiveTab();
+        }, 100);
+    });
 
-    // =================================================================
-    // Cross-tab reload
-    // =================================================================
     window.addEventListener('masterDataUpdated', function () {
+        if (window.NamesState && window.NamesState.clearAllCaches) window.NamesState.clearAllCaches();
         renderCultureList();
         if (selectedCultureId) renderActiveTab();
     });
 
-    // =================================================================
-    // Utilities
-    // =================================================================
     function escapeHtml(value) {
         if (typeof window.escapeHtml === 'function') return window.escapeHtml(value);
         if (value === null || value === undefined) return '';
         return String(value)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
-    // =================================================================
-    // Init
-    // =================================================================
     function onDomReady(fn) {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', fn);
-        } else {
-            fn();
-        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+        else fn();
     }
-
     onDomReady(bootstrap);
 })();
 </script>
 
 <!-- ================================================================
-     THEME SWITCHER (matches LocationManager)
+     THEME SWITCHER
      ================================================================ -->
 <script>
 (function () {
