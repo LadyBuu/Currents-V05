@@ -1,36 +1,40 @@
-// js/tabs/location-details-tab.js
+// js/tabs/location-detail-tab.js
 /**
  * =============================================================================
- * LOCATION DETAILS & EDITING TAB
+ * LOCATION DETAIL TAB (singular)
  * =============================================================================
  *
- * Renders the details view for a single location.
+ * Renders the details view for a single location. Edit and Delete
+ * delegate to the canonical modals from modals-location.js, which own
+ * the form, the command invocation, and the persist boundary.
  *
  * SCOPE
  * -----
- * Read-only display of a location's core fields, key statistics,
- * government assignment, and culture assignment. The Edit and Delete
- * buttons delegate to the canonical modals from modals-location.js
- * (window.openEditPlaceModal / window.openDeletePlaceModal), which own
- * the form, the command invocation, and the persistence boundary.
+ * - Read the place, its statistics, its parent, and its government /
+ *   culture assignments via the canonical location queries.
+ * - Render the details view.
+ * - Delegate Edit / Delete to window.openEditPlaceModal /
+ *   window.openDeletePlaceModal.
  *
  * OUT OF SCOPE
  * ------------
- * - Building edit/delete forms (owned by modals-location.js).
- * - Command wrappers (owned by LocationCommands).
- * - Toast / modal plumbing (owned by core and modals-location.js).
- * - Inline CSS. All styling comes from css/location-tabs.css.
+ * - Edit / delete forms and the parent picker (owned by
+ *   modals-location.js; the parent picker there is hierarchical).
+ * - Command invocation and persist (owned by modals-location.js via
+ *   LocationModals.runCommand).
+ * - CSS. Every class used here is defined in css/location-tabs.css.
  *
  * HARD DEPENDENCIES (load-time):
- *   - js/core/formatting.js          (window.escapeHtml)
- *   - js/core/icons.js               (window.getIcon)
- *   - js/location/location-queries.js (window.LocationQueries)
- *   - js/location/modals-location.js  (window.openEditPlaceModal,
- *                                      window.openDeletePlaceModal)
+ *   - js/core/formatting.js            (window.escapeHtml)
+ *   - js/core/icons.js                 (window.getIcon)
+ *   - js/location/location-queries.js  (window.LocationQueries)
  *
  * OPTIONAL DEPENDENCIES (call-time, guarded):
  *   - window.GovernmentQueries.getGovernmentType
  *   - window.CultureQueries.getCulture
+ *   - window.openEditPlaceModal
+ *   - window.openDeletePlaceModal
+ *   - window.showToast
  *
  * =============================================================================
  */
@@ -44,38 +48,30 @@
 
     if (typeof window.escapeHtml !== 'function') {
         throw new Error(
-            'location-details-tab.js requires core/formatting.js ' +
+            'location-detail-tab.js requires core/formatting.js ' +
             '(window.escapeHtml).'
         );
     }
     if (typeof window.getIcon !== 'function') {
         throw new Error(
-            'location-details-tab.js requires core/icons.js ' +
+            'location-detail-tab.js requires core/icons.js ' +
             '(window.getIcon).'
         );
     }
-    if (!window.LocationQueries || typeof window.LocationQueries.getPlace !== 'function') {
+    if (!window.LocationQueries ||
+        typeof window.LocationQueries.getPlace !== 'function') {
         throw new Error(
-            'location-details-tab.js requires location-queries.js ' +
+            'location-detail-tab.js requires location-queries.js ' +
             '(window.LocationQueries.getPlace).'
         );
     }
 
-    // =========================================================================
-    // 2. LOCAL ALIASES (no duplication — direct references)
-    // =========================================================================
-
     var LQ = window.LocationQueries;
 
     // =========================================================================
-    // 3. RESOLUTION HELPERS (thin — no logic the owning module lacks)
+    // 2. PRESENTATION HELPERS
     // =========================================================================
 
-    /**
-     * Resolve a government type's display name. The lookup lives in
-     * GovernmentQueries; the fallback 'None' is a presentation decision
-     * that belongs here, not in the domain module.
-     */
     function _governmentTypeName(governmentTypeId) {
         if (!governmentTypeId) return 'None';
         if (!window.GovernmentQueries ||
@@ -86,10 +82,6 @@
         return gt && gt.name ? gt.name : 'None';
     }
 
-    /**
-     * Resolve a culture's display name. CultureQueries owns the lookup;
-     * the fallback 'None' is a presentation decision.
-     */
     function _cultureName(cultureId) {
         if (!cultureId) return 'None';
         if (!window.CultureQueries ||
@@ -100,10 +92,6 @@
         return c && c.name ? c.name : 'None';
     }
 
-    /**
-     * Resolve a parent place's display name. Returns 'None' when the
-     * location has no parent or the parent record is missing.
-     */
     function _parentName(place) {
         if (!place || !place.parentId) return 'None';
         var parent = LQ.getPlace(place.parentId);
@@ -111,37 +99,64 @@
     }
 
     // =========================================================================
+    // 3. DELEGATION TO CANONICAL MODALS
+    // =========================================================================
+
+    function _openEdit(placeId, onRefresh) {
+        if (typeof window.openEditPlaceModal !== 'function') {
+            if (typeof window.showToast === 'function') {
+                window.showToast('Edit modal unavailable', 'error');
+            }
+            return;
+        }
+        window.openEditPlaceModal(placeId, function () {
+            if (typeof onRefresh === 'function') onRefresh();
+        });
+    }
+
+    function _openDelete(placeId, onRefresh) {
+        if (typeof window.openDeletePlaceModal !== 'function') {
+            if (typeof window.showToast === 'function') {
+                window.showToast('Delete modal unavailable', 'error');
+            }
+            return;
+        }
+        window.openDeletePlaceModal(placeId, function () {
+            if (typeof onRefresh === 'function') onRefresh();
+        });
+    }
+
+    // =========================================================================
     // 4. RENDER
     // =========================================================================
 
-    function render(containerId, locationId, onRefresh) {
+    function render(containerId, placeId, onRefresh) {
         var container = document.getElementById(containerId);
         if (!container) return;
 
-        if (!locationId) {
+        if (!placeId) {
             container.innerHTML =
-                '<div class="empty-state">Select a location from the sidebar</div>';
+                '<div class="loc-tab-empty">Select a location from the sidebar</div>';
             return;
         }
 
-        var place = LQ.getPlace(locationId);
+        var place = LQ.getPlace(placeId);
         if (!place) {
             container.innerHTML =
-                '<div class="empty-state">Location not found</div>';
+                '<div class="loc-tab-empty">Location not found</div>';
             return;
         }
 
-        var stats = LQ.getLocationStatistics(locationId) || {};
+        var stats = LQ.getLocationStatistics(placeId) || {};
         var typeName = LQ.getLocationTypeName(place.typeId) || 'Unknown';
         var parentName = _parentName(place);
         var govName = _governmentTypeName(place.governmentTypeId);
         var cultureName = _cultureName(place.cultureId);
 
-        var statusLine = [];
-        statusLine.push(window.escapeHtml(typeName));
+        var statusLine = [typeName];
         if (place.isCapital) statusLine.push('Capital');
         if (place.status && place.status !== 'active') {
-            statusLine.push(window.escapeHtml(place.status));
+            statusLine.push(place.status);
         }
 
         var html = '';
@@ -154,7 +169,7 @@
                         window.escapeHtml(place.displayName) +
                     '</div>';
         html +=     '<div class="loc-tab-header-subtitle">' +
-                        statusLine.join(' · ') +
+                        window.escapeHtml(statusLine.join(' · ')) +
                     '</div>';
         html +=   '</div>';
         html +=   '<div class="loc-tab-header-actions">';
@@ -288,37 +303,17 @@
         container.innerHTML = html;
 
         // ---- BIND EVENTS ----
-        // Both buttons delegate to the canonical modals. The modals own
-        // the form, the command invocation, and the persist boundary;
-        // the tab only decides "which location" and "what to do on
-        // completion".
         var editBtn = container.querySelector('#editLocationBtn');
         if (editBtn) {
             editBtn.addEventListener('click', function () {
-                if (typeof window.openEditPlaceModal !== 'function') {
-                    if (typeof window.showToast === 'function') {
-                        window.showToast('Edit modal unavailable', 'error');
-                    }
-                    return;
-                }
-                window.openEditPlaceModal(locationId, function () {
-                    if (typeof onRefresh === 'function') onRefresh();
-                });
+                _openEdit(placeId, onRefresh);
             });
         }
 
         var deleteBtn = container.querySelector('#deleteLocationBtn');
         if (deleteBtn) {
             deleteBtn.addEventListener('click', function () {
-                if (typeof window.openDeletePlaceModal !== 'function') {
-                    if (typeof window.showToast === 'function') {
-                        window.showToast('Delete modal unavailable', 'error');
-                    }
-                    return;
-                }
-                window.openDeletePlaceModal(locationId, function () {
-                    if (typeof onRefresh === 'function') onRefresh();
-                });
+                _openDelete(placeId, onRefresh);
             });
         }
     }
@@ -327,11 +322,11 @@
     // 5. EXPORTS
     // =========================================================================
 
-    window.LocationDetailsTab = { render: render };
-    window.renderLocationDetails = render;
+    window.LocationDetailTab = { render: render };
+    window.renderLocationDetail = render;
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = window.LocationDetailsTab;
+        module.exports = window.LocationDetailTab;
     }
 
 })();
