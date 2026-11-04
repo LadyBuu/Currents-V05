@@ -66,6 +66,8 @@
  *     does not use _renderError (that is modals-name.js's pattern).
  *   - Existing text fields and list fields are read from the modal
  *     root with root.querySelector('#id'), not document.
+ *   - escapeHtml is a REQUIRED dependency (formatting.js). The silent
+ *     fallback that lived in a previous revision has been removed.
  *
  * DEPENDENCIES (resolved at call time — no load-time guards, so a
  * missing optional dependency does not fail the page; the tab degrades):
@@ -74,23 +76,32 @@
  *                          getRandomName, getRandomSurname)
  *   - NameCommands        (addNameToList, removeNameFromList,
  *                          setCountrySurnameRules, persist)
- *   - NameRules           (RULE_TYPES, MARRIAGE_RULES, validateRules,
- *                          getRulePreset, getRulePresetNames)
+ *   - NameRules           (validateRules)
  *   - NameState           (subscribe — optional; used to re-render
  *                          when the name subsystem emits a change)
- *   - accessors.js        (getPlaceById, getPlaces, getPlaceScope —
- *                          getPlaceScope is world.js)
+ *   - accessors.js        (getPlaceById)
  *   - world.js            (getPlaceScope)
- *   - formatting.js       (escapeHtml)
+ *   - formatting.js       (escapeHtml — REQUIRED, throws if missing)
  *   - icons.js            (Icons[name] — chrome only)
  *   - ui.js               (showToast)
  *   - modals-core.js      (openModal, closeTopModal, confirmDialog)
- *   - selectors/modals-char-selector.js (openCharacterSelector —
- *                          OPTIONAL; only needed by the "generate
- *                          names" preview when picking a random
- *                          existing character's name — currently
- *                          unused, but the tab is future-proof)
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (A4):
+ *     - _escapeHtml tightened to throw if formatting.js is missing.
+ *       Matches the other culture tabs' post-audit contract.
+ *     - _ruleTypeLabel dropped its unused `NR` second parameter. The
+ *       label map lives locally; NR was forwarded but never read.
+ *       Call sites updated; _renderRulesSummary's second parameter
+ *       removed for the same reason (its only use of NR was
+ *       forwarding it to _ruleTypeLabel).
+ *     - Header dependency list trimmed: NameRules now lists only
+ *       validateRules (the four other exports the header used to name
+ *       were never read); modals-char-selector.js removed (it was
+ *       listed as "currently unused" and remains so).
+ *   Previous revisions:
+ *     - Initial implementation.
  * =============================================================================
  */
 
@@ -101,15 +112,18 @@
     // 1. DEPENDENCY WRAPPERS
     // =========================================================================
 
+    // escapeHtml is a REQUIRED dependency of this tab (formatting.js). The
+    // silent fallback that lived here in a previous revision diverged from
+    // the other culture tabs' contract and from formatting.js's own
+    // escaping policy. Renderers do not implement their own escaping.
     function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (str === null || str === undefined) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+        if (typeof window.escapeHtml !== 'function') {
+            throw new Error(
+                'culture-names-tab.js requires escapeHtml (formatting.js). ' +
+                'Check script tag order.'
+            );
+        }
+        return window.escapeHtml(str);
     }
 
     function _getIcon(name) {
@@ -441,7 +455,7 @@
             summary = 'No surname rules defined for this country.';
         } else {
             var ruleType = rules.type || 'family';
-            var ruleLabel = _ruleTypeLabel(ruleType, NR);
+            var ruleLabel = _ruleTypeLabel(ruleType);
             summary = ruleLabel;
         }
 
@@ -460,7 +474,7 @@
               '<div class="ct-names__rules-body"' +
                 (isExpanded ? '' : ' hidden') + '>' +
                 (rules
-                  ? _renderRulesSummary(rules, NR)
+                  ? _renderRulesSummary(rules)
                   : '<div class="ct-names__empty">' +
                     'Surname rules have not been set for this country yet.' +
                     '</div>') +
@@ -473,9 +487,9 @@
         );
     }
 
-    function _renderRulesSummary(rules, NR) {
+    function _renderRulesSummary(rules) {
         var ruleType = rules.type || 'family';
-        var typeLabel = _ruleTypeLabel(ruleType, NR);
+        var typeLabel = _ruleTypeLabel(ruleType);
 
         var detailLines = [];
 
@@ -613,7 +627,14 @@
         return typeKey;
     }
 
-    function _ruleTypeLabel(ruleType, NR) {
+    // Rule-type labels are presentation vocabulary for this tab. They
+    // are not read from NameRules; NameRules owns the rules themselves,
+    // not how a tab labels them. If NameRules ever exports a
+    // RULE_TYPES map of { key: { label } } and this tab wants to adopt
+    // it as the source of truth, swap the body to read from that map.
+    // Until then, the local map below is correct and matches the
+    // options rendered in _renderRulesForm.
+    function _ruleTypeLabel(ruleType) {
         var map = {
             random: 'Random surname',
             family: 'Family surname (inherited from parents)',
