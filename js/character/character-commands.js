@@ -200,6 +200,19 @@
  *   The generic updateCharacterFields / updateCharactersFields refuse
  *   these three fields. Use the dedicated writers below.
  *
+ * PROFESSION SPECIALIZATIONS:
+ *   `addProfessionSpecialization(characterId, roleId, specializationName)`
+ *   appends a specialization to an existing profession entry on the
+ *   character record. It is the sanctioned writer for the `specs` array
+ *   on a profession. It routes through updateProfession (the
+ *   character-commands-owned profession writer) rather than mutating
+ *   character.professions directly.
+ *
+ *   Added for apprenticeship-commands.js (teachSpecialization path).
+ *   Before this function existed, apprenticeship-commands.js had a
+ *   load-time guard on CharacterCommands.addProfessionSpecialization
+ *   that threw, blocking the entire apprenticeship module from loading.
+ *
  * READ CONTRACT (ALL ID-SHAPED READS):
  *   Every read function in this module returns a fresh object. None of
  *   them leak the live canonical object returned by
@@ -252,7 +265,22 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (P1-6):
+ *   Current revision (P1-7):
+ *     - Added addProfessionSpecialization(characterId, roleId,
+ *       specializationName). Appends a specialization to the `specs`
+ *       array on an existing profession entry. Routes through
+ *       updateProfession, not direct mutation.
+ *       Required by apprenticeship-commands.js's teachSpecialization
+ *       path, which has a load-time guard on
+ *       CharacterCommands.addProfessionSpecialization. Before this
+ *       function existed, apprenticeship-commands.js threw at load
+ *       with "character-commands.js must load first
+ *       (CharacterCommands.addProfessionSpecialization missing)",
+ *       blocking the entire apprenticeship module and every consumer
+ *       of it.
+ *     - Header PROFESSION SPECIALIZATIONS section added.
+ *     - No other behavioural change to any existing command.
+ *   Previous revision (P1-6):
  *     - Added `updateCharacters` alias to the exports. It points at the
  *       same function as `updateCharactersFields`. This closes the
  *       naming mismatch with location-commands.js::_cleanupCharactersAtPlaces
@@ -1283,6 +1311,64 @@
         if (!writeResult.success) return writeResult;
 
         return _ok({ professions: normalised });
+    }
+
+    /**
+     * Appends a specialization to an existing profession entry.
+     *
+     * This is the sanctioned writer for `profession.specs`. It routes
+     * through updateProfession (the character-commands-owned profession
+     * writer) rather than mutating character.professions directly.
+     *
+     * Added for apprenticeship-commands.js's teachSpecialization path,
+     * which load-time requires this method on CharacterCommands. See
+     * PROFESSION SPECIALIZATIONS in the module header.
+     *
+     * Idempotency: if the specialization is already present on the
+     * profession, returns { success: true, unchanged: true } without
+     * writing.
+     *
+     * @param {string} characterId
+     * @param {string} roleId            profession entry id
+     * @param {string} specializationName
+     * @returns {{ success: boolean, reason?: string, unchanged?: boolean, specs?: string[] }}
+     */
+    function addProfessionSpecialization(characterId, roleId, specializationName) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_hasId(roleId)) return _fail('roleId is required.');
+        if (typeof specializationName !== 'string'
+            || specializationName.trim() === '') {
+            return _fail('specializationName is required.');
+        }
+
+        var character = CS.getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var idx = _findProfessionIndex(character.professions, roleId);
+        if (idx === -1) {
+            return _fail('Character does not hold this role.');
+        }
+
+        var current = _normaliseNewProfession(character.professions[idx]);
+        var specs = current.specs.slice();
+
+        if (specs.indexOf(specializationName) !== -1) {
+            return _ok({ unchanged: true, specs: specs });
+        }
+
+        specs.push(specializationName);
+
+        var updateResult = updateProfession(characterId, roleId, { specs: specs });
+        if (!updateResult || updateResult.success !== true) {
+            return _fail(updateResult && updateResult.reason
+                ? updateResult.reason
+                : 'Failed to update profession specializations.');
+        }
+
+        return _ok({ unchanged: false, specs: specs });
     }
 
     // =========================================================================
@@ -2597,6 +2683,10 @@
         replaceProfessions: replaceProfessions,
         setPrimaryProfession: setPrimaryProfession,
         clearPrimaryProfession: clearPrimaryProfession,
+        // Profession specialization writer. See PROFESSION
+        // SPECIALIZATIONS in the module header. Required by
+        // apprenticeship-commands.js's teachSpecialization path.
+        addProfessionSpecialization: addProfessionSpecialization,
 
         recordCharacterSurnameChange: recordCharacterSurnameChange,
         revertCharacterSurnameChange: revertCharacterSurnameChange,
