@@ -56,7 +56,7 @@
  *     3. null
  *          No viable source.
  *
- *   Every function that needs a character's location calls
+ *   Every function in this module that needs a character's location calls
  *   _resolveCurrentLocationId. Do NOT call window.getCurrentLocationId
  *   directly: its name is overloaded (character-queries.js exports a
  *   version that takes an id; world.js exports a version that takes a
@@ -72,6 +72,13 @@
  *   the canonical field is birthplaceId, so the birth fallback was dead
  *   code even for characters whose birth location was set. Both fixed at
  *   the call site.
+ *
+ *   The resolver is also exposed publicly as
+ *   getCurrentLocationIdForCharacter(character). UI that needs "where is
+ *   this character" must call that, not re-implement the precedence
+ *   chain. Prior UI (culture-characters-tab.js) had its own copy that
+ *   omitted the CharacterQueries fallback; consolidating here prevents
+ *   the two from drifting.
  *
  * NOTE ON NAMING:
  *   The canonical lookup function is `getCultureById(id)`.
@@ -101,7 +108,19 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (A3):
+ *   Current revision (A4):
+ *     - Exposed getCurrentLocationIdForCharacter(character) as a public
+ *       function. It is a thin wrapper over the existing private
+ *       _resolveCurrentLocationId. Consumers (UI, callers outside this
+ *       module) must use it instead of re-implementing the resolution
+ *       precedence. culture-characters-tab.js is the first such
+ *       consumer; its local copy omitted the CharacterQueries fallback
+ *       and is being removed.
+ *     - Header LOCATION-RESOLUTION CONTRACT updated to name the public
+ *       entry point.
+ *     - No behavior change to any existing function. No public
+ *       signature or return-shape change for existing exports.
+ *   Previous revision (A3):
  *     - Added _resolveCurrentLocationId helper with LocationQueries →
  *       CharacterQueries → null precedence. Matches the resolution
  *       pattern used by religion-queries.js and location-commands.js.
@@ -116,7 +135,6 @@
  *     - Header LOCATION-RESOLUTION CONTRACT section added, plus
  *       DEPENDENCIES section clarifying which modules are load-time
  *       hard dependencies and which are call-time.
- *     - No public signature change, no public return-shape change.
  *   Previous revisions:
  *     - Initial implementation.
  * =============================================================================
@@ -183,6 +201,12 @@
     // See LOCATION-RESOLUTION CONTRACT in the header. This helper is the
     // single place where the resolution precedence is chosen. Every
     // function in this module that needs a character's location calls it.
+    //
+    // ---- A4 PATCH ----
+    // The helper is also exposed publicly as
+    // getCurrentLocationIdForCharacter(character), below in this section.
+    // UI and callers outside this module must go through that public
+    // entry point rather than re-implementing the precedence chain.
 
     function _resolveCurrentLocationId(character) {
         if (!character || !character.id) return null;
@@ -221,6 +245,27 @@
         }
 
         return null;
+    }
+
+    // ---- A4 PATCH ----
+    // Public entry point for the location-resolution contract. Thin
+    // wrapper; no independent logic. Callers outside this module (UI,
+    // view models, anything that displays a character's location) call
+    // this, not their own copy of the precedence chain.
+    /**
+     * Returns the resolved current location id for a character, or null.
+     *
+     * Precedence: LocationQueries (semantic) → CharacterQueries (raw
+     * field) → null. See LOCATION-RESOLUTION CONTRACT in the header.
+     *
+     * @param {Object} character   character object or projection. Must
+     *                             carry at least an `id` field; other
+     *                             fields are read opportunistically by
+     *                             the underlying resolvers.
+     * @returns {string|null}
+     */
+    function getCurrentLocationIdForCharacter(character) {
+        return _resolveCurrentLocationId(character);
     }
 
     // =========================================================================
@@ -833,6 +878,10 @@
         getPrimaryCultureForLocation: getPrimaryCultureForLocation,
         getAssociatedCulturesForLocation: getAssociatedCulturesForLocation,
         getCulturesForLocation: getCulturesForLocation,
+
+        // ---- A4 PATCH ----
+        // Location-resolution contract, public entry point.
+        getCurrentLocationIdForCharacter: getCurrentLocationIdForCharacter,
 
         // Character relationships
         getCultureForCharacter: getCultureForCharacter,
