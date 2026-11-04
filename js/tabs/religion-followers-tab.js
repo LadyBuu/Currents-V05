@@ -12,10 +12,12 @@
  *   - Search by name
  *   - Filter by gender, status, location
  *   - Sort by name, age (asc/desc), location
- *   - Assign a single follower (character selector → assignReligionToCharacter)
- *   - Bulk assign followers
- *   - Remove a follower
- *   - View conversion history per character
+ *   - Assign a single follower (delegates to
+ *     window.openAssignCharacterReligionModal)
+ *   - Bulk assign followers (loop over RC.assignReligionToCharacter;
+ *     persists ONCE at the end)
+ *   - Remove a follower (direct RC.removeReligionFromCharacter; persists)
+ *   - View conversion history per character (read-only modal, no persist)
  *   - Show living / deceased counts
  *
  * REGISTRATION (TabManager):
@@ -23,17 +25,79 @@
  *
  *   renderAdapter(container, context) → renderFollowersTab(container, context.religion)
  *
- * DEPENDENCIES (all resolved at call time — no load-time guards):
+ * CRUD DELEGATION
+ * ---------------
+ *   Assign (single)  → window.openAssignCharacterReligionModal
+ *   Bulk assign      → loop + RC.persist() once at the end
+ *   Remove           → local _confirmRemove + _runCommand (no modal exists;
+ *                      remove is a one-command path with a confirm)
+ *   History          → local modal (read-only; no command calls)
+ *
+ * PERSIST OWNERSHIP
+ * -----------------
+ *   Prior revisions had two silent-data-loss paths in this tab:
+ *
+ *     - _openAssignFollower called RC.assignReligionToCharacter directly
+ *       and never persisted. The character's religionId changed in
+ *       memory, the toast was shown, the tab re-rendered — but a page
+ *       reload before any other save discarded the assignment. FIXED:
+ *       this path now delegates to
+ *       window.openAssignCharacterReligionModal, which handles persist
+ *       via modals-religion.js::_handleCommandResult.
+ *
+ *     - _openBulkAssign looped RC.assignReligionToCharacter over N
+ *       selected characters and never persisted. N assignments in
+ *       memory, zero saved. Same data-loss class, N× worse because a
+ *       reload discards the whole batch. FIXED: the loop now calls
+ *       RC.persist() exactly once after the loop, reporting any persist
+ *       failure with a second toast. This is the pattern the
+ *       modals use per-command, applied to a batch: one persist at
+ *       the end of the write sequence, not one per write.
+ *
+ *   Remove (single) was already correct? Let's check: prior revision
+ *   called RC.removeReligionFromCharacter and then toast + onDone — no
+ *   persist. FIXED: the path now goes through _runCommand, which
+ *   persists.
+ *
+ *   So all three write paths (assign, bulk-assign, remove) now persist
+ *   exactly once per logical operation:
+ *     - assign: persist happens in the canonical modal
+ *     - bulk-assign: persist happens once in this tab, after the loop
+ *     - remove: persist happens once in this tab, via _runCommand
+ *
+ * LOCATION RESOLUTION
+ * -------------------
+ *   This tab displays each follower's current location, filters by it,
+ *   and sorts by it. That is a query the religion domain exposes
+ *   publicly:
+ *
+ *     window.ReligionQueries.getCharacterLocationId(characterOrId)
+ *
+ *   Prior revisions called window.getCurrentLocationId(character) —
+ *   passing a character object where the canonical resolver expects an
+ *   id. The call was wrapped in a try/catch with a raw-field fallback,
+ *   so it "worked" by silently falling back to character.currentLocationId
+ *   every time. For characters placed by a move record (not a direct
+ *   currentLocationId assignment), the raw field is stale, so the tab
+ *   showed and filtered by the wrong location.
+ *
+ *   FIXED: this tab now calls
+ *   ReligionQueries.getCharacterLocationId(character), which accepts a
+ *   character object and routes through the semantic resolver. See
+ *   LOCATION-RESOLUTION CONTRACT in religion-queries.js.
+ *
+ * DEPENDENCIES (resolved at call time — no load-time guards):
  *   - TabManager            (js/core/tab-manager.js)
- *   - ReligionQueries       (js/religion/religion-queries.js)
+ *   - ReligionQueries       (js/religion/religion-queries.js) — includes
+ *                            getCharacterLocationId (added in the same
+ *                            change as this tab rewrite)
  *   - ReligionCommands      (js/religion/religion-commands.js)
  *   - ReligionFormat        (js/religion/religion-format.js)
  *   - formatting.js         (escapeHtml)
- *   - icons.js              (Icons — chrome icons via _getIcon with
- *                            CIRCLE fallback; no emoji)
  *   - ui.js                 (showToast)
- *   - modals-core.js        (openModal, closeTopModal, confirmDialog)
- *   - modals-char-selector  (openCharacterSelector)
+ *   - modals-core.js        (openModal, confirmDialog)
+ *   - ReligionModals        (js/religion/modals-religion.js) — provides
+ *                            openAssignCharacterReligionModal
  *   - time.js               (getCurrentYear, calculateAge) — required at
  *                            call time; throws if missing
  *   - accessors.js          (getCharacterById, getCharacters,
@@ -46,8 +110,42 @@
  *               takes SCALARS. Passing a character object yields null.
  *               The followers list passes scalars; do not "simplify".
  *
+ * ICON POLICY: no emojis. This tab renders no chrome icons.
+ *
  * INLINE STYLES: none. All classes are in css/religion-tabs.css.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _currentLocationIdOf now calls
+ *       ReligionQueries.getCharacterLocationId(character), which
+ *       accepts a character object and routes through the semantic
+ *       resolver. Prior revisions called window.getCurrentLocationId
+ *       with a character object (wrong argument shape), which silently
+ *       bypassed the semantic resolver and fell back to the raw field.
+ *       Move-based placements rendered and filtered by the wrong
+ *       location.
+ *     - Assign (single) delegates to
+ *       window.openAssignCharacterReligionModal. Deleted:
+ *       _openAssignFollower (the local form with prompt()-based year
+ *       and reason). The canonical modal handles persist, toast, and
+ *       onSuccess-before-close.
+ *     - Bulk assign now calls RC.persist() exactly once after the
+ *       loop, with a persist-failure toast. Prior revisions looped
+ *       RC.assignReligionToCharacter without persisting, so the whole
+ *       batch was lost on reload.
+ *     - Remove (single) now goes through the local _runCommand helper,
+ *       which calls RC.persist() on success. Prior revisions did not
+ *       persist.
+ *     - _openConversionHistory is unchanged (read-only modal; no
+ *       command calls; no persist concern).
+ *     - The filter/sort/list rendering, per-tab filter state, debounced
+ *       search, and _applyFiltersInPlace are unchanged.
+ *     - The TabManager.register('religion', 'followers', renderAdapter)
+ *       and the window.ReligionFollowersTab export shape are unchanged.
+ *   Previous revisions:
+ *     - Filter/sort/list rendering extracted from earlier monolithic
+ *       religion UI code.
  * =============================================================================
  */
 
@@ -69,11 +167,6 @@
             .replace(/'/g, '&#39;');
     }
 
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) return window.Icons[name];
-        return '';
-    }
-
     function _showToast(msg, type) {
         if (typeof window.showToast === 'function') window.showToast(msg, type);
     }
@@ -81,10 +174,6 @@
     function _openModal(options) {
         if (typeof window.openModal === 'function') return window.openModal(options);
         return null;
-    }
-
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') window.closeTopModal();
     }
 
     function _confirmDialog(message, title, onConfirm) {
@@ -124,18 +213,14 @@
         return 'Unknown';
     }
 
-    function _openCharacterSelector(options) {
-        if (typeof window.openCharacterSelector === 'function') {
-            return window.openCharacterSelector(options);
-        }
-        if (typeof window.openUnifiedCharacterSelector === 'function') {
-            return window.openUnifiedCharacterSelector(options);
-        }
-        return null;
+    function _getOpenAssignModal() {
+        return typeof window.openAssignCharacterReligionModal === 'function'
+            ? window.openAssignCharacterReligionModal
+            : null;
     }
 
     // =========================================================================
-    // 2. TIME / AGE / FORMAT (canonical accessors only)
+    // 2. TIME / AGE / LOCATION / FORMAT (canonical accessors only)
     // =========================================================================
 
     function _getCurrentYear() {
@@ -163,19 +248,44 @@
     }
 
     /**
-     * Current location id for a character projection. Prefers the
-     * semantic resolver if loaded; falls back to the raw field.
+     * Current location id for a character projection.
+     *
+     * Delegates to ReligionQueries.getCharacterLocationId, which
+     * accepts a character object and routes through the semantic
+     * resolver (LocationQueries.getCurrentLocationId, with the
+     * CharacterQueries raw-field fallback for bare harnesses). See
+     * LOCATION-RESOLUTION CONTRACT in religion-queries.js.
+     *
+     * Prior revisions called window.getCurrentLocationId(character) —
+     * passing a character object where the canonical resolver expects
+     * an id. The call was wrapped in try/catch and the fallback was
+     * character.currentLocationId, so the semantic resolver was
+     * effectively never used. Characters placed by a move record (not
+     * a direct currentLocationId assignment) rendered and filtered by
+     * the wrong location.
+     *
+     * If ReligionQueries.getCharacterLocationId is not available (bare
+     * harness without the current religion-queries revision), the
+     * helper falls back to the raw currentLocationId field, which
+     * matches the prior revision's behavior — but the tab is not
+     * silently worse than before, it is explicitly the same.
      */
     function _currentLocationIdOf(character) {
-        if (!character) return null;
-        if (typeof window.getCurrentLocationId === 'function') {
+        if (!character || !character.id) return null;
+
+        var RQ = _getReligionQueries();
+        if (RQ && typeof RQ.getCharacterLocationId === 'function') {
             try {
-                var resolved = window.getCurrentLocationId(character);
+                var resolved = RQ.getCharacterLocationId(character);
                 if (typeof resolved === 'string' && resolved.length > 0) return resolved;
+                if (resolved === null) return null;
             } catch (e) {
-                // fall through
+                // Fall through to the raw field.
             }
         }
+
+        // Raw-field fallback. Only reached if the semantic resolver
+        // is unavailable or threw.
         var raw = character.currentLocationId;
         if (typeof raw === 'string' && raw.length > 0) return raw;
         if (typeof character.birthplaceId === 'string' && character.birthplaceId.length > 0) {
@@ -209,14 +319,52 @@
     }
 
     // =========================================================================
-    // 3. TAB-LOCAL UI STATE
+    // 3. COMMAND RUNNER (persist + toast + onSuccess, no modal)
     // =========================================================================
     //
-    // Filters are per-instance and reset every time the tab renders. The
-    // tab is re-rendered fresh by TabManager on activation, so a stable
-    // per-instance state object does not survive across activations.
-    // That is intentional: this tab does not persist its filters, matching
-    // every other TabManager-rendered tab.
+    // Mirrors modals-religion.js::_handleCommandResult for callers that
+    // are NOT modal onConfirm handlers. Used by the remove-follower path
+    // (no modal exists). The bulk-assign path uses a different shape —
+    // it loops the command and persists once at the end — see
+    // _openBulkAssign.
+
+    function _runCommand(result, successMessage, failurePrefix, onSuccess) {
+        if (result && result.success) {
+            _showToast(successMessage, 'success');
+
+            var RC = _getReligionCommands();
+            if (RC && typeof RC.persist === 'function') {
+                var saveResult = RC.persist();
+                if (saveResult && saveResult.success === false) {
+                    _showToast(
+                        'Save failed: ' + (saveResult.reason || 'unknown error'),
+                        'error'
+                    );
+                }
+            }
+
+            if (typeof onSuccess === 'function') {
+                try {
+                    onSuccess(result.data || result);
+                } catch (e) {
+                    if (typeof console !== 'undefined' && console.error) {
+                        console.error(
+                            'religion-followers-tab.js: onSuccess threw:', e
+                        );
+                    }
+                }
+            }
+            return true;
+        }
+
+        var reason = (result && result.reason) ? result.reason : 'Unknown error';
+        _showToast(failurePrefix + ': ' + reason, 'error');
+        return false;
+    }
+
+    // =========================================================================
+    // 4. TAB-LOCAL UI STATE
+    // =========================================================================
 
     var _state = {
         search: '',
@@ -235,7 +383,7 @@
     }
 
     // =========================================================================
-    // 4. RENDER
+    // 5. RENDER
     // =========================================================================
 
     function renderFollowersTab(container, religion) {
@@ -256,11 +404,6 @@
             return;
         }
 
-        // Fresh render → fresh filter state. A re-render from an action
-        // (remove, assign) calls renderFollowersTab again, which resets
-        // filters; that is acceptable UX. Users who want to keep filters
-        // keep the panel open; a switch away and back resets — same as
-        // before this rewrite.
         _resetState();
 
         var followers = RQ.getFollowers(religion.id, { includeDeceased: true }) || [];
@@ -352,7 +495,6 @@
 
         container.innerHTML = html;
 
-        // Set current filter selections after innerHTML assignment.
         _syncFilterSelects(container);
 
         _attachHandlers(container, religion);
@@ -380,7 +522,7 @@
     }
 
     // =========================================================================
-    // 5. FILTER / SORT
+    // 6. FILTER / SORT
     // =========================================================================
 
     function _filterFollowers(followers) {
@@ -451,7 +593,7 @@
     }
 
     // =========================================================================
-    // 6. LIST
+    // 7. LIST
     // =========================================================================
 
     function _renderList(followers, religion) {
@@ -526,7 +668,7 @@
     }
 
     // =========================================================================
-    // 7. HANDLERS
+    // 8. HANDLERS
     // =========================================================================
 
     function _attachHandlers(container, religion) {
@@ -534,7 +676,7 @@
         if (!RC) return;
 
         function rerender() {
-            renderFollowersTab(container, religion);
+            renderFollowersTab(container, _freshReligion(religion.id) || religion);
         }
 
         // ---- Search (debounced) ----
@@ -595,15 +737,58 @@
             });
         }
 
-        // ---- Assign follower ----
+        // ---- Assign follower (delegate to canonical modal) ----
         var assignBtn = container.querySelector('.assign-follower-btn');
         if (assignBtn) {
             assignBtn.addEventListener('click', function () {
-                _openAssignFollower(religion, rerender);
+                var openAssign = _getOpenAssignModal();
+                if (!openAssign) {
+                    _showToast(
+                        'Assign Religion modal is not available. Load modals-religion.js first.',
+                        'error'
+                    );
+                    return;
+                }
+                // NOTE: openAssignCharacterReligionModal takes a
+                // characterId, NOT a religionId. It is the modal for
+                // "assign a religion to a character", not "add a
+                // follower to a religion". To use it here we need to
+                // first ask the user which character to assign — which
+                // is exactly what openCharacterSelector does. So the
+                // tab opens the character selector, then opens the
+                // assign modal for the chosen character, then rerenders.
+                //
+                // This is a two-step flow: pick character → assign.
+                // The canonical modal handles the second step (the
+                // actual assignment + persist + toast).
+                if (typeof window.openCharacterSelector !== 'function') {
+                    _showToast(
+                        'Character selector is not available. Load modals-char-select.js first.',
+                        'error'
+                    );
+                    return;
+                }
+                window.openCharacterSelector({
+                    title: 'Select Character to Add to ' +
+                        (religion.displayName || religion.name),
+                    filters: { showDeceased: false },
+                    onSelect: function (character) {
+                        if (!character || !character.id) return;
+                        if (character.religionId === religion.id) {
+                            _showToast('Character is already a follower', 'info');
+                            return;
+                        }
+                        openAssign(character.id, {
+                            onSuccess: function () {
+                                rerender();
+                            }
+                        });
+                    }
+                });
             });
         }
 
-        // ---- Bulk assign ----
+        // ---- Bulk assign (loop + single persist at end) ----
         var bulkBtn = container.querySelector('.bulk-assign-btn');
         if (bulkBtn) {
             bulkBtn.addEventListener('click', function () {
@@ -611,29 +796,8 @@
             });
         }
 
-        // ---- Row actions (delegated per-listener, not per-row) ----
-        var body = container.querySelector('.rt-tab__body');
-        if (body) {
-            body.addEventListener('click', function (e) {
-                var target = e.target;
-                if (!target || typeof target.closest !== 'function') return;
-
-                var historyBtn = target.closest('.view-history-btn');
-                if (historyBtn) {
-                    e.preventDefault();
-                    var cid = historyBtn.getAttribute('data-char-id');
-                    if (cid) _openConversionHistory(cid);
-                    return;
-                }
-
-                var removeBtn = target.closest('.remove-follower-btn');
-                if (removeBtn) {
-                    e.preventDefault();
-                    var rid = removeBtn.getAttribute('data-char-id');
-                    if (rid) _confirmRemove(rid, religion, RC, rerender);
-                }
-            });
-        }
+        // ---- Row actions (delegated) ----
+        _attachRowActions(container, religion);
     }
 
     function _applyFiltersInPlace(container, religion) {
@@ -663,17 +827,13 @@
         }
 
         // The row-delegated click handler was bound to the OLD .rt-tab__body.
-        // Re-attach to the new one. Only the row-action handler is
-        // re-attached here; the filter controls and buttons are untouched.
-        _reattachRowActions(container, religion);
+        // Re-attach to the new one.
+        _attachRowActions(container, religion);
     }
 
-    function _reattachRowActions(container, religion) {
-        var RC = _getReligionCommands();
-        if (!RC) return;
+    function _attachRowActions(container, religion) {
         var body = container.querySelector('.rt-tab__body');
         if (!body) return;
-        // The handler is idempotent if we mark the element.
         if (body.__rtHandled) return;
         body.__rtHandled = true;
 
@@ -694,8 +854,11 @@
                 e.preventDefault();
                 var rid = removeBtn.getAttribute('data-char-id');
                 if (rid) {
-                    _confirmRemove(rid, religion, RC, function () {
-                        renderFollowersTab(container, religion);
+                    _confirmRemove(rid, religion, function () {
+                        renderFollowersTab(
+                            container,
+                            _freshReligion(religion.id) || religion
+                        );
                     });
                 }
             }
@@ -703,87 +866,113 @@
     }
 
     // =========================================================================
-    // 8. ASSIGN / REMOVE / HISTORY
+    // 9. REMOVE / HISTORY
     // =========================================================================
 
-    function _confirmRemove(characterId, religion, RC, onDone) {
-        var char = _getCharacterById(characterId);
-        if (!char) {
-            _showToast('Character not found', 'error');
-            return;
-        }
-        var displayName = (char.name || '') + ' ' + (char.surname || '');
-        _confirmDialog(
-            'Remove "' + displayName.trim() + '" from ' +
-            (religion.displayName || religion.name) + '?',
-            'Remove Follower',
-            function () {
-                var result = RC.removeReligionFromCharacter(characterId);
-                if (result && result.success) {
-                    _showToast('Follower removed', 'info');
-                    if (typeof onDone === 'function') onDone();
-                } else {
-                    _showToast(
-                        'Failed to remove follower: ' +
-                        (result && result.reason ? result.reason : 'unknown'),
-                        'error'
-                    );
-                }
-            }
-        );
-    }
-
-    function _openAssignFollower(religion, onDone) {
+    function _confirmRemove(characterId, religion, onDone) {
         var RC = _getReligionCommands();
         if (!RC) {
             _showToast('ReligionCommands not available', 'error');
             return;
         }
 
-        var selector = _openCharacterSelector({
-            title: 'Assign Follower to ' + (religion.displayName || religion.name),
-            filters: { showDeceased: false },
-            onSelect: function (character) {
-                if (!character || !character.id) return;
-
-                if (character.religionId === religion.id) {
-                    _showToast('Character is already a follower', 'info');
-                    return;
-                }
-
-                var yearInput = prompt('Year of conversion:', _getCurrentYear());
-                if (yearInput === null) return;
-                var year = parseInt(yearInput, 10);
-                if (Number.isNaN(year)) year = _getCurrentYear();
-
-                var reasonInput = prompt(
-                    'Reason (marriage, personal, forced, political, family, other):',
-                    'personal'
-                );
-                if (reasonInput === null) return;
-
-                var result = RC.assignReligionToCharacter(character.id, religion.id, {
-                    year: year,
-                    reason: reasonInput || 'personal',
-                    notes: 'Assigned via religion editor'
-                });
-
-                if (result && result.success) {
-                    _showToast('Follower assigned: ' + character.name, 'success');
-                    if (typeof onDone === 'function') onDone();
-                } else {
-                    _showToast(
-                        'Failed to assign follower: ' +
-                        (result && result.reason ? result.reason : 'unknown'),
-                        'error'
-                    );
-                }
-            }
-        });
-        if (!selector) {
-            _showToast('Character selector not available', 'error');
+        var char = _getCharacterById(characterId);
+        if (!char) {
+            _showToast('Character not found', 'error');
+            return;
         }
+        var displayName = ((char.name || '') + ' ' + (char.surname || '')).trim();
+
+        _confirmDialog(
+            'Remove "' + displayName + '" from ' +
+            (religion.displayName || religion.name) + '?',
+            'Remove Follower',
+            function () {
+                var result = RC.removeReligionFromCharacter(characterId);
+                _runCommand(
+                    result,
+                    'Follower removed',
+                    'Failed to remove follower',
+                    function () {
+                        if (typeof onDone === 'function') onDone();
+                    }
+                );
+            }
+        );
     }
+
+    function _openConversionHistory(characterId) {
+        var char = _getCharacterById(characterId);
+        if (!char) {
+            _showToast('Character not found', 'error');
+            return;
+        }
+        var history = _getConversionHistory(characterId);
+        var displayName = ((char.name || '') + ' ' + (char.surname || '')).trim();
+
+        var html = '<div class="rt-form">' +
+          '<p class="rt-form__hint"><strong>' +
+            _escapeHtml(displayName) +
+          '</strong> — ' + history.length +
+          ' conversion' + (history.length === 1 ? '' : 's') +
+          '</p>';
+
+        if (history.length === 0) {
+            html += '<div class="rt-empty">No conversion history recorded.</div>';
+        } else {
+            html += '<div class="rt-tab__body">';
+            for (var i = history.length - 1; i >= 0; i--) {
+                var ev = history[i] || {};
+                var fromName = ev.fromReligionName || 'None';
+                var toName = ev.toReligionName || 'None';
+                var year = ev.year === undefined || ev.year === null ? '?' : String(ev.year);
+                var reason = _conversionReasonName(ev.reason || 'other');
+                var isCurrent = (ev.toReligionId === char.religionId && i === history.length - 1);
+
+                html += '<div class="rt-history-row' +
+                  (isCurrent ? ' rt-history-row--current' : '') + '">' +
+                  '<span>' + _escapeHtml(fromName) +
+                    '<span class="rt-history-row__arrow">→</span>' +
+                    _escapeHtml(toName) +
+                  '</span>' +
+                  '<span class="rt-history-row__year">' + _escapeHtml(year) + '</span>' +
+                  '<span class="rt-history-row__reason">' + _escapeHtml(reason) + '</span>' +
+                '</div>';
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+
+        _openModal({
+            titleHtml: 'Conversion History',
+            contentHtml: html,
+            confirmText: 'Close',
+            cancelText: ''
+        });
+    }
+
+    // =========================================================================
+    // 10. BULK ASSIGN
+    // =========================================================================
+    //
+    // Loops RC.assignReligionToCharacter over the selected character ids,
+    // then calls RC.persist() exactly ONCE at the end. This is the batch
+    // form of the modal's per-command persist: N writes → one save.
+    //
+    // Prior revisions looped the command and never persisted. All N
+    // assignments lived in memory only; a reload discarded the whole
+    // batch. That was the worst instance of the silent-data-loss bug
+    // class in the religion tabs.
+    //
+    // Failure handling:
+    //   - If a command fails, it is counted but the loop continues. One
+    //     bad character (e.g. became deceased mid-batch) should not abort
+    //     the whole batch.
+    //   - After the loop, persist() runs unconditionally. Even if some
+    //     commands failed, the successful ones are in memory and must be
+    //     saved.
+    //   - The final toast reports success count, fail count, and (if
+    //     persist failed) a separate persist-failure toast.
 
     function _openBulkAssign(religion, onDone) {
         var RC = _getReligionCommands();
@@ -807,7 +996,6 @@
             return;
         }
 
-        // Sort available by name for a stable list.
         available.sort(function (a, b) {
             return String(a.name || '').localeCompare(String(b.name || ''));
         });
@@ -910,70 +1098,46 @@
                     else failCount++;
                 }
 
+                // Persist ONCE after the loop. See the section docstring
+                // above for the rationale and failure-handling rules.
+                var persistOk = true;
+                var persistReason = '';
+                if (typeof RC.persist === 'function') {
+                    var saveResult = RC.persist();
+                    if (saveResult && saveResult.success === false) {
+                        persistOk = false;
+                        persistReason = saveResult.reason || 'unknown error';
+                    }
+                }
+
                 _showToast(
                     'Assigned ' + successCount + ' follower' +
                     (successCount === 1 ? '' : 's') +
                     (failCount > 0 ? ' (' + failCount + ' failed)' : ''),
                     failCount > 0 ? 'warning' : 'success'
                 );
+                if (!persistOk) {
+                    _showToast('Save failed: ' + persistReason, 'error');
+                }
+
                 if (typeof onDone === 'function') onDone();
                 return true;
             }
         });
     }
 
-    function _openConversionHistory(characterId) {
-        var char = _getCharacterById(characterId);
-        if (!char) {
-            _showToast('Character not found', 'error');
-            return;
-        }
-        var history = _getConversionHistory(characterId);
-        var displayName = ((char.name || '') + ' ' + (char.surname || '')).trim();
+    // =========================================================================
+    // 11. FRESH-RELIGION HELPER
+    // =========================================================================
 
-        var html = '<div class="rt-form">' +
-          '<p class="rt-form__hint"><strong>' +
-            _escapeHtml(displayName) +
-          '</strong> — ' + history.length +
-          ' conversion' + (history.length === 1 ? '' : 's') +
-          '</p>';
-
-        if (history.length === 0) {
-            html += '<div class="rt-empty">No conversion history recorded.</div>';
-        } else {
-            html += '<div class="rt-tab__body">';
-            for (var i = history.length - 1; i >= 0; i--) {
-                var ev = history[i] || {};
-                var fromName = ev.fromReligionName || 'None';
-                var toName = ev.toReligionName || 'None';
-                var year = ev.year === undefined || ev.year === null ? '?' : String(ev.year);
-                var reason = _conversionReasonName(ev.reason || 'other');
-                var isCurrent = (ev.toReligionId === char.religionId && i === history.length - 1);
-
-                html += '<div class="rt-history-row' +
-                  (isCurrent ? ' rt-history-row--current' : '') + '">' +
-                  '<span>' + _escapeHtml(fromName) +
-                    '<span class="rt-history-row__arrow">→</span>' +
-                    _escapeHtml(toName) +
-                  '</span>' +
-                  '<span class="rt-history-row__year">' + _escapeHtml(year) + '</span>' +
-                  '<span class="rt-history-row__reason">' + _escapeHtml(reason) + '</span>' +
-                '</div>';
-            }
-            html += '</div>';
-        }
-        html += '</div>';
-
-        _openModal({
-            titleHtml: 'Conversion History',
-            contentHtml: html,
-            confirmText: 'Close',
-            cancelText: ''
-        });
+    function _freshReligion(religionId) {
+        var RQ = _getReligionQueries();
+        if (!RQ) return null;
+        return RQ.getReligion(religionId);
     }
 
     // =========================================================================
-    // 9. TABMANAGER ADAPTER + REGISTRATION
+    // 12. TABMANAGER ADAPTER + REGISTRATION
     // =========================================================================
 
     function renderAdapter(container, context) {
@@ -991,7 +1155,7 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 13. EXPORTS
     // =========================================================================
 
     window.ReligionFollowersTab = {
