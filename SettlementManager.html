@@ -281,9 +281,9 @@
 <!-- SCRIPT LOAD ORDER                                                   -->
 <!-- ================================================================== -->
 
-<!-- ================================================================
-     BLOCK 1 — CORE CONSTANTS
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 1 — CORE CONSTANTS (leaf)
+     ============================================================ -->
 <script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
 <script src="js/core/constants/character-constants.js"></script>
@@ -291,23 +291,23 @@
 <script src="js/core/constants/location-constants.js"></script>
 <script src="js/core/constants/relationship-constants.js"></script>
 
-<!-- ================================================================
-     BLOCK 2 — CORE UTILITIES
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 2 — CORE UTILITIES (leaf)
+     ============================================================ -->
 <script src="js/core/formatting.js"></script>
 <script src="js/core/icons.js"></script>
 <script src="js/core/collections.js"></script>
 <script src="js/core/ids.js"></script>
 <script src="js/core/randomness.js"></script>
 
-<!-- ================================================================
+<!-- ============================================================
      BLOCK 3 — CORE TIME
-     ================================================================ -->
+     ============================================================ -->
 <script src="js/core/time.js"></script>
 
-<!-- ================================================================
-     BLOCK 4 — CORE STORAGE
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 4 — CORE STORAGE (schema → storage → init)
+     ============================================================ -->
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
 <script>
@@ -319,99 +319,152 @@
 </script>
 <script src="js/core/accessors.js"></script>
 
-<!-- ================================================================
+<!-- ============================================================
      BLOCK 5 — CORE VALIDATION, WORLD, NAMES
-     ================================================================ -->
+     ============================================================ -->
 <script src="js/core/validation.js"></script>
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
 
-<!-- ================================================================
+<!-- ============================================================
      BLOCK 6 — CORE UI PRIMITIVES
-     ================================================================ -->
+     ============================================================ -->
 <script src="js/core/ui.js"></script>
 <script src="js/core/ui-state.js"></script>
 <script src="js/core/modals-core.js"></script>
 <script src="js/core/responsive.js"></script>
 <script src="js/core/collapsible.js"></script>
+<script src="js/core/tab-manager.js"></script>
 <script src="js/core/exportUtils.js"></script>
 
-<!-- ================================================================
-     BLOCK 7 — CORE INTEGRITY & MAINTENANCE
-     ================================================================ -->
-<script src="js/core/simulation-generators.js"></script>
+<!-- ============================================================
+     BLOCK 7 — CORE INTEGRITY / MAINTENANCE
+     ============================================================ -->
 <script src="js/core/integrity.js"></script>
 <script src="js/core/maintenance.js"></script>
 
-<!-- ================================================================
-     BLOCK 8 — SKILL TAXONOMY
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 8 — CORE SIMULATION GENERATORS
+     ============================================================ -->
+<script src="js/core/simulation-generators.js"></script>
+
+<!-- ============================================================
+     BLOCK 9 — SKILL TAXONOMY
+     ============================================================ -->
 <script src="js/roles/skill-utils.js"></script>
 
-<!-- ================================================================
-     BLOCK 9 — CHARACTER PURE POLICY
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 10 — EVENTS
+     ============================================================ -->
+<script src="js/events/timeline-core.js"></script>
+<script src="js/events/census-core.js"></script>
+<script src="js/events/annualProcessing.js"></script>
+<script src="js/events/social-events-system.js"></script>
+
+<!-- ============================================================
+     BLOCK 11 — CHARACTER PURE POLICY
+     ============================================================ -->
 <script src="js/character/family-rules.js"></script>
 <script src="js/character/children-rules.js"></script>
 <script src="js/character/mortality-rules.js"></script>
 
-<!-- ================================================================
-     BLOCK 10 — CHARACTER STATE
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 12 — CHARACTER STATE
+     ============================================================ -->
 <script src="js/character/character-state.js"></script>
 <script src="js/character/family-state.js"></script>
+<script src="js/character/children-state.js"></script>
 
-<!-- ================================================================
-     BLOCK 11 — CHARACTER COMMANDS & QUERIES
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 13 — CHARACTER COMMANDS & QUERIES
+     ============================================================ -->
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
 <script src="js/character/family-queries.js"></script>
 <script src="js/character/family-commands.js"></script>
 
-<!-- ================================================================
-     BLOCK 12 — CHARACTER FACTORY & CREATION
-     ================================================================ -->
-<script src="js/character/character-factory.js"></script>
-<script src="js/character/character-creation-commands.js"></script>
-<script src="js/character/character-deletion-commands.js"></script>
+<!-- ============================================================
+     BLOCK 14 — CHARACTER AGGREGATION + LIFECYCLE
+     ============================================================ -->
 <script src="js/character/mortality-queries.js"></script>
 <script src="js/character/mortality-statistics.js"></script>
-
-<!-- ================================================================
-     BLOCK 13 — CHARACTER LIFECYCLE (must precede crime)
-     ================================================================ -->
+<script src="js/character/family-statistics.js"></script>
+<script src="js/character/character-statistics.js"></script>
 <script src="js/character/character-lifecycle.js"></script>
 
-<!-- ================================================================
-     BLOCK 14 — ROLES
-     ================================================================ -->
-<script src="js/roles/role-constants.js"></script>
-<script src="js/roles/role-state.js"></script>
-<script src="js/roles/role-queries.js"></script>
-<script src="js/roles/role-commands.js"></script>
+<!-- ============================================================
+     BLOCK 14b — SELECTORS
+     ============================================================ -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script>
+    if (typeof window.getFilteredLocationOptions !== 'function') {
+        window.getFilteredLocationOptions = function (selectedId) {
+            if (typeof window.buildLocationDropdown === 'function') {
+                return window.buildLocationDropdown(selectedId, null, true);
+            }
+            return '<option value="">All locations</option>';
+        };
+    }
+</script>
+<script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
 
-<!-- ================================================================
-     BLOCK 15 — RANKS
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 15 — CHARACTER FACTORY & CREATION
+     ============================================================ -->
+<script src="js/character/character-factory.js"></script>
+<script src="js/character/character-generator.js"></script>
+<script src="js/character/character-creation-commands.js"></script>
+<script src="js/character/character-deletion-commands.js"></script>
+
+<!-- ============================================================
+     BLOCK 16 — CHARACTER CHILDREN
+     ============================================================ -->
+<script src="js/character/children-queries.js"></script>
+<script src="js/character/children-generator.js"></script>
+<script src="js/character/children-commands.js"></script>
+<script src="js/character/children-statistics.js"></script>
+
+<!-- ============================================================
+     BLOCK 17 — NAME SUBSYSTEM
+     ============================================================ -->
+<script src="js/names/name-queries.js"></script>
+<script src="js/names/name-rules.js"></script>
+<script src="js/names/names-state.js"></script>
+<script src="js/names/name-commands.js"></script>
+<script src="js/names/name-system.js"></script>
+<script src="js/names/modals-name.js"></script>
+
+<!-- ============================================================
+     BLOCK 18 — RANK SUBSYSTEM
+     ============================================================ -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
 <script src="js/ranks/rank-state.js"></script>
 <script src="js/ranks/rank-queries.js"></script>
 <script src="js/ranks/rank-assignment.js"></script>
 <script src="js/ranks/rank-commands.js"></script>
+<script src="js/ranks/rank-issues.js"></script>
+<script src="js/ranks/rank-ui-list.js"></script>
+<script src="js/ranks/modals-rank.js"></script>
+<script src="js/ranks/rank-bootstrap.js"></script>
 
-<!-- ================================================================
-     BLOCK 16 — NAMES
-     ================================================================ -->
-<script src="js/names/name-queries.js"></script>
-<script src="js/names/name-rules.js"></script>
-<script src="js/names/names-state.js"></script>
-<script src="js/names/name-commands.js"></script>
+<!-- ============================================================
+     BLOCK 19 — ROLE SUBSYSTEM
+     ============================================================ -->
+<script src="js/roles/role-constants.js"></script>
+<script src="js/roles/role-state.js"></script>
+<script src="js/roles/role-queries.js"></script>
+<script src="js/roles/role-commands.js"></script>
+<script src="js/roles/role-system.js"></script>
+<script src="js/roles/role-ui-list.js"></script>
+<script src="js/roles/modals-roles.js"></script>
+<script src="js/roles/modals-role-select.js"></script>
 
-<!-- ================================================================
-     BLOCK 17 — RELIGION
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 20 — RELIGION SUBSYSTEM
+     ============================================================ -->
 <script src="js/religion/religion-constants.js"></script>
 <script src="js/religion/religion-format.js"></script>
 <script src="js/religion/religion-validation.js"></script>
@@ -424,12 +477,96 @@
 <script src="js/religion/religion-view-models.js"></script>
 <script src="js/religion/religion-render.js"></script>
 <script src="js/religion/religion-ui-state.js"></script>
+<script src="js/religion/modals-religion.js"></script>
+<script src="js/religion/religion-bootstrap.js"></script>
 
-<!-- ================================================================
-     BLOCK 18 — HOUSEHOLDS + RESIDENCE
-     (Moved BEFORE industry: industry-commands.js and
-      industry-bootstrap.js require HouseholdCommands.)
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 21 — CULTURE SUBSYSTEM
+     ============================================================ -->
+<script src="js/culture/culture-constants.js"></script>
+<script src="js/culture/culture-validation.js"></script>
+<script src="js/culture/culture-state.js"></script>
+<script src="js/culture/culture-rules.js"></script>
+<script src="js/culture/culture-commands.js"></script>
+<script src="js/culture/culture-queries.js"></script>
+<script src="js/culture/culture-generation.js"></script>
+<script src="js/culture/culture-view-models.js"></script>
+<script src="js/culture/culture-ui-list.js"></script>
+<script src="js/culture/modals-culture.js"></script>
+<script src="js/culture/culture-bootstrap.js"></script>
+
+<!-- ============================================================
+     BLOCK 22 — RELATIONSHIP BASE
+     ============================================================ -->
+<script src="js/relationships/relationship-types.js"></script>
+<script src="js/relationships/relationship-utils.js"></script>
+<script src="js/relationships/relationship-state.js"></script>
+<script src="js/relationships/relationship-queries.js"></script>
+<script src="js/relationships/relationship-commands.js"></script>
+
+<!-- ============================================================
+     BLOCK 23 — RELATIONSHIP PER-ARCHETYPE RULES
+     ============================================================ -->
+<script src="js/relationships/romance-rules.js"></script>
+<script src="js/relationships/friendship-rules.js"></script>
+<script src="js/relationships/rivalry-rules.js"></script>
+<script src="js/relationships/professional-rules.js"></script>
+<script src="js/relationships/jealousy-rules.js"></script>
+<script src="js/relationships/affair-rules.js"></script>
+<script src="js/relationships/matchmaking-rules.js"></script>
+
+<!-- ============================================================
+     BLOCK 24 — RELATIONSHIP PER-ARCHETYPE QUERIES
+     ============================================================ -->
+<script src="js/relationships/romance-queries.js"></script>
+<script src="js/relationships/friendship-queries.js"></script>
+<script src="js/relationships/rivalry-queries.js"></script>
+<script src="js/relationships/professional-queries.js"></script>
+<script src="js/relationships/jealousy-queries.js"></script>
+<script src="js/relationships/affair-queries.js"></script>
+<script src="js/relationships/matchmaking-queries.js"></script>
+
+<!-- ============================================================
+     BLOCK 25 — RELATIONSHIP PER-ARCHETYPE COMMANDS
+     ============================================================ -->
+<script src="js/relationships/romance-commands.js"></script>
+<script src="js/relationships/friendship-commands.js"></script>
+<script src="js/relationships/rivalry-commands.js"></script>
+<script src="js/relationships/jealousy-commands.js"></script>
+<script src="js/relationships/affair-commands.js"></script>
+<script src="js/relationships/professional-commands.js"></script>
+
+<!-- ============================================================
+     BLOCK 26 — RELATIONSHIP FINDER, UI METADATA, INTEGRATIONS
+     ============================================================ -->
+<script src="js/relationships/relationship-finder-queries.js"></script>
+<script src="js/relationships/relationship-ui-metadata.js"></script>
+<script src="js/relationships/relationship-integrations.js"></script>
+
+<!-- ============================================================
+     BLOCK 27 — RELATIONSHIP MODALS
+     ============================================================ -->
+<script src="js/relationships/modals-relationship.js"></script>
+<script src="js/relationships/modals-friendship.js"></script>
+
+<!-- ============================================================
+     BLOCK 28 — RELATIONSHIP BOOTSTRAP
+     ============================================================ -->
+<script src="js/relationships/relationship-bootstrap.js"></script>
+
+<!-- ============================================================
+     BLOCK 29 — APPRENTICESHIP SUBSYSTEM
+     ============================================================ -->
+<script src="js/apprenticeship/apprenticeship-constants.js"></script>
+<script src="js/apprenticeship/apprenticeship-rules.js"></script>
+<script src="js/apprenticeship/apprenticeship-queries.js"></script>
+<script src="js/apprenticeship/apprenticeship-commands.js"></script>
+<script src="js/apprenticeship/professional-knowledge-commands.js"></script>
+<script src="js/apprenticeship/modals-apprenticeship.js"></script>
+
+<!-- ============================================================
+     BLOCK 30 — HOUSEHOLD AND RESIDENCE SUBSYSTEM
+     ============================================================ -->
 <script src="js/households/household-constants.js"></script>
 <script src="js/households/household-rules.js"></script>
 <script src="js/households/household-view-models.js"></script>
@@ -455,41 +592,47 @@
 <script src="js/households/modals-assign-staff.js"></script>
 <script src="js/households/modals-residence-history.js"></script>
 <script src="js/households/modals-residence-vacancy.js"></script>
-<!-- NOTE: modals-residence-snapshot.js is DEPRECATED. Its
-     functionality is now provided by modals-household-snapshot.js
-     (household history/snapshots) and modals-residence.js (residence
-     history/details). Do not add it back. -->
 
-<!-- ================================================================
-     BLOCK 19 — INDUSTRY
-     (Order fixed per industry-doc.txt §4 and the console errors:
-        constants → economics → rules → state → type-defaults →
-        type-init → types → type-commands → migration → commands →
-        queries → processor → view-models → modals → bootstrap.
-      industry-bootstrap.js must load LAST among industry files so
-      its verification finds every module. industry-rules.js must
-      precede industry-type-commands.js. industry-view-models.js must
-      precede industry-bootstrap.js.)
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 31 — INDUSTRY SUBSYSTEM
+     ============================================================ -->
 <script src="js/industry/industry-constants.js"></script>
 <script src="js/industry/industry-economics.js"></script>
-<script src="js/industry/industry-rules.js"></script>
 <script src="js/industry/industry-type-defaults.js"></script>
+<script src="js/industry/industry-rules.js"></script>
 <script src="js/industry/industry-state.js"></script>
 <script src="js/industry/industry-type-init.js"></script>
 <script src="js/industry/industry-types.js"></script>
-<script src="js/industry/industry-type-commands.js"></script>
 <script src="js/industry/industry-migration.js"></script>
+<script src="js/industry/industry-type-commands.js"></script>
 <script src="js/industry/industry-commands.js"></script>
 <script src="js/industry/industry-queries.js"></script>
 <script src="js/industry/industry-processor.js"></script>
 <script src="js/industry/industry-view-models.js"></script>
+<script src="js/industry/industry-ui-list.js"></script>
 <script src="js/industry/modals-industry.js"></script>
 <script src="js/industry/industry-bootstrap.js"></script>
 
-<!-- ================================================================
-     BLOCK 20 — LOCATION (core domain)
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 32 — DISASTER SUBSYSTEM
+     ============================================================ -->
+<script src="js/disaster/disaster-constants.js"></script>
+<script src="js/disaster/disaster-state.js"></script>
+<script src="js/disaster/disaster-queries.js"></script>
+<script src="js/disaster/disaster-damage.js"></script>
+<script src="js/disaster/disaster-commands.js"></script>
+<script src="js/disaster/disaster-view-models.js"></script>
+<script src="js/disaster/modals-disaster.js"></script>
+<script src="js/disaster/disaster-ui-stats.js"></script>
+<script src="js/disaster/disaster-bootstrap.js"></script>
+
+<!-- ============================================================
+     BLOCK 33 — (intentionally empty, block parity)
+     ============================================================ -->
+
+<!-- ============================================================
+     BLOCK 34 — LOCATION SUBSYSTEM
+     ============================================================ -->
 <script src="js/location/location-state.js"></script>
 <script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-commands.js"></script>
@@ -504,7 +647,9 @@
 <script src="js/location/modals-moves.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
-<!-- PlaceQueries façade -->
+<!-- ============================================================
+     BLOCK 34b — PlaceQueries FAÇADE
+     ============================================================ -->
 <script>
     (function () {
         'use strict';
@@ -519,14 +664,17 @@
                 return (window.LocationQueries && typeof window.LocationQueries.getPlaceSummaries === 'function')
                     ? window.LocationQueries.getPlaceSummaries()
                     : [];
+            },
+            getAllPlaces: function () {
+                return (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
             }
         };
     })();
 </script>
 
-<!-- ================================================================
-     BLOCK 21 — SETTLEMENT
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 35 — SETTLEMENT SUBSYSTEM
+     ============================================================ -->
 <script src="js/settlement/settlement-fiscal-definitions.js"></script>
 <script src="js/settlement/settlement-government-definitions.js"></script>
 <script src="js/settlement/settlement-rank-definitions.js"></script>
@@ -570,11 +718,38 @@
 
 <script src="js/settlement/settlement-view-models.js"></script>
 <script src="js/settlement/settlement-ui-state.js"></script>
-<script src="js/settlement/settlement-tabs.js"></script>
 
-<!-- ================================================================
-     BLOCK 22 — GOVERNMENT
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 36 — EDUCATION SUBSYSTEM
+     ============================================================ -->
+<script src="js/education/education-constants.js"></script>
+<script src="js/education/education-rules.js"></script>
+<script src="js/education/education-state.js"></script>
+<script src="js/education/education-learning.js"></script>
+<script src="js/education/education-history.js"></script>
+<script src="js/education/education-queries.js"></script>
+<script src="js/education/education-commands.js"></script>
+<script src="js/education/education-annual.js"></script>
+<script src="js/education/education-ui-list.js"></script>
+<script src="js/education/modals-education.js"></script>
+
+<!-- ============================================================
+     BLOCK 37 — CRIME SUBSYSTEM
+     ============================================================ -->
+<script src="js/crime/crime-constants.js"></script>
+<script src="js/crime/crime-state.js"></script>
+<script src="js/crime/crime-law-integration.js"></script>
+<script src="js/crime/crime-queries.js"></script>
+<script src="js/crime/crime-commands.js"></script>
+<script src="js/crime/crime-view-models.js"></script>
+<script src="js/crime/modals-crime.js"></script>
+<script src="js/crime/crime-ui-stats.js"></script>
+<script src="js/crime/vendetta-system.js"></script>
+<script src="js/crime/crime-bootstrap.js"></script>
+
+<!-- ============================================================
+     BLOCK 38 — GOVERNMENT SUBSYSTEM
+     ============================================================ -->
 <script src="js/government/government-constants.js"></script>
 <script src="js/government/government-state.js"></script>
 <script src="js/government/government-rules.js"></script>
@@ -583,552 +758,107 @@
 <script src="js/government/government-economy.js"></script>
 <script src="js/government/government-bootstrap.js"></script>
 <script src="js/government/government-view-models.js"></script>
+<script src="js/government/government-ui-list.js"></script>
+<script src="js/government/modals-government.js"></script>
+<script src="js/government/modals-government-departments.js"></script>
+<script src="js/government/modals-government-positions.js"></script>
+<script src="js/government/modals-government-assign.js"></script>
+<script src="js/government/modals-government-economy.js"></script>
+<script src="js/government/settlement-law-formatters.js"></script>
 
-<!-- ================================================================
-     BLOCK 23 — EDUCATION
-     ================================================================ -->
-<script src="js/education/education-constants.js"></script>
-<script src="js/education/education-rules.js"></script>
-<script src="js/education/education-state.js"></script>
-<script src="js/education/education-commands.js"></script>
-<script src="js/education/education-queries.js"></script>
-<script src="js/education/education-learning.js"></script>
-<script src="js/education/education-annual.js"></script>
-<script src="js/education/education-ui-list.js"></script>
-<script src="js/education/modals-education.js"></script>
-
-<!-- ================================================================
-     BLOCK 24 — CRIME
-     (character-lifecycle.js was moved to Block 13 so
-      killCharacter is available when crime-commands loads.)
-     ================================================================ -->
-<script src="js/crime/crime-constants.js"></script>
-<script src="js/crime/crime-state.js"></script>
-<script src="js/crime/crime-law-integration.js"></script>
-<script src="js/crime/crime-queries.js"></script>
-<script src="js/crime/crime-commands.js"></script>
-<script src="js/crime/crime-view-models.js"></script>
-<script src="js/crime/crime-ui-stats.js"></script>
-<script src="js/crime/modals-crime.js"></script>
-<script src="js/crime/vendetta-system.js"></script>
-<script src="js/crime/crime-bootstrap.js"></script>
-
-<!-- ================================================================
-     BLOCK 25 — SELECTORS
-     ================================================================ -->
-<script src="js/selectors/selector-base.js"></script>
-<script src="js/selectors/locationDropdown.js"></script>
-<script>
-    (function () {
-        if (typeof window.getFilteredLocationOptions === 'function') return;
-        window.getFilteredLocationOptions = function (selectedId) {
-            if (typeof window.buildLocationDropdown === 'function') {
-                return window.buildLocationDropdown(selectedId, null, true);
-            }
-            return '<option value="">All locations</option>';
-        };
-    })();
-</script>
-<script src="js/selectors/modals-char-selector.js"></script>
-<script src="js/selectors/modals-household-selector.js"></script>
-
-<!-- ================================================================
-     BLOCK 26 — RELIGION MODALS & BOOTSTRAP
-     ================================================================ -->
-<script src="js/religion/modals-religion.js"></script>
-<script src="js/religion/religion-bootstrap.js"></script>
-
-<!-- ================================================================
-     BLOCK 27 — CHARACTER UI MODALS
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 39 — CHARACTER UI MODALS
+     ============================================================ -->
 <script src="js/character/character-ui-list.js"></script>
 <script src="js/character/modals-character.js"></script>
+<script src="js/character/modals-children-birth.js"></script>
+<script src="js/character/modals-children-surrogacy.js"></script>
+<script src="js/character/modals-children-adoption.js"></script>
 <script src="js/character/modals-death.js"></script>
+<script src="js/character/character-system.js"></script>
 
-<!-- ================================================================
-     BLOCK 28 — SETTLEMENT MODALS + UI LIST
-     (settlement-tabs.js is loaded in Block 21.)
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 40 — SETTLEMENT UI + TAB RENDERERS
+     ============================================================ -->
+<script src="js/settlement/settlement-tabs.js"></script>
 <script src="js/settlement/settlement-ui-list.js"></script>
 <script src="js/settlement/modals-settlement-core.js"></script>
 <script src="js/settlement/modals-settlement-economy.js"></script>
 <script src="js/settlement/modals-settlement-roles.js"></script>
 
-<!-- ================================================================
-     BLOCK 29 — SETTLEMENT TAB RENDERERS
-     (Each tab file self-registers with SettlementTabs at load.
-      SettlementTabs must be defined first — see Block 21.)
-     ================================================================ -->
-<script src="js/tabs/settlement-overview-tab.js"></script>
-<script src="js/tabs/settlement-features-tab.js"></script>
+<script src="js/tabs/apprenticeship-tab.js"></script>
+<script src="js/tabs/culture-appearance-tab.js"></script>
+<script src="js/tabs/culture-characters-tab.js"></script>
+<script src="js/tabs/culture-editor-tab.js"></script>
+<script src="js/tabs/culture-mythology-tab.js"></script>
+<script src="js/tabs/culture-names-tab.js"></script>
+<script src="js/tabs/government-civil-laws-tab.js"></script>
+<script src="js/tabs/government-departments-tab.js"></script>
+<script src="js/tabs/government-details-tab.js"></script>
+<script src="js/tabs/government-economy-tab.js"></script>
+<script src="js/tabs/government-history-tab.js"></script>
+<script src="js/tabs/government-type-manager-tab.js"></script>
+<script src="js/tabs/household-activity-tab.js"></script>
+<script src="js/tabs/household-departments-tab.js"></script>
+<script src="js/tabs/household-economy-tab.js"></script>
+<script src="js/tabs/household-holdings-tab.js"></script>
+<script src="js/tabs/household-members-tab.js"></script>
+<script src="js/tabs/household-overview-tab.js"></script>
+<script src="js/tabs/location-tab.js"></script>
+<script src="js/tabs/location-type-manager-tab.js"></script>
+<script src="js/tabs/rank-manager-tab.js"></script>
+<script src="js/tabs/religion-details-tab.js"></script>
+<script src="js/tabs/religion-followers-tab.js"></script>
+<script src="js/tabs/religion-gods-tab.js"></script>
+<script src="js/tabs/religion-laws-tab.js"></script>
+<script src="js/tabs/religion-places-tab.js"></script>
+<script src="js/tabs/roles-analytics-tab.js"></script>
+<script src="js/tabs/roles-tab.js"></script>
+
 <script src="js/tabs/settlement-economy-tab.js"></script>
-<script src="js/tabs/settlement-religion-tab.js"></script>
-<script src="js/tabs/settlement-industry-tab.js"></script>
 <script src="js/tabs/settlement-education-tab.js"></script>
+<script src="js/tabs/settlement-features-tab.js"></script>
 <script src="js/tabs/settlement-history-tab.js"></script>
+<script src="js/tabs/settlement-industry-tab.js"></script>
+<script src="js/tabs/settlement-overview-tab.js"></script>
+<script src="js/tabs/settlement-religion-tab.js"></script>
+<script src="js/tabs/settlement-residence-tab.js"></script>
 <script src="js/tabs/settlement-roles-tab.js"></script>
 <script src="js/tabs/settlement-crime-tab.js"></script>
-<script src="js/tabs/settlement-residence-tab.js"></script>
 
-<!-- ================================================================
-     BLOCK 30 — MANAGER INIT
-     ================================================================ -->
+<!-- ============================================================
+     BLOCK 41 — OPTIONAL STATE FACADE
+     ============================================================ -->
+<script src="js/core/census-state.js"></script>
+<script src="js/core/matchmaker-state.js"></script>
+<script src="js/core/misc-state.js"></script>
+<script src="js/core/state.js"></script>
+
+<!-- ============================================================
+     APPLICATION BOOTSTRAP (function calls — after all script tags)
+     ============================================================ -->
 <script>
-(function () {
-    'use strict';
-
-    function getIcon(name) {
-        return (window.Icons && window.Icons[name]) ? window.Icons[name] : '';
-    }
-    function iconWithText(icon, text) {
-        if (!icon) return text || '';
-        return '<span style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">' +
-               icon + '<span>' + (text || '') + '</span></span>';
-    }
-    function showToast(msg, type) {
-        if (typeof window.showToast === 'function') window.showToast(msg, type);
-    }
-
-    var currentPlaceId = null;
-    var isInitialized = false;
-
-    // ---- 1. TOPBAR TEXT ----
-    function setupUIText() {
-        var title = document.getElementById('settlementManagerTitle');
-        if (title) title.innerHTML = iconWithText(getIcon('HOME'), ' SETTLEMENT MANAGER');
-        var sidebarTitle = document.getElementById('sidebarTitle');
-        if (sidebarTitle) sidebarTitle.innerHTML = iconWithText(getIcon('LOCATION'), ' LOCATIONS');
-        var addLoc = document.getElementById('addLocationBtn');
-        if (addLoc) addLoc.innerHTML = iconWithText(getIcon('PLUS'), ' Add Location');
-        var addSet = document.getElementById('addSettlementBtn');
-        if (addSet) addSet.innerHTML = iconWithText(getIcon('PLUS'), ' Add Settlement');
-        var importBtn = document.getElementById('importBtn');
-        if (importBtn) importBtn.innerHTML = iconWithText(getIcon('ARROW_RIGHT'), ' Import');
-        var exportBtn = document.getElementById('exportBtn');
-        if (exportBtn) exportBtn.innerHTML = iconWithText(getIcon('ARROW_RIGHT'), ' Export');
-        var loadingText = document.getElementById('loadingText');
-        if (loadingText) loadingText.textContent = 'Loading locations…';
-        var emptyState = document.getElementById('emptyStateText');
-        if (emptyState) emptyState.textContent = 'Select a location from the sidebar';
-    }
-
-    // ---- 2. YEAR CONTROL ----
-    function setupYearControl() {
-        var input = document.getElementById('yearInput');
-        var btn = document.getElementById('setYearBtn');
-        if (!input || !btn) return;
-        function syncFromCanonical() {
-            try {
-                var y = (typeof window.getCurrentYear === 'function')
-                    ? window.getCurrentYear()
-                    : (window.masterData && window.masterData.data
-                        ? window.masterData.data.currentYear
-                        : null);
-                if (typeof y === 'number' && isFinite(y)) input.value = String(y);
-            } catch (e) { /* ignore */ }
-        }
-        syncFromCanonical();
-        function applyYear() {
-            var raw = input.value;
-            var y = parseInt(raw, 10);
-            if (!isFinite(y)) { showToast('Enter a valid year', 'error'); return; }
-            if (typeof window.isValidYear === 'function' && window.isValidYear(y) !== true) {
-                showToast('Year out of range', 'error');
-                return;
-            }
-            var applied = false;
-            if (typeof window.setCurrentYear === 'function') {
-                try {
-                    var result = window.setCurrentYear(y);
-                    if (result === false) { showToast('Could not set year', 'error'); return; }
-                    applied = true;
-                } catch (e) { showToast('Set year failed: ' + (e.message || 'unknown'), 'error'); return; }
-            }
-            if (!applied) {
-                if (!window.masterData || !window.masterData.data) {
-                    showToast('Storage not initialized', 'error');
-                    return;
-                }
-                window.masterData.data.currentYear = y;
-                if (typeof window.markDataDirty === 'function') {
-                    try { window.markDataDirty(); } catch (e) { /* ignore */ }
-                }
-                if (typeof window.saveMasterData === 'function') {
-                    try { window.saveMasterData(); } catch (e) { /* ignore */ }
-                }
-                applied = true;
-            }
-            if (applied) {
-                showToast('Year set to ' + y, 'success');
-                syncFromCanonical();
-                if (typeof window.renderSettlementManagerTab === 'function' && currentPlaceId) {
-                    try { window.renderSettlementManagerTab('panelContent', currentPlaceId); }
-                    catch (e) { /* ignore */ }
-                }
-                setupSidebar();
-            }
-        }
-        btn.addEventListener('click', applyYear);
-        input.addEventListener('keydown', function (e) {
-            if (e.key === 'Enter') { e.preventDefault(); applyYear(); }
-        });
-    }
-
-    // ---- 3. SIDEBAR ----
-    function setupSidebar() {
-        var container = document.getElementById('placeList');
-        if (!container) return;
-        if (window.LocationUI && typeof window.LocationUI.renderLocationList === 'function') {
-            try {
-                window.LocationUI.renderLocationList('placeList', {
-                    selectedId: currentPlaceId,
-                    onSelect: function (placeOrId) {
-                        var id = (typeof placeOrId === 'string')
-                            ? placeOrId
-                            : (placeOrId && placeOrId.id ? placeOrId.id : null);
-                        if (!id) return;
-                        selectLocation(id);
-                    }
-                });
-                return;
-            } catch (e) {
-                console.error('[settlement-manager] renderLocationList failed:', e);
-            }
-        }
-        var places = (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
-        if (places && places.length > 0) {
-            var html = '';
-            for (var i = 0; i < places.length; i++) {
-                var p = places[i];
-                var sel = (p.id === currentPlaceId);
-                html += '<div class="place-item' + (sel ? ' selected' : '') +
-                        '" data-place-id="' + p.id + '">' +
-                        (p.displayName || p.name || 'Unknown') +
-                        '</div>';
-            }
-            container.innerHTML = html;
-            var items = container.querySelectorAll('.place-item');
-            for (var j = 0; j < items.length; j++) {
-                (function (item) {
-                    item.addEventListener('click', function () {
-                        var placeId = this.dataset.placeId;
-                        if (placeId) selectLocation(placeId);
-                    });
-                })(items[j]);
-            }
-        } else {
-            container.innerHTML = '<div class="empty-state">No locations found</div>';
-        }
-    }
-
-    function _applySidebarSelection(previousId, nextId) {
-        var container = document.getElementById('placeList');
-        if (!container) return;
-        var newRow = container.querySelector(
-            '.location-tree-item[data-node-id="' + _cssEscape(nextId) + '"]'
-        );
-        if (!newRow) { setupSidebar(); return; }
-        if (previousId) {
-            var prevRow = container.querySelector(
-                '.location-tree-item[data-node-id="' + _cssEscape(previousId) + '"]'
-            );
-            if (prevRow) prevRow.classList.remove('is-selected');
-        }
-        newRow.classList.add('is-selected');
-    }
-
-    function _cssEscape(s) {
-        if (typeof window.CSS !== 'undefined' && typeof window.CSS.escape === 'function') {
-            return window.CSS.escape(s);
-        }
-        return String(s).replace(/([^A-Za-z0-9_-])/g, '\\$1');
-    }
-
-    // ---- 4. SELECT LOCATION ----
-    function selectLocation(id) {
-        if (!id) return;
-        if (id === currentPlaceId) {
-            if (typeof window.renderSettlementManagerTab === 'function') {
-                try { window.renderSettlementManagerTab('panelContent', id); }
-                catch (e) { console.error(e); }
-            }
-            return;
-        }
-        var previousId = currentPlaceId;
-        currentPlaceId = id;
-        if (window.SettlementUIState && typeof window.SettlementUIState.setSelectedLocationId === 'function') {
-            try { window.SettlementUIState.setSelectedLocationId(id); }
-            catch (e) { /* ignore */ }
-        }
-        _applySidebarSelection(previousId, id);
-        if (typeof window.renderSettlementManagerTab === 'function') {
-            try { window.renderSettlementManagerTab('panelContent', id); }
-            catch (e) { console.error(e); }
-        }
-        if (window.innerWidth <= 768) closeSidebar();
-    }
-
-    function closeSidebar() {
-        var s = document.getElementById('locationsSidebar');
-        var o = document.getElementById('sidebarOverlay');
-        if (s) s.classList.remove('visible');
-        if (o) o.classList.remove('active');
-    }
-    function openSidebar() {
-        var s = document.getElementById('locationsSidebar');
-        var o = document.getElementById('sidebarOverlay');
-        if (s) s.classList.add('visible');
-        if (o) o.classList.add('active');
-    }
-    function toggleSidebar() {
-        var s = document.getElementById('locationsSidebar');
-        if (!s) return;
-        if (s.classList.contains('visible')) closeSidebar();
-        else openSidebar();
-    }
-
-    function pickInitialSelection() {
-        if (currentPlaceId) return;
-        if (!window.LocationQueries) return;
-        try {
-            var roots = window.LocationQueries.getRootPlaces({});
-            if (roots && roots.length > 0) selectLocation(roots[0].id);
-        } catch (e) {
-            console.error('[settlement-manager] initial selection failed:', e);
-        }
-    }
-
-    // ---- 5. TOPBAR ACTIONS ----
-    function setupTopBarActions() {
-        var addLocBtn = document.getElementById('addLocationBtn');
-        if (addLocBtn) addLocBtn.onclick = function () {
-            if (typeof window.openAddPlaceModal !== 'function') {
-                showToast('Add modal unavailable', 'error'); return;
-            }
-            window.openAddPlaceModal(null, function (newId) {
-                setupSidebar();
-                if (newId) selectLocation(newId);
-            });
-        };
-
-        var addSetBtn = document.getElementById('addSettlementBtn');
-        if (addSetBtn) addSetBtn.onclick = function () {
-            if (!currentPlaceId) { showToast('Select a location first', 'warning'); return; }
-            if (!window.SettlementFactory || typeof window.SettlementFactory.ensureSettlement !== 'function') {
-                showToast('SettlementFactory not loaded', 'error'); return;
-            }
-            try {
-                var result = window.SettlementFactory.ensureSettlement(currentPlaceId);
-                if (!result || result.success !== true) {
-                    showToast('Could not create settlement: ' +
-                        (result && result.code ? result.code : 'unknown'), 'error');
-                    return;
-                }
-                if (typeof window.SettlementTabs === 'object'
-                    && typeof window.SettlementTabs.activate === 'function') {
-                    window.SettlementTabs.activate('overview');
-                }
-                if (typeof window.renderSettlementManagerTab === 'function') {
-                    window.renderSettlementManagerTab('panelContent', currentPlaceId);
-                }
-                if (result.created === true) showToast('Settlement created', 'success');
-            } catch (e) {
-                console.error('[settlement-manager] createSettlement failed:', e);
-                showToast('Could not create settlement: ' + (e.message || 'unknown'), 'error');
-            }
-        };
-
-        var importBtn = document.getElementById('importBtn');
-        var fileInput = document.getElementById('fileInput');
-        if (importBtn && fileInput) {
-            importBtn.onclick = function () { fileInput.value = ''; fileInput.click(); };
-            fileInput.onchange = function () {
-                var file = this.files && this.files[0];
-                if (!file) return;
-                var reader = new FileReader();
-                reader.onload = function (ev) {
-                    try {
-                        var parsed = JSON.parse(ev.target.result);
-                        var dataToInstall = null;
-                        if (parsed && parsed.data && parsed.data.places !== undefined) dataToInstall = parsed.data;
-                        else if (parsed && parsed.places !== undefined) dataToInstall = parsed;
-                        else if (parsed && parsed.data) dataToInstall = parsed.data;
-                        if (!dataToInstall) { showToast('Unrecognized import format', 'error'); return; }
-                        if (typeof window.normalizeMasterData !== 'function') {
-                            showToast('Schema module not available', 'error'); return;
-                        }
-                        window.masterData = window.normalizeMasterData({
-                            schemaVersion: window.STORAGE_SCHEMA_VERSION,
-                            savedAt: new Date().toISOString(),
-                            data: dataToInstall
-                        });
-                        if (typeof window.invalidateAccessorCaches === 'function') window.invalidateAccessorCaches();
-                        if (typeof window.markDataDirty === 'function') window.markDataDirty();
-                        if (typeof window.saveMasterData === 'function' && !window.saveMasterData()) {
-                            showToast('Save failed after import', 'error'); return;
-                        }
-                        if (window.LocationBootstrap && typeof window.LocationBootstrap.init === 'function') {
-                            try { window.LocationBootstrap.init(); } catch (e) { /* ignore */ }
-                        }
-                        if (window.SettlementState && typeof window.SettlementState.rebuildIndexes === 'function') {
-                            try { window.SettlementState.rebuildIndexes(); } catch (e) { /* ignore */ }
-                        }
-                        if (window.CrimeBootstrap && typeof window.CrimeBootstrap.reinit === 'function') {
-                            try { window.CrimeBootstrap.reinit(); } catch (e) { /* ignore */ }
-                        }
-                        currentPlaceId = null;
-                        setupSidebar();
-                        pickInitialSelection();
-                        if (typeof window.renderSettlementManagerTab === 'function') {
-                            try { window.renderSettlementManagerTab('panelContent', currentPlaceId); }
-                            catch (e) { /* ignore */ }
-                        }
-                        showToast('Import complete', 'success');
-                    } catch (err) {
-                        showToast('Invalid JSON: ' + err.message, 'error');
-                    }
-                };
-                reader.onerror = function () { showToast('Failed to read file', 'error'); };
-                reader.readAsText(file);
-                this.value = '';
-            };
-        }
-
-        var exportBtn = document.getElementById('exportBtn');
-        if (exportBtn) exportBtn.onclick = function () {
-            if (typeof window.exportToJSON !== 'function') {
-                showToast('Export module not available', 'error'); return;
-            }
-            if (!window.masterData) { showToast('No data to export', 'error'); return; }
-            try {
-                window.exportToJSON(window.masterData, 'stillwaters');
-                showToast('Export started', 'success');
-            } catch (e) {
-                showToast('Export failed: ' + (e.message || 'unknown'), 'error');
-            }
-        };
-    }
-
-    // ---- 6. BOOTSTRAP ----
-    function bootstrap() {
-        if (isInitialized) return;
-        isInitialized = true;
-
-        setupUIText();
-        setupTopBarActions();
-        setupYearControl();
-
-        if (typeof window.loadMasterData === 'function') window.loadMasterData();
-
-        if (window.LocationBootstrap) {
-            try { window.LocationBootstrap.init(); }
-            catch (e) { console.error('LocationBootstrap.init failed:', e); }
-        }
-        if (window.SettlementState && typeof window.SettlementState.rebuildIndexes === 'function') {
-            try { window.SettlementState.rebuildIndexes(); }
-            catch (e) { console.error('SettlementState.rebuildIndexes failed:', e); }
-        }
-        if (window.ReligionBootstrap && typeof window.ReligionBootstrap.init === 'function') {
-            try { window.ReligionBootstrap.init(); } catch (e) { /* ignore */ }
-        }
-        if (window.CrimeBootstrap && typeof window.CrimeBootstrap.init === 'function') {
-            try { window.CrimeBootstrap.init(); } catch (e) { /* ignore */ }
-        }
-        if (window.IndustryBootstrap && typeof window.IndustryBootstrap.init === 'function') {
-            try { window.IndustryBootstrap.init(); } catch (e) { /* ignore */ }
-        }
-        if (window.GovernmentBootstrap && typeof window.GovernmentBootstrap.init === 'function') {
-            try { window.GovernmentBootstrap.init(); } catch (e) { /* ignore */ }
-        }
-        if (window.HouseholdBootstrap && typeof window.HouseholdBootstrap.init === 'function') {
-            try { window.HouseholdBootstrap.init(); } catch (e) { /* ignore */ }
-        }
-
-        setTimeout(function () {
-            setupSidebar();
-            pickInitialSelection();
-
-            if (!currentPlaceId && typeof window.renderSettlementManagerTab === 'function') {
-                try { window.renderSettlementManagerTab('panelContent', null); }
-                catch (e) { /* ignore */ }
-            }
-
-            var menuToggle = document.getElementById('menuToggle');
-            if (menuToggle) menuToggle.addEventListener('click', toggleSidebar);
-            var overlay = document.getElementById('sidebarOverlay');
-            if (overlay) overlay.addEventListener('click', closeSidebar);
-        }, 150);
-
-        if (typeof window.addEventListener === 'function') {
-            window.addEventListener('masterDataUpdated', function () {
-                setupSidebar();
-                if (typeof window.renderSettlementManagerTab === 'function') {
-                    try { window.renderSettlementManagerTab('panelContent', currentPlaceId); }
-                    catch (e) { /* ignore */ }
-                }
-            });
-        }
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', bootstrap);
-    } else {
-        bootstrap();
-    }
-})();
+    (function () {
+        'use strict';
+        try { if (window.LocationBootstrap && window.LocationBootstrap.init) window.LocationBootstrap.init(); } catch (e) { console.error('LocationBootstrap:', e); }
+        try { if (window.ReligionBootstrap && window.ReligionBootstrap.init) window.ReligionBootstrap.init(); } catch (e) { console.error('ReligionBootstrap:', e); }
+        try { if (window.GovernmentBootstrap && window.GovernmentBootstrap.init) window.GovernmentBootstrap.init(); } catch (e) { console.error('GovernmentBootstrap:', e); }
+        try { if (window.CultureBootstrap && window.CultureBootstrap.init) window.CultureBootstrap.init(); } catch (e) { console.error('CultureBootstrap:', e); }
+        try { if (window.Relationships && window.Relationships.init) window.Relationships.init(); } catch (e) { console.error('Relationships:', e); }
+        try { if (window.CrimeBootstrap && window.CrimeBootstrap.init) window.CrimeBootstrap.init(); } catch (e) { console.error('CrimeBootstrap:', e); }
+        try { if (window.IndustryBootstrap && window.IndustryBootstrap.init) window.IndustryBootstrap.init(); } catch (e) { console.error('IndustryBootstrap:', e); }
+        try { if (window.HouseholdBootstrap && window.HouseholdBootstrap.init) window.HouseholdBootstrap.init(); } catch (e) { console.error('HouseholdBootstrap:', e); }
+        try { if (window.DisasterBootstrap && window.DisasterBootstrap.init) window.DisasterBootstrap.init(); } catch (e) { console.error('DisasterBootstrap:', e); }
+    })();
 </script>
 
-<!-- ================================================================
-     BLOCK 31 — THEME SWITCHER UI
-     ================================================================ -->
-<script>
-(function () {
-    'use strict';
-    var themeBtn = document.getElementById('themeBtn');
-    var themeMenu = document.getElementById('themeMenu');
-    var themeName = document.getElementById('themeName');
-    var switcher = window.ThemeSwitcher;
-    if (!switcher) return;
-    function updateLabel(id) {
-        var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
-        if (themeName) themeName.textContent = label;
-    }
-    function buildMenu() {
-        var html = '';
-        for (var i = 0; i < switcher.themes.length; i++) {
-            var id = switcher.themes[i];
-            var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
-            html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' + id + '">' + label + '</button></li>';
-        }
-        if (themeMenu) themeMenu.innerHTML = html;
-    }
-    function openMenu()  { if (!themeMenu) return; themeMenu.hidden = false; themeBtn.setAttribute('aria-expanded', 'true'); }
-    function closeMenu() { if (!themeMenu) return; themeMenu.hidden = true; themeBtn.setAttribute('aria-expanded', 'false'); }
-    if (themeBtn) themeBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        if (themeMenu.hidden) openMenu(); else closeMenu();
-    });
-    if (themeMenu) themeMenu.addEventListener('click', function (e) {
-        var btn = e.target.closest('[data-theme-id]');
-        if (!btn) return;
-        var id = btn.getAttribute('data-theme-id');
-        switcher.apply(id); updateLabel(id); closeMenu();
-    });
-    document.addEventListener('click', function (e) {
-        if (themeMenu && !themeMenu.hidden) {
-            if (themeMenu.contains(e.target)) return;
-            if (e.target === themeBtn) return;
-            closeMenu();
-        }
-    });
-    document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && themeMenu && !themeMenu.hidden) closeMenu();
-    });
-    buildMenu();
-    var saved = switcher.getSaved();
-    if (saved) updateLabel(saved);
-})();
-</script>
-
+<!-- ============================================================
+     DO NOT LOAD (deprecated compatibility façades)
+     ============================================================
+       js/government/government-system.js
+       js/government/government-assignment.js
+       js/government/government-laws.js
+       js/households/modals-residence-snapshot.js
+     ============================================================ -->
 </body>
 </html>
