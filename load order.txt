@@ -142,7 +142,7 @@
      ============================================================ -->
 <script src="js/names/name-queries.js"></script>
 <script src="js/names/name-rules.js"></script>
-<script src="js/names/name-state.js"></script>
+<script src="js/names/names-state.js"></script>
 <script src="js/names/name-commands.js"></script>
 <script src="js/names/name-system.js"></script>
 <script src="js/names/modals-name.js"></script>
