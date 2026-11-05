@@ -21,6 +21,7 @@
  *   - addNameToList(cultureId, type, name)
  *   - removeNameFromList(cultureId, type, name)
  *   - setCultureSurnameRules(cultureId, rules)
+ *   - clearCultureSurnameRules(cultureId)       <-- NEW
  *   - calculateMarriageSurnames (delegates to NameRules)
  *   - persist
  *
@@ -34,9 +35,26 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (culture-keyed):
- *     - addNameToList, removeNameFromList, setCultureSurnameRules take a
- *       cultureId. The old country-keyed signatures are REMOVED.
+ *   Current revision (A2):
+ *     - Added clearCultureSurnameRules(cultureId). Sets
+ *       nameLists[cultureId].rules = null through the command layer,
+ *       marks data dirty, and publishes 'surnameRulesChanged' with
+ *       rules: null. This is the dedicated command for the "no rules
+ *       configured" state; setCultureSurnameRules is NOT used for
+ *       clearing because a null rules object intentionally fails its
+ *       validation. culture-names-tab.js's Clear Rules button now
+ *       calls this command instead of writing masterData directly.
+ *     - setCultureSurnameRules now passes a _clone(rules) to
+ *       validateRules. Validation cannot mutate the caller's object,
+ *       but a rules object that mutates during validation (or a
+ *       validator that stashes a reference and mutates it later) can
+ *       no longer corrupt the stored copy. Defensive; no behavior
+ *       change for well-behaved validators.
+ *     - Header SCOPE lists clearCultureSurnameRules.
+ *     - Header REFACTOR HISTORY updated.
+ *   Previous revision (culture-keyed):
+ *     - addNameToList, removeNameFromList, setCultureSurnameRules take
+ *       a cultureId. The old country-keyed signatures are REMOVED.
  *     - setCountrySurnameRules renamed to setCultureSurnameRules.
  *     - _commit publishes nameListChanged with { cultureId, ... }
  *       instead of { countryId, ... }.
@@ -750,9 +768,12 @@
             return _fail('NameRules.validateRules is required.');
         }
 
+        // Validate against a clone so a validator that mutates its
+        // argument (or stashes a reference and mutates it later) cannot
+        // corrupt the object we are about to store.
         var validation;
         try {
-            validation = NR.validateRules(rules);
+            validation = NR.validateRules(_clone(rules));
         } catch (e) {
             return _fail(
                 'Rules validation threw: ' +
@@ -789,6 +810,40 @@
         return _ok({ rules: _clone(rules) });
     }
 
+    /**
+     * Clears the surname rules for a culture by setting them to null.
+     *
+     * This is a command, not a state write, because "no rules
+     * configured" is a valid stored state (distinct from "rules
+     * configured but empty"). The name list itself is preserved; only
+     * the rules object is cleared.
+     *
+     * setCultureSurnameRules is NOT used here because a null rules
+     * object intentionally fails its validation. This command is the
+     * dedicated path for the "no rules configured" state.
+     *
+     * @param {string} cultureId
+     * @returns {{ success: boolean, reason?: string }}
+     */
+    function clearCultureSurnameRules(cultureId) {
+        var cultureCheck = _requireCultureId(cultureId, 'clearCultureSurnameRules');
+        if (!cultureCheck.ok) return _fail(cultureCheck.reason);
+
+        var list = NS.getMutableNameList(cultureId);
+        if (!list) {
+            return _fail('No name list for culture: ' + cultureId);
+        }
+
+        list.rules = null;
+
+        _commit('surnameRulesChanged', {
+            cultureId: cultureId,
+            rules: null
+        });
+
+        return _ok();
+    }
+
     // =========================================================================
     // 13. EXPORTS
     // =========================================================================
@@ -803,6 +858,7 @@
         addNameToList: addNameToList,
         removeNameFromList: removeNameFromList,
         setCultureSurnameRules: setCultureSurnameRules,
+        clearCultureSurnameRules: clearCultureSurnameRules,
 
         calculateMarriageSurnames: calculateMarriageSurnames,
 
