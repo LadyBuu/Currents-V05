@@ -6,10 +6,10 @@
     <title>Religion Manager</title>
     <link rel="icon" href="data:," />
 
-    <!-- Theme tokens MUST load first. -->
-    <link rel="stylesheet" href="css/themes.css" />
-    <!-- Structural styles consume the tokens. -->
-    <link rel="stylesheet" href="css/common.css" />
+    <script src="js/core/theme-boot.js"></script>
+
+    <link rel="stylesheet" href="css/themes.css">
+    <link rel="stylesheet" href="css/common.css">
 
     <style>
         /* ============================================================
@@ -337,14 +337,10 @@
 
         /* ============================================================
            RELIGION TAB CONTENT (.rt-*)
-           These classes are emitted by the five religion tab files
-           (religion-details-tab.js, religion-gods-tab.js,
-           religion-laws-tab.js, religion-places-tab.js,
-           religion-followers-tab.js). They are not shell chrome;
-           they are the tab bodies. Ported verbatim from religion.css.
+           These classes are emitted by the five religion tab files.
+           Ported verbatim from religion.css.
            ============================================================ */
 
-        /* ---- Tab skeleton ---- */
         .rt-tab { display: flex; flex-direction: column; gap: 1rem; }
         .rt-tab__header {
             display: flex; justify-content: space-between;
@@ -379,7 +375,6 @@
             padding-top: 0.75rem; border-top: 1px solid var(--border);
         }
 
-        /* ---- Buttons (rt variant) ---- */
         .rt-btn {
             display: inline-flex; align-items: center; gap: 0.25rem;
             padding: 0.3125rem 0.75rem; background: var(--bg3);
@@ -406,7 +401,6 @@
         }
         .rt-clear:hover { color: var(--accent-light); border-color: var(--accent); }
 
-        /* ---- Search ---- */
         .rt-search input {
             width: 100%; min-width: 12.5rem;
             padding: 0.3125rem 0.5rem; background: var(--bg);
@@ -423,7 +417,6 @@
         }
         .rt-tab__filters select:focus { outline: none; border-color: var(--accent); }
 
-        /* ---- Status / badges ---- */
         .rt-status {
             display: inline-flex; align-items: center;
             padding: 0.125rem 0.5rem; border-radius: var(--radius);
@@ -441,7 +434,6 @@
         }
         .rt-badge--accent { background: var(--accent-dim); color: var(--accent-light); }
 
-        /* ---- Details tab ---- */
         .rt-details__hero {
             display: flex; justify-content: space-between;
             align-items: flex-start; gap: 1rem;
@@ -451,9 +443,7 @@
         .rt-details__identity {
             display: flex; align-items: center; gap: 0.625rem;
         }
-        .rt-details__glyph {
-            font-size: 1.75rem; line-height: 1;
-        }
+        .rt-details__glyph { font-size: 1.75rem; line-height: 1; }
         .rt-details__name {
             font-family: var(--f-display); font-size: 1.1rem;
             font-weight: 600; color: var(--accent-light);
@@ -524,9 +514,7 @@
             font-size: 0.65rem; color: var(--dim);
             padding: 0.5rem 0; line-height: 1.5;
         }
-        .rt-chipset {
-            display: flex; flex-wrap: wrap; gap: 0.375rem;
-        }
+        .rt-chipset { display: flex; flex-wrap: wrap; gap: 0.375rem; }
         .rt-chip {
             display: inline-flex; align-items: center; gap: 0.125rem;
             padding: 0.125rem 0.125rem 0.125rem 0.5rem;
@@ -540,7 +528,6 @@
         }
         .rt-chip__remove:hover { opacity: 1; color: var(--danger-lt); }
 
-        /* ---- God cards ---- */
         .rt-god-card {
             display: flex; flex-direction: column; gap: 0.375rem;
             padding: 0.75rem 0.875rem;
@@ -555,9 +542,7 @@
         .rt-god-card__identity {
             display: flex; align-items: center; gap: 0.5rem;
         }
-        .rt-god-card__glyph {
-            font-size: 1.5rem; line-height: 1;
-        }
+        .rt-god-card__glyph { font-size: 1.5rem; line-height: 1; }
         .rt-god-card__name {
             font-family: var(--f-display); font-size: 0.8rem;
             font-weight: 600; color: var(--text);
@@ -566,9 +551,7 @@
             font-family: var(--f-mono); font-size: 0.6rem;
             color: var(--dim);
         }
-        .rt-god-card__actions {
-            display: flex; gap: 0.25rem; flex-shrink: 0;
-        }
+        .rt-god-card__actions { display: flex; gap: 0.25rem; flex-shrink: 0; }
         .rt-god-card__meta {
             display: flex; gap: 0.5rem; flex-wrap: wrap;
             font-family: var(--f-mono); font-size: 0.6rem;
@@ -582,7 +565,6 @@
             font-family: var(--f-mono);
         }
 
-        /* ---- Law cards ---- */
         .rt-law-card {
             display: flex; flex-direction: column; gap: 0.375rem;
             padding: 0.75rem 0.875rem;
@@ -613,9 +595,7 @@
         .rt-law-card__meta--severity-minor { color: var(--accent-light); }
         .rt-law-card__meta--severity-major { color: var(--warn, #c87040); }
         .rt-law-card__meta--severity-mortal { color: var(--danger-lt); }
-        .rt-law-card__actions {
-            display: flex; gap: 0.25rem; flex-shrink: 0;
-        }
+        .rt-law-card__actions { display: flex; gap: 0.25rem; flex-shrink: 0; }
         .rt-law-card__desc {
             font-size: 0.7rem; color: var(--text); line-height: 1.55;
         }
@@ -630,7 +610,6 @@
         .rt-enforced-badge--on { background: var(--accent-dim); color: var(--accent-light); }
         .rt-enforced-badge--off { background: var(--bg3); color: var(--dim); }
 
-        /* ---- Place cards ---- */
         .rt-place-card {
             display: flex; flex-direction: column; gap: 0.375rem;
             padding: 0.75rem 0.875rem;
@@ -655,9 +634,7 @@
             display: flex; gap: 0.625rem; flex-wrap: wrap;
             font-size: 0.65rem; color: var(--dim);
         }
-        .rt-place-card__actions {
-            display: flex; gap: 0.25rem; flex-shrink: 0;
-        }
+        .rt-place-card__actions { display: flex; gap: 0.25rem; flex-shrink: 0; }
         .rt-place-card__sub {
             display: flex; gap: 0.625rem; flex-wrap: wrap;
             font-size: 0.6rem; color: var(--dim);
@@ -674,7 +651,6 @@
             font-size: 0.65rem; color: var(--dim); line-height: 1.5;
         }
 
-        /* ---- Follower rows ---- */
         .rt-follower-row {
             display: flex; justify-content: space-between;
             align-items: flex-start; gap: 0.75rem;
@@ -710,11 +686,8 @@
             display: flex; gap: 0.625rem; flex-wrap: wrap;
             font-size: 0.65rem; color: var(--dim);
         }
-        .rt-follower-row__actions {
-            display: flex; gap: 0.25rem; flex-shrink: 0;
-        }
+        .rt-follower-row__actions { display: flex; gap: 0.25rem; flex-shrink: 0; }
 
-        /* ---- Bulk assign list ---- */
         .rt-bulk-list {
             max-height: 20rem; overflow-y: auto;
             display: flex; flex-direction: column; gap: 0.125rem;
@@ -739,7 +712,6 @@
             color: var(--dim);
         }
 
-        /* ---- Conversion history ---- */
         .rt-history-row {
             display: grid;
             grid-template-columns: 1fr max-content max-content;
@@ -751,19 +723,14 @@
             font-size: 0.72rem;
         }
         .rt-history-row--current { border-left-color: var(--accent); }
-        .rt-history-row__arrow {
-            padding: 0 0.375rem; color: var(--dim);
-        }
+        .rt-history-row__arrow { padding: 0 0.375rem; color: var(--dim); }
         .rt-history-row__year,
         .rt-history-row__reason {
             font-family: var(--f-mono); font-size: 0.6rem;
             color: var(--dim);
         }
 
-        /* ---- Modal-ish form (used by inline modals + rt-form) ---- */
-        .rt-form {
-            display: flex; flex-direction: column; gap: 0.625rem;
-        }
+        .rt-form { display: flex; flex-direction: column; gap: 0.625rem; }
         .rt-form__group { display: flex; flex-direction: column; gap: 0.25rem; }
         .rt-form__label {
             font-family: var(--f-display); font-size: 0.6rem;
@@ -815,7 +782,6 @@
             outline: none; border-color: var(--accent);
         }
 
-        /* ---- Fallback sidebar rows (when ReligionRender is absent) ---- */
         .religion-list { display: flex; flex-direction: column; gap: 0.125rem; }
         .religion-item {
             display: flex; align-items: center; gap: 0.5rem;
@@ -829,9 +795,6 @@
             color: var(--accent-light);
         }
 
-        /* ============================================================
-           RESPONSIVE
-           ============================================================ */
         @media (max-width: 768px) {
             .topbar .burger-menu { display: inline-flex; }
             .topbar { padding: 0.375rem 0.625rem; gap: 0.375rem; min-height: 2.625rem; }
@@ -952,78 +915,198 @@
     </div>
 </div>
 
-<!-- ============================================================ -->
-<!-- SCRIPTS                                                      -->
-<!--                                                              -->
-<!-- Script list is UNCHANGED from the previous ReligionManager.  -->
-<!-- Religion genuinely depends on the settlement/crime/culture   -->
-<!-- bundles (law enums, follower projections, culture-aware      -->
-<!-- name resolution). The shell changed; the dependency graph    -->
-<!-- did not. Reducing the script list to match CultureManager    -->
-<!-- would silently break law category pickers and follower       -->
-<!-- location columns.                                            -->
-<!-- ============================================================ -->
+<!-- ================================================================
+     SCRIPTS — BYTE-FOR-BYTE COPY OF CultureManager.html's SCRIPT
+     CHAIN, with only the religion-specific block and religion tab
+     files added at the end.
 
-<!-- Core -->
-<script src="js/core/constants.js"></script>
+     Order:
+       Core constants / utilities / time / storage / accessors
+         / validation / world / names
+       Core UI primitives
+       Skill taxonomy + event logger
+       Character (state, rules, queries, commands, factory, generator,
+                  children, statistics, lifecycle)
+       Selectors
+       Ranks (all)
+       Roles (all)
+       Religion (all 14 modules + bootstrap)
+       Location (all)
+       Culture (before names — name-queries requires CultureQueries)
+       Names
+       Character UI modals
+       Culture editor + tabs
+       (Religion TabManager.configure block)
+       Religion tab files
+       Orchestrator
+       Theme switcher
+
+     This is the same working load order CultureManager.html uses
+     for every non-religion module. Religion is inserted at the point
+     where CultureManager inserts culture, and the religion tabs are
+     inserted alongside the culture tabs.
+     ================================================================ -->
+
+<!-- Core constants -->
+<script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
 <script src="js/core/constants/character-constants.js"></script>
 <script src="js/core/constants/character-traits.js"></script>
 <script src="js/core/constants/location-constants.js"></script>
 <script src="js/core/constants/relationship-constants.js"></script>
 
-<script src="js/core/time.js"></script>
-<script src="js/core/randomness.js"></script>
-<script src="js/core/collections.js"></script>
+<!-- Core utilities -->
 <script src="js/core/formatting.js"></script>
 <script src="js/core/icons.js"></script>
+<script src="js/core/collections.js"></script>
 <script src="js/core/ids.js"></script>
+<script src="js/core/randomness.js"></script>
+
+<!-- Core time -->
+<script src="js/core/time.js"></script>
+
+<!-- Core storage + PlaceQueries façade -->
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
+<script>
+    (function () {
+        try {
+            if (typeof window.initializeStorage === 'function') window.initializeStorage();
+        } catch (e) { console.error('[boot] initializeStorage failed:', e); }
+    })();
+</script>
 <script src="js/core/accessors.js"></script>
+<script>
+    (function () {
+        'use strict';
+        window.PlaceQueries = {
+            getPlaceById: function (id) {
+                if (!window.LocationState
+                    || typeof window.LocationState.getPlaceById !== 'function') {
+                    return null;
+                }
+                return window.LocationState.getPlaceById(id);
+            },
+            getPlaceSummaries: function () {
+                return (window.LocationQueries
+                    && typeof window.LocationQueries.getPlaceSummaries === 'function')
+                    ? window.LocationQueries.getPlaceSummaries()
+                    : [];
+            },
+            getAllPlaces: function () {
+                return (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
+            }
+        };
+    })();
+</script>
+
+<!-- Core validation, world, names -->
+<script src="js/core/validation.js"></script>
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
-<script src="js/core/validation.js"></script>
-<script src="js/core/integrity.js"></script>
-<script src="js/core/maintenance.js"></script>
+
+<!-- Core UI primitives -->
 <script src="js/core/ui.js"></script>
 <script src="js/core/ui-state.js"></script>
 <script src="js/core/modals-core.js"></script>
-<script src="js/core/collapsible.js"></script>
 <script src="js/core/responsive.js"></script>
-<script src="js/core/exportUtils.js"></script>
+<script src="js/core/collapsible.js"></script>
 <script src="js/core/tab-manager.js"></script>
-<script src="js/modules/simulation/simulation-generators.js"></script>
+<script src="js/core/exportUtils.js"></script>
 
-<!-- Feature-state modules (required before state.js) -->
-<script src="js/systems/census/census-state.js"></script>
-<script src="js/systems/matchmaker/matchmaker-state.js"></script>
-<script src="js/systems/household/household-state.js"></script>
-<script src="js/systems/roles/role-state.js"></script>
-<script src="js/systems/ranks/rank-state.js"></script>
-<script src="js/systems/names/names-state.js"></script>
-<script src="js/core/state/misc-state.js"></script>
-<script src="js/core/state/location-ui-state.js"></script>
-<script src="js/core/state.js"></script>
+<!-- Skill taxonomy -->
+<script src="js/roles/skill-utils.js"></script>
 
-<!-- Character -->
+<!-- Event logger -->
+<script src="js/events/eventLogger.js"></script>
+
+<!-- Character pure policy -->
+<script src="js/character/family-rules.js"></script>
+<script src="js/character/children-rules.js"></script>
+<script src="js/character/mortality-rules.js"></script>
+
+<!-- Character state -->
 <script src="js/character/character-state.js"></script>
+<script src="js/character/family-state.js"></script>
+<script src="js/character/children-state.js"></script>
+
+<!-- Character commands & queries -->
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
-<script src="js/character/family-state.js"></script>
 <script src="js/character/family-queries.js"></script>
 <script src="js/character/family-commands.js"></script>
-<script src="js/character/character-lifecycle.js"></script>
-<script src="js/character/mortality-rules.js"></script>
+
+<!-- Character aggregation + lifecycle -->
 <script src="js/character/mortality-queries.js"></script>
 <script src="js/character/mortality-statistics.js"></script>
-<script src="js/character/modals-death.js"></script>
+<script src="js/character/family-statistics.js"></script>
+<script src="js/character/character-statistics.js"></script>
+<script src="js/character/character-lifecycle.js"></script>
 
 <!-- Selectors -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
+<script>
+    if (typeof window.getFilteredLocationOptions !== 'function') {
+        window.getFilteredLocationOptions = function (selectedId) {
+            if (typeof window.buildLocationDropdown === 'function') {
+                return window.buildLocationDropdown(selectedId, null, true);
+            }
+            return '<option value="">All locations</option>';
+        };
+    }
+</script>
 <script src="js/selectors/modals-char-selector.js"></script>
-<script src="js/selectors/modals-household-selector.js"></script>
+
+<!-- Character factory & creation -->
+<script src="js/character/character-factory.js"></script>
+<script src="js/character/character-generator.js"></script>
+<script src="js/character/character-creation-commands.js"></script>
+<script src="js/character/character-deletion-commands.js"></script>
+
+<!-- Character children -->
+<script src="js/character/children-queries.js"></script>
+<script src="js/character/children-generator.js"></script>
+<script src="js/character/children-commands.js"></script>
+<script src="js/character/children-statistics.js"></script>
+
+<!-- Ranks -->
+<script src="js/ranks/rank-constants.js"></script>
+<script src="js/ranks/rank-rules.js"></script>
+<script src="js/ranks/rank-state.js"></script>
+<script src="js/ranks/rank-queries.js"></script>
+<script src="js/ranks/rank-assignment.js"></script>
+<script src="js/ranks/rank-commands.js"></script>
+<script src="js/ranks/rank-issues.js"></script>
+<script src="js/ranks/rank-ui-list.js"></script>
+<script src="js/ranks/modals-rank.js"></script>
+<script src="js/ranks/rank-bootstrap.js"></script>
+
+<!-- Roles -->
+<script src="js/roles/role-constants.js"></script>
+<script src="js/roles/role-state.js"></script>
+<script src="js/roles/role-queries.js"></script>
+<script src="js/roles/role-commands.js"></script>
+<script src="js/roles/role-system.js"></script>
+<script src="js/roles/role-ui-list.js"></script>
+<script src="js/roles/modals-roles.js"></script>
+<script src="js/roles/modals-role-select.js"></script>
+
+<!-- Religion -->
+<script src="js/religion/religion-constants.js"></script>
+<script src="js/religion/religion-format.js"></script>
+<script src="js/religion/religion-validation.js"></script>
+<script src="js/religion/religion-state.js"></script>
+<script src="js/religion/religion-queries.js"></script>
+<script src="js/religion/religion-rules.js"></script>
+<script src="js/religion/religion-commands.js"></script>
+<script src="js/religion/religion-laws.js"></script>
+<script src="js/religion/religion-inheritance.js"></script>
+<script src="js/religion/religion-view-models.js"></script>
+<script src="js/religion/religion-render.js"></script>
+<script src="js/religion/religion-ui-state.js"></script>
+<script src="js/religion/modals-religion.js"></script>
+<script src="js/religion/religion-bootstrap.js"></script>
 
 <!-- Location -->
 <script src="js/location/location-state.js"></script>
@@ -1040,185 +1123,42 @@
 <script src="js/location/modals-moves.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
-<!-- Roles / Ranks / Names / Households -->
-<script src="js/roles/role-constants.js"></script>
-<script src="js/roles/role-queries.js"></script>
-<script src="js/roles/role-commands.js"></script>
-
-<script src="js/ranks/rank-constants.js"></script>
-<script src="js/ranks/rank-rules.js"></script>
-<script src="js/ranks/rank-queries.js"></script>
-<script src="js/ranks/rank-commands.js"></script>
-
-<script src="js/names/name-queries.js"></script>
-<script src="js/names/name-commands.js"></script>
-
-<script src="js/households/household-constants.js"></script>
-<script src="js/households/household-queries.js"></script>
-<script src="js/households/household-commands.js"></script>
-
-<!-- Settlement (law/crime enum source) -->
-<script src="js/settlement/settlement-fiscal-definitions.js"></script>
-<script src="js/settlement/settlement-government-definitions.js"></script>
-<script src="js/settlement/settlement-rank-definitions.js"></script>
-<script src="js/settlement/settlement-law-definitions.js"></script>
-<script src="js/settlement/settlement-finance-definitions.js"></script>
-<script src="js/settlement/settlement-prosperity-definitions.js"></script>
-<script src="js/settlement/settlement-feature-definitions.js"></script>
-<script src="js/settlement/settlement-education-definitions.js"></script>
-
-<script src="js/settlement/settlement-rank-rules.js"></script>
-<script src="js/settlement/settlement-fiscal-rules.js"></script>
-<script src="js/settlement/settlement-government-rules.js"></script>
-<script src="js/settlement/settlement-feature-rules.js"></script>
-<script src="js/settlement/settlement-law-rules.js"></script>
-
-<script src="js/settlement/settlement-state.js"></script>
-<script src="js/settlement/settlement-command-commit.js"></script>
-
-<script src="js/settlement/settlement-queries.js"></script>
-<script src="js/settlement/settlement-rank-queries.js"></script>
-<script src="js/settlement/settlement-feature-queries.js"></script>
-<script src="js/settlement/settlement-law-queries.js"></script>
-<script src="js/settlement/settlement-education-queries.js"></script>
-<script src="js/settlement/settlement-religion-queries.js"></script>
-<script src="js/settlement/settlement-employment-queries.js"></script>
-<script src="js/settlement/settlement-economy-queries.js"></script>
-<script src="js/settlement/settlement-crime-queries.js"></script>
-<script src="js/settlement/settlement-prosperity-queries.js"></script>
-
-<script src="js/settlement/settlement-feature-commands.js"></script>
-<script src="js/settlement/settlement-government-commands.js"></script>
-<script src="js/settlement/settlement-fiscal-commands.js"></script>
-<script src="js/settlement/settlement-law-commands.js"></script>
-<script src="js/settlement/settlement-wealth-commands.js"></script>
-<script src="js/settlement/settlement-debt-commands.js"></script>
-<script src="js/settlement/settlement-rank-commands.js"></script>
-<script src="js/settlement/settlement-specialization-commands.js"></script>
-
-<script src="js/settlement/settlement-factory.js"></script>
-<script src="js/settlement/settlement-annual-processor.js"></script>
-
-<script src="js/settlement/settlement-view-models.js"></script>
-<script src="js/settlement/settlement-ui-state.js"></script>
-
-<!-- Crime (crime type enum source) -->
-<script src="js/crime/crime-constants.js"></script>
-<script src="js/crime/crime-state.js"></script>
-<script src="js/crime/crime-law-integration.js"></script>
-<script src="js/crime/crime-commands.js"></script>
-<script src="js/crime/crime-queries.js"></script>
-<script src="js/crime/vendetta-system.js"></script>
-<script src="js/crime/crime-ui-stats.js"></script>
-<script src="js/crime/crime-view-models.js"></script>
-<script src="js/crime/modals-crime.js"></script>
-
-<!-- Industry / Government / Education / Disaster -->
-<script src="js/industry/industry-constants.js"></script>
-<script src="js/industry/industry-state.js"></script>
-<script src="js/industry/industry-commands.js"></script>
-<script src="js/industry/industry-queries.js"></script>
-<script src="js/industry/industry-types.js"></script>
-<script src="js/industry/industry-processor.js"></script>
-
-<script src="js/government/government-state.js"></script>
-<script src="js/government/government-commands.js"></script>
-<script src="js/government/government-queries.js"></script>
-<script src="js/government/government-rules.js"></script>
-
-<script src="js/education/education-constants.js"></script>
-<script src="js/education/education-state.js"></script>
-<script src="js/education/education-commands.js"></script>
-<script src="js/education/education-queries.js"></script>
-<script src="js/education/education-learning.js"></script>
-<script src="js/education/education-annual.js"></script>
-
-<script src="js/disaster/disaster-constants.js"></script>
-<script src="js/disaster/disaster-state.js"></script>
-<script src="js/disaster/disaster-queries.js"></script>
-<script src="js/disaster/disaster-commands.js"></script>
-<script src="js/disaster/disaster-damage.js"></script>
-<script src="js/disaster/disaster-ui-stats.js"></script>
-<script src="js/disaster/modals-disaster.js"></script>
-
-<!-- Relationship / Children -->
-<script src="js/relationships/relationship-types.js"></script>
-<script src="js/relationships/relationship-queries.js"></script>
-<script src="js/relationships/relationship-commands.js"></script>
-<script src="js/relationships/relationship-bootstrap.js"></script>
-<script src="js/relationships/relationship-integrations.js"></script>
-<script src="js/relationships/relationship-utils.js"></script>
-<script src="js/relationships/romance-rules.js"></script>
-<script src="js/relationships/romance-queries.js"></script>
-<script src="js/relationships/romance-commands.js"></script>
-<script src="js/relationships/friendship-rules.js"></script>
-<script src="js/relationships/friendship-queries.js"></script>
-<script src="js/relationships/friendship-commands.js"></script>
-<script src="js/relationships/professional-rules.js"></script>
-<script src="js/relationships/professional-queries.js"></script>
-<script src="js/relationships/professional-commands.js"></script>
-<script src="js/relationships/affair-rules.js"></script>
-<script src="js/relationships/affair-queries.js"></script>
-<script src="js/relationships/affair-commands.js"></script>
-<script src="js/relationships/jealousy-rules.js"></script>
-<script src="js/relationships/jealousy-queries.js"></script>
-<script src="js/relationships/jealousy-commands.js"></script>
-<script src="js/relationships/rivalry-rules.js"></script>
-<script src="js/relationships/rivalry-queries.js"></script>
-<script src="js/relationships/rivalry-commands.js"></script>
-<script src="js/relationships/matchmaking-rules.js"></script>
-<script src="js/relationships/matchmaking-queries.js"></script>
-<script src="js/relationships/relationship-finder-queries.js"></script>
-<script src="js/relationships/relationship-state.js"></script>
-<script src="js/relationships/relationship-ui-metadata.js"></script>
-<script src="js/relationships/modals-relationship.js"></script>
-<script src="js/relationships/modals-friendship.js"></script>
-
-<script src="js/character/children-state.js"></script>
-<script src="js/character/children-queries.js"></script>
-<script src="js/character/children-commands.js"></script>
-<script src="js/character/children-rules.js"></script>
-<script src="js/character/children-generator.js"></script>
-<script src="js/character/children-statistics.js"></script>
-<script src="js/character/modals-children-adoption.js"></script>
-<script src="js/character/modals-children-birth.js"></script>
-<script src="js/character/modals-children-surrogacy.js"></script>
-
-<!-- Apprenticeship -->
-<script src="js/apprenticeship/apprenticeship-constants.js"></script>
-<script src="js/apprenticeship/apprenticeship-rules.js"></script>
-<script src="js/apprenticeship/apprenticeship-queries.js"></script>
-<script src="js/apprenticeship/apprenticeship-commands.js"></script>
-<script src="js/apprenticeship/modals-apprenticeship.js"></script>
-<script src="js/apprenticeship/professional-knowledge-commands.js"></script>
-
-<!-- Culture -->
+<!-- Culture (before names — name-queries.js requires CultureQueries) -->
 <script src="js/culture/culture-constants.js"></script>
-<script src="js/culture/culture-state.js"></script>
-<script src="js/culture/culture-queries.js"></script>
-<script src="js/culture/culture-commands.js"></script>
-<script src="js/culture/culture-generation.js"></script>
 <script src="js/culture/culture-validation.js"></script>
+<script src="js/culture/culture-state.js"></script>
+<script src="js/culture/culture-rules.js"></script>
+<script src="js/culture/culture-commands.js"></script>
+<script src="js/culture/culture-queries.js"></script>
+<script src="js/culture/culture-generation.js"></script>
 <script src="js/culture/culture-view-models.js"></script>
 <script src="js/culture/culture-ui-list.js"></script>
-<script src="js/culture/culture-bootstrap.js"></script>
 <script src="js/culture/modals-culture.js"></script>
+<script src="js/culture/culture-bootstrap.js"></script>
 
-<!-- Religion (canonical order) -->
-<script src="js/religion/religion-constants.js"></script>
-<script src="js/religion/religion-format.js"></script>
-<script src="js/religion/religion-validation.js"></script>
-<script src="js/religion/religion-state.js"></script>
-<script src="js/religion/religion-queries.js"></script>
-<script src="js/religion/religion-rules.js"></script>
-<script src="js/religion/religion-commands.js"></script>
-<script src="js/religion/religion-laws.js"></script>
-<script src="js/religion/religion-inheritance.js"></script>
-<script src="js/religion/religion-view-models.js"></script>
-<script src="js/religion/religion-render.js"></script>
-<script src="js/religion/religion-ui-state.js"></script>
-<script src="js/religion/modals-religion.js"></script>
-<script src="js/religion/religion-bootstrap.js"></script>
+<!-- Names (after culture) -->
+<script src="js/names/name-queries.js"></script>
+<script src="js/names/name-rules.js"></script>
+<script src="js/names/names-state.js"></script>
+<script src="js/names/name-commands.js"></script>
+<script src="js/names/name-system.js"></script>
+<script src="js/names/modals-name.js"></script>
+
+<!-- Character UI modals (need culture-queries for projections) -->
+<script src="js/character/character-ui-list.js"></script>
+<script src="js/character/modals-character.js"></script>
+<script src="js/character/modals-children-birth.js"></script>
+<script src="js/character/modals-children-surrogacy.js"></script>
+<script src="js/character/modals-children-adoption.js"></script>
+<script src="js/character/modals-death.js"></script>
+<script src="js/character/character-system.js"></script>
+
+<!-- Culture editor host + the four tabs -->
+<script src="js/tabs/culture-editor-tab.js"></script>
+<script src="js/tabs/culture-appearance-tab.js"></script>
+<script src="js/tabs/culture-mythology-tab.js"></script>
+<script src="js/tabs/culture-characters-tab.js"></script>
+<script src="js/tabs/culture-names-tab.js"></script>
 
 <!-- ============================================================ -->
 <!-- TABMANAGER SCOPE (before the religion tab files register)    -->
@@ -1260,15 +1200,12 @@
 <script src="js/tabs/religion-followers-tab.js"></script>
 
 <!-- ============================================================ -->
-<!-- ORCHESTRATOR (Culture Manager pattern)                       -->
+<!-- ORCHESTRATOR                                                 -->
 <!-- ============================================================ -->
 <script>
 (function () {
     'use strict';
 
-    // -----------------------------------------------------------------
-    // DOM references
-    // -----------------------------------------------------------------
     var religionContainer = document.getElementById('religionListContainer');
     var sidebar           = document.getElementById('religionSidebar');
     var sidebarOverlay    = document.getElementById('sidebarOverlay');
@@ -1287,25 +1224,16 @@
         document.querySelectorAll('.manager-subtabs .manager-subtab')
     );
 
-    // -----------------------------------------------------------------
-    // Local state
-    // -----------------------------------------------------------------
     var selectedReligionId = null;
     var activeTabId        = 'details';
     var isInitialized      = false;
 
-    // -----------------------------------------------------------------
-    // Bootstrapping
-    // -----------------------------------------------------------------
     function bootstrap() {
         if (isInitialized) return;
         isInitialized = true;
 
-        if (typeof window.initializeStorage === 'function') {
-            try { window.initializeStorage(); } catch (e) {
-                console.error('[religion-manager] storage init failed:', e);
-            }
-        }
+        // initializeStorage() already ran inline after storage.js.
+        // Domain bootstraps only.
 
         if (window.LocationBootstrap
             && typeof window.LocationBootstrap.init === 'function') {
@@ -1332,9 +1260,6 @@
         syncTabButtons(activeTabId);
     }
 
-    // -----------------------------------------------------------------
-    // Icon injection
-    // -----------------------------------------------------------------
     function injectIcons() {
         if (typeof window.Icons === 'undefined') {
             setTimeout(injectIcons, 100);
@@ -1349,9 +1274,6 @@
         }
     }
 
-    // -----------------------------------------------------------------
-    // Sidebar rendering
-    // -----------------------------------------------------------------
     function renderReligionList() {
         if (!religionContainer) return;
 
@@ -1443,7 +1365,6 @@
             window.ReligionUIState.setSelectedReligionId(id);
         }
 
-        // Push selection into TabManager context.
         if (window.ReligionTabContext) {
             var fresh = null;
             try {
@@ -1456,7 +1377,6 @@
             window.ReligionTabContext.religion = fresh || null;
         }
 
-        // Mark selected item visually.
         var items = religionContainer.querySelectorAll('.religion-item');
         for (var i = 0; i < items.length; i++) {
             items[i].classList.toggle(
@@ -1469,9 +1389,6 @@
         if (window.innerWidth <= 768) closeSidebar();
     }
 
-    // -----------------------------------------------------------------
-    // Tab dispatch
-    // -----------------------------------------------------------------
     function activateTab(tabId) {
         activeTabId = tabId;
         syncTabButtons(tabId);
@@ -1504,7 +1421,6 @@
     }
 
     function renderActiveTab() {
-        // TabManager path: delegate to the registered renderer.
         if (window.TabManager && typeof window.TabManager.has === 'function') {
             try {
                 if (window.TabManager.has('religion', activeTabId)) {
@@ -1518,11 +1434,9 @@
                     '[religion-manager] TabManager.activate failed for tab "' +
                     activeTabId + '":', e
                 );
-                // Fall through to the fallback.
             }
         }
 
-        // Fallback path: generic view-model renderer.
         var container = document.getElementById('tab-' + activeTabId);
         if (!container) return;
 
@@ -1624,9 +1538,6 @@
             .replace(/'/g, '&#39;');
     }
 
-    // -----------------------------------------------------------------
-    // Sidebar toggle
-    // -----------------------------------------------------------------
     function openSidebar() {
         if (sidebar) sidebar.classList.add('visible');
         if (sidebarOverlay) sidebarOverlay.classList.add('active');
@@ -1646,9 +1557,6 @@
         if (e.key === 'Escape') closeSidebar();
     });
 
-    // -----------------------------------------------------------------
-    // Year
-    // -----------------------------------------------------------------
     function syncYearInput() {
         if (!yearInput) return;
         try {
@@ -1678,9 +1586,6 @@
         renderActiveTab();
     });
 
-    // -----------------------------------------------------------------
-    // Export / Import
-    // -----------------------------------------------------------------
     if (exportBtn) exportBtn.addEventListener('click', function () {
         if (typeof window.exportData === 'function') { window.exportData(); return; }
         if (typeof window.exportToJSON === 'function' && window.masterData) {
@@ -1749,9 +1654,6 @@
         }, 100);
     });
 
-    // -----------------------------------------------------------------
-    // Create / Edit / Delete
-    // -----------------------------------------------------------------
     function openCreateReligion() {
         if (typeof window.openCreateReligionModal !== 'function') {
             window.alert('Create Religion modal not loaded.');
@@ -1821,9 +1723,6 @@
         if (selectedReligionId) openDeleteReligion(selectedReligionId);
     });
 
-    // -----------------------------------------------------------------
-    // Cross-tab reload
-    // -----------------------------------------------------------------
     window.addEventListener('masterDataUpdated', function () {
         renderReligionList();
         if (selectedReligionId && window.ReligionQueries) {
@@ -1839,9 +1738,6 @@
         }
     });
 
-    // -----------------------------------------------------------------
-    // Init
-    // -----------------------------------------------------------------
     function onDomReady(fn) {
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', fn);
