@@ -2,203 +2,176 @@
 /**
  * =============================================================================
  * LOCATION MOVEMENT TAB
+ * js/tabs/location-movement-tab.js
  * =============================================================================
+ *
+ * LOCATION: js/tabs/location-movement-tab.js
  *
  * Displays every character move that touches this location — arrivals
  * (move.locationId === this place) and departures
- * (move.fromLocationId === this place), sorted newest-first.
+ * (move.fromLocationId === this place), newest-first.
  *
- * SCOPE
- * -----
- * - Read the place and the moves touching it via LocationQueries.
- * - Render the movement list with arrival/departure styling and year.
+ * RENDERER CONTRACT (from LocationManagerBootstrap):
+ *   fn(container, context) where context = { locationId, locationName }
  *
- * OUT OF SCOPE
- * ------------
- * - Enumerating character moves (owned by LocationQueries.getMovesForLocation).
- * - Resolving current locations (owned by LocationQueries._resolveCurrentLocationId).
- * - Character name resolution (owned by CharacterQueries/accessors).
- * - Travel restrictions (owned by LocationMovement.getTravelRestrictions;
- *   not surfaced on this tab because it is character-specific).
- * - Inline CSS. All styling comes from css/location-tabs.css.
+ * DATA SOURCES:
+ *   - LocationQueries.getPlace(id)
+ *   - LocationQueries.getMovesForLocation(id)  (returns [{ move, character, isArrival }])
  *
- * HARD DEPENDENCIES (load-time):
- *   - js/core/formatting.js           (window.escapeHtml)
- *   - js/core/icons.js                (window.getIcon)
- *   - js/location/location-queries.js (window.LocationQueries)
+ * FILTERS: none.
  *
- * CALL-TIME DEPENDENCIES (soft — resolved per call):
- *   - window.getCharacterById  (character display name; 'Unknown' fallback)
- *   - window.LocationQueries.getMovesForLocation (added in location-queries.js)
+ * DEPENDENCIES (all soft; guarded at call time):
+ *   - LocationQueries — REQUIRED
+ *   - TabManager      — REQUIRED
+ *   - formatting.js   (escapeHtml) — REQUIRED
+ *   - icons.js        (Icons)      — soft
  *
+ * TIME CONTRACT: none (years are read from the move record, not the clock).
+ * ICON POLICY: no emojis. The arrival/departure arrow is text (→ / ←), not an emoji.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Refactored to the Education tab skeleton:
+ *     - Renderer contract is fn(container, context).
+ *     - Registers with TabManager at load time.
+ *     - Empty states are three-way: no-context / no-place / no-moves.
+ *     - querySelectorAll+forEach pattern removed; no per-row listeners at all.
  * =============================================================================
  */
 
 (function () {
     'use strict';
 
-    // =========================================================================
-    // 1. LOAD-TIME DEPENDENCY CHECKS
-    // =========================================================================
+    var TAB_ID = 'movement';
+    var SCOPE  = 'location';
 
-    if (typeof window.escapeHtml !== 'function') {
-        throw new Error(
-            'location-movement-tab.js requires core/formatting.js ' +
-            '(window.escapeHtml).'
-        );
+    function _queries() {
+        return (typeof window.LocationQueries !== 'undefined') ? window.LocationQueries : null;
     }
-    if (typeof window.getIcon !== 'function') {
-        throw new Error(
-            'location-movement-tab.js requires core/icons.js ' +
-            '(window.getIcon).'
-        );
+    function _tabManager() {
+        return (typeof window.TabManager !== 'undefined') ? window.TabManager : null;
     }
-    if (!window.LocationQueries ||
-        typeof window.LocationQueries.getPlace !== 'function') {
-        throw new Error(
-            'location-movement-tab.js requires location-queries.js ' +
-            '(window.LocationQueries.getPlace).'
-        );
+    function _esc(v) {
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(v);
+        if (v === null || v === undefined) return '';
+        return String(v)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
-
-    // =========================================================================
-    // 2. LOCAL ALIASES
-    // =========================================================================
-
-    var LQ = window.LocationQueries;
-
-    // =========================================================================
-    // 3. PRESENTATION HELPERS
-    // =========================================================================
+    function _icon(name) {
+        if (typeof window.getIcon === 'function') {
+            try { var s = window.getIcon(name); if (typeof s === 'string') return s; }
+            catch (e) { /* fall through */ }
+        }
+        if (window.Icons && typeof window.Icons[name] === 'string') return window.Icons[name];
+        return '';
+    }
 
     function _characterName(character) {
         if (!character) return 'Unknown';
-        var full = ((character.name || '') + ' ' +
-                    (character.surname || '')).trim();
+        var full = ((character.name || '') + ' ' + (character.surname || '')).trim();
         return full || 'Unknown';
     }
-
-    function _placeName(placeId, cachedName) {
+    function _placeName(placeId, cachedName, Q) {
         if (cachedName) return cachedName;
         if (!placeId) return 'Unknown';
-        var p = LQ.getPlace(placeId);
+        var p = Q.getPlace(placeId);
         return p && p.displayName ? p.displayName : 'Unknown';
     }
 
-    // =========================================================================
-    // 4. RENDER
-    // =========================================================================
+    function _renderEvent(e, Q) {
+        var move = e.move || {};
+        var char = e.character || {};
+        var isArrival = e.isArrival === true;
+        var rowClass = isArrival
+            ? 'loc-move-row loc-move-row--arrival'
+            : 'loc-move-row loc-move-row--departure';
+        var actionLabel = isArrival ? 'Arrived' : 'Departed';
+        var arrow = isArrival ? '\u2192' : '\u2190';
+        var year = (move.year === null || move.year === undefined) ? '?' : String(move.year);
 
-    function render(containerId, locationId, onRefresh) {
-        var container = document.getElementById(containerId);
+        var detail;
+        if (isArrival) {
+            detail = 'from ' + _placeName(move.fromLocationId, move.fromLocationName, Q);
+        } else {
+            detail = 'to ' + _placeName(move.locationId, move.locationName, Q);
+        }
+
+        var html = '<div class="' + rowClass + '">';
+        html +=   '<div class="loc-move-row-body">';
+        html +=     '<div class="loc-move-row-char">' + _esc(_characterName(char)) + '</div>';
+        html +=     '<div class="loc-move-row-detail">' +
+                      '<span class="loc-move-row-action">' + _esc(arrow + ' ' + actionLabel) + '</span> ' +
+                      _esc(detail) +
+                    '</div>';
+        html +=   '</div>';
+        html +=   '<div class="loc-move-row-year">Year ' + _esc(year) + '</div>';
+        html += '</div>';
+        return html;
+    }
+
+    function renderMovementTab(container, context) {
         if (!container) return;
-
-        var place = LQ.getPlace(locationId);
-        if (!place) {
+        if (!context || !context.locationId) {
+            container.innerHTML = '<div class="empty-state">Select a location from the sidebar.</div>';
+            return;
+        }
+        var Q = _queries();
+        if (!Q) {
             container.innerHTML =
-                '<div class="empty-state">Location not found</div>';
+                '<div class="rt-unavailable">LocationQueries is not available. ' +
+                'Load js/location/location-queries.js.</div>';
+            return;
+        }
+        var place = Q.getPlace(context.locationId);
+        if (!place) {
+            container.innerHTML = '<div class="empty-state">Location not found.</div>';
             return;
         }
 
-        // Enumerate moves touching this location via the shared query.
-        // Falls back to [] if the query is missing (bare harness).
         var events = [];
-        if (typeof LQ.getMovesForLocation === 'function') {
-            events = LQ.getMovesForLocation(locationId) || [];
+        if (typeof Q.getMovesForLocation === 'function') {
+            try { events = Q.getMovesForLocation(context.locationId) || []; }
+            catch (e) { events = []; }
         }
 
-        var html = '';
-
-        // ---- HEADER ----
-        html += '<div class="loc-tab-header">';
-        html +=   '<div class="loc-tab-header-text">';
-        html +=     '<div class="loc-tab-header-title">' +
-                        window.getIcon('TIMELINE') + ' Movement History: ' +
-                        window.escapeHtml(place.displayName) +
-                    '</div>';
-        html +=     '<div class="loc-tab-header-subtitle">' +
+        var html = '<div class="loc-tab">';
+        html += '<div class="loc-tab-header">' +
+                    '<div class="loc-tab-header-text">' +
+                      '<div class="loc-tab-header-title">' +
+                        _icon('TIMELINE') + ' Movement History: ' + _esc(place.displayName) +
+                      '</div>' +
+                      '<div class="loc-tab-header-subtitle">' +
                         events.length + ' total movement event' +
                         (events.length === 1 ? '' : 's') + ' recorded' +
-                    '</div>';
-        html +=   '</div>';
-        html += '</div>';
-
-        // ---- LIST ----
+                      '</div>' +
+                    '</div>' +
+                '</div>';
         html += '<div class="loc-tab-section">';
-
         if (events.length === 0) {
-            html += '<div class="loc-tab-empty">' +
-                        'No movement records found for this location.' +
-                    '</div>';
+            html += '<div class="loc-tab-empty">No movement records found for this location.</div>';
         } else {
             html += '<div class="loc-move-list">';
-
             for (var i = 0; i < events.length; i++) {
-                var e = events[i];
-                var move = e.move || {};
-                var char = e.character || {};
-
-                var isArrival = e.isArrival === true;
-                var rowClass = isArrival
-                    ? 'loc-move-row loc-move-row--arrival'
-                    : 'loc-move-row loc-move-row--departure';
-
-                var actionLabel = isArrival ? 'Arrived' : 'Departed';
-                var arrow = isArrival ? '\u2192' : '\u2190'; // → / ←
-                var charName = _characterName(char);
-                var year = (move.year === null || move.year === undefined)
-                    ? '?' : String(move.year);
-
-                // Build the "from/to" detail line.
-                var detail;
-                if (isArrival) {
-                    var fromName = _placeName(
-                        move.fromLocationId, move.fromLocationName);
-                    detail = 'from ' + fromName;
-                } else {
-                    var toName = _placeName(
-                        move.locationId, move.locationName);
-                    detail = 'to ' + toName;
-                }
-
-                html += '<div class="' + rowClass + '">';
-                html +=   '<div class="loc-move-row-body">';
-                html +=     '<div class="loc-move-row-char">' +
-                                window.escapeHtml(charName) +
-                            '</div>';
-                html +=     '<div class="loc-move-row-detail">' +
-                                '<span class="loc-move-row-action">' +
-                                    window.escapeHtml(arrow + ' ' + actionLabel) +
-                                '</span> ' +
-                                window.escapeHtml(detail) +
-                            '</div>';
-                html +=   '</div>';
-                html +=   '<div class="loc-move-row-year">' +
-                                'Year ' + window.escapeHtml(year) +
-                          '</div>';
-                html += '</div>';
+                html += _renderEvent(events[i], Q);
             }
-
             html += '</div>';
         }
-
         html += '</div>';
-
+        html += '</div>';
         container.innerHTML = html;
-
-        // No interactive elements on this tab, so no event binding.
-        // `onRefresh` is unused; the parameter is kept for signature
-        // compatibility with the other tab renderers.
     }
 
-    // =========================================================================
-    // 5. EXPORTS
-    // =========================================================================
+    var TM = _tabManager();
+    if (TM && typeof TM.register === 'function') {
+        TM.register(SCOPE, TAB_ID, renderMovementTab);
+    } else if (typeof console !== 'undefined' && console.warn) {
+        console.warn('location-movement-tab.js: TabManager is not available at load time; the tab was not registered. Load tab-manager.js first.');
+    }
 
-    window.LocationMovementTab = { render: render };
+    window.LocationMovementTab = { id: TAB_ID, render: renderMovementTab };
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.LocationMovementTab;
     }
-
 })();
