@@ -8,7 +8,7 @@
  * The composite-form host for the culture editor. Owns:
  *   - the CultureEditorTabs registry (register / unregister / list)
  *   - openEditor(cultureId, options) — opens the editor modal
- *   - tab switching, per-tab caching, save-all orchestration
+ *   - tab switching, save-all orchestration
  *
  * ARCHITECTURE
  * ------------
@@ -45,13 +45,17 @@
  * Switching tabs re-renders the tab from `_state.culture`. Any input the
  * user has typed is present in `_state.culture` ONLY IF the tab's own
  * input/change handlers wrote it there. All four tabs do this for
- * text/number input. The one gap:
+ * text/number input.
  *
- *   - A row that has been ADDED to a list (e.g. an empty appearance
- *     option row) but not yet TYPED INTO does not survive a tab switch.
- *     It has no representation in `_state.culture` because the reader
- *     skips empty values. On switch-back, the row is gone and must be
- *     re-added. This is documented and accepted.
+ * Known gap: a row that has been ADDED to a list (e.g. an empty
+ * appearance option row) but not yet TYPED INTO does not survive a tab
+ * switch on some tabs. It has no representation in `_state.culture`
+ * because the reader skips empty values. On switch-back, the row is
+ * gone and must be re-added. culture-appearance-tab.js was refactored
+ * to preserve empty categories in the working copy (the category key
+ * survives, the empty row does not), which narrows this gap for
+ * appearance; the same fix should be applied to any future list tab
+ * that has the same add-row-then-type flow.
  *
  * There is no tab-data cache. Prior revisions carried one that was
  * written on switch, read once, and unconditionally discarded before
@@ -61,50 +65,71 @@
  * to cached DOM, and that is a larger change than the value it
  * delivers. The honest contract above is what the tabs actually do.
  *
- * WHAT CHANGED FROM THE PREVIOUS VERSION
- * --------------------------------------
- *   - _state.tabDataCache is deleted. _switchTab no longer caches the
- *     pane's innerHTML; _renderTab no longer reads from a cache. The
- *     cache was never consulted on switch-back; removing it removes
- *     dead code and a misleading header claim.
- *   - Header SAVE IS ATOMIC FOR CULTURE-RECORD FIELDS ONLY section
- *     added. The prior "Either the whole culture updates, or nothing
- *     does" claim was false for the characters and names tabs.
- *   - Header TAB-SWITCH PRESERVATION CONTRACT section added. The
- *     prior "cache preserves unsaved edits" claim was false.
- *   - openEditor now reads via CultureQueries.getCultureById (was:
- *     CultureState.getCulture, which does not exist).
- *   - _saveCulture no longer touches masterData or saveMasterData
- *     directly. It calls CultureCommands.updateCulture once for the
- *     merged record and then CultureCommands.persist() once for the
- *     save. No bypassing the domain save contract.
- *   - Every inline style="" is gone. Classes live in
- *     css/culture-tabs.css.
- *   - The built-in 'details' tab is REMOVED. Details are edited through
- *     the standard culture modals (culture-modals.js::openEditCultureModal).
- *     The editor is for the domain-specific content (appearance,
- *     mythology, characters, names).
- *   - Save is explicit. The editor's Save button calls updateCulture
- *     once and persist once; Cancel discards. There is no auto-save.
+ * ICON POLICY: no emojis. Icons via _getIcon(name) — returns '' for
+ * unknown names, never a fabricated glyph.
+ *
+ * INLINE STYLES: none. All classes are in css/culture-tabs.css.
  *
  * DEPENDENCIES (resolved at call time — no load-time guards):
  *   - TabManager is NOT used here. The composite-form architecture does
- *     not fit TabManager's one-pane-at-a-time model; see
- *     religion-tabs-config.js's header for the contrast.
+ *     not fit TabManager's one-pane-at-a-time model.
  *   - CultureEditorTabs (this file) installs itself on window.
  *   - CultureQueries    (read the current culture)
  *   - CultureCommands   (updateCulture + persist)
  *   - modals-core.js    (openModal)
  *   - ui.js             (showToast)
- *   - formatting.js     (escapeHtml)
+ *   - formatting.js     (escapeHtml — REQUIRED, throws if missing)
  *   - icons.js          (Icons[name] via _getIcon)
  *
- * ICON POLICY: no emojis. Icons via _getIcon(name) — returns '' for
- * unknown names, never a fabricated glyph. `fallbackGlyphs` is DELETED
- * from the previous version; it was a source of stray Unicode.
- *
- * INLINE STYLES: none. All classes are in css/culture-tabs.css.
- *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (A7):
+ *     - _saveCulture now calls _cleanup() and nulls _state.root /
+ *       _state.culture / _state.cultureId after closing the modal. The
+ *       previous version only cleaned up on the onCancel path, which
+ *       leaked every tracked listener (including the document-level
+ *       Ctrl+S handler) on every successful save.
+ *     - _renderTab now distinguishes three failure modes:
+ *       no-registration (tabId not in the registry), no-container
+ *       (pane element missing), and render-error (tab.render threw).
+ *       The previous version only surfaced render-error and used the
+ *       same class (rt-unavailable) for all three. The no-registration
+ *       case now names the missing tab file, per the playbook's
+ *       "unavailable state, do not silent-empty" rule.
+ *     - _renderTab now guards against a null _state.culture (defensive;
+ *       openEditor always sets it, but a future refactor could clear it
+ *       early). The no-culture state is a distinct message.
+ *     - Header TAB-SWITCH PRESERVATION CONTRACT updated to note that
+ *       culture-appearance-tab.js now preserves empty categories in
+ *       the working copy (reduces, but does not eliminate, the
+ *       added-but-untyped-row gap).
+ *     - Header SAVE IS ATOMIC section preserved from the previous
+ *       revision (it was already correct).
+ *     - _escapeHtml is now a strict dependency (throws if formatting.js
+ *       is missing), matching culture-mythology-tab.js and the
+ *       post-audit contract of the other culture tabs.
+ *     - REFACTOR HISTORY section preserved and extended.
+ *   Previous revisions:
+ *     - _state.tabDataCache deleted; _switchTab no longer caches the
+ *       pane's innerHTML; _renderTab no longer reads from a cache.
+ *     - Header SAVE IS ATOMIC FOR CULTURE-RECORD FIELDS ONLY section
+ *       added.
+ *     - Header TAB-SWITCH PRESERVATION CONTRACT section added.
+ *     - openEditor now reads via CultureQueries.getCultureById (was:
+ *       CultureState.getCulture, which does not exist).
+ *     - _saveCulture no longer touches masterData or saveMasterData
+ *       directly. It calls CultureCommands.updateCulture once for the
+ *       merged record and then CultureCommands.persist() once for the
+ *       save. No bypassing the domain save contract.
+ *     - Every inline style="" is gone. Classes live in
+ *       css/culture-tabs.css.
+ *     - The built-in 'details' tab is REMOVED. Details are edited
+ *       through the standard culture modals
+ *       (modals-culture.js::openEditCultureModal). The editor is for
+ *       the domain-specific content (appearance, mythology, characters,
+ *       names).
+ *     - Save is explicit. The editor's Save button calls updateCulture
+ *       once and persist once; Cancel discards. There is no auto-save.
  * =============================================================================
  */
 
@@ -115,15 +140,18 @@
     // 1. DEPENDENCY WRAPPERS
     // =========================================================================
 
+    // escapeHtml is a REQUIRED dependency (formatting.js). Renderers do not
+    // implement their own escaping; a missing escapeHtml is a load-order bug
+    // that must be visible. See the header of culture-mythology-tab.js for
+    // the same contract.
     function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (str === null || str === undefined) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+        if (typeof window.escapeHtml !== 'function') {
+            throw new Error(
+                'culture-editor-tab.js requires escapeHtml (formatting.js). ' +
+                'Check script tag order.'
+            );
+        }
+        return window.escapeHtml(str);
     }
 
     function _getIcon(name) {
@@ -216,6 +244,12 @@
     // Every listener the editor installs goes through _track so that
     // _cleanup can remove them all when the modal closes. Without this,
     // a second openEditor call stacks listeners on document.
+    //
+    // _cleanup is called on BOTH paths: onCancel (via the modal's own
+    // onCancel) and on successful save (at the end of _saveCulture).
+    // The prior revision only cleaned up on cancel, which leaked the
+    // document-level Ctrl+S handler (and every other tracked listener)
+    // on every successful save.
 
     function _track(el, eventType, handler) {
         if (!el || typeof el.addEventListener !== 'function') return;
@@ -394,6 +428,7 @@
                 _cleanup();
                 _state.culture = null;
                 _state.cultureId = null;
+                _state.root = null;
                 if (typeof options.onCancel === 'function') {
                     try { options.onCancel(); }
                     catch (e) {
@@ -453,7 +488,7 @@
         });
 
         // Render the initial tab.
-        _renderTab(_state.activeTabId, visibleIds);
+        _renderTab(_state.activeTabId);
     }
 
     // =========================================================================
@@ -514,13 +549,45 @@
         }
     }
 
+    // =========================================================================
+    // 8. RENDER TAB (with three-way empty-state disambiguation)
+    // =========================================================================
+    //
+    // Failure modes, per the playbook's "unavailable state, do not
+    // silent-empty" rule:
+    //
+    //   no-registration — tabId is not in _tabRegistry. Names the
+    //                     missing tab file so the fix is obvious.
+    //   no-container    — the pane element is missing from the DOM. This
+    //                     is a host bug (openEditor built the modal but
+    //                     a pane was not emitted). Names the pane id.
+    //   no-culture      — _state.culture is null. Defensive; openEditor
+    //                     always sets it, but a future refactor could
+    //                     clear it early. Distinct message.
+    //   render-error    — tab.render threw. Shows the error message.
+    //
+    // The prior revision only surfaced render-error and used the same
+    // class for all failure modes.
+
     function _renderTab(tabId) {
         if (!_state.root) return;
+
         var tab = _tabRegistry[tabId];
-        if (!tab) return;
+        if (!tab) {
+            _renderHostEmptyState(tabId, 'no-registration');
+            return;
+        }
+
+        if (!_state.culture) {
+            _renderHostEmptyState(tabId, 'no-culture');
+            return;
+        }
 
         var pane = _state.root.querySelector('#ct_pane_' + tabId);
-        if (!pane) return;
+        if (!pane) {
+            _renderHostEmptyState(tabId, 'no-container');
+            return;
+        }
 
         try {
             tab.render(pane, _state.culture);
@@ -536,8 +603,45 @@
         }
     }
 
+    function _renderHostEmptyState(tabId, reason) {
+        if (!_state.root) return;
+        var pane = _state.root.querySelector('#ct_pane_' + tabId);
+        if (!pane) {
+            // No pane to write into — this is a host bug that can only
+            // be surfaced on the console. The per-tab renderer would
+            // never have run either.
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    '[culture-editor] cannot render host empty state: no pane for "' +
+                    tabId + '" (reason: ' + reason + ')'
+                );
+            }
+            return;
+        }
+
+        var message;
+        if (reason === 'no-registration') {
+            message =
+                'The "' + _escapeHtml(tabId) + '" tab is not loaded. ' +
+                'Load the corresponding culture-' + _escapeHtml(tabId) + '-tab.js ' +
+                'before culture-editor-tab.js.';
+        } else if (reason === 'no-container') {
+            message =
+                'The host did not emit a pane for "' + _escapeHtml(tabId) + '". ' +
+                'This is a culture-editor-tab.js bug.';
+        } else if (reason === 'no-culture') {
+            message =
+                'No culture is loaded. Close the editor and reopen it from ' +
+                'the culture manager.';
+        } else {
+            message = 'This tab cannot be rendered.';
+        }
+
+        pane.innerHTML = '<div class="rt-unavailable">' + message + '</div>';
+    }
+
     // =========================================================================
-    // 8. SAVE ALL
+    // 9. SAVE ALL
     // =========================================================================
     //
     // Iterates every REGISTERED tab (not just the visible ones; a tab
@@ -667,8 +771,22 @@
             }
         }
 
-        // Close the modal.
+        // Close the modal AND clean up tracked listeners.
+        //
+        // The prior revision only closed the modal, which left the
+        // document-level Ctrl+S handler (and every other tracked
+        // listener) installed. A second openEditor call would stack a
+        // second Ctrl+S handler, which would fire _saveCulture twice
+        // per keystroke. The listener is removed here; _state is
+        // cleared so a late-arriving event from the closing modal
+        // cannot re-enter _saveCulture.
         _closeTopModal();
+        _cleanup();
+        _state.culture = null;
+        _state.cultureId = null;
+        _state.root = null;
+        _state.activeTabId = null;
+        _state.onSaveCallback = null;
     }
 
     function _showErrors(errors) {
@@ -690,7 +808,7 @@
     }
 
     // =========================================================================
-    // 9. PUBLIC API
+    // 10. PUBLIC API
     // =========================================================================
 
     window.CultureEditorTabs = {
