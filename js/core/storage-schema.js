@@ -12,22 +12,27 @@
  *     whitelist. Fresh installs no longer crash on the first government
  *     write, and existing saves preserve those arrays across reloads.
  *
- *   - Current revision adds religions to both places, for the exact same
- *     reason. Without it, normalizeMasterData drops data.religions on
- *     every load; the orchestrator's defensive repair then sets it to [];
- *     the next save writes [] back to storage; every religion the user
- *     created is silently lost on the next page reload.
+ *   - That same revision added religions to both places. Without it,
+ *     normalizeMasterData dropped data.religions on every load; the
+ *     orchestrator's defensive repair then set it to []; the next save
+ *     wrote [] back to storage; every religion the user created was
+ *     silently lost on the next page reload.
  *
- *     The symptom users saw was "religions aren't getting saved" — the
- *     write side was always fine (saveMasterData persisted the full
- *     array), the read side was dropping it. Adding religions to the
- *     normalize whitelist makes loadMasterData return what was actually
- *     saved.
+ *   - Current revision adds cultures to both places, for the exact same
+ *     reason. Without it, normalizeMasterData drops data.cultures on
+ *     every load; culture-bootstrap's _verifyCanonical repairs it to [];
+ *     the next save writes [] back; every culture the user created is
+ *     silently lost on the next page reload. The write side was always
+ *     fine; the read side was dropping it.
  *
- *   - Removed a duplicate 'governmentTypes' entry from the arrayKeys
- *     whitelist (it appeared at both the general-arrays position and
- *     the government-group position; the duplication was harmless but
- *     was a copy-paste artifact from the previous fix).
+ *     Also adds cultureLocationAssociations as an empty top-level array.
+ *     Nothing in the culture subsystem writes to it today; the culture's
+ *     own location associations live inline on the culture record
+ *     (culture.locations). The field is declared so that if the culture
+ *     domain ever promotes associations to a top-level collection, the
+ *     storage layer already preserves it. Removing this line is safe if
+ *     the association surface never appears; keeping it costs one empty
+ *     array on disk.
  * =============================================================================
  */
 
@@ -137,14 +142,20 @@
                 householdAssignments: [],
 
                 // ─── Religion collections ─────────────────────────────────
-                // FIX: religions was never declared here. Fresh installs
-                // produced a masterData with data.religions === undefined;
-                // the religion bootstrap's _verifyCanonical() repaired it
-                // to [] on first init, but any load that ran BEFORE the
-                // bootstrap (e.g. an auto-init at parse time) saw the
-                // undefined shape. Adding it here makes a fresh install
-                // start with religions: [] and never rely on the repair.
                 religions: [],
+
+                // ─── Culture collections ──────────────────────────────────
+                // cultures: the top-level array the culture subsystem
+                // persists into. Without it here and in the normalizer's
+                // arrayKeys, every saved culture is dropped on the next
+                // load. See the header.
+                cultures: [],
+                // cultureLocationAssociations: declared so the storage
+                // layer preserves the field if the culture domain ever
+                // promotes associations to a top-level collection. The
+                // culture subsystem does not write to this today; its
+                // location associations live inline on culture.locations.
+                cultureLocationAssociations: [],
 
                 // ─── Government domain collections ────────────────────────
                 governmentDepartments: [],
@@ -199,6 +210,14 @@
             'governmentTypes', 'governments', 'households',
             'householdPositions', 'householdAssignments',
             'religions',
+            // FIX: cultures was never in the arrayKeys whitelist.
+            // normalizeMasterData therefore dropped data.cultures on
+            // every load; culture-bootstrap repaired it to []; the next
+            // save wrote [] back; every saved culture was lost on the
+            // next page reload. Same class of bug the religions entry
+            // fixed. See the header.
+            'cultures',
+            'cultureLocationAssociations',
             'governmentDepartments', 'governmentHistory',
             'enterprises', 'enterpriseTypes',
             'residences', 'disasters', 'eventLog',
