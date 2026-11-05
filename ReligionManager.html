@@ -875,7 +875,16 @@
     </div>
     <div id="sidebarOverlay" class="sidebar-overlay"></div>
 
-    <div class="main-panel">
+    <!--
+        data-religion-editor lives here, on .main-panel, because this
+        element is the lowest common ancestor of BOTH the tab strip
+        (.manager-subtabs) and the pane container (#tabContent).
+        TabManager's click router walks up from the clicked tab button
+        and asks each configured scope whether containerRoot.contains(button).
+        If containerRoot were #tabContent, strip clicks would fail to
+        route because the strip is a sibling, not a descendant.
+    -->
+    <div class="main-panel" data-religion-editor>
         <div class="manager-subtabs" id="panelSubtabs" role="tablist">
             <button class="manager-subtab active" role="tab" type="button" data-tab="details" aria-selected="true" tabindex="0">
                 <span class="manager-subtab-icon" data-icon="CIRCLE_DOT" aria-hidden="true"></span>
@@ -1149,6 +1158,11 @@
 
 <!-- ============================================================ -->
 <!-- TABMANAGER SCOPE (before the religion tab files register)    -->
+<!--                                                              -->
+<!-- This block MUST run before religion-*-tab.js so that the     -->
+<!-- scope is configured by the time each tab calls              -->
+<!-- TabManager.register. It configures the scope only; it does   -->
+<!-- NOT call TabManager.init() — that happens in bootstrap().    -->
 <!-- ============================================================ -->
 <script>
 (function () {
@@ -1158,28 +1172,89 @@
         return;
     }
 
+    var SCOPE = 'religion';
+    var KNOWN_TAB_IDS = ['details', 'gods', 'laws', 'places', 'followers'];
+    var PANE_ID_PREFIX = 'tab-';   // Matches the pane ids in the HTML.
+
+    // Shared context object. The orchestrator sets
+    // ReligionTabContext.religion = <religion record> in selectReligion(),
+    // and clears it (sets null) when the selected religion is deleted
+    // from another tab.
     var context = { religion: null };
     window.ReligionTabContext = context;
 
-    window.TabManager.configure('religion', {
-        containerRoot: function () {
-            return document.querySelector('[data-religion-editor]');
-        },
+    function _resolveContainerRoot() {
+        return document.querySelector('[data-religion-editor]');
+    }
+
+    function _resolveContainer(tabId) {
+        // The shell uses id="tab-<tabid>". Keep that id scheme; the
+        // pane is owned by the tab renderer via TabManager.
+        return document.getElementById(PANE_ID_PREFIX + tabId);
+    }
+
+    function _syncTabStrip(tabId) {
+        // Strip buttons: .active, aria-selected, tabindex.
+        var btns = document.querySelectorAll('.manager-subtabs .manager-subtab');
+        for (var i = 0; i < btns.length; i++) {
+            var isActive = btns[i].getAttribute('data-tab') === tabId;
+            btns[i].classList.toggle('active', isActive);
+            btns[i].setAttribute('aria-selected', isActive ? 'true' : 'false');
+            btns[i].setAttribute('tabindex', isActive ? '0' : '-1');
+        }
+        // Panes: .active. TabManager does NOT toggle pane visibility;
+        // the bootstrap must. Without this, clicking a tab highlights
+        // the button but the pane below stays display:none.
+        var panes = document.querySelectorAll('#tabContent .tab-pane');
+        for (var j = 0; j < panes.length; j++) {
+            panes[j].classList.toggle(
+                'active',
+                panes[j].getAttribute('data-tab-content') === tabId
+            );
+        }
+    }
+
+    window.TabManager.configure(SCOPE, {
+        containerRoot: _resolveContainerRoot,
+        resolveContainer: _resolveContainer,
         buildContext: function () {
             if (!context.religion) return null;
             return { religion: context.religion };
         },
+        getActiveTabId: function () {
+            return window.__religionActiveTabId || 'details';
+        },
+        setActiveTabId: function (tabId) {
+            window.__religionActiveTabId = tabId;
+            _syncTabStrip(tabId);
+        },
         buildEmptyState: function (tabId, reason) {
-            if (reason === 'no-renderer')  return 'This tab is not available.';
-            if (reason === 'no-context')   return 'Select a religion to view this tab.';
-            if (reason === 'no-container') return '';
+            if (reason === 'no-renderer') {
+                return '<div class="rt-empty">The "' +
+                    tabId + '" tab is not loaded. Check the script load order.</div>';
+            }
+            if (reason === 'no-context') {
+                return '<div class="rt-empty">Select a religion to view this tab.</div>';
+            }
+            if (reason === 'no-container') {
+                return '<div class="rt-unavailable">Missing pane for "' +
+                    tabId + '".</div>';
+            }
             return '';
         }
     });
+
+    // Exposed so the orchestrator can sync the strip after bootstrap()
+    // without duplicating _syncTabStrip. Kept under one name to make
+    // the cross-file contract obvious.
+    window.ReligionTabSync = {
+        syncStrip: _syncTabStrip,
+        knownTabIds: KNOWN_TAB_IDS.slice()
+    };
 })();
 </script>
 
-<!-- Religion tab files -->
+<!-- Religion tab files (self-register with TabManager at load) -->
 <script src="js/tabs/religion-details-tab.js"></script>
 <script src="js/tabs/religion-gods-tab.js"></script>
 <script src="js/tabs/religion-laws-tab.js"></script>
@@ -1188,8 +1263,10 @@
 
 <!-- ============================================================ -->
 <!-- DIAGNOSTIC HOOK — paste this AFTER all scripts and BEFORE    -->
-<!-- the orchestrator. Runs at load time, logs a full picture of  -->
-<!-- the storage round-trip to the console. Safe: read-only.      -->
+<!-- the orchestrator. Runs at DOMContentLoaded (after a          -->
+<!-- microtask) so the bootstrap's synchronous work finishes      -->
+<!-- first. NO setTimeout — that was Rule-10 debt. Safe:          -->
+<!-- read-only.                                                   -->
 <!-- ============================================================ -->
 <script>
 (function () {
@@ -1254,13 +1331,13 @@
 
             // 3. Compare.
             if (storageKey && Array.isArray(inMemoryReligions)) {
-                var parsed = JSON.parse(localStorage.getItem(storageKey));
-                var storageReligions = parsed && parsed.data && parsed.data.religions;
-                if (Array.isArray(storageReligions)) {
+                var parsed2 = JSON.parse(localStorage.getItem(storageKey));
+                var storageReligions2 = parsed2 && parsed2.data && parsed2.data.religions;
+                if (Array.isArray(storageReligions2)) {
                     console.log('SAME COUNT?',
-                        inMemoryReligions.length === storageReligions.length,
+                        inMemoryReligions.length === storageReligions2.length,
                         '(memory:', inMemoryReligions.length,
-                        'storage:', storageReligions.length, ')');
+                        'storage:', storageReligions2.length, ')');
                 }
             }
 
@@ -1335,19 +1412,35 @@
         }
     };
 
-    // Log the load-time state immediately.
-    console.log('[religion-diag] Diagnostic hook installed. ' +
-        'Run one of these in the console:\n' +
-        '  __religionDiag.snapshot()          — current memory vs storage\n' +
-        '  __religionDiag.saveAndInspect()    — force save, then compare\n' +
-        '  __religionDiag.keys()              — list localStorage keys\n' +
-        '  __religionDiag._countInStorage()   — count religions in storage');
+    // Log the load-time state after DOMContentLoaded + one microtask.
+    // This replaces the prior setTimeout(fn, 500) which was racing the
+    // orchestrator's DOMContentLoaded bootstrap.
+    function _runInitialSnapshot() {
+        console.log('[religion-diag] Diagnostic hook installed. ' +
+            'Run one of these in the console:\n' +
+            '  __religionDiag.snapshot()          — current memory vs storage\n' +
+            '  __religionDiag.saveAndInspect()    — force save, then compare\n' +
+            '  __religionDiag.keys()              — list localStorage keys\n' +
+            '  __religionDiag._countInStorage()   — count religions in storage');
+        try { window.__religionDiag.snapshot('after-load'); }
+        catch (e) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('[religion-diag] initial snapshot threw:', e);
+            }
+        }
+    }
 
-    // Also run a snapshot after a short delay, so if loadMasterData
-    // finished by then, we capture it.
-    setTimeout(function () {
-        window.__religionDiag.snapshot('after-load');
-    }, 500);
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function () {
+            // Promise.resolve().then schedules after the current
+            // synchronous DOMContentLoaded listener chain has run
+            // (which includes the orchestrator's bootstrap), but
+            // before the next macrotask.
+            Promise.resolve().then(_runInitialSnapshot);
+        });
+    } else {
+        Promise.resolve().then(_runInitialSnapshot);
+    }
 })();
 </script>
 
@@ -1372,13 +1465,15 @@
     var deleteReligionBtn = document.getElementById('deleteReligionBtn');
     var refreshBtn        = document.getElementById('refreshBtn');
 
-    var tabButtons = Array.prototype.slice.call(
-        document.querySelectorAll('.manager-subtabs .manager-subtab')
-    );
-
     var selectedReligionId = null;
     var activeTabId        = 'details';
     var isInitialized      = false;
+
+    // The tab strip buttons are NOT bound here. TabManager owns click
+    // routing for [data-tab] buttons inside containerRoot (the
+    // .main-panel[data-religion-editor]). The orchestrator only calls
+    // TabManager.activate() from code paths (sidebar select, refresh,
+    // masterDataUpdated).
 
     function bootstrap() {
         if (isInitialized) return;
@@ -1419,9 +1514,16 @@
         syncYearInput();
         renderReligionList();
         pickInitialSelection();
-        syncTabButtons(activeTabId);
 
-        // Expose a manual refresh so the diagnostic can trigger a
+        // Sync the strip using the shared helper exposed by the
+        // TabManager scope block above. Previously this called a
+        // local syncTabButtons(); that function is now deleted so the
+        // strip state is owned in exactly one place.
+        if (window.ReligionTabSync && typeof window.ReligionTabSync.syncStrip === 'function') {
+            window.ReligionTabSync.syncStrip(activeTabId);
+        }
+
+        // Expose a manual refresh so diagnostics can trigger a
         // re-render after a forced save.
         window.__religionManagerRefresh = function () {
             renderReligionList();
@@ -1559,137 +1661,72 @@
     }
 
     function activateTab(tabId) {
+        if (!tabId) return;
         activeTabId = tabId;
-        syncTabButtons(tabId);
-        renderActiveTab();
-    }
 
-    function syncTabButtons(tabId) {
-        for (var i = 0; i < tabButtons.length; i++) {
-            var btn = tabButtons[i];
-            var isActive = btn.dataset.tab === tabId;
-            btn.classList.toggle('active', isActive);
-            btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
-            btn.setAttribute('tabindex', isActive ? '0' : '-1');
+        var TM = window.TabManager;
+        if (!TM || typeof TM.activate !== 'function') {
+            var container = document.getElementById('tab-' + tabId);
+            if (container) {
+                container.innerHTML =
+                    '<div class="rt-unavailable">TabManager is not available. ' +
+                    'Check the script load order.</div>';
+            }
+            return;
         }
-        var panes = document.querySelectorAll('#tabContent .tab-pane');
-        for (var j = 0; j < panes.length; j++) {
-            panes[j].classList.toggle(
-                'active',
-                panes[j].getAttribute('data-tab-content') === tabId
+
+        try {
+            TM.activate('religion', tabId);
+        } catch (e) {
+            console.error(
+                '[religion-manager] TabManager.activate failed for tab "' +
+                tabId + '":', e
             );
+            var c = document.getElementById('tab-' + tabId);
+            if (c) {
+                c.innerHTML =
+                    '<div class="rt-unavailable">Error rendering tab: ' +
+                    escapeHtml(e.message || 'unknown') + '</div>';
+            }
         }
-    }
-
-    for (var i = 0; i < tabButtons.length; i++) {
-        (function (btn) {
-            btn.addEventListener('click', function () {
-                activateTab(btn.dataset.tab);
-            });
-        })(tabButtons[i]);
     }
 
     function renderActiveTab() {
-        if (window.TabManager && typeof window.TabManager.has === 'function') {
-            try {
-                if (window.TabManager.has('religion', activeTabId)) {
-                    window.TabManager.activate('religion', activeTabId);
-                    return;
-                }
-                window.TabManager.render('religion', activeTabId);
-                return;
-            } catch (e) {
-                console.error(
-                    '[religion-manager] TabManager.activate failed for tab "' +
-                    activeTabId + '":', e
-                );
-            }
-        }
+        var TM = window.TabManager;
 
-        var container = document.getElementById('tab-' + activeTabId);
-        if (!container) return;
+        if (!TM || typeof TM.activate !== 'function') {
+            var container = document.getElementById('tab-' + activeTabId);
+            if (container) {
+                container.innerHTML =
+                    '<div class="rt-unavailable">TabManager is not available. ' +
+                    'Check the script load order.</div>';
+            }
+            return;
+        }
 
         if (!selectedReligionId) {
-            setEmptyState(container, 'Select a religion from the sidebar');
+            var c2 = document.getElementById('tab-' + activeTabId);
+            if (c2) {
+                c2.innerHTML =
+                    '<div class="rt-empty">Select a religion from the sidebar.</div>';
+            }
             return;
         }
 
-        var VM = window.ReligionViewModels;
-        if (!VM) {
-            setEmptyState(container, 'Religion view models not loaded');
-            return;
-        }
-
-        var model;
         try {
-            model = VM.buildReligionDetailsModel(selectedReligionId);
+            TM.activate('religion', activeTabId);
         } catch (e) {
-            console.error('[religion-manager] buildReligionDetailsModel failed:', e);
-            setEmptyState(container, 'Error loading religion data');
-            return;
-        }
-        if (!model) {
-            setEmptyState(container, 'Religion not found');
-            return;
-        }
-        renderGenericTab(container, model, activeTabId);
-    }
-
-    function renderGenericTab(container, model, tabId) {
-        var row = model.row;
-        var html = '';
-        if (tabId === 'details') {
-            html = '<div class="ct-hint">' +
-                '<strong>' + escapeHtml(row.displayName) + '</strong>' +
-                (row.description
-                    ? '<div style="margin-top:0.375rem;">' + escapeHtml(row.description) + '</div>'
-                    : '') +
-                '<div style="margin-top:0.375rem;font-family:var(--f-mono);font-size:0.65rem;">' +
-                row.followerCount + ' followers · ' +
-                row.godCount + ' gods · ' +
-                row.lawCount + ' laws · ' +
-                row.placeCount + ' places' +
-                '</div></div>';
-        } else if (tabId === 'gods') {
-            if (model.gods.length === 0) {
-                html = '<div class="ct-empty">No gods recorded.</div>';
-            } else {
-                html = '<div class="ct-hint">';
-                for (var i = 0; i < model.gods.length; i++) {
-                    html += '<div>' + escapeHtml(model.gods[i].displayName) + '</div>';
-                }
-                html += '</div>';
+            console.error(
+                '[religion-manager] TabManager.activate failed for tab "' +
+                activeTabId + '":', e
+            );
+            var c3 = document.getElementById('tab-' + activeTabId);
+            if (c3) {
+                c3.innerHTML =
+                    '<div class="rt-unavailable">Error rendering tab: ' +
+                    escapeHtml(e.message || 'unknown') + '</div>';
             }
-        } else if (tabId === 'laws') {
-            if (model.laws.length === 0) {
-                html = '<div class="ct-empty">No laws recorded.</div>';
-            } else {
-                html = '<div class="ct-hint">';
-                for (var j = 0; j < model.laws.length; j++) {
-                    var l = model.laws[j];
-                    html += '<div>' + escapeHtml(l.name) +
-                        ' <span style="color:var(--dim);">(' +
-                        escapeHtml(l.typeLabel) + ', ' +
-                        escapeHtml(l.domainLabel) + ')</span></div>';
-                }
-                html += '</div>';
-            }
-        } else if (tabId === 'places') {
-            if (model.places.length === 0) {
-                html = '<div class="ct-empty">No places of worship.</div>';
-            } else {
-                html = '<div class="ct-hint">';
-                for (var k = 0; k < model.places.length; k++) {
-                    html += '<div>' + escapeHtml(model.places[k].id) + '</div>';
-                }
-                html += '</div>';
-            }
-        } else if (tabId === 'followers') {
-            html = '<div class="ct-empty">' +
-                row.followerCount + ' living follower(s).' +
-                '</div>';
         }
-        container.innerHTML = html;
     }
 
     function setEmptyState(container, message) {
@@ -1819,6 +1856,25 @@
         setTimeout(function () {
             if (window.ReligionBootstrap) window.ReligionBootstrap.init();
             renderReligionList();
+
+            // Reconcile selection against the reloaded data. If the
+            // selected religion no longer exists (e.g. it was removed
+            // by a manual localStorage edit), clear the topbar and
+            // re-pick an initial selection.
+            var Q = window.ReligionQueries;
+            if (Q && selectedReligionId) {
+                var still = null;
+                try { still = Q.getReligion(selectedReligionId); }
+                catch (e) { /* treat as missing */ }
+                if (!still) {
+                    selectedReligionId = null;
+                    if (editReligionBtn)   editReligionBtn.disabled   = true;
+                    if (deleteReligionBtn) deleteReligionBtn.disabled = true;
+                    if (window.ReligionTabContext) window.ReligionTabContext.religion = null;
+                }
+            }
+
+            pickInitialSelection();
             if (selectedReligionId) renderActiveTab();
         }, 100);
     });
@@ -1892,18 +1948,46 @@
         if (selectedReligionId) openDeleteReligion(selectedReligionId);
     });
 
+    // masterDataUpdated: reconcile selection against the new state.
+    // If the currently-selected religion was deleted elsewhere, the
+    // sidebar should update, the topbar buttons should disable, and
+    // the tab panes should either show the empty state or a different
+    // religion — NOT stay stuck on the deleted record.
     window.addEventListener('masterDataUpdated', function () {
         renderReligionList();
-        if (selectedReligionId && window.ReligionQueries) {
-            var fresh = null;
-            try { fresh = window.ReligionQueries.getReligion(selectedReligionId); }
-            catch (e) { /* ignore */ }
-            if (fresh && window.ReligionTabContext) {
-                window.ReligionTabContext.religion = fresh;
-            } else if (window.ReligionTabContext) {
-                window.ReligionTabContext.religion = null;
-            }
+
+        if (!selectedReligionId) {
+            pickInitialSelection();
+            return;
+        }
+
+        var fresh = null;
+        try {
+            fresh = window.ReligionQueries
+                ? window.ReligionQueries.getReligion(selectedReligionId)
+                : null;
+        } catch (e) { /* treat as missing */ }
+
+        if (fresh) {
+            if (window.ReligionTabContext) window.ReligionTabContext.religion = fresh;
             renderActiveTab();
+            return;
+        }
+
+        // Selection no longer exists.
+        selectedReligionId = null;
+        if (editReligionBtn)   editReligionBtn.disabled   = true;
+        if (deleteReligionBtn) deleteReligionBtn.disabled = true;
+        if (window.ReligionTabContext) window.ReligionTabContext.religion = null;
+        pickInitialSelection();
+        if (selectedReligionId) renderActiveTab();
+        else {
+            // No religions left. Show the empty state in the active pane.
+            var c = document.getElementById('tab-' + activeTabId);
+            if (c) {
+                c.innerHTML =
+                    '<div class="rt-empty">Select a religion to view its details.</div>';
+            }
         }
     });
 
