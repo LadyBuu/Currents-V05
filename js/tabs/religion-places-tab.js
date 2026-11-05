@@ -14,8 +14,7 @@
  *   - Edit place (delegates to window.openEditPlaceOfWorshipModal;
  *     gated behind PLACES_EDITABLE — see PLACES ARE PARTIAL below)
  *   - Remove place (delegates to window.openDeletePlaceOfWorshipModal)
- *   - Collect tithes (direct call to ReligionCommands.collectTithes;
- *     no modal — it is a one-click read, not a form)
+ *   - Collect tithes (direct call to ReligionCommands.collectTithes)
  *
  * REGISTRATION (TabManager):
  *   TabManager.register('religion', 'places', renderAdapter)
@@ -37,21 +36,9 @@
  *   onSuccess BEFORE closing. The tab's onSuccess callback re-renders the
  *   tab; it does NOT need to persist, toast, or close anything.
  *
- *   Prior revisions of this tab built their own add/edit/delete forms
- *   locally. That duplicated modals-religion.js's place modals, and the
- *   two copies drifted:
- *     - The tab hardcoded founded-year default 1250; the modal used
- *       getCurrentYear(). Same record, two different default years
- *       depending on which UI path created it.
- *     - The tab used a local _getLocationOptions fallback that returned
- *       different labels for missing places than
- *       locationDropdown.js's getFilteredLocationOptions.
- *   The tab now delegates every write to the canonical modal, which
- *   eliminates both drifts by construction.
- *
  * PLACES ARE PARTIAL
  * ------------------
- *   Place records are not yet canonically stored. What is stored:
+ *   What is canonically stored:
  *
  *     religion.placesOfWorship: [placeId, placeId, ...]
  *
@@ -63,85 +50,71 @@
  *     return value of createPlaceOfWorship, in-memory, for the caller
  *     that created it.
  *
- *   What this means for the tab:
+ *   What this means for rendering:
  *
- *     - Add works (the id is linked).
- *     - Delete works (the id is unlinked).
- *     - Edit does NOT work: ReligionCommands.updatePlaceOfWorship is a
- *       documented no-op stub (see religion-commands.js §13). It
- *       returns success without applying any updates.
- *     - The list rendering falls back to the place id as the display
- *       name when the record only carries the id (which is what
- *       ReligionState.getPlaceOfWorshipById returns today — it
- *       indexes only { religionId, religionName } per id).
+ *     ReligionQueries.getPlacesOfWorshipByReligion(religionId) returns
+ *     the id array (religion.placesOfWorship.slice()). This tab must
+ *     resolve each id to a record before rendering. The resolver:
  *
- *   The PLACES_EDITABLE gate exists to make this honest. When false,
- *   the Edit button is not rendered, and a visible note explains why.
- *   When true, the Edit button delegates to
- *   window.openEditPlaceOfWorshipModal, which is wired correctly
- *   against the stub — it will toast success and change nothing until
- *   the command becomes real. Flip PLACES_EDITABLE to true when
- *   ReligionCommands.updatePlaceOfWorship stops being a stub.
+ *       - tries ReligionQueries.getPlaceOfWorship(id), which today
+ *         returns { id, religionId, religionName } from the state
+ *         index (no name, no type, etc.);
+ *       - falls back to an id-only stub { id } if the lookup returns
+ *         null, so the place is at least visible with its id as the
+ *         display name (see _placeDisplayName).
+ *
+ *     Prior revisions passed the id array straight to _filterPlaces and
+ *     _renderList, both of which skip anything that isn't an object —
+ *     so every place id was silently dropped. Header counter said N,
+ *     list showed 0, empty-state said "No places match your filters."
+ *     That was a bug in the tab, not in the partial store. This
+ *     revision resolves ids to records first.
+ *
+ *   What Edit means:
+ *
+ *     ReligionCommands.updatePlaceOfWorship is a documented no-op stub
+ *     (see religion-commands.js §13). It returns success without
+ *     applying any updates. The PLACES_EDITABLE gate hides the Edit
+ *     button until the command becomes real. When the flag is false,
+ *     the "partial store" note explains why Edit is absent. When the
+ *     flag is true, Edit delegates to openEditPlaceOfWorshipModal,
+ *     which is wired correctly against the stub — it will toast
+ *     success and change nothing until the command becomes real.
  *
  * DEPENDENCIES (resolved at call time — no load-time guards):
  *   - TabManager            (js/core/tab-manager.js)
  *   - ReligionQueries       (js/religion/religion-queries.js)
- *   - ReligionCommands      (js/religion/religion-commands.js) —
- *                            collectTithes is called directly; there is
- *                            no modal for it
- *   - ReligionFormat        (js/religion/religion-format.js) — for
- *                            getWorshipTypeName
+ *   - ReligionCommands      (js/religion/religion-commands.js)
+ *   - ReligionFormat        (js/religion/religion-format.js)
  *   - formatting.js         (escapeHtml)
- *   - ui.js                 (showToast) — used for collect-tithes toast
- *                            and the rare "modal unavailable" defensive
- *                            toast
- *   - ReligionModals        (js/religion/modals-religion.js) — provides
- *                            openCreatePlaceOfWorshipModal /
- *                            openEditPlaceOfWorshipModal /
- *                            openDeletePlaceOfWorshipModal
- *   - accessors.js          (getPlaceById, getPlaceName) — for the
- *                            location column display
+ *   - ui.js                 (showToast)
+ *   - modals-core.js        (openModal, confirmDialog)
+ *   - ReligionModals        (js/religion/modals-religion.js)
+ *   - accessors.js          (getPlaceById, getPlaceName)
  *
- * ICON POLICY: no emojis. The worship-type emoji map from the original
- * (🏛 ⛪ ⛩ 🕌 🕍 🏯 🌳) is removed. Places are rendered with their display
- * name and type as text. If you later add per-type icons, register them in
- * icons.js and call _getIcon('WORSHIP_' + type) with the CIRCLE fallback.
- * Do not reintroduce a local emoji map.
+ * ICON POLICY: no emojis.
  *
- * INLINE STYLES: none. All classes are in css/religion-tabs.css.
+ * INLINE STYLES: none.
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - CRUD delegation. Add / Edit / Delete now call the canonical
- *       religion modals instead of building local forms. Deleted local:
- *       _openAddPlace, _openEditPlace, _confirmDeletePlace, _readVal,
- *       _getLocationOptions fallback (the modal owns location options).
- *     - Fixes default drift: the tab hardcoded founded-year default
- *       1250; the modal uses getCurrentYear(). Now the modal is the
- *       only place-creation input path.
- *     - PLACES_EDITABLE gate retained. When false, the Edit button is
- *       not rendered, and a visible "partial store" note explains why.
- *       When true, Edit delegates to openEditPlaceOfWorshipModal, which
- *       is wired correctly against the current updatePlaceOfWorship
- *       stub (it will toast success and change nothing until the
- *       command becomes real).
- *     - Collect Tithes stays a direct call to RC.collectTithes — it is
- *       a read that returns an amount, not a form. The tab no longer
- *       re-renders after collecting (nothing changed), which removes a
- *       flicker. If a future revision makes collectTithes record the
- *       collection on the place record, the call site is commented and
- *       the re-render must be restored.
- *     - The list rendering is unchanged: place cards with display name,
- *       type label, location name, founded year, head clergy, clergy
- *       count, wealth, notes, Active / Inactive status, and a partial-
- *       store footnote for records that only carry an id.
- *     - TabManager.register('religion', 'places', renderAdapter) is
- *       unchanged. renderAdapter is unchanged. The ReligionPlacesTab
- *       export is unchanged, including isEditable().
+ *     - Fixed "1 place but 0 cards" rendering bug. The tab now resolves
+ *       religion.placesOfWorship's id array to a record-or-stub array
+ *       via _resolvePlacesForRender() before filtering and rendering.
+ *       Prior revisions passed the raw id array (strings) to
+ *       _filterPlaces and _renderList, both of which skip non-object
+ *       entries. Header counter (places.length) said N; list loop
+ *       dropped every entry; empty state said "No places match your
+ *       filters."
+ *     - CRUD delegation to canonical modals (add/edit/delete).
+ *     - PLACES_EDITABLE gate retained.
+ *     - Collect Tithes stays a direct command call (read-only, no
+ *       persist needed).
  *   Previous revisions:
  *     - Filter/sort/list rendering extracted from earlier monolithic
  *       religion UI code.
+ *     - CRUD delegation added.
  * =============================================================================
  */
 
@@ -149,7 +122,7 @@
     'use strict';
 
     // Feature gate: set true when ReligionCommands.updatePlaceOfWorship
-    // stops being a stub. See PLACES ARE PARTIAL in the header.
+    // stops being a stub.
     var PLACES_EDITABLE = false;
 
     // =========================================================================
@@ -200,8 +173,6 @@
         return typeId || '';
     }
 
-    // The three canonical write modals. The tab renders and filters; the
-    // modals own the write path (form + persist + toast).
     function _getOpenCreatePlaceModal() {
         return typeof window.openCreatePlaceOfWorshipModal === 'function'
             ? window.openCreatePlaceOfWorshipModal
@@ -221,7 +192,64 @@
     }
 
     // =========================================================================
-    // 2. TAB-LOCAL UI STATE
+    // 2. RESOLVE PLACE IDS TO RECORDS
+    // =========================================================================
+    //
+    // religion.placesOfWorship is an array of ids (strings). This helper
+    // turns it into an array of objects so _filterPlaces and _renderList
+    // (both of which skip non-objects) can render every place.
+    //
+    // For each id:
+    //   1. Try ReligionQueries.getPlaceOfWorship(id). Today this returns
+    //      { id, religionId, religionName } from the state index.
+    //   2. If the lookup returns null (e.g. the id is stale or the
+    //      state index doesn't have it), fall back to { id }.
+    //   3. Drop entries whose id is not a non-empty string.
+    //
+    // Returns an array of objects. The objects may be sparse (only id
+    // and religion metadata); _placeDisplayName handles that.
+
+    function _resolvePlacesForRender(placeIds) {
+        if (!Array.isArray(placeIds) || placeIds.length === 0) return [];
+
+        var RQ = _getReligionQueries();
+        var canLookup = RQ && typeof RQ.getPlaceOfWorship === 'function';
+
+        var out = [];
+        for (var i = 0; i < placeIds.length; i++) {
+            var id = placeIds[i];
+            if (typeof id !== 'string' || id.length === 0) continue;
+
+            var rec = null;
+            if (canLookup) {
+                try { rec = RQ.getPlaceOfWorship(id); }
+                catch (e) { rec = null; }
+            }
+
+            if (rec && typeof rec === 'object') {
+                // Ensure the record carries its id even if the
+                // underlying index entry is incomplete.
+                if (!rec.id) {
+                    var copy = {};
+                    for (var k in rec) {
+                        if (Object.prototype.hasOwnProperty.call(rec, k)) {
+                            copy[k] = rec[k];
+                        }
+                    }
+                    copy.id = id;
+                    out.push(copy);
+                } else {
+                    out.push(rec);
+                }
+            } else {
+                out.push({ id: id });
+            }
+        }
+        return out;
+    }
+
+    // =========================================================================
+    // 3. TAB-LOCAL UI STATE
     // =========================================================================
 
     var _state = {
@@ -239,7 +267,7 @@
     }
 
     // =========================================================================
-    // 3. RENDER
+    // 4. RENDER
     // =========================================================================
 
     function renderPlacesTab(container, religion) {
@@ -262,15 +290,10 @@
 
         _resetState();
 
-        var places = RQ.getPlacesOfWorshipByReligion(religion.id) || [];
+        var placeIds = RQ.getPlacesOfWorshipByReligion(religion.id) || [];
+        var places = _resolvePlacesForRender(placeIds);
         var isDeprecated = religion.isDeprecated === true;
 
-        // Filter dropdown values by whatever the current place shape
-        // carries. When places are only { religionId, religionName } (see
-        // PLACES ARE PARTIAL), type/status are undefined and those
-        // filters behave as no-ops — the card shows the id and the
-        // source location is hidden, but no filter lies about hidden
-        // data.
         var typeSet = Object.create(null);
         for (var i = 0; i < places.length; i++) {
             var p = places[i];
@@ -292,7 +315,6 @@
         var html =
             '<div class="rt-tab">' +
 
-            // ---- Header ----
             '<div class="rt-tab__header">' +
               '<div class="rt-tab__header-title">Places of Worship' +
                 '<span class="rt-tab__header-count">(' + places.length + ')</span>' +
@@ -304,7 +326,6 @@
               '</div>' +
             '</div>' +
 
-            // ---- Partial note ----
             ((!PLACES_EDITABLE && places.length > 0)
               ? '<div class="rt-place-partial-note">' +
                   'Place records are not fully persisted yet — editing is ' +
@@ -313,7 +334,6 @@
                 '</div>'
               : '') +
 
-            // ---- Filters ----
             '<div class="rt-tab__filters">' +
               '<div class="rt-search">' +
                 '<input type="text" class="places-search"' +
@@ -334,7 +354,6 @@
               '<button type="button" class="rt-clear clear-places-filters">Clear</button>' +
             '</div>' +
 
-            // ---- List ----
             (filtered.length > 0
               ? _renderList(filtered, religion)
               : _renderEmpty(places.length > 0)) +
@@ -370,7 +389,7 @@
     }
 
     // =========================================================================
-    // 4. FILTER / SORT
+    // 5. FILTER / SORT
     // =========================================================================
 
     function _filterPlaces(places) {
@@ -384,10 +403,6 @@
             var p = places[i];
             if (!p || typeof p !== 'object') continue;
 
-            // Display name for a place is derived at render time from
-            // whatever the record carries. Searching matches name,
-            // locationName, and the id, so a partially-populated record
-            // is still findable.
             if (search) {
                 var hay = String(
                     (p.name || '') + ' ' +
@@ -431,13 +446,6 @@
         return out;
     }
 
-    /**
-     * Display name for a place record. Prefers name, then locationName,
-     * then the id. The id path is what a partially-persisted record shows
-     * (see PLACES ARE PARTIAL). The label is a presentation fallback, not
-     * a domain default — the domain has not stored a name, so the id is
-     * the only stable identifier we have.
-     */
     function _placeDisplayName(place) {
         if (!place) return '';
         if (typeof place.name === 'string' && place.name.length > 0) {
@@ -453,7 +461,7 @@
     }
 
     // =========================================================================
-    // 5. LIST
+    // 6. LIST
     // =========================================================================
 
     function _renderList(places, religion) {
@@ -535,7 +543,7 @@
     }
 
     // =========================================================================
-    // 6. HANDLERS
+    // 7. HANDLERS
     // =========================================================================
 
     function _attachHandlers(container, religion) {
@@ -543,7 +551,6 @@
             renderPlacesTab(container, _freshReligion(religion.id) || religion);
         }
 
-        // ---- Search (debounced) ----
         var search = container.querySelector('.places-search');
         if (search) {
             var timer = null;
@@ -589,7 +596,6 @@
             });
         }
 
-        // ---- Add place (delegate to canonical modal) ----
         var addBtn = container.querySelector('.add-place-btn');
         if (addBtn) {
             addBtn.addEventListener('click', function () {
@@ -603,23 +609,19 @@
                     return;
                 }
                 openCreate(religion.id, {
-                    onSuccess: function () {
-                        // The modal has already toasted and persisted.
-                        // We only re-render with the fresh religion.
-                        rerender();
-                    }
+                    onSuccess: function () { rerender(); }
                 });
             });
         }
 
-        // ---- Row actions (delegated) ----
         _attachRowActions(container, religion);
     }
 
     function _applyFiltersInPlace(container, religion) {
         var RQ = _getReligionQueries();
         if (!RQ) return;
-        var places = RQ.getPlacesOfWorshipByReligion(religion.id) || [];
+        var placeIds = RQ.getPlacesOfWorshipByReligion(religion.id) || [];
+        var places = _resolvePlacesForRender(placeIds);
         var filtered = _filterPlaces(places);
 
         var existing = container.querySelector('.rt-tab__body');
@@ -653,7 +655,6 @@
             var target = e.target;
             if (!target || typeof target.closest !== 'function') return;
 
-            // ---- Collect tithes (direct command call, not a modal) ----
             var collectBtn = target.closest('.collect-tithes-btn');
             if (collectBtn) {
                 e.preventDefault();
@@ -662,15 +663,10 @@
                 return;
             }
 
-            // ---- Edit place (delegates to canonical modal) ----
             var editBtn = target.closest('.edit-place-btn');
             if (editBtn) {
                 e.preventDefault();
                 if (!PLACES_EDITABLE) {
-                    // Defensive: the button is not rendered when
-                    // PLACES_EDITABLE is false, so this branch is only
-                    // reachable if a caller mutated the DOM. Toast is
-                    // still correct.
                     _showToast(
                         'Editing places is disabled until the canonical ' +
                         'place store lands.',
@@ -691,13 +687,12 @@
                 }
                 openEdit(religion.id, eid, {
                     onSuccess: function () {
-                        rerender();
+                        renderPlacesTab(container, _freshReligion(religion.id) || religion);
                     }
                 });
                 return;
             }
 
-            // ---- Delete place (delegates to canonical modal) ----
             var delBtn = target.closest('.delete-place-btn');
             if (delBtn) {
                 e.preventDefault();
@@ -714,46 +709,25 @@
                 }
                 openDelete(religion.id, did, {
                     onSuccess: function () {
-                        rerender();
+                        renderPlacesTab(container, _freshReligion(religion.id) || religion);
                     }
                 });
             }
         });
     }
 
-    /**
-     * Collect tithes for a place.
-     *
-     * ReligionCommands.collectTithes is a READ that returns
-     * { success, data: { placeId, year, amount } }. It does not mutate
-     * canonical state and does not need persist(). The toast is the
-     * entire effect.
-     *
-     * The tab does NOT re-render after collecting. Nothing changed, so
-     * the list is unaffected. If a future revision makes collectTithes
-     * record the collection on the place record (or update
-     * collectedThisYear), this helper must restore the re-render — at
-     * that point the toast is not the entire effect. The call site is
-     * commented to flag this.
-     */
     function _collectTithes(placeId) {
         var RC = _getReligionCommands();
         if (!RC) {
             _showToast('ReligionCommands not available', 'error');
             return;
         }
-
         var result = RC.collectTithes(placeId);
         if (result && result.success) {
             var amount = result.data && typeof result.data.amount === 'number'
                 ? result.data.amount
                 : 0;
-            _showToast(
-                'Collected ' + amount + ' gold in tithes',
-                'success'
-            );
-            // No re-render: collectTithes does not mutate. See the
-            // helper docstring above.
+            _showToast('Collected ' + amount + ' gold in tithes', 'success');
         } else {
             _showToast(
                 'Failed to collect tithes: ' +
@@ -763,23 +737,6 @@
         }
     }
 
-    /**
-     * Re-fetch the current religion record from Queries. Returns null
-     * if the religion no longer exists (e.g. the caller deleted it from
-     * another tab while this one was open). The caller falls back to the
-     * stale `religion` argument in that case, which will render the
-     * empty places list — a graceful degradation, not a crash.
-     *
-     * This helper exists because the canonical write modals'
-     * onSuccess payload is NOT the religion record. For
-     * createPlaceOfWorship it is the new place record; for
-     * updatePlaceOfWorship it is the (unchanged) religion record
-     * because the command re-clones and re-commits; for
-     * deletePlaceOfWorship it is undefined. The tab needs the religion,
-     * not the place, to re-render. Rather than thread a different
-     * payload shape through each modal (a modals-religion.js change),
-     * the tab re-fetches.
-     */
     function _freshReligion(religionId) {
         var RQ = _getReligionQueries();
         if (!RQ) return null;
@@ -787,7 +744,7 @@
     }
 
     // =========================================================================
-    // 7. TABMANAGER ADAPTER + REGISTRATION
+    // 8. TABMANAGER ADAPTER + REGISTRATION
     // =========================================================================
 
     function renderAdapter(container, context) {
@@ -805,14 +762,13 @@
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
     window.ReligionPlacesTab = {
         id: 'places',
         render: renderPlacesTab,
         renderAdapter: renderAdapter,
-        // Exposed for the editor host to check whether editing is live.
         isEditable: function () { return PLACES_EDITABLE === true; }
     };
 
