@@ -4,939 +4,198 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Location Manager</title>
-
     <link rel="icon" href="data:,">
-
-    <!-- 1. Theme Bootstrapper (MUST LOAD FIRST) -->
     <script src="js/core/theme-boot.js"></script>
-
-    <!-- 2. Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-
-    <!-- 3. Shared stylesheets -->
     <link rel="stylesheet" href="css/themes.css">
     <link rel="stylesheet" href="css/common.css">
-
+    <link rel="stylesheet" href="css/location-tabs.css">
     <style>
-        /* ==================================================================
-           LOCATION MANAGER — INLINE STYLES
-           ==================================================================
-           Every color, radius, shadow, and font value comes from
-           themes.css. Structural layout only. Every tab-specific class
-           (loc-tab-*) lives in this file so the manager is fully
-           self-contained.
-           ================================================================== */
-
-        /* ---- App shell ---- */
+        /* ---- Layout-only styles (no domain styling; those live in css/location-tabs.css) ---- */
         html, body { height: 100%; margin: 0; overflow: hidden; }
         body {
-            display: flex;
-            flex-direction: column;
-            background: var(--bg);
-            color: var(--text);
-            font-family: var(--f-body);
-            font-size: 16px;
-            line-height: 1.5;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
+            display: flex; flex-direction: column;
+            background: var(--bg); color: var(--text);
+            font-family: var(--f-body); font-size: 16px; line-height: 1.5;
+            -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
         }
         .topbar {
-            position: relative;
-            z-index: 100;
-            flex-shrink: 0;
-            background: var(--bg2);
-            padding: 8px 16px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            border-bottom: 1px solid var(--border);
-            min-height: 48px;
-            flex-wrap: wrap;
+            position: relative; z-index: 100; flex-shrink: 0;
+            background: var(--bg2); padding: 8px 16px;
+            display: flex; align-items: center; gap: 10px;
+            border-bottom: 1px solid var(--border); min-height: 48px; flex-wrap: wrap;
         }
-
-        .world-app {
-            display: flex;
-            flex-direction: row;
-            flex: 1;
-            min-height: 0;
-            overflow: hidden;
-        }
-
+        .world-app { display: flex; flex-direction: row; flex: 1; min-height: 0; overflow: hidden; }
         .locations-sidebar {
-            flex-shrink: 0;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            background: var(--bg2);
-            border-right: 1px solid var(--border);
-            width: 280px;
+            flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden;
+            background: var(--bg2); border-right: 1px solid var(--border); width: 280px;
         }
-
-        .sidebar-header {
-            padding: 12px 16px;
-            border-bottom: 1px solid var(--border);
-            background: var(--bg3);
-        }
+        .sidebar-header { padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg3); }
         .sidebar-header h3 {
-            margin: 0;
-            font-family: var(--f-display);
-            font-size: 0.65rem;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            color: var(--accent);
-            display: flex;
-            align-items: center;
-            gap: 6px;
+            margin: 0; font-family: var(--f-display); font-size: 0.65rem;
+            letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent);
+            display: flex; align-items: center; gap: 6px;
         }
-        .sidebar-header h3 svg {
-            width: 1em;
-            height: 1em;
-            fill: currentColor;
-        }
-
-        .place-list {
-            flex: 1;
-            overflow-y: auto;
-            padding: 8px;
-            min-height: 0;
-        }
-
-        .main-panel {
-            display: flex;
-            flex-direction: column;
-            flex: 1;
-            min-width: 0;
-            min-height: 0;
-            overflow: hidden;
-        }
-
+        .sidebar-header h3 svg { width: 1em; height: 1em; fill: currentColor; }
+        .place-list { flex: 1; overflow-y: auto; padding: 8px; min-height: 0; }
+        .main-panel { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
         .tab-content-wrapper {
-            flex: 1;
-            min-height: 0;
-            overflow-y: auto;
-            overflow-x: hidden;
-            padding: 20px 24px;
-            background: var(--bg);
+            flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+            padding: 20px 24px; background: var(--bg);
         }
-
-        /* ---- Sidebar tree — indent + border guide ---- */
-        .place-list .location-tree-children,
-        .locations-sidebar .location-tree-children {
-            margin-left: 0 !important;
-            padding-left: 16px !important;
-            border-left: 1px solid var(--border-light) !important;
-            display: none;
+        .place-list .location-tree-children, .locations-sidebar .location-tree-children {
+            margin-left: 0 !important; padding-left: 16px !important;
+            border-left: 1px solid var(--border-light) !important; display: none;
         }
         .place-list .location-tree-children.is-expanded,
-        .locations-sidebar .location-tree-children.is-expanded {
-            display: block;
-        }
+        .locations-sidebar .location-tree-children.is-expanded { display: block; }
         .place-list .location-tree-children .location-tree-children,
-        .locations-sidebar .location-tree-children .location-tree-children {
-            padding-left: 16px !important;
-        }
-
-        /* ---- Sidebar rows (fallback when LocationUI is absent) ---- */
+        .locations-sidebar .location-tree-children .location-tree-children { padding-left: 16px !important; }
         .place-list .place-item {
-            padding: 6px 10px;
-            cursor: pointer;
-            border-radius: var(--radius);
-            font-size: 0.78rem;
-            color: var(--text);
-            margin: 2px 0;
+            padding: 6px 10px; cursor: pointer; border-radius: var(--radius);
+            font-size: 0.78rem; color: var(--text); margin: 2px 0;
             transition: background-color 0.15s, color 0.15s;
         }
-        .place-list .place-item:hover {
-            background: var(--bg4);
-        }
+        .place-list .place-item:hover { background: var(--bg4); }
         .place-list .place-item.selected {
-            background: var(--accent-dim);
-            color: var(--accent-light);
+            background: var(--accent-dim); color: var(--accent-light);
             border-left: 3px solid var(--accent);
         }
-
-        /* ---- Topbar buttons ---- */
         .tb-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 6px 14px;
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--text);
-            font-family: var(--f-body);
-            font-size: 0.7rem;
-            font-weight: 500;
-            cursor: pointer;
-            line-height: 1.2;
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 6px 14px; background: var(--bg2); border: 1px solid var(--border);
+            border-radius: var(--radius); color: var(--text);
+            font-family: var(--f-body); font-size: 0.7rem; font-weight: 500;
+            cursor: pointer; line-height: 1.2;
             transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
         }
-        .tb-btn svg {
-            width: 0.9em;
-            height: 0.9em;
-            fill: currentColor;
-        }
-        .tb-btn:hover {
-            border-color: var(--accent);
-            background: var(--accent-dim);
-            color: var(--accent-light);
-        }
-        .tb-btn.primary {
-            background: var(--accent);
-            border-color: var(--accent);
-            color: var(--accent-fg);
-        }
-        .tb-btn.primary:hover {
-            background: var(--accent-dark);
-            border-color: var(--accent-dark);
-        }
-        .tb-btn:disabled {
-            opacity: 0.45;
-            cursor: not-allowed;
-        }
-        .tb-btn:disabled:hover {
-            background: var(--bg2);
-            border-color: var(--border);
-            color: var(--text);
-        }
-
+        .tb-btn svg { width: 0.9em; height: 0.9em; fill: currentColor; }
+        .tb-btn:hover { border-color: var(--accent); background: var(--accent-dim); color: var(--accent-light); }
+        .tb-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+        .tb-btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+        .tb-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .tb-btn:disabled:hover { background: var(--bg2); border-color: var(--border); color: var(--text); }
         .topbar .title {
-            font-family: var(--f-display);
-            font-weight: 600;
-            font-size: 0.9rem;
-            color: var(--accent);
-            white-space: nowrap;
-            letter-spacing: 0.02em;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
+            font-family: var(--f-display); font-weight: 600; font-size: 0.9rem;
+            color: var(--accent); white-space: nowrap; letter-spacing: 0.02em;
+            display: inline-flex; align-items: center; gap: 6px;
         }
-        .topbar .title svg {
-            width: 1em;
-            height: 1em;
-            fill: currentColor;
-        }
-        .topbar .spacer {
-            flex: 1;
-            min-width: 12px;
-        }
+        .topbar .title svg { width: 1em; height: 1em; fill: currentColor; }
+        .topbar .spacer { flex: 1; min-width: 12px; }
         .topbar .burger-menu {
-            display: none;
-            align-items: center;
-            justify-content: center;
-            padding: 4px 10px;
-            background: transparent;
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--text);
-            cursor: pointer;
+            display: none; align-items: center; justify-content: center;
+            padding: 4px 10px; background: transparent; border: 1px solid var(--border);
+            border-radius: var(--radius); color: var(--text); cursor: pointer;
         }
-        .topbar .burger-menu:hover {
-            border-color: var(--accent);
-            color: var(--accent);
-        }
-
-        /* ---- Year input ---- */
+        .topbar .burger-menu:hover { border-color: var(--accent); color: var(--accent); }
         .year-input {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 3px 10px;
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            font-family: var(--f-body);
-            font-size: 0.7rem;
-            line-height: 1.2;
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 3px 10px; background: var(--bg); border: 1px solid var(--border);
+            border-radius: var(--radius); font-family: var(--f-body); font-size: 0.7rem; line-height: 1.2;
         }
         .year-input label {
-            font-family: var(--f-display);
-            font-size: 0.55rem;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            color: var(--dim);
-            white-space: nowrap;
+            font-family: var(--f-display); font-size: 0.55rem; letter-spacing: 0.06em;
+            text-transform: uppercase; color: var(--dim); white-space: nowrap;
         }
         .year-input input {
-            width: 64px;
-            padding: 3px 6px;
-            background: transparent;
-            border: 1px solid var(--border);
-            border-radius: calc(var(--radius) - 1px);
-            color: var(--text);
-            font-family: var(--f-mono);
-            font-size: 0.7rem;
-            text-align: right;
+            width: 64px; padding: 3px 6px; background: transparent;
+            border: 1px solid var(--border); border-radius: calc(var(--radius) - 1px);
+            color: var(--text); font-family: var(--f-mono); font-size: 0.7rem; text-align: right;
         }
-        .year-input input:focus {
-            outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 2px var(--accent-soft);
-        }
-        .year-input input::-webkit-outer-spin-button,
-        .year-input input::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-        }
+        .year-input input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+        .year-input input::-webkit-outer-spin-button, .year-input input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
         .year-input input[type=number] { -moz-appearance: textfield; }
-
-        /* ---- Theme toggle ---- */
         .theme-toggle { position: relative; display: inline-flex; }
         .theme-toggle__btn { gap: 6px; }
         .theme-toggle__menu {
-            position: absolute;
-            top: calc(100% + 4px);
-            right: 0;
-            z-index: 9999;
-            min-width: 160px;
-            max-height: 60vh;
-            padding: 4px;
-            margin: 0;
-            list-style: none;
-            background: var(--surface);
-            border: 1px solid var(--line);
-            border-radius: var(--radius);
-            box-shadow: var(--shadow);
-            overflow-y: auto;
+            position: absolute; top: calc(100% + 4px); right: 0; z-index: 9999;
+            min-width: 160px; max-height: 60vh; padding: 4px; margin: 0; list-style: none;
+            background: var(--surface); border: 1px solid var(--line);
+            border-radius: var(--radius); box-shadow: var(--shadow); overflow-y: auto;
         }
         .theme-toggle__menu[hidden] { display: none; }
         .theme-toggle__menu button {
-            display: block;
-            width: 100%;
-            padding: 6px 12px;
-            text-align: left;
-            background: transparent;
-            border: none;
-            color: var(--text);
-            font-family: var(--f-body);
-            font-size: 0.7rem;
-            border-radius: calc(var(--radius) - 2px);
-            cursor: pointer;
+            display: block; width: 100%; padding: 6px 12px; text-align: left;
+            background: transparent; border: none; color: var(--text);
+            font-family: var(--f-body); font-size: 0.7rem;
+            border-radius: calc(var(--radius) - 2px); cursor: pointer;
             transition: background-color 0.15s ease;
         }
-        .theme-toggle__menu button:hover,
-        .theme-toggle__menu button:focus-visible {
-            background: var(--accent-dim);
-            color: var(--accent-light);
-            outline: none;
+        .theme-toggle__menu button:hover, .theme-toggle__menu button:focus-visible {
+            background: var(--accent-dim); color: var(--accent-light); outline: none;
         }
-
-        /* ============================================================
-           SUB-TAB STRIP
-           ============================================================ */
+        /* ---- Sub-tab strip (structural; the buttons are emitted by the bootstrap) ---- */
         .manager-subtabs {
-            position: sticky;
-            top: 0;
-            display: flex;
-            align-items: stretch;
-            gap: 4px;
-            padding: 8px 4px 0;
-            margin: -20px -24px 20px;
-            padding-left: 24px;
-            padding-right: 24px;
-            background: var(--bg);
-            border-bottom: 1px solid var(--border);
-            flex-wrap: wrap;
-            z-index: 10;
+            position: sticky; top: 0; display: flex; align-items: stretch; gap: 4px;
+            padding: 8px 4px 0; margin: -20px -24px 20px;
+            padding-left: 24px; padding-right: 24px;
+            background: var(--bg); border-bottom: 1px solid var(--border);
+            flex-wrap: wrap; z-index: 10;
         }
         .manager-subtab {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 12px 18px 11px;
-            background: transparent;
-            border: 1px solid transparent;
-            border-bottom: none;
-            border-radius: 6px 6px 0 0;
-            color: var(--dim);
-            font-family: var(--f-display);
-            font-size: 0.78rem;
-            font-weight: 500;
-            letter-spacing: 0.06em;
-            line-height: 1.15;
-            white-space: nowrap;
-            cursor: pointer;
-            transition: color 0.15s ease, background-color 0.15s ease;
+            position: relative; display: inline-flex; align-items: center; gap: 8px;
+            padding: 12px 18px 11px; background: transparent;
+            border: 1px solid transparent; border-bottom: none;
+            border-radius: 6px 6px 0 0; color: var(--dim);
+            font-family: var(--f-display); font-size: 0.78rem; font-weight: 500;
+            letter-spacing: 0.06em; line-height: 1.15; white-space: nowrap;
+            cursor: pointer; transition: color 0.15s ease, background-color 0.15s ease;
         }
         .manager-subtab::after {
-            content: '';
-            position: absolute;
-            left: 0; right: 0; bottom: -1px;
-            height: 2px;
-            background: transparent;
-            border-radius: 2px 2px 0 0;
+            content: ''; position: absolute; left: 0; right: 0; bottom: -1px;
+            height: 2px; background: transparent; border-radius: 2px 2px 0 0;
             transition: background-color 0.15s ease;
         }
-        .manager-subtab:hover {
-            color: var(--accent-light);
-            background: var(--accent-dim);
-        }
-        .manager-subtab:hover::after {
-            background: var(--accent);
-            opacity: 0.35;
-        }
+        .manager-subtab:hover { color: var(--accent-light); background: var(--accent-dim); }
+        .manager-subtab:hover::after { background: var(--accent); opacity: 0.35; }
         .manager-subtab.active {
-            color: var(--accent);
-            background: var(--bg2);
-            border-color: var(--border);
-            border-bottom-color: transparent;
-            font-weight: 600;
+            color: var(--accent); background: var(--bg2);
+            border-color: var(--border); border-bottom-color: transparent; font-weight: 600;
         }
-        .manager-subtab.active::after {
-            background: var(--accent);
-            opacity: 1;
-        }
+        .manager-subtab.active::after { background: var(--accent); opacity: 1; }
         .manager-subtab-icon {
-            display: inline-flex;
-            width: 16px;
-            height: 16px;
-            align-items: center;
-            justify-content: center;
-            color: currentColor;
-            flex-shrink: 0;
-            opacity: 0.9;
-        }
-        .manager-subtab-icon svg {
-            width: 100%;
-            height: 100%;
-            fill: currentColor;
-        }
-        .manager-subpanel {
-            min-height: 200px;
-            padding-top: 4px;
-        }
-
-        /* ============================================================
-           LOCATION TAB SHARED CLASSES
-           ============================================================ */
-
-        .loc-tab-section {
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 14px 16px;
-            margin-bottom: 16px;
-        }
-        .loc-tab-section-title {
-            font-size: 0.65rem;
-            color: var(--accent-light);
-            font-weight: bold;
-            margin-bottom: 10px;
-            letter-spacing: 0.04em;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .loc-tab-section-title svg {
-            width: 0.9em;
-            height: 0.9em;
-            fill: currentColor;
-            color: var(--accent);
-        }
-
-        .loc-tab-grid-2 {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 6px 20px;
-            font-size: 0.7rem;
-        }
-
-        .loc-tab-label { color: var(--dim); font-size: 0.7rem; }
-        .loc-tab-value { color: var(--text); font-size: 0.7rem; }
-        .loc-tab-mono {
-            font-family: var(--f-mono);
-            font-size: 0.6rem;
-            color: var(--text);
-        }
-
-        .loc-tab-notes {
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 1px solid var(--border-light);
-            font-size: 0.65rem;
-            color: var(--dim);
-            line-height: 1.55;
-            white-space: pre-wrap;
-        }
-
-        .loc-tab-empty {
-            color: var(--dim);
-            font-size: 0.7rem;
-            text-align: center;
-            padding: 16px 0;
-        }
-
-        .loc-tab-header {
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 12px 16px;
-            margin-bottom: 16px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
-        .loc-tab-header-text { min-width: 0; }
-        .loc-tab-header-title {
-            font-size: 0.9rem;
-            font-weight: bold;
-            color: var(--accent-light);
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-family: var(--f-display);
-            letter-spacing: 0.02em;
-        }
-        .loc-tab-header-title svg {
-            width: 1em;
-            height: 1em;
-            fill: currentColor;
-            color: var(--accent);
-        }
-        .loc-tab-header-subtitle {
-            font-size: 0.65rem;
-            color: var(--dim);
-            margin-top: 3px;
-        }
-        .loc-tab-header-actions {
-            display: flex;
-            gap: 6px;
-            flex-wrap: wrap;
-        }
-
-        .loc-tab-btn {
-            font-size: 0.6rem;
-            padding: 4px 12px;
-            background: var(--bg3);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            cursor: pointer;
-            color: var(--accent-light);
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            font-family: var(--f-body);
-            font-weight: 500;
-            line-height: 1.3;
-            transition: background-color 0.15s, border-color 0.15s, color 0.15s;
-        }
-        .loc-tab-btn svg {
-            width: 0.9em;
-            height: 0.9em;
-            fill: currentColor;
-        }
-        .loc-tab-btn:hover {
-            background: var(--accent-dim);
-            border-color: var(--accent);
-            color: var(--accent);
-        }
-        .loc-tab-btn--primary {
-            background: var(--accent);
-            border-color: var(--accent);
-            color: var(--accent-fg);
-        }
-        .loc-tab-btn--primary:hover {
-            background: var(--accent-dark);
-            border-color: var(--accent-dark);
-            color: var(--accent-fg);
-        }
-        .loc-tab-btn--danger {
-            border-color: var(--danger);
-            color: var(--danger-lt);
-        }
-        .loc-tab-btn--danger:hover {
-            background: var(--danger-soft);
-            border-color: var(--danger-lt);
-            color: var(--danger-lt);
-        }
-
-        .loc-tab-stats-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 12px;
-            margin-bottom: 16px;
-        }
-        .loc-tab-stats-grid--wrap {
-            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-            text-align: center;
-        }
-        .loc-tab-stat {
-            background: var(--bg2);
-            padding: 12px;
-            border-radius: 8px;
-            text-align: center;
-            border: 1px solid var(--border);
-        }
-        .loc-tab-stat-label {
-            font-size: 0.55rem;
-            color: var(--dim);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 4px;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            font-family: var(--f-display);
-            font-weight: 500;
-        }
-        .loc-tab-stat-label svg {
-            width: 0.9em;
-            height: 0.9em;
-            fill: currentColor;
-            color: var(--accent);
-        }
-        .loc-tab-stat-value {
-            font-size: 0.85rem;
-            font-weight: bold;
-            color: var(--text);
-            margin-top: 3px;
-            font-family: var(--f-mono);
-        }
-        .loc-tab-stat-value--accent { color: var(--accent); font-size: 1.2rem; }
-        .loc-tab-stat-value--ok { color: var(--ok); font-size: 1.2rem; }
-        .loc-tab-stat-value--danger { color: var(--danger-lt); font-size: 1.2rem; }
-        .loc-tab-value--bold { font-weight: bold; }
-
-        .loc-tab-card {
-            background: var(--bg3);
-            padding: 10px;
-            border-radius: 6px;
-        }
-        .loc-tab-card-label {
-            font-size: 0.6rem;
-            color: var(--dim);
-            text-transform: uppercase;
-            margin-bottom: 4px;
-            letter-spacing: 0.06em;
-            font-family: var(--f-display);
-            font-weight: 500;
-        }
-        .loc-tab-card-value {
-            font-size: 0.75rem;
-            color: var(--text);
-            font-weight: 500;
-        }
-        .loc-tab-card-sub {
-            font-size: 0.55rem;
-            color: var(--dim);
-            margin-top: 3px;
-        }
-
-        /* ---- Leadership tab ---- */
-        .loc-leader-card {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: var(--bg3);
-            padding: 10px 14px;
-            border-radius: 6px;
-            border-left: 4px solid var(--accent);
-            gap: 12px;
-        }
-        .loc-leader-card-body { min-width: 0; }
-        .loc-leader-card-name {
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: var(--text);
-        }
-        .loc-leader-card-title {
-            font-size: 0.6rem;
-            color: var(--accent-light);
-            margin-top: 2px;
-        }
-        .loc-leader-card-since {
-            font-size: 0.55rem;
-            color: var(--dim);
-            margin-top: 2px;
-        }
-        .loc-leader-history-list {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-        .loc-leader-history-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: var(--bg3);
-            padding: 8px 12px;
-            border-radius: 4px;
-            gap: 12px;
-        }
-        .loc-leader-history-info { min-width: 0; }
-        .loc-leader-history-name {
-            font-size: 0.7rem;
-            color: var(--text);
-            font-weight: 500;
-        }
-        .loc-leader-history-title {
-            font-size: 0.55rem;
-            color: var(--dim);
-            margin-top: 2px;
-        }
-        .loc-leader-history-years {
-            font-size: 0.6rem;
-            font-family: var(--f-mono);
-            color: var(--dim);
-            white-space: nowrap;
-        }
-
-        /* ---- Movement tab ---- */
-        .loc-move-list {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            max-height: 500px;
-            overflow-y: auto;
-        }
-        .loc-move-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: var(--bg3);
-            padding: 8px 12px;
-            border-radius: 6px;
-            border-left: 3px solid var(--border);
-            gap: 12px;
-        }
-        .loc-move-row--arrival { border-left-color: var(--ok); }
-        .loc-move-row--departure { border-left-color: var(--danger-lt); }
-        .loc-move-row-body {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-            min-width: 0;
-        }
-        .loc-move-row-char {
-            font-size: 0.7rem;
-            font-weight: 500;
-            color: var(--text);
-        }
-        .loc-move-row-detail {
-            font-size: 0.55rem;
-            color: var(--dim);
-        }
-        .loc-move-row--arrival .loc-move-row-action {
-            color: var(--ok);
-            font-weight: bold;
-        }
-        .loc-move-row--departure .loc-move-row-action {
-            color: var(--danger-lt);
-            font-weight: bold;
-        }
-        .loc-move-row-year {
-            font-size: 0.65rem;
-            font-family: var(--f-mono);
-            color: var(--dim);
-            background: var(--bg);
-            padding: 2px 8px;
-            border-radius: 4px;
-            white-space: nowrap;
-        }
-
-        /* ---- Population tab ---- */
-        .loc-pop-age-row {
-            display: flex;
-            gap: 16px;
-            flex-wrap: wrap;
-            font-size: 0.6rem;
-        }
-        .loc-resident-list {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            max-height: 400px;
-            overflow-y: auto;
-        }
-        .loc-resident-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: var(--bg3);
-            padding: 6px 10px;
-            border-radius: 4px;
-            gap: 8px;
-        }
-        .loc-resident-row-name {
-            font-size: 0.7rem;
-            color: var(--text);
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            min-width: 0;
-        }
-        .loc-resident-row-gender {
-            opacity: 0.6;
-            font-size: 0.7rem;
-            flex-shrink: 0;
-        }
-        .loc-resident-row-deceased {
-            color: var(--danger-lt);
-            font-size: 0.6rem;
-            flex-shrink: 0;
-        }
-        .loc-resident-row-age {
-            font-size: 0.6rem;
-            color: var(--dim);
-            white-space: nowrap;
-            flex-shrink: 0;
-        }
-
-        /* ---- Hierarchy tab ---- */
-        .loc-hier-list {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-        .loc-hier-row {
-            display: flex;
-            align-items: center;
-            padding: 6px 8px;
-            border-radius: 4px;
-            gap: 8px;
-        }
-        .loc-hier-row.is-self {
-            background: var(--accent-dim);
-            border-left: 3px solid var(--accent);
-        }
-        .loc-hier-row-name {
-            font-size: 0.75rem;
-            color: var(--text);
-            flex: 1;
-        }
-        .loc-hier-row.is-self .loc-hier-row-name {
-            color: var(--accent-light);
-            font-weight: bold;
-        }
-        .loc-hier-row-type {
-            font-size: 0.55rem;
-            color: var(--dim);
-            margin-left: 8px;
-            font-weight: normal;
-        }
-        .loc-hier-desc-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 8px;
-        }
-        .loc-hier-desc-card {
-            background: var(--bg3);
-            padding: 8px 10px;
-            border-radius: 6px;
-            border-left: 2px solid var(--border);
-        }
-        .loc-hier-desc-name {
-            font-size: 0.7rem;
-            font-weight: 500;
-            color: var(--text);
-        }
-        .loc-hier-desc-meta {
-            font-size: 0.55rem;
-            color: var(--dim);
-            margin-top: 2px;
-        }
-        .loc-hier-nav-btn {
-            margin-top: 6px;
-            background: transparent;
-            border: 1px solid var(--border);
-            padding: 2px 8px;
-            font-size: 0.55rem;
-            cursor: pointer;
-            color: var(--accent);
-            border-radius: 4px;
-            font-family: var(--f-body);
-            transition: background-color 0.15s, border-color 0.15s;
-        }
-        .loc-hier-nav-btn:hover {
-            background: var(--accent-dim);
-            border-color: var(--accent);
-        }
-
-        /* ---- Toast / modal chrome ---- */
-        .toast { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-        .modal-container { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-        .btn:hover { box-shadow: none !important; }
-        .icon-svg { display: inline-block; width: 1em; height: 1em; vertical-align: middle; fill: currentColor; }
-
-        /* ---- Sidebar overlay ---- */
-        .sidebar-overlay { display: none; }
-        .sidebar-overlay.active {
-            display: block;
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.8);
-            z-index: 999;
-        }
-
-        /* ---- Empty / loading ---- */
+            display: inline-flex; width: 16px; height: 16px;
+            align-items: center; justify-content: center;
+            color: currentColor; flex-shrink: 0; opacity: 0.9;
+        }
+        .manager-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
+        /* ---- Panes: every pane is a direct child of #panelContent; TabManager fills them ---- */
+        .manager-pane { display: none; }
+        .manager-pane.active { display: block; }
         .empty-state {
-            padding: 48px 24px;
-            text-align: center;
-            color: var(--dim);
-            font-size: 0.88rem;
-            line-height: 1.6;
+            padding: 48px 24px; text-align: center; color: var(--dim);
+            font-size: 0.88rem; line-height: 1.6;
         }
         .loading {
-            padding: 24px;
-            text-align: center;
-            color: var(--tmut);
-            font-size: 0.85rem;
-            animation: pulse 1.5s ease-in-out infinite;
+            padding: 24px; text-align: center; color: var(--tmut);
+            font-size: 0.85rem; animation: pulse 1.5s ease-in-out infinite;
         }
-        @keyframes pulse {
-            0%, 100% { opacity: 0.6; }
-            50% { opacity: 1; }
+        @keyframes pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
+        .sidebar-overlay { display: none; }
+        .sidebar-overlay.active {
+            display: block; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8); z-index: 999;
         }
-
-        /* ---- Responsive ---- */
         @media (max-width: 768px) {
             .topbar .burger-menu { display: inline-flex; }
-            .topbar {
-                padding: 6px 10px;
-                gap: 6px;
-                min-height: 42px;
-            }
+            .topbar { padding: 6px 10px; gap: 6px; min-height: 42px; }
             .topbar .title { font-size: 0.75rem; }
             .topbar .tb-btn { padding: 3px 10px; font-size: 0.65rem; }
             .year-input { padding: 2px 6px; }
             .year-input label { display: none; }
             .year-input input { width: 52px; font-size: 0.65rem; }
-
             .world-app { flex-direction: column; }
             .locations-sidebar {
-                position: fixed;
-                top: 0; bottom: 0; left: 0;
-                height: 100vh;
-                width: 85%;
-                max-width: 280px;
-                z-index: 1000;
-                transform: translateX(-100%);
-                transition: transform 0.3s ease;
-                box-shadow: none;
+                position: fixed; top: 0; bottom: 0; left: 0; height: 100vh;
+                width: 85%; max-width: 280px; z-index: 1000;
+                transform: translateX(-100%); transition: transform 0.3s ease;
             }
             .locations-sidebar.visible { transform: translateX(0); }
             .tab-content-wrapper { padding: 16px; }
-            .manager-subtabs {
-                margin: -16px -16px 16px;
-                padding-left: 16px;
-                padding-right: 16px;
-            }
-            .manager-subtab {
-                flex: 1 1 auto;
-                min-width: 0;
-                padding: 10px 14px;
-                font-size: 0.72rem;
-            }
-            .loc-tab-stats-grid { grid-template-columns: repeat(2, 1fr); }
-            .loc-tab-grid-2 { grid-template-columns: 1fr; }
-            .loc-tab-header { padding: 10px 12px; }
-            .loc-tab-header-title { font-size: 0.82rem; }
+            .manager-subtabs { margin: -16px -16px 16px; padding-left: 16px; padding-right: 16px; }
+            .manager-subtab { flex: 1 1 auto; min-width: 0; padding: 10px 14px; font-size: 0.72rem; }
         }
     </style>
 </head>
@@ -950,23 +209,18 @@
     </button>
     <div class="title" id="locationManagerTitle"></div>
     <div class="spacer"></div>
-
     <button id="addPlaceBtn" class="tb-btn primary" type="button"></button>
     <button id="editPlaceBtn" class="tb-btn" type="button" disabled></button>
     <button id="deletePlaceBtn" class="tb-btn" type="button" disabled></button>
-
     <div class="year-input">
         <label for="yearInput">Year</label>
         <input type="number" id="yearInput" min="1" step="1">
         <button id="setYearBtn" class="tb-btn" type="button">Set</button>
     </div>
-
     <button id="importBtn" class="tb-btn" type="button"></button>
     <button id="exportBtn" class="tb-btn" type="button"></button>
     <button id="refreshBtn" class="tb-btn" type="button"></button>
-
     <input type="file" id="fileInput" accept=".json" style="display:none;" />
-
     <div class="theme-toggle" role="group" aria-label="Theme">
         <button class="tb-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
             <span aria-hidden="true">◐</span>
@@ -986,12 +240,15 @@
     <div id="sidebarOverlay" class="sidebar-overlay"></div>
 
     <div class="main-panel">
-        <div class="tab-content-wrapper" id="panelContent">
-            <div class="empty-state" id="emptyStateText">Select a location from the sidebar</div>
+        <div class="manager-subtabs" id="locationTabStrip" role="tablist">
+            <!-- Emitted by LocationManagerBootstrap.init() from KNOWN_TAB_IDS -->
+        </div>
+        <div class="tab-content-wrapper" id="panelContent" role="tabpanel">
+            <!-- One .manager-pane per tab, id="location-pane-<tabId>", data-tab-content="<tabId>".
+                 Panes are created by the bootstrap from KNOWN_TAB_IDS. TabManager.render fills them. -->
         </div>
     </div>
 </div>
-
 
 <!-- ================================================================
      BLOCK 1 — CORE CONSTANTS
@@ -1039,7 +296,7 @@
 <script src="js/core/names.js"></script>
 
 <!-- ================================================================
-     BLOCK 6 — CORE UI PRIMITIVES
+     BLOCK 6 — CORE UI PRIMITIVES (responsive BEFORE collapsible; tab-manager last)
      ================================================================ -->
 <script src="js/core/ui.js"></script>
 <script src="js/core/ui-state.js"></script>
@@ -1047,6 +304,7 @@
 <script src="js/core/responsive.js"></script>
 <script src="js/core/collapsible.js"></script>
 <script src="js/core/exportUtils.js"></script>
+<script src="js/core/tab-manager.js"></script>
 
 <!-- ================================================================
      BLOCK 7 — SKILL TAXONOMY
@@ -1165,20 +423,17 @@
             throw new Error('place-queries shim: location-state.js must load first.');
         }
         window.PlaceQueries = {
-            getPlaceById: function (id) {
-                return window.LocationState.getPlaceById(id);
-            },
+            getPlaceById: function (id) { return window.LocationState.getPlaceById(id); },
             getPlaceSummaries: function () {
                 return (window.LocationQueries && typeof window.LocationQueries.getPlaceSummaries === 'function')
-                    ? window.LocationQueries.getPlaceSummaries()
-                    : [];
+                    ? window.LocationQueries.getPlaceSummaries() : [];
             }
         };
     })();
 </script>
 
 <!-- ================================================================
-     BLOCK 18 — SETTLEMENT (for cross-domain reads used by location tabs)
+     BLOCK 18 — SETTLEMENT
      ================================================================ -->
 <script src="js/settlement/settlement-fiscal-definitions.js"></script>
 <script src="js/settlement/settlement-government-definitions.js"></script>
@@ -1188,16 +443,13 @@
 <script src="js/settlement/settlement-prosperity-definitions.js"></script>
 <script src="js/settlement/settlement-feature-definitions.js"></script>
 <script src="js/settlement/settlement-education-definitions.js"></script>
-
 <script src="js/settlement/settlement-rank-rules.js"></script>
 <script src="js/settlement/settlement-fiscal-rules.js"></script>
 <script src="js/settlement/settlement-government-rules.js"></script>
 <script src="js/settlement/settlement-feature-rules.js"></script>
 <script src="js/settlement/settlement-law-rules.js"></script>
-
 <script src="js/settlement/settlement-state.js"></script>
 <script src="js/settlement/settlement-command-commit.js"></script>
-
 <script src="js/settlement/settlement-rank-queries.js"></script>
 <script src="js/settlement/settlement-queries.js"></script>
 <script src="js/settlement/settlement-feature-queries.js"></script>
@@ -1208,7 +460,6 @@
 <script src="js/settlement/settlement-economy-queries.js"></script>
 <script src="js/settlement/settlement-crime-queries.js"></script>
 <script src="js/settlement/settlement-prosperity-queries.js"></script>
-
 <script src="js/settlement/settlement-feature-commands.js"></script>
 <script src="js/settlement/settlement-government-commands.js"></script>
 <script src="js/settlement/settlement-fiscal-commands.js"></script>
@@ -1217,15 +468,13 @@
 <script src="js/settlement/settlement-debt-commands.js"></script>
 <script src="js/settlement/settlement-rank-commands.js"></script>
 <script src="js/settlement/settlement-specialization-commands.js"></script>
-
 <script src="js/settlement/settlement-factory.js"></script>
 <script src="js/settlement/settlement-annual-processor.js"></script>
-
 <script src="js/settlement/settlement-view-models.js"></script>
 <script src="js/settlement/settlement-ui-state.js"></script>
 
 <!-- ================================================================
-     BLOCK 19 — GOVERNMENT (for government-assignment display)
+     BLOCK 19 — GOVERNMENT
      ================================================================ -->
 <script src="js/government/government-constants.js"></script>
 <script src="js/government/government-state.js"></script>
@@ -1281,7 +530,7 @@
 <script src="js/settlement/modals-settlement-roles.js"></script>
 
 <!-- ================================================================
-     BLOCK 25 — LOCATION TABS
+     BLOCK 25 — LOCATION TABS (each self-registers with TabManager)
      ================================================================ -->
 <script src="js/tabs/location-detail-tab.js"></script>
 <script src="js/tabs/location-hierarchy-tab.js"></script>
@@ -1289,599 +538,10 @@
 <script src="js/tabs/location-movement-tab.js"></script>
 <script src="js/tabs/location-leadership-tab.js"></script>
 
-
 <!-- ================================================================
-     SUB-TAB HOST
+     BLOCK 26 — LOCATION MANAGER BOOTSTRAP (configures TabManager, wires shell)
      ================================================================ -->
-<script>
-(function () {
-    'use strict';
-
-    var SUBTABS = [
-        {
-            id: 'details',
-            label: 'Details',
-            icon: 'LOCATION',
-            render: function (containerId, placeId) {
-                if (window.LocationDetailTab &&
-                    typeof window.LocationDetailTab.render === 'function') {
-                    window.LocationDetailTab.render(containerId, placeId, function () {
-                        renderSubtabStrip('panelContent', placeId);
-                    });
-                }
-            }
-        },
-        {
-            id: 'hierarchy',
-            label: 'Hierarchy',
-            icon: 'FAMILY_TREE',
-            render: function (containerId, placeId) {
-                if (window.LocationHierarchyTab &&
-                    typeof window.LocationHierarchyTab.render === 'function') {
-                    window.LocationHierarchyTab.render(containerId, placeId, function () {
-                        renderSubtabStrip('panelContent', placeId);
-                    });
-                }
-            }
-        },
-        {
-            id: 'population',
-            label: 'Population',
-            icon: 'PEOPLE',
-            render: function (containerId, placeId) {
-                if (window.LocationPopulationTab &&
-                    typeof window.LocationPopulationTab.render === 'function') {
-                    window.LocationPopulationTab.render(containerId, placeId, function () {
-                        renderSubtabStrip('panelContent', placeId);
-                    });
-                }
-            }
-        },
-        {
-            id: 'movement',
-            label: 'Movement',
-            icon: 'TIMELINE',
-            render: function (containerId, placeId) {
-                if (window.LocationMovementTab &&
-                    typeof window.LocationMovementTab.render === 'function') {
-                    window.LocationMovementTab.render(containerId, placeId, function () {
-                        renderSubtabStrip('panelContent', placeId);
-                    });
-                }
-            }
-        },
-        {
-            id: 'leadership',
-            label: 'Leadership',
-            icon: 'CROWN',
-            render: function (containerId, placeId) {
-                if (window.LocationLeadershipTab &&
-                    typeof window.LocationLeadershipTab.render === 'function') {
-                    window.LocationLeadershipTab.render(containerId, placeId, function () {
-                        renderSubtabStrip('panelContent', placeId);
-                    });
-                }
-            }
-        }
-    ];
-
-    var _activeSubtabId = 'details';
-    var _currentPlaceId = null;
-
-    function _icon(name) {
-        return (window.Icons && typeof window.Icons[name] === 'string')
-            ? window.Icons[name]
-            : '';
-    }
-
-    function _esc(s) {
-        return typeof window.escapeHtml === 'function'
-            ? window.escapeHtml(s)
-            : String(s == null ? '' : s);
-    }
-
-    function _findSubtab(id) {
-        for (var i = 0; i < SUBTABS.length; i++) {
-            if (SUBTABS[i].id === id) return SUBTABS[i];
-        }
-        return null;
-    }
-
-    function renderSubtabStrip(containerId, placeId) {
-        var container = document.getElementById(containerId);
-        if (!container) return;
-
-        _currentPlaceId = placeId || null;
-
-        if (!placeId) {
-            container.innerHTML =
-                '<div class="empty-state">Select a location from the sidebar</div>';
-            return;
-        }
-
-        var stripHtml = '<div class="manager-subtabs" role="tablist">';
-        for (var i = 0; i < SUBTABS.length; i++) {
-            var t = SUBTABS[i];
-            var isActive = (t.id === _activeSubtabId);
-            var cls = 'manager-subtab' + (isActive ? ' active' : '');
-            var iconHtml = _icon(t.icon)
-                ? '<span class="manager-subtab-icon">' + _icon(t.icon) + '</span>'
-                : '';
-            stripHtml +=
-                '<button type="button" class="' + cls + '" ' +
-                'data-subtab-id="' + _esc(t.id) + '" ' +
-                'role="tab" aria-selected="' + (isActive ? 'true' : 'false') + '">' +
-                iconHtml +
-                '<span>' + _esc(t.label) + '</span>' +
-                '</button>';
-        }
-        stripHtml += '</div>';
-        stripHtml += '<div id="' + _esc(containerId) + '-subpanel" ' +
-            'class="manager-subpanel" role="tabpanel"></div>';
-
-        container.innerHTML = stripHtml;
-
-        var buttons = container.querySelectorAll('.manager-subtab');
-        for (var b = 0; b < buttons.length; b++) {
-            (function (btn) {
-                btn.addEventListener('click', function () {
-                    var id = btn.getAttribute('data-subtab-id');
-                    if (!id || id === _activeSubtabId) return;
-                    _activeSubtabId = id;
-                    renderSubtabStrip(containerId, _currentPlaceId);
-                });
-            })(buttons[b]);
-        }
-
-        var activeTab = _findSubtab(_activeSubtabId);
-        if (activeTab && typeof activeTab.render === 'function') {
-            activeTab.render(containerId + '-subpanel', _currentPlaceId);
-        }
-    }
-
-    window.renderLocationManagerTab = function (containerId, placeId) {
-        renderSubtabStrip(containerId, placeId);
-    };
-})();
-</script>
-
-<!-- ================================================================
-     MANAGER INIT
-     ================================================================ -->
-<script>
-(function () {
-    'use strict';
-
-    function getIcon(name) {
-        return (window.Icons && window.Icons[name]) ? window.Icons[name] : '';
-    }
-    function iconWithText(icon, text) {
-        if (!icon) return text || '';
-        return '<span style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">' +
-               icon + '<span>' + (text || '') + '</span></span>';
-    }
-    function showToast(msg, type) {
-        if (typeof window.showToast === 'function') window.showToast(msg, type);
-    }
-
-    var currentPlaceId = null;
-    var isInitialized = false;
-
-    function setupUIText() {
-        var title = document.getElementById('locationManagerTitle');
-        if (title) title.innerHTML = iconWithText(getIcon('LOCATION'), ' LOCATION MANAGER');
-
-        var sidebarTitle = document.getElementById('sidebarTitle');
-        if (sidebarTitle) sidebarTitle.innerHTML = iconWithText(getIcon('LOCATION'), ' LOCATIONS');
-
-        var addBtn = document.getElementById('addPlaceBtn');
-        if (addBtn) addBtn.innerHTML = iconWithText(getIcon('PLUS'), ' Add Location');
-
-        var editBtn = document.getElementById('editPlaceBtn');
-        if (editBtn) editBtn.innerHTML = iconWithText(getIcon('EDIT'), ' Edit');
-
-        var deleteBtn = document.getElementById('deletePlaceBtn');
-        if (deleteBtn) deleteBtn.innerHTML = iconWithText(getIcon('TRASH'), ' Delete');
-
-        var importBtn = document.getElementById('importBtn');
-        if (importBtn) importBtn.innerHTML = iconWithText(getIcon('ARROW_RIGHT'), ' Import');
-
-        var exportBtn = document.getElementById('exportBtn');
-        if (exportBtn) exportBtn.innerHTML = iconWithText(getIcon('ARROW_RIGHT'), ' Export');
-
-        var refreshBtn = document.getElementById('refreshBtn');
-        if (refreshBtn) refreshBtn.innerHTML = iconWithText(getIcon('REFRESH'), ' Refresh');
-
-        var loadingText = document.getElementById('loadingText');
-        if (loadingText) loadingText.textContent = 'Loading locations...';
-
-        var emptyState = document.getElementById('emptyStateText');
-        if (emptyState) emptyState.textContent = 'Select a location from the sidebar';
-    }
-
-    function setupYearControl() {
-        var input = document.getElementById('yearInput');
-        var btn = document.getElementById('setYearBtn');
-        if (!input || !btn) return;
-
-        function syncFromCanonical() {
-            try {
-                var y = (typeof window.getCurrentYear === 'function')
-                    ? window.getCurrentYear()
-                    : (window.masterData && window.masterData.data
-                        ? window.masterData.data.currentYear
-                        : null);
-                if (typeof y === 'number' && isFinite(y)) {
-                    input.value = String(y);
-                }
-            } catch (e) { /* ignore */ }
-        }
-        syncFromCanonical();
-
-        function applyYear() {
-            var raw = input.value;
-            var y = parseInt(raw, 10);
-            if (!isFinite(y)) {
-                showToast('Enter a valid year', 'error');
-                return;
-            }
-            if (typeof window.isValidYear === 'function' && window.isValidYear(y) !== true) {
-                showToast('Year out of range', 'error');
-                return;
-            }
-
-            var applied = false;
-            if (typeof window.setCurrentYear === 'function') {
-                try {
-                    var result = window.setCurrentYear(y);
-                    if (result === false) {
-                        showToast('Could not set year', 'error');
-                        return;
-                    }
-                    applied = true;
-                } catch (e) {
-                    showToast('Set year failed: ' + (e.message || 'unknown'), 'error');
-                    return;
-                }
-            }
-
-            if (!applied) {
-                if (!window.masterData || !window.masterData.data) {
-                    showToast('Storage not initialized', 'error');
-                    return;
-                }
-                window.masterData.data.currentYear = y;
-                if (typeof window.markDataDirty === 'function') {
-                    try { window.markDataDirty(); } catch (e) { /* ignore */ }
-                }
-                if (typeof window.saveMasterData === 'function') {
-                    try { window.saveMasterData(); } catch (e) { /* ignore */ }
-                }
-                applied = true;
-            }
-
-            if (applied) {
-                showToast('Year set to ' + y, 'success');
-                syncFromCanonical();
-                if (typeof window.renderLocationManagerTab === 'function' && currentPlaceId) {
-                    try { window.renderLocationManagerTab('panelContent', currentPlaceId); }
-                    catch (e) { /* ignore */ }
-                }
-                setupSidebar();
-            }
-        }
-
-        btn.addEventListener('click', applyYear);
-        input.addEventListener('keydown', function (e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                applyYear();
-            }
-        });
-    }
-
-    function setupSidebar() {
-        var container = document.getElementById('placeList');
-        if (!container) return;
-
-        if (window.LocationUI && typeof window.LocationUI.renderLocationList === 'function') {
-            try {
-                window.LocationUI.renderLocationList('placeList', {
-                    selectedId: currentPlaceId,
-                    onSelect: function (placeOrId) {
-                        var id = (typeof placeOrId === 'string')
-                            ? placeOrId
-                            : (placeOrId && placeOrId.id ? placeOrId.id : null);
-                        if (!id) return;
-                        selectLocation(id);
-                    }
-                });
-                return;
-            } catch (e) {
-                console.error('[location-manager] renderLocationList failed:', e);
-            }
-        }
-
-        var places = (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
-        if (places && places.length > 0) {
-            var html = '';
-            for (var i = 0; i < places.length; i++) {
-                var p = places[i];
-                var sel = (p.id === currentPlaceId);
-                html += '<div class="place-item' + (sel ? ' selected' : '') +
-                        '" data-place-id="' + p.id + '">' +
-                        (p.displayName || p.name || 'Unknown') +
-                        '</div>';
-            }
-            container.innerHTML = html;
-            var items = container.querySelectorAll('.place-item');
-            for (var j = 0; j < items.length; j++) {
-                (function (item) {
-                    item.addEventListener('click', function () {
-                        var placeId = this.dataset.placeId;
-                        if (placeId) selectLocation(placeId);
-                    });
-                })(items[j]);
-            }
-        } else {
-            container.innerHTML = '<div class="empty-state">No locations found</div>';
-        }
-    }
-
-    /**
-     * Move the .is-selected class from the previous row to the new row
-     * without rebuilding the tree.
-     *
-     * LocationUI renders each row as:
-     *   <div class="location-tree-item is-selected" data-node-id="…">…</div>
-     * (see js/location/location-ui-list.js::_renderNode)
-     *
-     * So the toggle is a class add/remove on the two rows. If the new
-     * node isn't in the DOM (shouldn't happen for a click on a visible
-     * row, but defensive), we fall back to a full rebuild.
-     */
-    function _applySidebarSelection(previousId, nextId) {
-        var container = document.getElementById('placeList');
-        if (!container) return;
-
-        var newRow = container.querySelector(
-            '.location-tree-item[data-node-id="' + _cssEscape(nextId) + '"]'
-        );
-
-        if (!newRow) {
-            setupSidebar();
-            return;
-        }
-
-        if (previousId) {
-            var prevRow = container.querySelector(
-                '.location-tree-item[data-node-id="' + _cssEscape(previousId) + '"]'
-            );
-            if (prevRow) prevRow.classList.remove('is-selected');
-        }
-
-        newRow.classList.add('is-selected');
-    }
-
-    /**
-     * Minimal CSS.escape shim. Node ids from generateId('place') only
-     * contain [A-Za-z0-9_], but the shim means an id with a stray
-     * character can't break the selector.
-     */
-    function _cssEscape(s) {
-        if (typeof window.CSS !== 'undefined' &&
-            typeof window.CSS.escape === 'function') {
-            return window.CSS.escape(s);
-        }
-        return String(s).replace(/([^A-Za-z0-9_-])/g, '\\$1');
-    }
-
-    function selectLocation(id) {
-        if (!id) return;
-
-        if (id === currentPlaceId) {
-            // Re-selecting the current place: still re-render the tab in
-            // case the caller expects a refresh, but skip the sidebar
-            // class churn.
-            if (typeof window.renderLocationManagerTab === 'function') {
-                try { window.renderLocationManagerTab('panelContent', id); }
-                catch (e) { console.error(e); }
-            }
-            return;
-        }
-
-        var previousId = currentPlaceId;
-        currentPlaceId = id;
-
-        var editBtn = document.getElementById('editPlaceBtn');
-        var deleteBtn = document.getElementById('deletePlaceBtn');
-        if (editBtn) editBtn.disabled = false;
-        if (deleteBtn) deleteBtn.disabled = false;
-
-        if (window.LocationUIState &&
-            typeof window.LocationUIState.setSelectedLocationId === 'function') {
-            try { window.LocationUIState.setSelectedLocationId(id); }
-            catch (e) { /* ignore */ }
-        }
-
-        // Update the sidebar highlight in place — no tree rebuild.
-        _applySidebarSelection(previousId, id);
-
-        // Render the tab.
-        if (typeof window.renderLocationManagerTab === 'function') {
-            try { window.renderLocationManagerTab('panelContent', id); }
-            catch (e) { console.error(e); }
-        }
-
-        if (window.innerWidth <= 768) closeSidebar();
-    }
-
-    function closeSidebar() {
-        var s = document.getElementById('locationsSidebar');
-        var o = document.getElementById('sidebarOverlay');
-        if (s) s.classList.remove('visible');
-        if (o) o.classList.remove('active');
-    }
-    function openSidebar() {
-        var s = document.getElementById('locationsSidebar');
-        var o = document.getElementById('sidebarOverlay');
-        if (s) s.classList.add('visible');
-        if (o) o.classList.add('active');
-    }
-    function toggleSidebar() {
-        var s = document.getElementById('locationsSidebar');
-        if (!s) return;
-        if (s.classList.contains('visible')) closeSidebar();
-        else openSidebar();
-    }
-
-    function pickInitialSelection() {
-        if (currentPlaceId) return;
-        var places = (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
-        if (!places || places.length === 0) return;
-
-        for (var i = 0; i < places.length; i++) {
-            if (places[i].variableKey && places[i].variableKey !== 'world_root') {
-                selectLocation(places[i].id);
-                return;
-            }
-        }
-        selectLocation(places[0].id);
-    }
-
-    function setupTopBarActions() {
-        var addBtn = document.getElementById('addPlaceBtn');
-        if (addBtn) addBtn.onclick = function () {
-            if (typeof window.openAddPlaceModal !== 'function') {
-                showToast('Add modal unavailable', 'error');
-                return;
-            }
-            window.openAddPlaceModal(null, function (newId) {
-                setupSidebar();
-                if (newId) selectLocation(newId);
-            });
-        };
-
-        var editBtn = document.getElementById('editPlaceBtn');
-        if (editBtn) editBtn.onclick = function () {
-            if (!currentPlaceId) return;
-            if (typeof window.openEditPlaceModal !== 'function') {
-                showToast('Edit modal unavailable', 'error');
-                return;
-            }
-            window.openEditPlaceModal(currentPlaceId, function () {
-                setupSidebar();
-                if (typeof window.renderLocationManagerTab === 'function') {
-                    try { window.renderLocationManagerTab('panelContent', currentPlaceId); }
-                    catch (e) { /* ignore */ }
-                }
-            });
-        };
-
-        var deleteBtn = document.getElementById('deletePlaceBtn');
-        if (deleteBtn) deleteBtn.onclick = function () {
-            if (!currentPlaceId) return;
-            if (typeof window.openDeletePlaceModal !== 'function') {
-                showToast('Delete modal unavailable', 'error');
-                return;
-            }
-            window.openDeletePlaceModal(currentPlaceId, function () {
-                currentPlaceId = null;
-                var e = document.getElementById('editPlaceBtn');
-                var d = document.getElementById('deletePlaceBtn');
-                if (e) e.disabled = true;
-                if (d) d.disabled = true;
-                setupSidebar();
-                pickInitialSelection();
-            });
-        };
-
-        var importBtn = document.getElementById('importBtn');
-        if (importBtn) importBtn.onclick = function () {
-            if (typeof window.importData !== 'function') {
-                showToast('Import not available', 'error');
-                return;
-            }
-            window.importData()
-                .then(function () {
-                    if (window.LocationBootstrap && typeof window.LocationBootstrap.init === 'function') {
-                        try { window.LocationBootstrap.init(); } catch (e) { /* ignore */ }
-                    }
-                    setupSidebar();
-                    if (currentPlaceId && typeof window.renderLocationManagerTab === 'function') {
-                        try { window.renderLocationManagerTab('panelContent', currentPlaceId); }
-                        catch (e) { /* ignore */ }
-                    }
-                    showToast('Import successful', 'success');
-                })
-                .catch(function (err) {
-                    showToast('Import failed: ' + (err && err.message ? err.message : 'unknown'), 'error');
-                });
-        };
-
-        var exportBtn = document.getElementById('exportBtn');
-        if (exportBtn) exportBtn.onclick = function () {
-            if (typeof window.exportData !== 'function') {
-                showToast('Export not available', 'error');
-                return;
-            }
-            try { window.exportData(); showToast('Export started', 'success'); }
-            catch (e) { showToast('Export failed: ' + (e.message || 'unknown'), 'error'); }
-        };
-
-        var refreshBtn = document.getElementById('refreshBtn');
-        if (refreshBtn) refreshBtn.onclick = function () {
-            if (typeof window.loadMasterData === 'function') window.loadMasterData();
-            setTimeout(function () {
-                setupSidebar();
-                if (currentPlaceId && typeof window.renderLocationManagerTab === 'function') {
-                    try { window.renderLocationManagerTab('panelContent', currentPlaceId); }
-                    catch (e) { /* ignore */ }
-                }
-                showToast('Refreshed', 'success');
-            }, 100);
-        };
-    }
-
-    function init() {
-        if (isInitialized) return;
-        isInitialized = true;
-
-        setupUIText();
-
-        if (typeof window.loadMasterData === 'function') window.loadMasterData();
-
-        if (window.LocationBootstrap) {
-            try { window.LocationBootstrap.init(); }
-            catch (e) { console.error('LocationBootstrap.init failed:', e); }
-        }
-
-        setTimeout(function () {
-            setupSidebar();
-            setupTopBarActions();
-            setupYearControl();
-            pickInitialSelection();
-
-            if (!currentPlaceId) {
-                if (typeof window.renderLocationManagerTab === 'function') {
-                    window.renderLocationManagerTab('panelContent', null);
-                }
-            }
-
-            var menuToggle = document.getElementById('menuToggle');
-            if (menuToggle) menuToggle.addEventListener('click', toggleSidebar);
-            var overlay = document.getElementById('sidebarOverlay');
-            if (overlay) overlay.addEventListener('click', closeSidebar);
-        }, 150);
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
-    }
-})();
-</script>
+<script src="js/tabs/location-manager-bootstrap.js"></script>
 
 <!-- ================================================================
      THEME SWITCHER
@@ -1894,7 +554,6 @@
     var themeName = document.getElementById('themeName');
     var switcher = window.ThemeSwitcher;
     if (!switcher) return;
-
     function updateLabel(id) {
         var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
         if (themeName) themeName.textContent = label;
@@ -1910,7 +569,6 @@
     }
     function openMenu()  { if (!themeMenu) return; themeMenu.hidden = false; themeBtn.setAttribute('aria-expanded', 'true'); }
     function closeMenu() { if (!themeMenu) return; themeMenu.hidden = true; themeBtn.setAttribute('aria-expanded', 'false'); }
-
     if (themeBtn) themeBtn.addEventListener('click', function (e) {
         e.stopPropagation();
         if (themeMenu.hidden) openMenu(); else closeMenu();
@@ -1931,7 +589,6 @@
     document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape' && themeMenu && !themeMenu.hidden) closeMenu();
     });
-
     buildMenu();
     var saved = switcher.getSaved();
     if (saved) updateLabel(saved);
