@@ -24,6 +24,21 @@
  * DEFAULT_ACTIVE_TAB_ID ('overview'), which it also pushes to
  * EducationUIState via setKnownTabIds() at init time.
  *
+ * CONTAINER ROOT (IMPORTANT)
+ *
+ *   TabManager's click router finds [data-tab] buttons by walking up
+ *   from the click target to see which configured scope's
+ *   containerRoot contains it. The containerRoot must therefore
+ *   contain BOTH the tab strip AND the pane container — otherwise the
+ *   strip's own buttons cannot be routed to this scope.
+ *
+ *   In EducationManager.html, #educationTabStrip and #panelContent are
+ *   siblings inside .main-panel. containerRoot is set to the strip's
+ *   parentNode (.main-panel), not to #panelContent. Setting it to
+ *   #panelContent would leave the strip orphaned and clicking any tab
+ *   button would silently do nothing (the Overview tab would appear
+ *   stuck because it is the default active tab).
+ *
  * RENDERER CONTRACT
  * -----------------
  *   Every education tab is:
@@ -51,12 +66,6 @@
  *   onto the next tick, so a chain of modals firing onSuccess in
  *   rapid succession produces one render, not N.
  *
- *   This bootstrap does NOT wrap the modal exports to force refresh.
- *   Wrapping would defeat the tabs' ability to decide whether a modal
- *   result warrants a re-render (e.g. a "Cancel" close should not
- *   re-render). The onSuccess contract belongs to the tab that
- *   opened the modal, not to the page bootstrap.
- *
  * STATE OWNERSHIP
  * ---------------
  *   EducationUIState owns:
@@ -78,11 +87,6 @@
  *   the error is logged and the manager renders an error state via
  *   buildEmptyState. The tab strip is not touched.
  *
- *   The raw institutions array is read from
- *   window.masterData.data.educationalInstitutions || []. Missing
- *   masterData is caught by hydrateFromMasterData's own throw, which
- *   this file logs.
- *
  * DEPENDENCIES (resolved at init time; a missing dependency produces
  * a visible error state, not a silent no-op):
  *
@@ -103,17 +107,17 @@
  *     - window.getPlaces                          (initial selection)
  *     - window.getPlaceById                       (context build)
  *
- *   NO references to EducationCommands, EducationHistory, or
- *   EducationUI. Those are the tabs' concern. This bootstrap is
- *   the page's plumbing, not the domain's.
- *
- * ICON POLICY: no emojis. Icons via window.Icons[name] /
- * window.getIcon. Missing icons render as empty string; the
- * button label carries the meaning.
- *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Initial revision.
+ *   Current revision:
+ *     - containerRoot changed from #panelContent to the tab strip's
+ *       parentNode (.main-panel). The click router requires
+ *       containerRoot to CONTAIN the [data-tab] buttons it routes;
+ *       #panelContent does not. Prior revision left the strip
+ *       orphaned, so clicking any non-Overview tab did nothing and
+ *       Overview appeared stuck. See CONTAINER ROOT in the header.
+ *     - No other behavioural change.
+ *   Initial revision:
  *     - Written for the Education Manager's TabManager-based host.
  *     - buildContext computes the education summary / health once
  *       per render and passes it to the tab via context.educationState.
@@ -134,17 +138,6 @@
     // 1. CONSTANTS
     // =========================================================================
 
-    /**
-     * The tab ids this page wires up. Must match the ids each tab file
-     * passes to TabManager.register('education', '<id>', fn) at its own
-     * load. Passed to EducationUIState.setKnownTabIds() at init so the
-     * module can validate the persisted activeTabId against the current
-     * release's tab list.
-     *
-     * If this list grows, the corresponding tab file must be added to
-     * EducationManager.html's <script> block AND the tab must call
-     * TabManager.register with the matching id.
-     */
     var KNOWN_TAB_IDS = [
         'overview',
         'institutions',
@@ -199,7 +192,7 @@
             typeof window.EducationUIState.setKnownTabIds !== 'function') {
             throw new Error(
                 'education-manager-bootstrap: EducationUIState is missing ' +
-                'or incomplete. Load js/systems/education/education-ui-state.js ' +
+                'or incomplete. Load js/education/education-ui-state.js ' +
                 'before this file.'
             );
         }
@@ -212,7 +205,7 @@
             typeof window.EducationQueries.getEducationHealthScore !== 'function') {
             throw new Error(
                 'education-manager-bootstrap: EducationQueries is missing ' +
-                'or incomplete. Load js/systems/education/education-queries.js ' +
+                'or incomplete. Load js/education/education-queries.js ' +
                 'before this file.'
             );
         }
@@ -224,7 +217,7 @@
             typeof window.EducationState.hydrateFromMasterData !== 'function') {
             throw new Error(
                 'education-manager-bootstrap: EducationState is missing. ' +
-                'Load js/systems/education/education-state.js before this file.'
+                'Load js/education/education-state.js before this file.'
             );
         }
         return window.EducationState;
@@ -273,17 +266,33 @@
     }
 
     // =========================================================================
-    // 3. BUILD CONTEXT
+    // 3. CONTAINER ROOT RESOLUTION
     // =========================================================================
     //
-    // Called by TabManager once per render. Returns null when there is
-    // no selected location — TabManager writes the 'no-context' empty
-    // state in that case.
+    // The click router requires containerRoot to CONTAIN the [data-tab]
+    // buttons it routes. #educationTabStrip and #panelContent are
+    // siblings inside .main-panel. Setting containerRoot to the strip's
+    // parentNode makes .main-panel the scope root, which contains both.
     //
-    // Computes the settlement education summary and health score ONCE
-    // per render. Every tab reads context.educationState.* rather than
-    // re-querying. This is the same contract settlement-tabs.js uses
-    // for buildSettlementSummary.
+    // Fallback chain:
+    //   1. strip.parentNode   (the normal case)
+    //   2. #panelContent      (defensive — a page that puts the strip
+    //                          inside the panel would still work)
+    //   3. null               (TabManager skips routing for this scope)
+
+    function _resolveContainerRoot() {
+        var strip = document.getElementById(ID_TAB_STRIP);
+        if (strip && strip.parentNode && typeof strip.parentNode.contains === 'function') {
+            return strip.parentNode;
+        }
+        var panel = document.getElementById(ID_PANEL);
+        if (panel) return panel;
+        return null;
+    }
+
+    // =========================================================================
+    // 4. BUILD CONTEXT
+    // =========================================================================
 
     function _buildContext() {
         var ui = _requireUIState();
@@ -320,7 +329,7 @@
     }
 
     // =========================================================================
-    // 4. EMPTY STATE BUILDER
+    // 5. EMPTY STATE BUILDER
     // =========================================================================
 
     function _buildEmptyState(tabId, reason) {
@@ -337,9 +346,6 @@
                 '</div>';
         }
         if (reason === 'no-container') {
-            // The pane element is missing from the DOM. That's a page
-            // structure problem, not a "no data" problem. Render a
-            // visible error so it does not fail silently.
             return '<div class="empty-state" style="color:var(--danger);">' +
                 'Missing tab pane element for "' + _escapeHtml(tabId) + '". ' +
                 'Check EducationManager.html.' +
@@ -349,7 +355,7 @@
     }
 
     // =========================================================================
-    // 5. TAB STRIP VISUAL SYNC
+    // 6. TAB STRIP VISUAL SYNC
     // =========================================================================
     //
     // TabManager owns click routing; it does NOT own the visual strip.
@@ -373,16 +379,8 @@
     }
 
     // =========================================================================
-    // 6. SIDEBAR
+    // 7. SIDEBAR
     // =========================================================================
-    //
-    // Two paths, mirroring the Government and Location Manager pages:
-    //   - LocationUI.renderLocationList if loaded (canonical).
-    //   - Fallback flat list otherwise.
-    //
-    // On selection: set the location in EducationUIState, then
-    // TabManager.renderActive('education') to re-render the current tab
-    // for the new location.
 
     function _selectLocation(locationId) {
         if (!locationId) return;
@@ -390,8 +388,6 @@
 
         var previous = ui.getSelectedLocationId();
         if (previous === locationId) {
-            // Re-selecting the same location: still re-render, in case
-            // the user clicked it as a "refresh" gesture.
             window.TabManager.renderActive(SCOPE);
             return;
         }
@@ -427,7 +423,6 @@
             }
         }
 
-        // Fallback: flat list of places, alphabetical.
         var places = (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
         if (!Array.isArray(places) || places.length === 0) {
             container.innerHTML = '<div class="empty-state">No locations found</div>';
@@ -464,11 +459,8 @@
     }
 
     // =========================================================================
-    // 7. INITIAL LOCATION
+    // 8. INITIAL LOCATION
     // =========================================================================
-    //
-    // Matches the Government and Location Manager pages: prefer the first
-    // non-world_root place with a variableKey, else the first place.
 
     function _pickInitialLocation() {
         if (typeof window.getPlaces !== 'function') return null;
@@ -485,11 +477,10 @@
     }
 
     // =========================================================================
-    // 8. TOPBAR ACTIONS
+    // 9. TOPBAR ACTIONS
     // =========================================================================
 
     function _setupTopBar() {
-        // ---- Import ----
         var importBtn = document.getElementById(ID_IMPORT_BTN);
         if (importBtn) {
             importBtn.addEventListener('click', function () {
@@ -515,7 +506,6 @@
             });
         }
 
-        // ---- Export ----
         var exportBtn = document.getElementById(ID_EXPORT_BTN);
         if (exportBtn) {
             exportBtn.addEventListener('click', function () {
@@ -535,7 +525,6 @@
             });
         }
 
-        // ---- Refresh ----
         var refreshBtn = document.getElementById(ID_REFRESH_BTN);
         if (refreshBtn) {
             refreshBtn.addEventListener('click', function () {
@@ -549,7 +538,6 @@
             });
         }
 
-        // ---- Year control ----
         var yearInput = document.getElementById(ID_YEAR_INPUT);
         var yearBtn   = document.getElementById(ID_YEAR_BTN);
         if (yearInput && yearBtn) {
@@ -560,7 +548,6 @@
             });
         }
 
-        // ---- Sidebar toggle (mobile) ----
         var menuToggle = document.getElementById(ID_MENU_TOGGLE);
         if (menuToggle) {
             menuToggle.addEventListener('click', function () {
@@ -652,7 +639,7 @@
     }
 
     // =========================================================================
-    // 9. HYDRATION
+    // 10. HYDRATION
     // =========================================================================
 
     function _hydrateEducationState() {
@@ -678,7 +665,7 @@
     }
 
     // =========================================================================
-    // 10. INIT
+    // 11. INIT
     // =========================================================================
 
     var _initialized = false;
@@ -687,7 +674,6 @@
         if (_initialized) return;
         _initialized = true;
 
-        // ---- 1. Resolve hard dependencies early. -----------------------
         var TabManager;
         var uiState;
         try {
@@ -696,8 +682,6 @@
             _requireQueries();
             _requireState();
         } catch (depErr) {
-            // Cannot even render an error state — no TabManager, no UIState,
-            // etc. Write to the page's empty-state element if it exists.
             if (typeof console !== 'undefined' && console.error) {
                 console.error('education-manager-bootstrap:', depErr);
             }
@@ -710,7 +694,6 @@
             return;
         }
 
-        // ---- 2. Initialize storage and load masterData. ----------------
         try {
             if (typeof window.initializeStorage === 'function') {
                 window.initializeStorage();
@@ -735,8 +718,6 @@
             }
         }
 
-        // ---- 3. Hydrate EducationState (mandatory; education does not
-        //         auto-hydrate). ----------------------------------------
         var hydratedOk = _hydrateEducationState();
         if (!hydratedOk) {
             var emptyEl = document.getElementById(ID_EMPTY_STATE);
@@ -745,20 +726,17 @@
                     'Education state could not hydrate. See console for details.';
                 emptyEl.style.color = 'var(--danger)';
             }
-            // Do not proceed. The tabs would all throw on their first
-            // query (assertHydrated), producing N console errors.
             return;
         }
 
-        // ---- 4. Configure EducationUIState's known tab ids. -----------
-        //         This must happen BEFORE configure(). The state module
-        //         uses the known-tab list to validate the persisted
-        //         activeTabId at load.
         uiState.setKnownTabIds(KNOWN_TAB_IDS);
 
-        // ---- 5. Configure the education scope. -----------------------
         TabManager.configure(SCOPE, {
-            containerRoot: document.getElementById(ID_PANEL),
+            // IMPORTANT: containerRoot must contain BOTH the tab strip
+            // and the panes. #educationTabStrip and #panelContent are
+            // siblings inside .main-panel; the strip's parentNode is
+            // therefore .main-panel. See CONTAINER ROOT in the header.
+            containerRoot: _resolveContainerRoot(),
 
             resolveContainer: function (tabId) {
                 return document.getElementById('education-pane-' + tabId);
@@ -772,41 +750,29 @@
 
             setActiveTabId: function (tabId) {
                 uiState.setActiveTabId(tabId);
-                // Visual strip sync happens here so every path that
-                // changes the active tab (user click, initial render,
-                // programmatic activate) keeps the strip in sync.
                 _syncTabStrip(tabId);
             },
 
             buildEmptyState: _buildEmptyState
         });
 
-        // ---- 6. Attach the document-level click handler. -------------
         TabManager.init();
 
-        // ---- 7. Sidebar + topbar wiring. -----------------------------
         _setupSidebar();
         _setupTopBar();
 
-        // ---- 8. Initial location + first render. ---------------------
         var initialLocationId = uiState.getSelectedLocationId() || _pickInitialLocation();
         if (initialLocationId) {
             uiState.setSelectedLocationId(initialLocationId);
         }
 
-        // Sync the strip to whatever the current active tab id is
-        // (possibly restored from localStorage), then render.
         _syncTabStrip(uiState.getActiveTabId());
 
-        // renderActive returns false if there is no active tab id, or if
-        // buildContext returned null. Both are handled by the empty
-        // state machinery inside TabManager. Either way, no need to
-        // branch here.
         TabManager.renderActive(SCOPE);
     }
 
     // =========================================================================
-    // 11. AUTO-INIT
+    // 12. AUTO-INIT
     // =========================================================================
 
     if (document.readyState === 'loading') {
@@ -816,26 +782,12 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 13. EXPORTS
     // =========================================================================
-    //
-    // Exposed for two callers:
-    //   - Tests that want to re-run init against a fresh masterData.
-    //   - A future "open Education Manager to X" entry point that wants
-    //     to programmatically switch the location before activating a tab.
-    //
-    // The manager page itself does not call anything here — it relies on
-    // the auto-init at DOMContentLoaded.
 
     window.EducationManagerBootstrap = {
         init: init,
 
-        /**
-         * Programmatically navigate the manager. If locationId is
-         * supplied, sets it in EducationUIState and re-renders the
-         * active tab. If tabId is supplied, activates that tab.
-         * Either may be omitted.
-         */
         navigate: function (locationId, tabId) {
             var ui = _requireUIState();
             if (locationId) {
