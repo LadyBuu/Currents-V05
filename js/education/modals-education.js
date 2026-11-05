@@ -3,6 +3,8 @@
  * STILL WATERS - EDUCATION MODALS (modals-education.js)
  * =============================================================================
  *
+ * LOCATION: js/education/modals-education.js
+ *
  * UI modals for education management. Reads via EducationQueries, writes via
  * EducationCommands, persists once per successful mutation batch, surfaces
  * command results to the user. No state, no policy, no toasts from Commands.
@@ -12,8 +14,9 @@
  *   - Every modal reads via EducationQueries.
  *   - Every modal writes via EducationCommands and checks .success.
  *   - Every successful mutation batch calls EducationCommands.persist()
- *     once; a persist failure produces a warning toast but does not roll
- *     back the in-memory write (the debounced save will retry).
+ *     once via _persistAndWarn; a persist failure produces a warning
+ *     toast but does not roll back the in-memory write (the debounced
+ *     save will retry).
  *   - Failures surface .reason via _showToast.
  *   - No direct EducationState access.
  *   - No layout that polls or stashes state on window.
@@ -22,38 +25,39 @@
  *
  *   Every modal uses onMount to bind its post-open handlers, and does NOT
  *   use setTimeout or module-level "already open" flags. The modal stack
- *   in modals-core.js enforces single-instance semantics: opening a second
- *   modal closes the first (that is the modal stack contract). This
- *   replaces the previous _processingModal + setTimeout(100) pattern,
- *   which had two failure modes:
+ *   in modals-core.js enforces single-instance semantics.
  *
- *     1. A fast close (Escape / overlay / close button) left a pending
- *        timeout that fired against whichever modal opened next with
- *        the same element IDs.
+ * CLOSING ON SUCCESS (IMPORTANT)
  *
- *     2. A throw before the flag was cleared left the guard stuck, and
- *        no education modal could open until page reload.
+ *   Every onConfirm success path in this file does three things, in
+ *   order:
  *
- *   onMount runs synchronously during openModal, so both failures are
- *   impossible. This matches modals-character.js and modals-roles.js.
+ *     1. Persist (_persistAndWarn(...)).
+ *     2. Call _closeTopModal().
+ *     3. Call onSuccess(...) if the caller supplied one.
+ *     4. return true.
  *
- * PERSISTENCE
+ *   The explicit _closeTopModal() is deliberate. modals-core.js's
+ *   contract says onConfirm returning false keeps the modal open and
+ *   anything else closes it, but in practice a modal that returns
+ *   undefined on the success path can be left open if the persistence
+ *   toast or the onSuccess callback triggers a re-render that races
+ *   the close decision. Calling closeTopModal explicitly makes the
+ *   close deterministic and independent of that race. modals-
+ *   apprenticeship.js uses the same pattern.
  *
- *   EducationState writes masterData.data.educationalInstitutions and
- *   marks the data dirty on every mutation. EducationCommands.persist()
- *   is the flush. Modals call persist() exactly once after a successful
- *   mutation batch.
- *
- *   The persist() return value is a boolean. A false return means the
- *   synchronous flush failed; the debounced save may still succeed later.
- *   Modals surface a warning toast on failure but do not roll back.
+ *   The trailing `return true;` follows modals-core.js's contract
+ *   unambiguously — a truthy return means "close", a falsy return
+ *   means "stay open". Prior revisions returned undefined on the
+ *   success path (because the onSuccess call was the last statement),
+ *   which is truthy-adjacent but not what the contract asks for.
  *
  * CROSS-DOMAIN
  *
- *   Role skill progression, character education fields, household wealth,
- *   and settlement wealth are written by the respective domains. The
- *   modals do not touch them directly; the commands do, and the modals
- *   only consume command results.
+ *   Role skill progression, character education fields, household
+ *   wealth, and settlement wealth are written by the respective
+ *   domains. The modals do not touch them directly; the commands do,
+ *   and the modals only consume command results.
  *
  * DEPENDENCIES
  *
@@ -73,6 +77,16 @@
  *
  * ICON POLICY: SVG from icons.js. No emojis.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Every onConfirm success path calls _closeTopModal() explicitly
+ *       and returns true. Prior revisions returned undefined (via the
+ *       last statement being the onSuccess call), which could leave
+ *       the modal open if a persistence toast or the onSuccess
+ *       callback triggered a race with the close decision. See
+ *       CLOSING ON SUCCESS in the header.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -264,11 +278,6 @@
     // =========================================================================
     // 1. PERSISTENCE HELPER
     // =========================================================================
-    //
-    // EducationCommands.persist() returns a boolean in the current contract.
-    // Callers check the return and surface a warning on failure. A false
-    // return is not fatal — the debounced save may still succeed — but the
-    // user should know the immediate flush did not.
 
     function _persistAndWarn(successMessage) {
         var ok = _commands().persist();
@@ -353,7 +362,6 @@
         var firstTypeId = Object.keys(types)[0] || 'town_school';
         var hasReligions = _getAllReligions().length > 0;
 
-        // Closure-scoped owner selection. No window globals, no polling.
         var ownerState = {
             id: null,
             type: 'character'
@@ -551,7 +559,9 @@
                 }
 
                 _persistAndWarn('Institution created: ' + name);
+                _closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess(result.institutionId);
+                return true;
             }
         });
     }
@@ -647,7 +657,9 @@
                 }
 
                 _persistAndWarn('Institution updated');
+                _closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
+                return true;
             }
         });
     }
@@ -815,10 +827,6 @@
             confirmText: 'Close',
             cancelText: '',
             onMount: function(modalEl) {
-                // Each detail-modal action closes this modal, opens the
-                // target modal, and on success re-opens the details modal
-                // fresh. No setTimeout; no stale binding.
-
                 function reopenDetails() {
                     openInstitutionDetailsModal(institutionId, onSuccess);
                 }
@@ -864,6 +872,7 @@
             },
             onConfirm: function() {
                 if (typeof onSuccess === 'function') onSuccess();
+                return true;
             }
         });
 
@@ -1122,7 +1131,9 @@
                 }
 
                 _persistAndWarn('Curriculum updated');
+                _closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
+                return true;
             }
         });
     }
@@ -1224,7 +1235,9 @@
                     return false;
                 }
                 _persistAndWarn('Student enrolled');
+                _closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
+                return true;
             }
         });
     }
@@ -1330,7 +1343,9 @@
                     return false;
                 }
                 _persistAndWarn('Teacher hired');
+                _closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
+                return true;
             }
         });
     }
@@ -1457,7 +1472,9 @@
                     return false;
                 }
                 _persistAndWarn('Headmaster appointed');
+                _closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
+                return true;
             }
         });
     }
@@ -1565,7 +1582,9 @@
                     return false;
                 }
                 _persistAndWarn('Student graduated');
+                _closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
+                return true;
             }
         });
     }
@@ -1640,7 +1659,9 @@
                     return false;
                 }
                 _persistAndWarn('Institution deleted');
+                _closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
+                return true;
             }
         });
     }
@@ -1728,8 +1749,9 @@
             cancelText: isPublic ? '' : 'Cancel',
             onConfirm: function(modalEl) {
                 if (isPublic) {
+                    _closeTopModal();
                     if (typeof onSuccess === 'function') onSuccess();
-                    return;
+                    return true;
                 }
 
                 var base = parseInt(
@@ -1768,7 +1790,9 @@
                 }
 
                 _persistAndWarn('Tuition updated');
+                _closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
+                return true;
             }
         });
     }
@@ -1946,7 +1970,9 @@
                 }
 
                 _persistAndWarn('Ownership updated');
+                _closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
+                return true;
             }
         });
     }
