@@ -22,8 +22,7 @@
            Structure mirrors CultureManager.html so both manager pages
            share a common shell. The .rt-* rules at the bottom are the
            religion tab content styles that the five religion tab files
-           emit; they are NOT shell chrome and are preserved verbatim
-           from religion.css so the tabs render identically.
+           emit.
            ============================================================ */
 
         html, body { height: 100%; margin: 0; overflow: hidden; }
@@ -38,7 +37,6 @@
             -webkit-font-smoothing: antialiased;
         }
 
-        /* ---- Topbar ---- */
         .topbar {
             position: relative;
             z-index: 100;
@@ -177,7 +175,6 @@
             color: var(--accent-light);
         }
 
-        /* ---- Layout ---- */
         .app-layout {
             display: flex;
             flex-direction: row;
@@ -285,7 +282,6 @@
         .tab-pane { display: none; }
         .tab-pane.active { display: block; }
 
-        /* ---- Shared: hint, empty, loading ---- */
         .ct-hint {
             background: var(--bg2);
             border-left: 3px solid var(--accent);
@@ -336,8 +332,7 @@
 
         /* ============================================================
            RELIGION TAB CONTENT (.rt-*)
-           Emitted by the five religion tab files. Ported verbatim
-           from religion.css.
+           Emitted by the five religion tab files.
            ============================================================ */
 
         .rt-tab { display: flex; flex-direction: column; gap: 1rem; }
@@ -921,15 +916,16 @@
        - Shared modules use CultureManager.html's paths and order.
        - Religion-specific modules are inserted at the point where
          CultureManager inserts culture.
-       - Settlement + crime enum files load BEFORE religion (religion
-         law validation reads their enums at call time).
+       - Settlement + crime enum files load BEFORE religion.
        - responsive.js loads BEFORE collapsible.js.
        - initializeStorage() runs inline after storage.js.
        - loadMasterData() runs in bootstrap(), then religions array is
          repaired, THEN domain bootstraps run.
        - skill-utils.js loads BEFORE role-constants.js.
-       - household-state.js and household-rules.js load BEFORE
-         household-queries.js.
+       - NO household modules. Nothing on this page uses them, and
+         they carry chains of required modules that aren't in this
+         tree. If a future feature needs a household selector, load
+         the household block explicitly at that point.
      ================================================================ -->
 
 <!-- Core constants -->
@@ -1028,7 +1024,7 @@
 <script src="js/character/character-statistics.js"></script>
 <script src="js/character/character-lifecycle.js"></script>
 
-<!-- Selectors -->
+<!-- Selectors (char selector only; NO household selector) -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
 <script>
@@ -1042,7 +1038,6 @@
     }
 </script>
 <script src="js/selectors/modals-char-selector.js"></script>
-<script src="js/selectors/modals-household-selector.js"></script>
 
 <!-- Character factory & creation -->
 <script src="js/character/character-factory.js"></script>
@@ -1077,13 +1072,6 @@
 <script src="js/roles/role-ui-list.js"></script>
 <script src="js/roles/modals-roles.js"></script>
 <script src="js/roles/modals-role-select.js"></script>
-
-<!-- Households. state + rules MUST load before queries. -->
-<script src="js/households/household-constants.js"></script>
-<script src="js/households/household-state.js"></script>
-<script src="js/households/household-rules.js"></script>
-<script src="js/households/household-queries.js"></script>
-<script src="js/households/household-commands.js"></script>
 
 <!-- ============================================================ -->
 <!-- SETTLEMENT + CRIME ENUM SOURCES (religion law validation)    -->
@@ -1199,6 +1187,171 @@
 <script src="js/tabs/religion-followers-tab.js"></script>
 
 <!-- ============================================================ -->
+<!-- DIAGNOSTIC HOOK — paste this AFTER all scripts and BEFORE    -->
+<!-- the orchestrator. Runs at load time, logs a full picture of  -->
+<!-- the storage round-trip to the console. Safe: read-only.      -->
+<!-- ============================================================ -->
+<script>
+(function () {
+    'use strict';
+
+    window.__religionDiag = {
+        // Snapshot the state. Call at any time from the console.
+        snapshot: function (label) {
+            label = label || 'snapshot';
+            console.group('[religion-diag] ' + label);
+
+            // 1. What masterData looks like in memory right now.
+            var md = window.masterData;
+            console.log('masterData present:', !!md);
+            console.log('masterData.data present:', !!(md && md.data));
+            var inMemoryReligions = (md && md.data && md.data.religions);
+            console.log('masterData.data.religions type:',
+                Array.isArray(inMemoryReligions) ? 'array' : typeof inMemoryReligions);
+            console.log('masterData.data.religions length:',
+                Array.isArray(inMemoryReligions) ? inMemoryReligions.length : '(not array)');
+            if (Array.isArray(inMemoryReligions)) {
+                console.log('masterData.data.religions content:',
+                    inMemoryReligions.map(function (r) {
+                        return r && r.id ? (r.name || r.id) : '(invalid)';
+                    }));
+            }
+
+            // 2. What's actually in localStorage right now.
+            var keys = Object.keys(localStorage);
+            console.log('localStorage keys:', keys);
+            var storageKey = null;
+            for (var i = 0; i < keys.length; i++) {
+                var k = keys[i];
+                var v = null;
+                try { v = localStorage.getItem(k); } catch (e) {}
+                if (v && v.length > 100) {
+                    var parsed = null;
+                    try { parsed = JSON.parse(v); } catch (e) {}
+                    if (parsed && (parsed.data || parsed.schemaVersion)) {
+                        storageKey = k;
+                        console.log('detected save key:', k, 'length:', v.length);
+                        var storageReligions = parsed && parsed.data && parsed.data.religions;
+                        console.log('  storage religions type:',
+                            Array.isArray(storageReligions) ? 'array' : typeof storageReligions);
+                        console.log('  storage religions length:',
+                            Array.isArray(storageReligions) ? storageReligions.length : '(not array)');
+                        if (Array.isArray(storageReligions)) {
+                            console.log('  storage religions content:',
+                                storageReligions.map(function (r) {
+                                    return r && r.id ? (r.name || r.id) : '(invalid)';
+                                }));
+                        }
+                        console.log('  schemaVersion:', parsed.schemaVersion);
+                        console.log('  savedAt:', parsed.savedAt);
+                    }
+                }
+            }
+            if (!storageKey) {
+                console.warn('No save key detected in localStorage. ' +
+                    'Nothing has been persisted under a recognizable schema.');
+            }
+
+            // 3. Compare.
+            if (storageKey && Array.isArray(inMemoryReligions)) {
+                var parsed = JSON.parse(localStorage.getItem(storageKey));
+                var storageReligions = parsed && parsed.data && parsed.data.religions;
+                if (Array.isArray(storageReligions)) {
+                    console.log('SAME COUNT?',
+                        inMemoryReligions.length === storageReligions.length,
+                        '(memory:', inMemoryReligions.length,
+                        'storage:', storageReligions.length, ')');
+                }
+            }
+
+            console.groupEnd();
+            return { storageKey: storageKey };
+        },
+
+        // Force a save and immediately check what landed. Call this
+        // right after creating a religion, before reload.
+        saveAndInspect: function () {
+            console.group('[religion-diag] saveAndInspect');
+
+            if (typeof window.saveMasterData !== 'function') {
+                console.error('saveMasterData is not a function. Storage module not loaded.');
+                console.groupEnd();
+                return;
+            }
+
+            var before = window.__religionDiag._countInStorage();
+            console.log('storage religion count BEFORE save:', before);
+
+            var ok = null;
+            try {
+                ok = window.saveMasterData();
+            } catch (e) {
+                console.error('saveMasterData threw:', e);
+                console.groupEnd();
+                return;
+            }
+            console.log('saveMasterData() returned:', ok);
+
+            if (typeof window.getLastSaveError === 'function') {
+                var err = window.getLastSaveError();
+                console.log('getLastSaveError():', err);
+            }
+
+            var after = window.__religionDiag._countInStorage();
+            console.log('storage religion count AFTER save:', after);
+            console.log('count increased by save?', (after - before));
+
+            window.__religionDiag.snapshot('after-save');
+            console.groupEnd();
+        },
+
+        _countInStorage: function () {
+            var keys = Object.keys(localStorage);
+            for (var i = 0; i < keys.length; i++) {
+                var v = null;
+                try { v = localStorage.getItem(keys[i]); } catch (e) {}
+                if (v && v.length > 100) {
+                    var parsed = null;
+                    try { parsed = JSON.parse(v); } catch (e) {}
+                    if (parsed && parsed.data && Array.isArray(parsed.data.religions)) {
+                        return parsed.data.religions.length;
+                    }
+                }
+            }
+            return -1;
+        },
+
+        // Print storage keys + which one looks like the save.
+        keys: function () {
+            var keys = Object.keys(localStorage);
+            console.table(keys.map(function (k) {
+                var v = localStorage.getItem(k);
+                return {
+                    key: k,
+                    length: v ? v.length : 0,
+                    preview: v ? v.slice(0, 60) : ''
+                };
+            }));
+        }
+    };
+
+    // Log the load-time state immediately.
+    console.log('[religion-diag] Diagnostic hook installed. ' +
+        'Run one of these in the console:\n' +
+        '  __religionDiag.snapshot()          — current memory vs storage\n' +
+        '  __religionDiag.saveAndInspect()    — force save, then compare\n' +
+        '  __religionDiag.keys()              — list localStorage keys\n' +
+        '  __religionDiag._countInStorage()   — count religions in storage');
+
+    // Also run a snapshot after a short delay, so if loadMasterData
+    // finished by then, we capture it.
+    setTimeout(function () {
+        window.__religionDiag.snapshot('after-load');
+    }, 500);
+})();
+</script>
+
+<!-- ============================================================ -->
 <!-- ORCHESTRATOR                                                 -->
 <!-- ============================================================ -->
 <script>
@@ -1231,11 +1384,6 @@
         if (isInitialized) return;
         isInitialized = true;
 
-        // initializeStorage() already ran inline after storage.js and
-        // created the empty masterData shell. loadMasterData() reads
-        // the persisted JSON from storage and repopulates masterData.
-        // MUST run before the domain bootstraps, because they hydrate
-        // their indexes from masterData.data.
         if (typeof window.loadMasterData === 'function') {
             try { window.loadMasterData(); }
             catch (e) {
@@ -1243,18 +1391,6 @@
             }
         }
 
-        // Repair masterData.data.religions if the loaded data doesn't
-        // have it (e.g. a save written before the religion subsystem
-        // shipped, or normalizeMasterData leaving it undefined). The
-        // religion bootstrap's _verifyCanonical() normally does this,
-        // but its repair only runs on the FIRST init() call. When
-        // religion-bootstrap auto-initializes at load time (before
-        // this function runs), the second init() from bootstrap()
-        // skips verification — so if loadMasterData() replaces
-        // masterData with a shape whose religions field is missing,
-        // nothing repairs it before the first Create click. That is
-        // why Create was failing with "ReligionState: canonical store
-        // not initialized."
         if (window.masterData && window.masterData.data) {
             if (!Array.isArray(window.masterData.data.religions)) {
                 window.masterData.data.religions = [];
@@ -1284,6 +1420,13 @@
         renderReligionList();
         pickInitialSelection();
         syncTabButtons(activeTabId);
+
+        // Expose a manual refresh so the diagnostic can trigger a
+        // re-render after a forced save.
+        window.__religionManagerRefresh = function () {
+            renderReligionList();
+            if (selectedReligionId) renderActiveTab();
+        };
     }
 
     function injectIcons() {
