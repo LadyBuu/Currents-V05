@@ -2,99 +2,108 @@
 /**
  * =============================================================================
  * LOCATION LEADERSHIP TAB
+ * js/tabs/location-leadership-tab.js
  * =============================================================================
  *
- * Displays the current leader and the leader history for a location.
- * Allows assigning a new leader and ending an active term.
+ * LOCATION: js/tabs/location-leadership-tab.js
  *
- * SCOPE
- * -----
- * - Read the current leader and history via LocationQueries.
- * - Render the current leader card and the history list.
- * - Provide "Assign Leader" and "End Term" actions that call
- *   LocationCommands.assignLeader / endLeaderTerm, then persist
- *   exactly once via LocationCommands.persist().
- * - Open the shared character selector modal to pick a new leader.
+ * Displays the current leader and past leaders for a location. Provides
+ * "Assign Leader" and "End Term" actions. Both actions call
+ * LocationCommands.assignLeader / endLeaderTerm and then persist exactly
+ * once via LocationCommands.persist().
  *
- * OUT OF SCOPE
- * ------------
- * - Leader assignment storage (owned by place.leaderAssignments).
- * - Character name resolution (owned by CharacterQueries/accessors).
- * - Character selector UI (owned by selectors/modals-char-selector.js).
- * - Modal / toast plumbing (owned by core/ui.js and modals-core.js).
- * - Inline CSS. All styling comes from css/location-tabs.css.
+ * RENDERER CONTRACT (from LocationManagerBootstrap):
+ *   fn(container, context) where context = { locationId, locationName }
  *
- * HARD DEPENDENCIES (load-time):
- *   - js/core/formatting.js           (window.escapeHtml)
- *   - js/core/icons.js                (window.getIcon)
- *   - js/location/location-queries.js (window.LocationQueries)
- *   - js/location/location-commands.js (window.LocationCommands)
+ * DATA SOURCES:
+ *   - LocationQueries.getPlace(id)
+ *   - LocationQueries.getCurrentLeader(id)
+ *   - LocationQueries.getLeaderHistory(id)
  *
- * OPTIONAL DEPENDENCIES (call-time, guarded):
- *   - window.openCharacterSelector (or openUnifiedCharacterSelector)
- *   - window.getCharacterById      (character display-name resolution)
- *   - window.getCurrentYear        (year default for term boundaries)
- *   - window.showToast             (user feedback)
+ * WRITES (this tab is the inline writer for leader assignments):
+ *   - LocationCommands.assignLeader(locationId, characterId, year, title)
+ *   - LocationCommands.endLeaderTerm(locationId, characterId, year)
+ *   - LocationCommands.persist()  ← exactly once per user action
  *
+ * FILTERS: none.
+ *
+ * DEPENDENCIES (all soft; guarded at call time):
+ *   - LocationQueries   — REQUIRED
+ *   - LocationCommands  — REQUIRED
+ *   - TabManager        — REQUIRED
+ *   - formatting.js     (escapeHtml) — REQUIRED
+ *   - icons.js          (Icons)      — soft
+ *   - ui.js             (showToast)  — soft
+ *   - selectors/modals-char-selector.js (openCharacterSelector) — soft (toast if missing)
+ *
+ * TIME CONTRACT: uses window.getCurrentYear (no fallback year). If the year
+ *   is unavailable, the action toasts and refuses rather than defaulting to
+ *   1250 (the prior revision's data-corruption bug).
+ * ICON POLICY: no emojis. Glyphs from Icons[name], '' fallback.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Refactored to the Education tab skeleton:
+ *     - Renderer contract is fn(container, context).
+ *     - Registers with TabManager at load time.
+ *     - Removed the 1250 fallback year. _currentYear() returns null when
+ *       the year is unavailable; callers refuse the action.
+ *     - Removed per-button listeners. One delegated click handler on the
+ *       container, routed via data-action + data-char-id.
+ *     - Modal delegate is resolved at click time via _resolveModal (toasts
+ *       on absence rather than silently no-op'ing).
+ *     - Persist ownership is documented and honored: this tab owns
+ *       persist() for leader writes; no modal calls persist() on its behalf.
  * =============================================================================
  */
 
 (function () {
     'use strict';
 
-    // =========================================================================
-    // 1. LOAD-TIME DEPENDENCY CHECKS
-    // =========================================================================
+    var TAB_ID = 'leadership';
+    var SCOPE  = 'location';
 
-    if (typeof window.escapeHtml !== 'function') {
-        throw new Error(
-            'location-leadership-tab.js requires core/formatting.js ' +
-            '(window.escapeHtml).'
-        );
+    function _queries() {
+        return (typeof window.LocationQueries !== 'undefined') ? window.LocationQueries : null;
     }
-    if (typeof window.getIcon !== 'function') {
-        throw new Error(
-            'location-leadership-tab.js requires core/icons.js ' +
-            '(window.getIcon).'
-        );
+    function _commands() {
+        return (typeof window.LocationCommands !== 'undefined') ? window.LocationCommands : null;
     }
-    if (!window.LocationQueries ||
-        typeof window.LocationQueries.getPlace !== 'function' ||
-        typeof window.LocationQueries.getCurrentLeader !== 'function' ||
-        typeof window.LocationQueries.getLeaderHistory !== 'function') {
-        throw new Error(
-            'location-leadership-tab.js requires location-queries.js ' +
-            '(getPlace, getCurrentLeader, getLeaderHistory).'
-        );
+    function _tabManager() {
+        return (typeof window.TabManager !== 'undefined') ? window.TabManager : null;
     }
-    if (!window.LocationCommands ||
-        typeof window.LocationCommands.assignLeader !== 'function' ||
-        typeof window.LocationCommands.endLeaderTerm !== 'function' ||
-        typeof window.LocationCommands.persist !== 'function') {
-        throw new Error(
-            'location-leadership-tab.js requires location-commands.js ' +
-            '(assignLeader, endLeaderTerm, persist).'
-        );
+    function _esc(v) {
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(v);
+        if (v === null || v === undefined) return '';
+        return String(v)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function _icon(name) {
+        if (typeof window.getIcon === 'function') {
+            try { var s = window.getIcon(name); if (typeof s === 'string') return s; }
+            catch (e) { /* fall through */ }
+        }
+        if (window.Icons && typeof window.Icons[name] === 'string') return window.Icons[name];
+        return '';
+    }
+    function _toast(msg, type) {
+        if (typeof window.showToast === 'function') window.showToast(msg, type);
+    }
+    function _resolveModal(name) {
+        var fn = window[name];
+        if (typeof fn !== 'function') {
+            _toast('Action unavailable: ' + name + ' is not loaded.', 'error');
+            return null;
+        }
+        return fn;
     }
 
-    // =========================================================================
-    // 2. LOCAL ALIASES (direct references — no wrappers)
-    // =========================================================================
-
-    var LQ = window.LocationQueries;
-    var LC = window.LocationCommands;
-
-    // =========================================================================
-    // 3. SMALL PRESENTATION HELPERS
-    //    (resolve names / years; do not reimplement domain logic)
-    // =========================================================================
-
-    /**
-     * Resolve a character's display name. Character projections are the
-     * canonical shape returned by window.getCharacterById under the
-     * documented load order. Returns 'Unknown' for a missing record; that
-     * is a presentation fallback, not a domain default.
-     */
+    function _currentYear() {
+        if (typeof window.getCurrentYear !== 'function') return null;
+        var y = window.getCurrentYear();
+        return (typeof y === 'number' && isFinite(y)) ? y : null;
+    }
     function _characterName(characterId) {
         if (!characterId) return 'Unknown';
         if (typeof window.getCharacterById !== 'function') return 'Unknown';
@@ -103,296 +112,224 @@
         var full = ((c.name || '') + ' ' + (c.surname || '')).trim();
         return full || 'Unknown';
     }
-
-    /**
-     * The current world year, with the documented default fallback. The
-     * location domain uses getCurrentYear (not getCurrentYearSafe); this
-     * helper mirrors that contract for the tab layer.
-     */
-    function _currentYear() {
-        if (typeof window.getCurrentYear === 'function') {
-            return window.getCurrentYear();
-        }
-        return 1250;
-    }
-
-    function _toast(message, type) {
-        if (typeof window.showToast === 'function') {
-            window.showToast(message, type || 'info');
-        }
-    }
-
-    // =========================================================================
-    // 4. LEADER HISTORY HELPERS
-    // =========================================================================
-
-    /**
-     * An assignment is active iff isActive === true AND endYear is
-     * null/undefined. LocationQueries.getCurrentLeader already returns
-     * the active assignment (or null); getLeaderHistory returns every
-     * assignment. We separate them here to render "past" leaders.
-     */
     function _isActiveAssignment(assignment) {
         if (!assignment) return false;
         if (assignment.isActive !== true) return false;
-        if (assignment.endYear !== null && assignment.endYear !== undefined) {
-            return false;
-        }
+        if (assignment.endYear !== null && assignment.endYear !== undefined) return false;
         return true;
     }
 
-    // =========================================================================
-    // 5. RENDER
-    // =========================================================================
-
-    function render(containerId, locationId, onRefresh) {
-        var container = document.getElementById(containerId);
-        if (!container) return;
-
-        var place = LQ.getPlace(locationId);
-        if (!place) {
-            container.innerHTML =
-                '<div class="empty-state">Location not found</div>';
-            return;
-        }
-
-        var currentLeader = LQ.getCurrentLeader(locationId);
-        var allHistory = LQ.getLeaderHistory(locationId) || [];
-
-        // The history list omits the active assignment (which is shown
-        // in the current-leader card above it). Ended / past terms only.
-        var pastLeaders = [];
-        for (var i = 0; i < allHistory.length; i++) {
-            if (!_isActiveAssignment(allHistory[i])) {
-                pastLeaders.push(allHistory[i]);
-            }
-        }
-
-        var html = '';
-
-        // ---- HEADER ----
-        html += '<div class="loc-tab-header">';
-        html +=   '<div class="loc-tab-header-text">';
-        html +=     '<div class="loc-tab-header-title">' +
-                        window.getIcon('CROWN') + ' Leadership: ' +
-                        window.escapeHtml(place.displayName) +
-                    '</div>';
-        html +=     '<div class="loc-tab-header-subtitle">' +
-                        'Manage the ruler of this location' +
-                    '</div>';
-        html +=   '</div>';
-        html +=   '<button type="button" id="assignLeaderBtn" ' +
-                    'class="loc-tab-btn loc-tab-btn--primary">' +
-                    window.getIcon('PLUS') + ' Assign Leader' +
-                  '</button>';
-        html += '</div>';
-
-        // ---- CURRENT LEADER ----
-        html += '<div class="loc-tab-section">';
-        html +=   '<div class="loc-tab-section-title">Current Leader</div>';
-
+    function _renderCurrentLeader(currentLeader) {
+        var html = '<div class="loc-tab-section">';
+        html += '<div class="loc-tab-section-title">Current Leader</div>';
         if (currentLeader) {
-            var leaderName = _characterName(currentLeader.characterId);
-            var leaderTitle = currentLeader.title || 'Leader';
-            var leaderStart = (currentLeader.startYear === null ||
-                               currentLeader.startYear === undefined)
-                ? '?' : currentLeader.startYear;
-
+            var name = _characterName(currentLeader.characterId);
+            var title = currentLeader.title || 'Leader';
+            var start = (currentLeader.startYear === null || currentLeader.startYear === undefined)
+                ? '?' : String(currentLeader.startYear);
             html += '<div class="loc-leader-card">';
             html +=   '<div class="loc-leader-card-body">';
-            html +=     '<div class="loc-leader-card-name">' +
-                            window.escapeHtml(leaderName) +
-                        '</div>';
-            html +=     '<div class="loc-leader-card-title">' +
-                            window.escapeHtml(leaderTitle) +
-                        '</div>';
-            html +=     '<div class="loc-leader-card-since">' +
-                            'Since year ' + window.escapeHtml(String(leaderStart)) +
-                        '</div>';
+            html +=     '<div class="loc-leader-card-name">' + _esc(name) + '</div>';
+            html +=     '<div class="loc-leader-card-title">' + _esc(title) + '</div>';
+            html +=     '<div class="loc-leader-card-since">Since year ' + _esc(start) + '</div>';
             html +=   '</div>';
-            html +=   '<button type="button" id="endLeaderBtn" ' +
-                        'class="loc-tab-btn loc-tab-btn--danger" ' +
-                        'data-char-id="' +
-                        window.escapeHtml(currentLeader.characterId) + '">' +
+            html +=   '<button type="button" class="loc-tab-btn loc-tab-btn--danger" ' +
+                        'data-action="end-term" data-char-id="' + _esc(currentLeader.characterId) + '">' +
                         'End Term' +
                       '</button>';
             html += '</div>';
         } else {
             html += '<div class="loc-tab-empty">No current leader.</div>';
         }
-
         html += '</div>';
+        return html;
+    }
 
-        // ---- PAST LEADERS ----
-        html += '<div class="loc-tab-section">';
-        html +=   '<div class="loc-tab-section-title">' +
-                    'Past Leaders (' + pastLeaders.length + ')' +
-                  '</div>';
-
+    function _renderPastLeaders(pastLeaders) {
+        var html = '<div class="loc-tab-section">';
+        html += '<div class="loc-tab-section-title">Past Leaders (' + pastLeaders.length + ')</div>';
         if (pastLeaders.length === 0) {
             html += '<div class="loc-tab-empty">No past leaders recorded.</div>';
         } else {
             html += '<div class="loc-leader-history-list">';
             for (var h = 0; h < pastLeaders.length; h++) {
                 var past = pastLeaders[h];
-                var pastName = _characterName(past.characterId);
-                var pastTitle = past.title || 'Leader';
-                var startYear = (past.startYear === null ||
-                                 past.startYear === undefined)
-                    ? '?' : String(past.startYear);
-                var endYear = (past.endYear === null ||
-                               past.endYear === undefined)
-                    ? '?' : String(past.endYear);
-
+                var name = _characterName(past.characterId);
+                var title = past.title || 'Leader';
+                var start = (past.startYear === null || past.startYear === undefined) ? '?' : String(past.startYear);
+                var end   = (past.endYear === null || past.endYear === undefined) ? '?' : String(past.endYear);
                 html += '<div class="loc-leader-history-row">';
                 html +=   '<div class="loc-leader-history-info">';
-                html +=     '<div class="loc-leader-history-name">' +
-                                window.escapeHtml(pastName) +
-                            '</div>';
-                html +=     '<div class="loc-leader-history-title">' +
-                                window.escapeHtml(pastTitle) +
-                            '</div>';
+                html +=     '<div class="loc-leader-history-name">' + _esc(name) + '</div>';
+                html +=     '<div class="loc-leader-history-title">' + _esc(title) + '</div>';
                 html +=   '</div>';
                 html +=   '<div class="loc-leader-history-years">' +
-                                window.escapeHtml(startYear) + ' – ' +
-                                window.escapeHtml(endYear) +
+                            _esc(start) + ' – ' + _esc(end) +
                           '</div>';
                 html += '</div>';
             }
             html += '</div>';
         }
-
         html += '</div>';
+        return html;
+    }
 
+    function renderLeadershipTab(container, context) {
+        if (!container) return;
+        if (!context || !context.locationId) {
+            container.innerHTML = '<div class="empty-state">Select a location from the sidebar.</div>';
+            return;
+        }
+        var Q = _queries();
+        if (!Q) {
+            container.innerHTML =
+                '<div class="rt-unavailable">LocationQueries is not available. ' +
+                'Load js/location/location-queries.js.</div>';
+            return;
+        }
+        var place = Q.getPlace(context.locationId);
+        if (!place) {
+            container.innerHTML = '<div class="empty-state">Location not found.</div>';
+            return;
+        }
+
+        var currentLeader = null;
+        try { currentLeader = Q.getCurrentLeader(context.locationId); }
+        catch (e) { currentLeader = null; }
+
+        var allHistory = [];
+        try { allHistory = Q.getLeaderHistory(context.locationId) || []; }
+        catch (e) { allHistory = []; }
+
+        var past = [];
+        for (var i = 0; i < allHistory.length; i++) {
+            if (!_isActiveAssignment(allHistory[i])) past.push(allHistory[i]);
+        }
+
+        var html = '<div class="loc-tab">';
+        html += '<div class="loc-tab-header">' +
+                    '<div class="loc-tab-header-text">' +
+                      '<div class="loc-tab-header-title">' +
+                        _icon('CROWN') + ' Leadership: ' + _esc(place.displayName) +
+                      '</div>' +
+                      '<div class="loc-tab-header-subtitle">Manage the ruler of this location</div>' +
+                    '</div>' +
+                    '<div class="loc-tab-header-actions">' +
+                      '<button type="button" class="loc-tab-btn loc-tab-btn--primary" data-action="assign">' +
+                        _icon('PLUS') + ' Assign Leader' +
+                      '</button>' +
+                    '</div>' +
+                '</div>';
+        html += _renderCurrentLeader(currentLeader);
+        html += _renderPastLeaders(past);
+        html += '</div>';
         container.innerHTML = html;
 
-        // ---- BIND EVENTS ----
-        _bindAssignButton(container, locationId, place, onRefresh);
-        _bindEndTermButton(container, locationId, onRefresh);
-    }
-
-    // =========================================================================
-    // 6. EVENT HANDLERS
-    // =========================================================================
-
-    /**
-     * Assign Leader: opens the character selector, then on selection
-     * calls LocationCommands.assignLeader followed by a single persist.
-     *
-     * The selector is loaded lazily and the call is guarded — the tab
-     * works in a bare harness; the action is a no-op (with a toast) when
-     * the selector module is absent.
-     */
-    function _bindAssignButton(container, locationId, place, onRefresh) {
-        var btn = container.querySelector('#assignLeaderBtn');
-        if (!btn) return;
-
-        btn.addEventListener('click', function () {
-            var openSelector =
-                (typeof window.openCharacterSelector === 'function')
-                    ? window.openCharacterSelector
-                    : (typeof window.openUnifiedCharacterSelector === 'function')
-                        ? window.openUnifiedCharacterSelector
-                        : null;
-
-            if (!openSelector) {
-                _toast('Character selector unavailable', 'error');
-                return;
-            }
-
-            openSelector({
-                title: 'Select Leader for ' + place.displayName,
-                preset: 'available',
-                filters: {
-                    location: locationId,
-                    showDeceased: false
-                },
-                onSelect: function (characterId) {
-                    if (!characterId) return;
-
-                    var year = _currentYear();
-                    var res = LC.assignLeader(
-                        locationId,
-                        characterId,
-                        year,
-                        'Leader'
-                    );
-
-                    if (!res || res.success !== true) {
-                        _toast(
-                            (res && res.reason) ? res.reason
-                                                : 'Failed to assign leader',
-                            'error'
-                        );
-                        return;
-                    }
-
-                    var persistRes = LC.persist();
-                    if (!persistRes || persistRes.success !== true) {
-                        _toast(
-                            (persistRes && persistRes.reason)
-                                ? persistRes.reason
-                                : 'Failed to save leader assignment',
-                            'error'
-                        );
-                        return;
-                    }
-
-                    _toast('Leader assigned', 'success');
-                    if (typeof onRefresh === 'function') onRefresh();
-                }
+        if (!container.__locationLeadershipWired) {
+            container.__locationLeadershipWired = true;
+            container.addEventListener('click', function (e) {
+                var btn = e.target.closest('[data-action]');
+                if (!btn || !container.contains(btn)) return;
+                var action = btn.dataset.action;
+                if (action === 'assign') _handleAssign(context);
+                else if (action === 'end-term') _handleEndTerm(context, btn.getAttribute('data-char-id'));
             });
-        });
-    }
-
-    /**
-     * End Term: calls LocationCommands.endLeaderTerm followed by a
-     * single persist. The current-year end is recorded on the
-     * assignment; the record itself stays in the place's history.
-     */
-    function _bindEndTermButton(container, locationId, onRefresh) {
-        var btn = container.querySelector('#endLeaderBtn');
-        if (!btn) return;
-
-        btn.addEventListener('click', function () {
-            var characterId = this.getAttribute('data-char-id');
-            if (!characterId) return;
-
-            var year = _currentYear();
-            var res = LC.endLeaderTerm(locationId, characterId, year);
-
-            if (!res || res.success !== true) {
-                _toast(
-                    (res && res.reason) ? res.reason : 'Failed to end term',
-                    'error'
-                );
-                return;
-            }
-
-            var persistRes = LC.persist();
-            if (!persistRes || persistRes.success !== true) {
-                _toast(
-                    (persistRes && persistRes.reason)
-                        ? persistRes.reason
-                        : 'Failed to save term end',
-                    'error'
-                );
-                return;
-            }
-
-            _toast('Term ended', 'info');
-            if (typeof onRefresh === 'function') onRefresh();
-        });
+        }
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 4. ACTIONS (persist exactly once per user action)
     // =========================================================================
 
-    window.LocationLeadershipTab = { render: render };
+    function _handleAssign(context) {
+        var LC = _commands();
+        if (!LC || typeof LC.assignLeader !== 'function' || typeof LC.persist !== 'function') {
+            _toast('Leader assignment is unavailable. Load location-commands.js.', 'error');
+            return;
+        }
+        var openSelector = _resolveModal('openCharacterSelector')
+            || _resolveModal('openUnifiedCharacterSelector');
+        if (!openSelector) return;
+
+        var place = _queries().getPlace(context.locationId);
+        openSelector({
+            title: 'Select Leader for ' + (place ? place.displayName : 'Location'),
+            preset: 'available',
+            filters: { location: context.locationId, showDeceased: false },
+            onSelect: function (characterId) {
+                if (!characterId) return;
+                var year = _currentYear();
+                if (year === null) {
+                    _toast('The current year is unavailable; cannot assign a leader.', 'error');
+                    return;
+                }
+                var res = LC.assignLeader(context.locationId, characterId, year, 'Leader');
+                if (!res || res.success !== true) {
+                    _toast((res && res.reason) ? res.reason : 'Failed to assign leader', 'error');
+                    return;
+                }
+                var p = LC.persist();
+                if (!p || p.success !== true) {
+                    _toast((p && p.reason) ? p.reason : 'Failed to save leader assignment', 'error');
+                    return;
+                }
+                _toast('Leader assigned', 'success');
+                _refresh();
+            }
+        });
+    }
+
+    function _handleEndTerm(context, characterId) {
+        if (!characterId) return;
+        var LC = _commands();
+        if (!LC || typeof LC.endLeaderTerm !== 'function' || typeof LC.persist !== 'function') {
+            _toast('End-term is unavailable. Load location-commands.js.', 'error');
+            return;
+        }
+        var year = _currentYear();
+        if (year === null) {
+            _toast('The current year is unavailable; cannot end a term.', 'error');
+            return;
+        }
+        var res = LC.endLeaderTerm(context.locationId, characterId, year);
+        if (!res || res.success !== true) {
+            _toast((res && res.reason) ? res.reason : 'Failed to end term', 'error');
+            return;
+        }
+        var p = LC.persist();
+        if (!p || p.success !== true) {
+            _toast((p && p.reason) ? p.reason : 'Failed to save term end', 'error');
+            return;
+        }
+        _toast('Term ended', 'info');
+        _refresh();
+    }
+
+    function _refresh() {
+        var TM = _tabManager();
+        if (TM && typeof TM.requestRender === 'function') {
+            try { TM.requestRender(SCOPE); } catch (e) { /* ignore */ }
+        }
+    }
+
+    // =========================================================================
+    // 5. REGISTRATION
+    // =========================================================================
+
+    var TM = _tabManager();
+    if (TM && typeof TM.register === 'function') {
+        TM.register(SCOPE, TAB_ID, renderLeadershipTab);
+    } else if (typeof console !== 'undefined' && console.warn) {
+        console.warn('location-leadership-tab.js: TabManager is not available at load time; the tab was not registered. Load tab-manager.js first.');
+    }
+
+    // =========================================================================
+    // 6. EXPORTS
+    // =========================================================================
+
+    window.LocationLeadershipTab = { id: TAB_ID, render: renderLeadershipTab };
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.LocationLeadershipTab;
     }
-
 })();
