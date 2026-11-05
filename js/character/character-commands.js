@@ -13,11 +13,14 @@
  *   - Trait array management on the character record
  *   - Profession array management on the character record
  *   - Rank assignment array management on the character record
- *   - Surname history mutations
+ *   - Surname history mutations (add / revert / update-entry /
+ *     delete-entry / update-birth-surname)
  *   - Religion assignment orchestration (delegates to ReligionCommands)
  *   - Religion field writers (religionId, religionHistory) — the only
  *     sanctioned writers for these character-owned fields.
  *     ReligionCommands and ReligionInheritance route through these.
+ *   - Religion history entry edits and deletions (in-place correction
+ *     of existing conversion events; does NOT change religionId)
  *   - Bulk character-owned field updates
  *   - Death transition (markDeceased) — the single canonical writer of
  *     isDeceased and its associated fields
@@ -135,6 +138,27 @@
  *   silently discarded and every religion assignment reported success
  *   while leaving canonical state unchanged. Routing through
  *   CharacterState.updateCharacter fixes that.
+ *
+ *   RELIGION HISTORY CORRECTION:
+ *   setReligion APPENDS a conversion event. It does not correct or
+ *   delete existing events. Two additional writers exist for that:
+ *
+ *     updateReligionHistoryEntry(characterId, index, patch)
+ *       Edits a single existing event in place. Accepts a patch with
+ *       any subset of { year, reason, notes, inherited, inheritedFrom }.
+ *       Does NOT change character.religionId; changing the current
+ *       religion goes through setReligion.
+ *
+ *     deleteReligionHistoryEntry(characterId, index)
+ *       Removes a single existing event. Does NOT change
+ *       character.religionId; the current religion is a separate fact
+ *       from its recorded history.
+ *
+ *   These two writers exist because the Identity tab allows the user to
+ *   fix mistakes in recorded history. Without them, a typo in a
+ *   conversion year could only be "fixed" by appending a second
+ *   conversion, which is worse than the original bug. They are the
+ *   ONLY sanctioned in-place editors for religionHistory.
  *
  * TRAITS:
  *   The character record carries `traits` as a domain-owned array of
@@ -265,7 +289,31 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (P1-7):
+ *   Current revision (P1-8):
+ *     - Added five commands for in-place correction of recorded history:
+ *
+ *         updateBirthSurname(characterId, newBirthSurname)
+ *         updateSurnameChangeEntry(characterId, index, patch)
+ *         deleteSurnameChangeEntry(characterId, index)
+ *         updateReligionHistoryEntry(characterId, index, patch)
+ *         deleteReligionHistoryEntry(characterId, index)
+ *
+ *       These exist because the Identity tab allows users to fix
+ *       mistakes in recorded history. Prior revisions exposed only
+ *       record (append) and revert-last (pop); a typo in an existing
+ *       entry could not be corrected at all.
+ *
+ *       Contract notes for each are in their function headers.
+ *
+ *     - Header Surname history SCOPE line updated to name all five
+ *       surname-history writers.
+ *     - Header RELIGION FIELDS section extended with
+ *       RELIGION HISTORY CORRECTION sub-section documenting the two
+ *       new religion-history writers.
+ *     - No existing command changed. No existing behaviour changed.
+ *       Every export from the previous revision keeps its exact
+ *       signature and return shape.
+ *   Previous revision (P1-7):
  *     - Added addProfessionSpecialization(characterId, roleId,
  *       specializationName). Appends a specialization to the `specs`
  *       array on an existing profession entry. Routes through
@@ -446,6 +494,13 @@
     function _resolveYear(value) {
         if (_isMissing(value)) return window.getCurrentYear();
         return value;
+    }
+
+    function _isValidIndex(v, length) {
+        if (typeof v !== 'number' || !Number.isInteger(v)) return false;
+        if (v < 0) return false;
+        if (v >= length) return false;
+        return true;
     }
 
     // =========================================================================
@@ -665,7 +720,178 @@
     }
 
     // =========================================================================
-    // 6. TRAIT NORMALISATION AND WRITE
+    // 6. RELIGION HISTORY CORRECTION WRITERS
+    // =========================================================================
+    //
+    // setReligion APPENDS a conversion event. These two writers EDIT or
+    // REMOVE an existing event. They exist because a recorded conversion
+    // can contain a mistake (wrong year, wrong reason, wrong note) that
+    // cannot be fixed by appending another conversion.
+    //
+    // Neither writer changes character.religionId. The current religion
+    // is a separate fact from the recorded history; changing the current
+    // religion goes through setReligion.
+
+    /**
+     * Edits a single existing religion-history event in place.
+     *
+     * Accepts a patch with any subset of:
+     *   year              number | null
+     *   reason            string
+     *   notes             string
+     *   inherited         boolean
+     *   inheritedFrom     string | null
+     *
+     * The fields id, characterId, fromReligionId, fromReligionName,
+     * toReligionId, toReligionName, and timestamp are NOT editable.
+     * Changing a conversion's endpoints or its identity is not a
+     * "correction"; it is a different conversion. Use setReligion to
+     * record a new conversion event.
+     *
+     * Does NOT change character.religionId.
+     *
+     * @param {string} characterId
+     * @param {number} index  zero-based index into character.religionHistory
+     * @param {Object} patch
+     * @returns {{ success: boolean, reason?: string, entry?: Object }}
+     */
+    function updateReligionHistoryEntry(characterId, index, patch) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+            return _fail('index must be a non-negative integer.');
+        }
+        if (!_isPlainObject(patch)) {
+            return _fail('patch must be a plain object.');
+        }
+
+        var character = CS.getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var history = Array.isArray(character.religionHistory)
+            ? character.religionHistory.slice()
+            : [];
+        if (!_isValidIndex(index, history.length)) {
+            return _fail('Religion history entry not found at index ' + index + '.');
+        }
+
+        var current = history[index];
+        if (!current || typeof current !== 'object') {
+            return _fail('Religion history entry at index ' + index +
+                         ' is malformed.');
+        }
+
+        var next = {
+            id: current.id,
+            characterId: current.characterId,
+            fromReligionId: current.fromReligionId,
+            fromReligionName: current.fromReligionName,
+            toReligionId: current.toReligionId,
+            toReligionName: current.toReligionName,
+            year: current.year,
+            reason: current.reason,
+            notes: current.notes,
+            inherited: current.inherited,
+            inheritedFrom: current.inheritedFrom,
+            timestamp: current.timestamp
+        };
+
+        if (Object.prototype.hasOwnProperty.call(patch, 'year')) {
+            if (!_isMissing(patch.year) && !_isValidYearOrMissing(patch.year)) {
+                return _fail('year must be a valid world year or null.');
+            }
+            next.year = _isMissing(patch.year) ? null : patch.year;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'reason')) {
+            if (!_isMissing(patch.reason) && typeof patch.reason !== 'string') {
+                return _fail('reason must be a string when provided.');
+            }
+            next.reason = _isMissing(patch.reason) ? 'personal' : String(patch.reason);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'notes')) {
+            if (!_isMissing(patch.notes) && typeof patch.notes !== 'string') {
+                return _fail('notes must be a string when provided.');
+            }
+            next.notes = _isMissing(patch.notes) ? '' : String(patch.notes);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'inherited')) {
+            next.inherited = patch.inherited === true;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'inheritedFrom')) {
+            if (!_isMissing(patch.inheritedFrom)
+                && typeof patch.inheritedFrom !== 'string') {
+                return _fail('inheritedFrom must be a string or null.');
+            }
+            next.inheritedFrom = _isMissing(patch.inheritedFrom)
+                ? null
+                : String(patch.inheritedFrom);
+        }
+
+        history[index] = next;
+
+        var update = CS.updateCharacter(characterId, {
+            religionHistory: history,
+            updatedAt: Date.now()
+        });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the religion-history write.');
+        }
+
+        return _ok({ entry: next, index: index });
+    }
+
+    /**
+     * Removes a single existing religion-history event.
+     *
+     * Does NOT change character.religionId. If the current religion was
+     * set by the event being removed, the character's current religion
+     * remains what it is; the deleted event is simply no longer part of
+     * the recorded history.
+     *
+     * @param {string} characterId
+     * @param {number} index
+     * @returns {{ success: boolean, reason?: string, removed?: Object }}
+     */
+    function deleteReligionHistoryEntry(characterId, index) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+            return _fail('index must be a non-negative integer.');
+        }
+
+        var character = CS.getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var history = Array.isArray(character.religionHistory)
+            ? character.religionHistory.slice()
+            : [];
+        if (!_isValidIndex(index, history.length)) {
+            return _fail('Religion history entry not found at index ' + index + '.');
+        }
+
+        var removed = history.splice(index, 1)[0];
+
+        var update = CS.updateCharacter(characterId, {
+            religionHistory: history,
+            updatedAt: Date.now()
+        });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the religion-history write.');
+        }
+
+        return _ok({ removed: removed, index: index });
+    }
+
+    // =========================================================================
+    // 7. TRAIT NORMALISATION AND WRITE
     // =========================================================================
     //
     // Traits are canonical trait ids (see constants/character-traits.js).
@@ -757,7 +983,7 @@
     }
 
     // =========================================================================
-    // 7. TRAIT API
+    // 8. TRAIT API
     // =========================================================================
 
     /**
@@ -875,7 +1101,7 @@
     }
 
     // =========================================================================
-    // 8. DEATH TRANSITION (markDeceased)
+    // 9. DEATH TRANSITION (markDeceased)
     // =========================================================================
 
     function _requireMortalityRules() {
@@ -995,7 +1221,7 @@
     }
 
     // =========================================================================
-    // 9. PROFESSION NORMALISATION
+    // 10. PROFESSION NORMALISATION
     // =========================================================================
 
     function _normaliseNewProfession(data) {
@@ -1041,7 +1267,7 @@
     }
 
     // =========================================================================
-    // 10. PROFESSION API
+    // 11. PROFESSION API
     // =========================================================================
 
     function getProfession(characterId, professionId) {
@@ -1372,7 +1598,7 @@
     }
 
     // =========================================================================
-    // 11. PROFESSION PRIMACY
+    // 12. PROFESSION PRIMACY
     // =========================================================================
 
     function setPrimaryProfession(characterId, professionId) {
@@ -1430,8 +1656,70 @@
     }
 
     // =========================================================================
-    // 12. SURNAME HISTORY
+    // 13. SURNAME HISTORY
     // =========================================================================
+    //
+    // Four writers touch character.surnameHistory and the paired
+    // character.surname field:
+    //
+    //   recordCharacterSurnameChange   APPENDS a new entry and sets the
+    //                                  character.surname to the new value.
+    //                                  This is the "make a change" command.
+    //
+    //   revertCharacterSurnameChange   POPS the last entry and restores
+    //                                  character.surname to the previous
+    //                                  entry's surname (or birthSurname).
+    //                                  This is the "undo the last change"
+    //                                  command.
+    //
+    //   updateSurnameChangeEntry       EDITS an existing entry in place.
+    //                                  Does NOT change character.surname.
+    //                                  This is the "fix a mistake in a
+    //                                  recorded entry" command.
+    //
+    //   deleteSurnameChangeEntry       REMOVES an existing entry. If the
+    //                                  removed entry was the last one and
+    //                                  its surname matched the character's
+    //                                  current surname, also reverts
+    //                                  character.surname. This is the
+    //                                  "remove a bad entry" command.
+    //
+    //   updateBirthSurname             EDITS the anchor birthSurname.
+    //                                  Does NOT change character.surname.
+    //
+    // All five route through CharacterState.updateCharacter. None of
+    // them write to the live record directly.
+    //
+    // The tab is expected to reason about which of these to call based
+    // on user intent. For example, editing the last entry's surname may
+    // be accompanied by a recordCharacterSurnameChange call if the user
+    // also wants the character's current surname to change. The commands
+    // remain single-purpose: each does exactly one thing.
+
+    function _readSurnameHistory(character) {
+        if (!_isPlainObject(character.surnameHistory)) {
+            return {
+                birthSurname: typeof character.surname === 'string'
+                    ? character.surname
+                    : '',
+                entries: [],
+                lastUpdated: _isMissing(character.birthYear)
+                    ? window.getCurrentYear()
+                    : character.birthYear
+            };
+        }
+        return {
+            birthSurname: typeof character.surnameHistory.birthSurname === 'string'
+                ? character.surnameHistory.birthSurname
+                : (typeof character.surname === 'string' ? character.surname : ''),
+            entries: Array.isArray(character.surnameHistory.entries)
+                ? character.surnameHistory.entries.slice()
+                : [],
+            lastUpdated: _isMissing(character.surnameHistory.lastUpdated)
+                ? window.getCurrentYear()
+                : character.surnameHistory.lastUpdated
+        };
+    }
 
     function recordCharacterSurnameChange(id, newSurname, year, reason, options) {
         if (!_hasId(id)) return _fail('Character id is required.');
@@ -1454,26 +1742,12 @@
         }
         var changeYear = _resolveYear(year);
 
-        var history;
-        if (_isPlainObject(character.surnameHistory)) {
-            history = {
-                birthSurname: typeof character.surnameHistory.birthSurname === 'string'
-                    ? character.surnameHistory.birthSurname
-                    : (typeof character.surname === 'string' ? character.surname : ''),
-                entries: Array.isArray(character.surnameHistory.entries)
-                    ? character.surnameHistory.entries.slice()
-                    : [],
-                lastUpdated: _isMissing(character.surnameHistory.lastUpdated)
-                    ? _resolveYear(character.birthYear)
-                    : character.surnameHistory.lastUpdated
-            };
-        } else {
-            history = {
-                birthSurname: typeof character.surname === 'string' ? character.surname : '',
-                entries: [],
-                lastUpdated: _resolveYear(character.birthYear)
-            };
-        }
+        var history = _readSurnameHistory(character);
+        // Copy the entries array into a fresh array so the update is
+        // clean (CS.updateCharacter replaces the field, but we want a
+        // fresh array regardless so the caller's history object is not
+        // mutated if the write fails).
+        history.entries = history.entries.slice();
 
         var previousSurname = _isMissing(options.previousSurname)
             ? (typeof character.surname === 'string' ? character.surname : '')
@@ -1548,8 +1822,271 @@
         return _ok({ reverted: lastChange });
     }
 
+    /**
+     * Edits a single existing surname-change entry in place.
+     *
+     * Accepts a patch with any subset of:
+     *   surname           string (non-empty)
+     *   year              number | null
+     *   reason            string
+     *   notes             string
+     *   spouseId          string | null
+     *   previousSurname   string | null
+     *
+     * Does NOT change character.surname. If the user edits the last
+     * entry's surname and wants the current surname to follow, they
+     * must also call recordCharacterSurnameChange (creating a new
+     * entry) or updateCharacter (character-owned surname field). This
+     * command stays single-purpose.
+     *
+     * @param {string} characterId
+     * @param {number} index  zero-based index into surnameHistory.entries
+     * @param {Object} patch
+     * @returns {{ success: boolean, reason?: string, entry?: Object }}
+     */
+    function updateSurnameChangeEntry(characterId, index, patch) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+            return _fail('index must be a non-negative integer.');
+        }
+        if (!_isPlainObject(patch)) {
+            return _fail('patch must be a plain object.');
+        }
+
+        var character = CS.getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var history = _readSurnameHistory(character);
+        if (!_isValidIndex(index, history.entries.length)) {
+            return _fail('Surname history entry not found at index ' + index + '.');
+        }
+
+        var current = history.entries[index];
+        if (!current || typeof current !== 'object') {
+            return _fail('Surname history entry at index ' + index +
+                         ' is malformed.');
+        }
+
+        var next = {
+            surname: current.surname,
+            year: current.year,
+            reason: current.reason,
+            previousSurname: current.previousSurname,
+            spouseId: current.spouseId,
+            notes: current.notes
+        };
+
+        if (Object.prototype.hasOwnProperty.call(patch, 'surname')) {
+            if (typeof patch.surname !== 'string' || patch.surname.trim() === '') {
+                return _fail('surname must be a non-empty string.');
+            }
+            next.surname = patch.surname;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'year')) {
+            if (!_isMissing(patch.year) && !_isValidYearOrMissing(patch.year)) {
+                return _fail('year must be a valid world year or null.');
+            }
+            next.year = _isMissing(patch.year) ? null : patch.year;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'reason')) {
+            if (!_isMissing(patch.reason) && typeof patch.reason !== 'string') {
+                return _fail('reason must be a string when provided.');
+            }
+            next.reason = _isMissing(patch.reason) ? 'custom' : String(patch.reason);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'notes')) {
+            if (!_isMissing(patch.notes) && typeof patch.notes !== 'string') {
+                return _fail('notes must be a string when provided.');
+            }
+            next.notes = _isMissing(patch.notes) ? '' : String(patch.notes);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'spouseId')) {
+            if (!_isMissing(patch.spouseId) && typeof patch.spouseId !== 'string') {
+                return _fail('spouseId must be a string or null.');
+            }
+            next.spouseId = _isMissing(patch.spouseId) ? null : patch.spouseId;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'previousSurname')) {
+            if (!_isMissing(patch.previousSurname)
+                && typeof patch.previousSurname !== 'string') {
+                return _fail('previousSurname must be a string or null.');
+            }
+            next.previousSurname = _isMissing(patch.previousSurname)
+                ? null
+                : patch.previousSurname;
+        }
+
+        var nextEntries = history.entries.slice();
+        nextEntries[index] = next;
+
+        // lastUpdated reflects the most recent entry's year (or the
+        // birth year when no entries remain).
+        var nextLastUpdated = nextEntries.length > 0
+            ? (typeof nextEntries[nextEntries.length - 1].year === 'number'
+                ? nextEntries[nextEntries.length - 1].year
+                : _resolveYear(character.birthYear))
+            : _resolveYear(character.birthYear);
+
+        var nextHistory = {
+            birthSurname: history.birthSurname,
+            entries: nextEntries,
+            lastUpdated: nextLastUpdated
+        };
+
+        var update = CS.updateCharacter(characterId, {
+            surnameHistory: nextHistory
+        });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the surname-history write.');
+        }
+
+        return _ok({ entry: next, index: index });
+    }
+
+    /**
+     * Removes a single existing surname-change entry.
+     *
+     * If the removed entry was the LAST entry, and its surname matched
+     * the character's current surname, the command also reverts
+     * character.surname to the previous entry's surname (or the birth
+     * surname when no entries remain). This prevents a character whose
+     * current surname has no recorded justification.
+     *
+     * If the removed entry was NOT the last one, character.surname is
+     * not touched. The entries that follow the removed one remain
+     * unchanged; this is deliberate — the user asked to remove one
+     * entry, not to re-derive the entire surname chain.
+     *
+     * @param {string} characterId
+     * @param {number} index
+     * @returns {{ success: boolean, reason?: string, removed?: Object,
+     *             surnameReverted?: boolean, newSurname?: string }}
+     */
+    function deleteSurnameChangeEntry(characterId, index) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+            return _fail('index must be a non-negative integer.');
+        }
+
+        var character = CS.getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var history = _readSurnameHistory(character);
+        if (!_isValidIndex(index, history.entries.length)) {
+            return _fail('Surname history entry not found at index ' + index + '.');
+        }
+
+        var wasLast = (index === history.entries.length - 1);
+        var currentSurname = typeof character.surname === 'string'
+            ? character.surname
+            : '';
+
+        var nextEntries = history.entries.slice();
+        var removed = nextEntries.splice(index, 1)[0];
+
+        var nextSurname = currentSurname;
+        var surnameReverted = false;
+
+        if (wasLast
+            && removed
+            && typeof removed.surname === 'string'
+            && removed.surname === currentSurname) {
+            // The removed entry was the current surname's justification.
+            // Revert character.surname to the previous anchor.
+            if (nextEntries.length > 0) {
+                nextSurname = nextEntries[nextEntries.length - 1].surname
+                    || history.birthSurname
+                    || '';
+            } else {
+                nextSurname = history.birthSurname || '';
+            }
+            surnameReverted = true;
+        }
+
+        var nextLastUpdated = nextEntries.length > 0
+            ? (typeof nextEntries[nextEntries.length - 1].year === 'number'
+                ? nextEntries[nextEntries.length - 1].year
+                : _resolveYear(character.birthYear))
+            : _resolveYear(character.birthYear);
+
+        var nextHistory = {
+            birthSurname: history.birthSurname,
+            entries: nextEntries,
+            lastUpdated: nextLastUpdated
+        };
+
+        var patch = { surnameHistory: nextHistory };
+        if (surnameReverted) patch.surname = nextSurname;
+
+        var update = CS.updateCharacter(characterId, patch);
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the surname-history write.');
+        }
+
+        return _ok({
+            removed: removed,
+            index: index,
+            surnameReverted: surnameReverted,
+            newSurname: nextSurname
+        });
+    }
+
+    /**
+     * Edits the birth surname (the anchor of the surname history).
+     *
+     * Does NOT change character.surname. The birth surname is a
+     * historical fact ("what surname was this character born with"),
+     * independent of the current surname.
+     *
+     * @param {string} characterId
+     * @param {string} newBirthSurname
+     * @returns {{ success: boolean, reason?: string, birthSurname?: string }}
+     */
+    function updateBirthSurname(characterId, newBirthSurname) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (typeof newBirthSurname !== 'string') {
+            return _fail('newBirthSurname must be a string.');
+        }
+
+        var character = CS.getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var history = _readSurnameHistory(character);
+        var nextHistory = {
+            birthSurname: newBirthSurname,
+            entries: history.entries.slice(),
+            lastUpdated: _isMissing(history.lastUpdated)
+                ? _resolveYear(character.birthYear)
+                : history.lastUpdated
+        };
+
+        var update = CS.updateCharacter(characterId, {
+            surnameHistory: nextHistory
+        });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the surname-history write.');
+        }
+
+        return _ok({ birthSurname: newBirthSurname });
+    }
+
     // =========================================================================
-    // 13. RELIGION ORCHESTRATION (delegates to ReligionCommands)
+    // 14. RELIGION ORCHESTRATION (delegates to ReligionCommands)
     // =========================================================================
     //
     // These three commands delegate to ReligionCommands, which in turn
@@ -1655,7 +2192,7 @@
     }
 
     // =========================================================================
-    // 14. EDUCATION CONTAINER INITIALISATION
+    // 15. EDUCATION CONTAINER INITIALISATION
     // =========================================================================
 
     function initializeEducationContainers(characterId) {
@@ -1701,7 +2238,7 @@
     }
 
     // =========================================================================
-    // 15. EDUCATION RECORD (character.education)
+    // 16. EDUCATION RECORD (character.education)
     // =========================================================================
 
     function _normaliseEducationEntry(current, incoming) {
@@ -1892,7 +2429,7 @@
     }
 
     // =========================================================================
-    // 16. EDUCATION HISTORY (character.educationHistory)
+    // 17. EDUCATION HISTORY (character.educationHistory)
     // =========================================================================
 
     function getEducationHistory(characterId) {
@@ -1935,7 +2472,7 @@
     }
 
     // =========================================================================
-    // 17. SUBJECT PROGRESS (character.subjectProgress)
+    // 18. SUBJECT PROGRESS (character.subjectProgress)
     // =========================================================================
 
     function _normaliseSubjectProgressEntry(current) {
@@ -2087,7 +2624,7 @@
     }
 
     // =========================================================================
-    // 18. LITERACY (character.isLiterate)
+    // 19. LITERACY (character.isLiterate)
     // =========================================================================
 
     function isLiterate(characterId) {
@@ -2127,7 +2664,7 @@
     }
 
     // =========================================================================
-    // 19. RANK API - NORMALISATION
+    // 20. RANK API - NORMALISATION
     // =========================================================================
 
     function _normaliseNumberInfo(raw) {
@@ -2275,7 +2812,7 @@
     }
 
     // =========================================================================
-    // 20. RANK API - CONTAINER INITIALISATION
+    // 21. RANK API - CONTAINER INITIALISATION
     // =========================================================================
 
     function initializeRankContainers(characterId) {
@@ -2308,7 +2845,7 @@
     }
 
     // =========================================================================
-    // 21. RANK API - READS
+    // 22. RANK API - READS
     // =========================================================================
 
     function getRankAssignments(characterId) {
@@ -2364,7 +2901,7 @@
     }
 
     // =========================================================================
-    // 22. RANK API - WRITES
+    // 23. RANK API - WRITES
     // =========================================================================
 
     function addRankAssignment(characterId, assignmentData) {
@@ -2652,7 +3189,7 @@
     }
 
     // =========================================================================
-    // 23. EXPORTS
+    // 24. EXPORTS
     // =========================================================================
 
     window.CharacterCommands = {
@@ -2666,6 +3203,8 @@
         markDeceased: markDeceased,
 
         setReligion: setReligion,
+        updateReligionHistoryEntry: updateReligionHistoryEntry,
+        deleteReligionHistoryEntry: deleteReligionHistoryEntry,
 
         getTraits: getTraits,
         hasTrait: hasTrait,
@@ -2690,6 +3229,9 @@
 
         recordCharacterSurnameChange: recordCharacterSurnameChange,
         revertCharacterSurnameChange: revertCharacterSurnameChange,
+        updateSurnameChangeEntry: updateSurnameChangeEntry,
+        deleteSurnameChangeEntry: deleteSurnameChangeEntry,
+        updateBirthSurname: updateBirthSurname,
 
         assignCharacterReligion: assignCharacterReligion,
         removeCharacterReligion: removeCharacterReligion,
