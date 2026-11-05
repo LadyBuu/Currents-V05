@@ -335,13 +335,8 @@
 
         /* ============================================================
            EDUCATION TAB CONTENT (.edu-*)
-           Emitted by the seven education tab files. These are the
-           styles the tabs reference via `class="edu-manager-*"` names,
-           added to the page's inline block so the tabs render
-           correctly without a page-local CSS file.
            ============================================================ */
 
-        /* ---- Header: title / subtitle / actions row ---- */
         .edu-manager-header {
             display: flex;
             justify-content: space-between;
@@ -370,7 +365,6 @@
             flex-wrap: wrap;
         }
 
-        /* ---- Buttons ---- */
         .edu-manager-btn {
             display: inline-flex;
             align-items: center;
@@ -411,7 +405,6 @@
             cursor: not-allowed;
         }
 
-        /* ---- Stat cards (summary row) ---- */
         .edu-manager-stats {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
@@ -452,7 +445,6 @@
             margin-top: 0.125rem;
         }
 
-        /* ---- Filter bar ---- */
         .edu-manager-filters {
             display: flex;
             gap: 0.375rem;
@@ -488,7 +480,6 @@
             color: var(--text);
         }
 
-        /* ---- List rows ---- */
         .edu-manager-list {
             display: flex;
             flex-direction: column;
@@ -537,7 +528,6 @@
             align-items: flex-start;
         }
 
-        /* ---- Empty / warning / error banners ---- */
         .edu-manager-empty {
             padding: 2rem 1rem;
             text-align: center;
@@ -592,7 +582,6 @@
             margin-top: 0.125rem;
         }
 
-        /* ---- Card / column layouts ---- */
         .edu-manager-card {
             background: var(--bg2);
             border: 1px solid var(--border);
@@ -617,7 +606,6 @@
             margin-bottom: 0.75rem;
         }
 
-        /* ---- Sidebar fallback list (used only if LocationUI is absent) ---- */
         .place-list { padding: 0.25rem; }
         .place-list .place-item {
             padding: 0.375rem 0.5rem;
@@ -633,7 +621,6 @@
             color: var(--accent-light);
         }
 
-        /* ---- Responsive ---- */
         @media (max-width: 768px) {
             .topbar .burger-menu { display: inline-flex; }
             .topbar { padding: 0.375rem 0.625rem; gap: 0.375rem; min-height: 2.625rem; }
@@ -762,37 +749,26 @@
 <!-- ================================================================
      SCRIPTS
 
-     Load order is layered:
-       - Core constants → utilities → time → storage → accessors →
-         world → names → ui → ui-state → modals-core → responsive →
-         collapsible → exportUtils → tab-manager.
-       - Character (state → commands → queries → family → mortality →
-         lifecycle).
-       - Households (state + rules must precede queries, which must
-         precede selectors — modals-household-selector.js requires
-         HouseholdQueries at load).
-       - Selectors (base → locationDropdown → getFilteredLocationOptions
-         shim → char-selector → household-selector).
-       - Roles → Ranks → (RankBootstrap tolerates missing education at
-         load; the missing-Education warnings it prints are not errors).
-       - Relationship domain (types → utils → state → queries →
-         commands → professional-rules → professional-queries →
-         professional-commands). Apprenticeship requires all of these
-         at load.
-       - Religion → Location → Culture → Names.
-       - Settlement (definitions → rules → state → commit → queries →
-         commands → factory → annual-processor → view-models →
-         ui-state).
-       - Education (constants → rules → state → learning → history →
-         queries → commands → annual → ui-list → modals). Settlement is
-         already loaded, so education-annual.js's
-         SettlementState.getEducationBudget load-time method check
-         succeeds.
-       - Apprenticeship (constants → rules → queries → commands →
-         professional-knowledge-commands → modals).
-       - EducationUIState.
-       - The seven education tab files.
-       - education-manager-bootstrap.js (last).
+     Fix log for this revision:
+       - Re-inserted the PlaceQueries shim immediately after
+         accessors.js. CultureQueries (and Religion, Crime, Settlement
+         modals) require window.PlaceQueries to exist at load time.
+         Without the shim, culture-queries.js throws, and every
+         downstream module (culture-generation, culture-view-models,
+         culture-ui-list, modals-culture, name-queries, name-rules,
+         name-commands, name-system, modals-name) cascades. The shim is
+         the same one ReligionManager.html installs.
+       - Education script paths corrected from js/systems/education/*
+         to js/education/* to match structure.txt.
+       - Relationship domain re-ordered to types → utils → state →
+         queries → commands → professional-* so relationship-state.js's
+         load-time check passes.
+       - Households load before selectors, because
+         modals-household-selector.js requires HouseholdQueries at
+         load.
+       - RankBootstrap's "optional dependencies missing" warning for
+         EducationCommands / EducationQueries is expected (education
+         loads later). Not a failure.
      ================================================================ -->
 
 <!-- ============================================================ -->
@@ -833,9 +809,42 @@
 </script>
 
 <!-- ============================================================ -->
-<!-- CORE ACCESSORS + WORLD + NAMES                                -->
+<!-- CORE ACCESSORS + PlaceQueries shim                            -->
+<!--                                                                -->
+<!-- The shim MUST be installed before any module that checks for  -->
+<!-- window.PlaceQueries at load time (CultureQueries,             -->
+<!-- ReligionQueries, SettlementQueries, CrimeQueries). It lazily  -->
+<!-- reaches LocationState.getPlaceById, so location-state does    -->
+<!-- not need to be loaded yet — only the reference must exist.    -->
 <!-- ============================================================ -->
 <script src="js/core/accessors.js"></script>
+<script>
+    (function () {
+        'use strict';
+        window.PlaceQueries = {
+            getPlaceById: function (id) {
+                if (!window.LocationState
+                    || typeof window.LocationState.getPlaceById !== 'function') {
+                    return null;
+                }
+                return window.LocationState.getPlaceById(id);
+            },
+            getPlaceSummaries: function () {
+                return (window.LocationQueries
+                    && typeof window.LocationQueries.getPlaceSummaries === 'function')
+                    ? window.LocationQueries.getPlaceSummaries()
+                    : [];
+            },
+            getAllPlaces: function () {
+                return (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
+            }
+        };
+    })();
+</script>
+
+<!-- ============================================================ -->
+<!-- CORE WORLD + NAMES                                            -->
+<!-- ============================================================ -->
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
 
@@ -889,9 +898,9 @@
 <script src="js/character/children-statistics.js"></script>
 
 <!-- ============================================================ -->
-<!-- HOUSEHOLDS (state + rules BEFORE queries; queries BEFORE     -->
+<!-- HOUSEHOLDS. state + rules BEFORE queries. queries BEFORE      -->
 <!-- selectors, because modals-household-selector.js load-requires -->
-<!-- HouseholdQueries).                                            -->
+<!-- HouseholdQueries.                                             -->
 <!-- ============================================================ -->
 <script src="js/households/household-constants.js"></script>
 <script src="js/households/household-state.js"></script>
@@ -901,8 +910,8 @@
 <script src="js/households/household-economy.js"></script>
 
 <!-- ============================================================ -->
-<!-- SELECTORS. locationDropdown BEFORE the shim; shim BEFORE the  -->
-<!-- selectors that call getFilteredLocationOptions internally.    -->
+<!-- SELECTORS. getFilteredLocationOptions shim between            -->
+<!-- locationDropdown and the modules that call it.                -->
 <!-- ============================================================ -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
@@ -932,9 +941,7 @@
 <script src="js/roles/modals-role-select.js"></script>
 
 <!-- ============================================================ -->
-<!-- RANKS. RankBootstrap prints an "optional dependencies missing" -->
-<!-- warning for EducationCommands/EducationQueries on this page — -->
-<!-- that's expected (education loads later). Not an error.        -->
+<!-- RANKS                                                         -->
 <!-- ============================================================ -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
@@ -948,9 +955,8 @@
 <script src="js/ranks/rank-bootstrap.js"></script>
 
 <!-- ============================================================ -->
-<!-- RELATIONSHIP DOMAIN. types → utils → state → queries →       -->
-<!-- commands → professional-rules → professional-queries →       -->
-<!-- professional-commands. Apprenticeship requires all of these. -->
+<!-- RELATIONSHIP DOMAIN                                           -->
+<!-- types → utils → state → queries → commands → professional-*   -->
 <!-- ============================================================ -->
 <script src="js/relationships/relationship-types.js"></script>
 <script src="js/relationships/relationship-utils.js"></script>
@@ -997,7 +1003,7 @@
 <script src="js/location/location-bootstrap.js"></script>
 
 <!-- ============================================================ -->
-<!-- CULTURE (before names — name-queries requires CultureQueries) -->
+<!-- CULTURE. Must run AFTER the PlaceQueries shim (above).        -->
 <!-- ============================================================ -->
 <script src="js/culture/culture-constants.js"></script>
 <script src="js/culture/culture-validation.js"></script>
@@ -1012,7 +1018,7 @@
 <script src="js/culture/culture-bootstrap.js"></script>
 
 <!-- ============================================================ -->
-<!-- NAMES                                                         -->
+<!-- NAMES. Requires CultureQueries (above).                       -->
 <!-- ============================================================ -->
 <script src="js/names/name-queries.js"></script>
 <script src="js/names/name-rules.js"></script>
@@ -1023,10 +1029,6 @@
 
 <!-- ============================================================ -->
 <!-- SETTLEMENT                                                    -->
-<!--                                                                -->
-<!-- education-annual.js's load-time check requires                 -->
-<!-- SettlementState.getEducationBudget, so this block MUST         -->
-<!-- precede the education block.                                   -->
 <!-- ============================================================ -->
 <script src="js/settlement/settlement-fiscal-definitions.js"></script>
 <script src="js/settlement/settlement-government-definitions.js"></script>
@@ -1074,36 +1076,20 @@
 
 <!-- ============================================================ -->
 <!-- EDUCATION SUBSYSTEM (js/education/, not js/systems/education/) -->
-<!--                                                                -->
-<!-- Order matches education-doc.txt Part 4 (Groups E1–E10).       -->
-<!-- SettlementState.getEducationBudget exists by the time          -->
-<!-- education-annual.js runs its LOAD-TIME METHOD CHECK.           -->
 <!-- ============================================================ -->
-
-<!-- E1: constants -->
 <script src="js/education/education-constants.js"></script>
-<!-- E2: rules -->
 <script src="js/education/education-rules.js"></script>
-<!-- E3: state -->
 <script src="js/education/education-state.js"></script>
-<!-- E4: learning -->
 <script src="js/education/education-learning.js"></script>
-<!-- E5: history -->
 <script src="js/education/education-history.js"></script>
-<!-- E6: queries -->
 <script src="js/education/education-queries.js"></script>
-<!-- E7: commands -->
 <script src="js/education/education-commands.js"></script>
-<!-- E8: annual (SettlementState.getEducationBudget is available) -->
 <script src="js/education/education-annual.js"></script>
-<!-- E9: UI list -->
 <script src="js/education/education-ui-list.js"></script>
-<!-- E10: modals -->
 <script src="js/education/modals-education.js"></script>
 
 <!-- ============================================================ -->
-<!-- APPRENTICESHIP (needs relationship-types, relationship-queries, -->
-<!-- professional-commands — all loaded above)                     -->
+<!-- APPRENTICESHIP                                                -->
 <!-- ============================================================ -->
 <script src="js/apprenticeship/apprenticeship-constants.js"></script>
 <script src="js/apprenticeship/apprenticeship-rules.js"></script>
@@ -1126,7 +1112,6 @@
 <script src="js/tabs/education-apprenticeship-tab.js"></script>
 <script src="js/tabs/education-history-tab.js"></script>
 
-<!-- Bootstrap loads LAST. -->
 <script src="js/tabs/education-manager-bootstrap.js"></script>
 
 <!-- ============================================================ -->
