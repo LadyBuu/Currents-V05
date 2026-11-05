@@ -4,21 +4,30 @@
  * STILL WATERS - STORAGE SCHEMA (storage-schema.js)
  * =============================================================================
  *
- * Canonical shape of the persisted masterData envelope. See the original
- * header (retained verbatim below in spirit — this file is a minimal edit
- * to declare the government-domain collections that were missing).
+ * Canonical shape of the persisted masterData envelope.
  *
- * The change from the previous revision:
- *   governmentDepartments, governmentTypes, governmentHistory were NOT
- *   declared in the factory or in normalization. On a fresh install,
- *   initializeStorage() produced a masterData where
- *   data.governmentDepartments was undefined. The first write to the
- *   government domain (createDepartment) crashed with
- *   "can't access property 'push', window.masterData.data.governmentDepartments
- *   is undefined".
+ * CHANGE LOG:
+ *   - Previous revision added governmentDepartments / governmentTypes /
+ *     governmentHistory to both the default factory and the normalizer
+ *     whitelist. Fresh installs no longer crash on the first government
+ *     write, and existing saves preserve those arrays across reloads.
  *
- *   Both fields are now declared in createDefaultMasterDataOverride().data
- *   and normalized (missing → []) in normalizeMasterData().
+ *   - Current revision adds religions to both places, for the exact same
+ *     reason. Without it, normalizeMasterData drops data.religions on
+ *     every load; the orchestrator's defensive repair then sets it to [];
+ *     the next save writes [] back to storage; every religion the user
+ *     created is silently lost on the next page reload.
+ *
+ *     The symptom users saw was "religions aren't getting saved" — the
+ *     write side was always fine (saveMasterData persisted the full
+ *     array), the read side was dropping it. Adding religions to the
+ *     normalize whitelist makes loadMasterData return what was actually
+ *     saved.
+ *
+ *   - Removed a duplicate 'governmentTypes' entry from the arrayKeys
+ *     whitelist (it appeared at both the general-arrays position and
+ *     the government-group position; the duplication was harmless but
+ *     was a copy-paste artifact from the previous fix).
  * =============================================================================
  */
 
@@ -127,12 +136,18 @@
                 householdPositions: [],
                 householdAssignments: [],
 
+                // ─── Religion collections ─────────────────────────────────
+                // FIX: religions was never declared here. Fresh installs
+                // produced a masterData with data.religions === undefined;
+                // the religion bootstrap's _verifyCanonical() repaired it
+                // to [] on first init, but any load that ran BEFORE the
+                // bootstrap (e.g. an auto-init at parse time) saw the
+                // undefined shape. Adding it here makes a fresh install
+                // start with religions: [] and never rely on the repair.
+                religions: [],
+
                 // ─── Government domain collections ────────────────────────
-                // FIX: were missing from the previous revision. Without
-                // these, government-state.js's _addDepartment pushed into
-                // undefined on a fresh install.
                 governmentDepartments: [],
-                governmentTypes: [],
                 governmentHistory: [],
 
                 // ─── Industry collections ─────────────────────────────────
@@ -179,14 +194,12 @@
         var source = envelope.data;
         var out = {};
 
-        // FIX: governmentDepartments, governmentTypes, governmentHistory
-        // were added. governmentTypes was already declared; governmentDepartments
-        // and governmentHistory were not.
         var arrayKeys = [
             'characters', 'places', 'ranks', 'roles', 'locationTypes',
             'governmentTypes', 'governments', 'households',
             'householdPositions', 'householdAssignments',
-            'governmentDepartments', 'governmentTypes', 'governmentHistory',
+            'religions',
+            'governmentDepartments', 'governmentHistory',
             'enterprises', 'enterpriseTypes',
             'residences', 'disasters', 'eventLog',
             'educationalInstitutions', 'parentChildEdges',
