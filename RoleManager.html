@@ -461,42 +461,22 @@
 </div>
 
 <!-- ================================================================
-     SCRIPTS
+     SCRIPTS — load order
 
-     Load order follows ReligionManager.html's structure, with:
-       - NO religion subsystem (not used by the Role Manager).
-       - NO culture subsystem (not used directly; culture-queries
-         aren't in the role tab dependency set).
-       - NO education subsystem (not used by the Role Manager tabs).
-       - NO household subsystem (not used).
-       - YES relationship + professional (apprenticeships require
-         them at load time, per apprenticeship-queries.js §1).
-       - YES apprenticeship (tab 3 depends on it).
-       - YES location (character projections and accessors reference it).
-       - YES culture (name-queries requires CultureQueries at load;
-         and character-factory requires it — even though we don't
-         touch names directly, dropping it breaks character-factory).
-       - YES names (name-queries is a load-time dependency of
-         character-factory.js; we don't call names but the factory
-         must load).
+     Religion is loaded on this page despite no role tab reading it
+     directly, because culture-queries.js has a LOAD-TIME dependency
+     on ReligionQueries (verified by the error:
 
-     The three "not used" subsystems above can only be dropped if
-     their load-time dependents are also dropped. character-factory
-     requires name-queries; name-queries requires CultureQueries.
-     So culture + names stay. Religion + education + household are
-     genuinely not referenced anywhere in the tab dependency tree.
-     Verified against:
-       role-details-tab.js        → RoleState, RoleQueries, modals-roles
-       role-characters-tab.js     → RoleState, RoleQueries, RoleCommands, modals-roles
-       role-apprenticeships-tab.js → RoleState, RoleQueries,
-                                     ApprenticeshipQueries, ApprenticeshipCommands,
-                                     TEACHING_CONSTANTS, APPRENTICESHIP_STATUS,
-                                     modals-apprenticeship, modals-char-selector
-       role-analytics-tab.js      → RoleState, RoleQueries, accessors
-       role-assignments-tab.js    → RoleState, RoleQueries, CharacterState,
-                                     modals-roles
-       category-manager-tab.js    → RoleState, RoleCommands, RoleConstants,
-                                     modals-core (confirmDialog)
+       "culture-queries.js loaded but window.ReligionQueries is
+        missing. Check script tag order."
+
+     ). Culture in turn is a load-time dependency of name-queries.js
+     (via CultureQueries.getCultureForCharacter), which is a load-time
+     dependency of character-factory.js. The whole chain must be
+     present.
+
+     Education and household are NOT loaded — nothing in the role
+     tab dependency tree touches them.
      ================================================================ -->
 
 <!-- Core constants -->
@@ -595,8 +575,7 @@
 <script src="js/character/character-statistics.js"></script>
 <script src="js/character/character-lifecycle.js"></script>
 
-<!-- Selectors (char selector + household selector not needed for roles;
-     only char-selector is used by role-apprenticeships-tab's Create flow) -->
+<!-- Selectors (char selector used by the apprenticeships tab) -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
 <script>
@@ -611,7 +590,8 @@
 </script>
 <script src="js/selectors/modals-char-selector.js"></script>
 
-<!-- Character factory & creation (name-queries requires CultureQueries at load) -->
+<!-- Character factory (name-queries requires CultureQueries at load;
+     CultureQueries is loaded later in the culture block) -->
 <script src="js/character/character-factory.js"></script>
 <script src="js/character/character-generator.js"></script>
 <script src="js/character/character-creation-commands.js"></script>
@@ -623,9 +603,7 @@
 <script src="js/character/children-commands.js"></script>
 <script src="js/character/children-statistics.js"></script>
 
-<!-- Ranks (RoleQueries.getRankSummary reads RankState.getRank;
-     the Rank Manager is not on this page, but rank data must be
-     hydrated for the summary function to return values). -->
+<!-- Ranks (RoleQueries.getRankSummary reads RankState.getRank) -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
 <script src="js/ranks/rank-state.js"></script>
@@ -647,6 +625,43 @@
 <script src="js/roles/modals-roles.js"></script>
 <script src="js/roles/modals-role-select.js"></script>
 
+<!-- ============================================================ -->
+<!-- SETTLEMENT + CRIME ENUM SOURCES                                -->
+<!-- (religion-validation.js load-time requires both)               -->
+<!-- ============================================================ -->
+<script src="js/settlement/settlement-law-definitions.js"></script>
+<script src="js/crime/crime-constants.js"></script>
+
+<!-- ============================================================ -->
+<!-- RELIGION                                                       -->
+<!--                                                                -->
+<!-- Culture-queries.js has a LOAD-TIME dependency on               -->
+<!-- ReligionQueries (verified by its own _verifyLoadTimeDependencies -->
+<!-- check at line 861). This is the only reason religion is loaded -->
+<!-- on the Role Manager page — no role tab reads it directly.       -->
+<!--                                                                -->
+<!-- Dropping this block causes culture-queries.js to throw, which  -->
+<!-- cascades through culture-generation / culture-view-models /    -->
+<!-- culture-ui-list / modals-culture / culture-bootstrap /         -->
+<!-- name-queries / name-rules / names-state / name-commands /      -->
+<!-- name-system / modals-name / character-factory — every one of   -->
+<!-- which has a load-time guard on the previous module's output.   -->
+<!-- ============================================================ -->
+<script src="js/religion/religion-constants.js"></script>
+<script src="js/religion/religion-format.js"></script>
+<script src="js/religion/religion-validation.js"></script>
+<script src="js/religion/religion-state.js"></script>
+<script src="js/religion/religion-queries.js"></script>
+<script src="js/religion/religion-rules.js"></script>
+<script src="js/religion/religion-commands.js"></script>
+<script src="js/religion/religion-laws.js"></script>
+<script src="js/religion/religion-inheritance.js"></script>
+<script src="js/religion/religion-view-models.js"></script>
+<script src="js/religion/religion-render.js"></script>
+<script src="js/religion/religion-ui-state.js"></script>
+<script src="js/religion/modals-religion.js"></script>
+<script src="js/religion/religion-bootstrap.js"></script>
+
 <!-- Relationship domain (apprenticeship requires these at load) -->
 <script src="js/relationships/relationship-types.js"></script>
 <script src="js/relationships/relationship-utils.js"></script>
@@ -657,8 +672,7 @@
 <script src="js/relationships/professional-queries.js"></script>
 <script src="js/relationships/professional-commands.js"></script>
 
-<!-- Location (character projections reference currentLocationId;
-     apprenticeships location resolver needs getCurrentPlace) -->
+<!-- Location -->
 <script src="js/location/location-state.js"></script>
 <script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-commands.js"></script>
@@ -673,8 +687,7 @@
 <script src="js/location/modals-moves.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
-<!-- Culture (name-queries requires CultureQueries at load;
-     character-factory requires name-queries) -->
+<!-- Culture (name-queries requires CultureQueries at load) -->
 <script src="js/culture/culture-constants.js"></script>
 <script src="js/culture/culture-validation.js"></script>
 <script src="js/culture/culture-state.js"></script>
@@ -695,8 +708,7 @@
 <script src="js/names/name-system.js"></script>
 <script src="js/names/modals-name.js"></script>
 
-<!-- Apprenticeship (tab 3 depends on it; relationship + professional
-     + character-commands + role-commands are all loaded above) -->
+<!-- Apprenticeship (tab 3 depends on it) -->
 <script src="js/apprenticeship/apprenticeship-constants.js"></script>
 <script src="js/apprenticeship/apprenticeship-rules.js"></script>
 <script src="js/apprenticeship/apprenticeship-queries.js"></script>
@@ -715,9 +727,6 @@
         return;
     }
 
-    // The tab files read `context.role` (canonical accessor clone) and
-    // `context.onRerender` (called after every successful mutation).
-    // The sidebar's selectedRoleId drives both.
     var context = {
         role: null,
         onRerender: function () {
@@ -766,9 +775,7 @@
 <script src="js/tabs/category-manager-tab.js"></script>
 
 <!-- ============================================================ -->
-<!-- DIAGNOSTIC HOOK — adapted from ReligionManager.html's          -->
-<!-- __religionDiag. Read-only. Reads masterData.data.roles and     -->
-<!-- masterData.data.roleCategories.                                -->
+<!-- DIAGNOSTIC HOOK                                                -->
 <!-- ============================================================ -->
 <script>
 (function () {
@@ -925,7 +932,7 @@
 </script>
 
 <!-- ============================================================ -->
-<!-- ORCHESTRATOR                                                 -->
+<!-- ORCHESTRATOR                                                  -->
 <!-- ============================================================ -->
 <script>
 (function () {
@@ -964,8 +971,6 @@
             }
         }
 
-        // Ensure the roles / roleCategories arrays exist before
-        // RoleState.init() reads them.
         if (window.masterData && window.masterData.data) {
             if (!Array.isArray(window.masterData.data.roles)) {
                 window.masterData.data.roles = [];
@@ -977,9 +982,7 @@
             }
         }
 
-        // RoleState.init() must run AFTER masterData loads. It is
-        // mandatory (RoleState's public reads throw before it). See
-        // role-state.js::INITIALISATION CONTRACT.
+        // RoleState.init() must run AFTER masterData loads.
         if (window.RoleState && typeof window.RoleState.init === 'function') {
             try { window.RoleState.init(); }
             catch (e) {
@@ -987,10 +990,6 @@
             }
         }
 
-        // These subsystems hydrate from masterData on load, but calling
-        // their bootstraps is idempotent and ensures arrays exist even
-        // when the preload block didn't seed them. Order matches the
-        // script load order above.
         if (window.RankBootstrap && typeof window.RankBootstrap.init === 'function') {
             try { window.RankBootstrap.init(); } catch (e) { console.error(e); }
         }
@@ -1000,22 +999,19 @@
         if (window.CultureBootstrap && typeof window.CultureBootstrap.init === 'function') {
             try { window.CultureBootstrap.init(); } catch (e) { console.error(e); }
         }
+        if (window.ReligionBootstrap && typeof window.ReligionBootstrap.init === 'function') {
+            try { window.ReligionBootstrap.init(); } catch (e) { console.error(e); }
+        }
         if (window.TabManager && typeof window.TabManager.init === 'function') {
             try { window.TabManager.init(); } catch (e) {
                 console.error('[role-manager] TabManager.init failed:', e);
             }
         }
 
-        // Sidebar refresh hook — the tab files call
-        // window.renderRoleList after mutations that change the
-        // sidebar's labels/counts. Expose it here so any tab can
-        // trigger a sidebar re-render without reaching into the
-        // orchestrator's internals.
+        // Sidebar refresh hook — tab files call this after mutations.
         window.renderRoleList = renderRoleList;
 
-        // Re-render whatever tab is currently active. Called by the
-        // TabManager context's onRerender callback that every tab
-        // uses after a successful mutation.
+        // Re-render the current tab (used by the tab files' onRerender).
         window.__roleManagerRerenderActiveTab = function () {
             renderActiveTab();
         };
@@ -1065,7 +1061,6 @@
             return;
         }
 
-        // Try RoleUI's sidebar-compatible renderer first.
         var RUI = window.RoleUI;
         if (RUI && typeof RUI.renderRoleList === 'function') {
             try {
@@ -1079,12 +1074,6 @@
                     onEdit: null,
                     onDelete: null
                 });
-                // RoleUI.renderRoleList expects a container ID, not an
-                // element. That matches the canon signature in
-                // role-ui-list.js. Re-bind selection highlight because
-                // its rows carry `.role-row` and it toggles inline
-                // styles (not our .is-selected class). We layer our
-                // highlight on top.
                 _highlightSidebarSelection();
                 return;
             } catch (e) {
@@ -1156,7 +1145,6 @@
         if (editRoleBtn)   editRoleBtn.disabled   = false;
         if (deleteRoleBtn) deleteRoleBtn.disabled = false;
 
-        // Update the tab context. Every tab reads `context.role`.
         if (window.RoleTabContext) {
             var fresh = null;
             try {
@@ -1169,7 +1157,6 @@
             window.RoleTabContext.role = fresh || null;
         }
 
-        // Sidebar highlight.
         var items = roleContainer ? roleContainer.querySelectorAll('[data-role-id]') : [];
         for (var i = 0; i < items.length; i++) {
             items[i].classList.toggle(
@@ -1230,9 +1217,6 @@
             }
         }
 
-        // Fallback if TabManager isn't available (shouldn't happen
-        // under the documented load order, but the page should still
-        // show something meaningful).
         var container = document.getElementById('tab-' + activeTabId);
         if (!container) return;
         container.innerHTML =
@@ -1335,11 +1319,9 @@
                         window.alert('Save failed after import.'); return;
                     }
 
-                    // Re-hydrate RoleState from the freshly-installed
-                    // masterData. RoleState.init() short-circuits if
-                    // already initialised, so a full reload of the
-                    // state is required. There is no public reload()
-                    // on RoleState; the clean path is a page reload.
+                    // RoleState.init() short-circuits if already
+                    // initialised. There is no RoleState.reload(). Reload
+                    // the page so the new role state hydrates cleanly.
                     window.alert('Import complete. Reloading to re-hydrate role state…');
                     window.location.reload();
                 } catch (err) {
@@ -1374,8 +1356,6 @@
         }
         window.openEditRoleModal(id, function () {
             renderRoleList();
-            // Refresh the current tab's context with the fresh role
-            // clone (the edit may have changed fields the tab reads).
             if (window.RoleTabContext) {
                 var fresh = null;
                 try {
@@ -1442,7 +1422,7 @@
 </script>
 
 <!-- ============================================================ -->
-<!-- THEME SWITCHER                                               -->
+<!-- THEME SWITCHER                                                -->
 <!-- ============================================================ -->
 <script>
 (function () {
