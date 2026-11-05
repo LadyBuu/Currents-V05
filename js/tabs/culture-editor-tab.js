@@ -51,19 +51,25 @@
  * appearance option row) but not yet TYPED INTO does not survive a tab
  * switch on some tabs. It has no representation in `_state.culture`
  * because the reader skips empty values. On switch-back, the row is
- * gone and must be re-added. culture-appearance-tab.js was refactored
- * to preserve empty categories in the working copy (the category key
- * survives, the empty row does not), which narrows this gap for
- * appearance; the same fix should be applied to any future list tab
- * that has the same add-row-then-type flow.
+ * gone and must be re-added. culture-appearance-tab.js preserves empty
+ * categories in the working copy (the category key survives, the empty
+ * row does not), which narrows this gap for appearance; the same fix
+ * should be applied to any future list tab that has the same
+ * add-row-then-type flow.
  *
- * There is no tab-data cache. Prior revisions carried one that was
- * written on switch, read once, and unconditionally discarded before
- * `tab.render(...)` ran — it never preserved anything. It has been
- * deleted rather than fixed; making it work would require every tab to
- * expose a `rehydrate(root, culture)` hook that re-attaches listeners
- * to cached DOM, and that is a larger change than the value it
- * delivers. The honest contract above is what the tabs actually do.
+ * LIFECYCLE AND CLEANUP
+ * ---------------------
+ * Every listener the editor installs is tracked through _track(). Two
+ * paths must call _resetEditorState() to remove them:
+ *
+ *   1. Successful save — at the end of _saveCulture, after _closeTopModal.
+ *   2. Programmatic close — CultureEditorTabs.closeEditor(), after
+ *      _closeTopModal.
+ *
+ * The modal's own onCancel callback runs _resetEditorState() directly
+ * (it is the third path). Without this, a second openEditor call stacks
+ * a second document-level Ctrl+S handler, and a click on a stale nav
+ * button can fire a handler against a detached root.
  *
  * ICON POLICY: no emojis. Icons via _getIcon(name) — returns '' for
  * unknown names, never a fabricated glyph.
@@ -83,53 +89,49 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (A7):
- *     - _saveCulture now calls _cleanup() and nulls _state.root /
- *       _state.culture / _state.cultureId after closing the modal. The
- *       previous version only cleaned up on the onCancel path, which
- *       leaked every tracked listener (including the document-level
- *       Ctrl+S handler) on every successful save.
- *     - _renderTab now distinguishes three failure modes:
- *       no-registration (tabId not in the registry), no-container
- *       (pane element missing), and render-error (tab.render threw).
- *       The previous version only surfaced render-error and used the
- *       same class (rt-unavailable) for all three. The no-registration
- *       case now names the missing tab file, per the playbook's
- *       "unavailable state, do not silent-empty" rule.
- *     - _renderTab now guards against a null _state.culture (defensive;
- *       openEditor always sets it, but a future refactor could clear it
- *       early). The no-culture state is a distinct message.
+ *   Current revision (A8):
+ *     - _resetEditorState() extracted. It runs _cleanup(), nulls every
+ *       field of _state, and is now called from THREE paths:
+ *         (a) the modal's onCancel callback,
+ *         (b) the end of _saveCulture (after _closeTopModal),
+ *         (c) CultureEditorTabs.closeEditor() (after _closeTopModal).
+ *       Prior to this revision, paths (b) and (c) only closed the modal
+ *       without running _cleanup(). Path (b) was fixed in A7 by
+ *       inlining the cleanup; path (c) was never fixed. The extracted
+ *       helper closes that gap and makes the three paths share one
+ *       implementation.
+ *     - CultureEditorTabs.closeEditor() now calls _resetEditorState().
+ *       The public API is unchanged; the side effects are now correct.
+ *     - Header gained a LIFECYCLE AND CLEANUP section documenting the
+ *       three cleanup paths.
  *     - Header TAB-SWITCH PRESERVATION CONTRACT updated to note that
  *       culture-appearance-tab.js now preserves empty categories in
  *       the working copy (reduces, but does not eliminate, the
  *       added-but-untyped-row gap).
- *     - Header SAVE IS ATOMIC section preserved from the previous
- *       revision (it was already correct).
- *     - _escapeHtml is now a strict dependency (throws if formatting.js
- *       is missing), matching culture-mythology-tab.js and the
- *       post-audit contract of the other culture tabs.
- *     - REFACTOR HISTORY section preserved and extended.
+ *     - _saveCulture now calls _resetEditorState() instead of inlining
+ *       the cleanup block (behavior identical).
+ *   Previous revisions (A7):
+ *     - _saveCulture called _cleanup() and nulled _state.root /
+ *       _state.culture / _state.cultureId after closing the modal, to
+ *       stop the document-level Ctrl+S handler from leaking.
+ *     - _renderTab distinguished no-registration / no-container /
+ *       render-error failure modes via _renderHostEmptyState.
+ *     - _escapeHtml became strict (throws if formatting.js is missing).
  *   Previous revisions:
  *     - _state.tabDataCache deleted; _switchTab no longer caches the
  *       pane's innerHTML; _renderTab no longer reads from a cache.
  *     - Header SAVE IS ATOMIC FOR CULTURE-RECORD FIELDS ONLY section
  *       added.
  *     - Header TAB-SWITCH PRESERVATION CONTRACT section added.
- *     - openEditor now reads via CultureQueries.getCultureById (was:
- *       CultureState.getCulture, which does not exist).
- *     - _saveCulture no longer touches masterData or saveMasterData
- *       directly. It calls CultureCommands.updateCulture once for the
- *       merged record and then CultureCommands.persist() once for the
- *       save. No bypassing the domain save contract.
+ *     - openEditor reads via CultureQueries.getCultureById.
+ *     - _saveCulture calls CultureCommands.updateCulture once and
+ *       CultureCommands.persist() once. No bypassing the domain save
+ *       contract.
  *     - Every inline style="" is gone. Classes live in
  *       css/culture-tabs.css.
  *     - The built-in 'details' tab is REMOVED. Details are edited
- *       through the standard culture modals
- *       (modals-culture.js::openEditCultureModal). The editor is for
- *       the domain-specific content (appearance, mythology, characters,
- *       names).
- *     - Save is explicit. The editor's Save button calls updateCulture
- *       once and persist once; Cancel discards. There is no auto-save.
+ *       through modals-culture.js::openEditCultureModal.
+ *     - Save is explicit. No auto-save.
  * =============================================================================
  */
 
@@ -191,7 +193,7 @@
     // Registration order, for the nav bar.
     var _tabOrder = [];
 
-    // Per-editor state. Reset by openEditor.
+    // Per-editor state. Reset by openEditor and _resetEditorState.
     var _state = {
         cultureId: null,
         culture: null,          // working copy (deep-cloned from canonical)
@@ -242,14 +244,18 @@
     // =========================================================================
     //
     // Every listener the editor installs goes through _track so that
-    // _cleanup can remove them all when the modal closes. Without this,
-    // a second openEditor call stacks listeners on document.
+    // _resetEditorState can remove them all when the modal closes.
     //
-    // _cleanup is called on BOTH paths: onCancel (via the modal's own
-    // onCancel) and on successful save (at the end of _saveCulture).
-    // The prior revision only cleaned up on cancel, which leaked the
-    // document-level Ctrl+S handler (and every other tracked listener)
-    // on every successful save.
+    // _resetEditorState is called from THREE paths (see LIFECYCLE AND
+    // CLEANUP in the header):
+    //   (a) the modal's own onCancel callback,
+    //   (b) the end of _saveCulture (after _closeTopModal),
+    //   (c) CultureEditorTabs.closeEditor() (after _closeTopModal).
+    //
+    // All three must run it. A path that only closes the modal without
+    // resetting _state leaves the document-level Ctrl+S handler
+    // installed; the next openEditor call stacks a second one, which
+    // fires _saveCulture twice per keystroke.
 
     function _track(el, eventType, handler) {
         if (!el || typeof el.addEventListener !== 'function') return;
@@ -268,6 +274,28 @@
             } catch (e) { /* non-fatal */ }
         }
         _state.listeners = [];
+    }
+
+    /**
+     * Full teardown of the current editor session. Runs _cleanup() and
+     * nulls every field of _state. Called from all three close paths:
+     * onCancel, _saveCulture, and closeEditor.
+     *
+     * Does NOT call _closeTopModal() — callers are responsible for
+     * closing the modal themselves. This keeps the helper usable from
+     * the modal's onCancel callback (which has already closed the
+     * modal by the time it runs) as well as from paths that need to
+     * call _closeTopModal first.
+     */
+    function _resetEditorState() {
+        _cleanup();
+        _state.cultureId = null;
+        _state.culture = null;
+        _state.activeTabId = null;
+        _state.onSaveCallback = null;
+        _state.modal = null;
+        _state.root = null;
+        // _state.listeners is reset inside _cleanup().
     }
 
     // =========================================================================
@@ -337,11 +365,14 @@
             return;
         }
 
-        // Reset per-editor state.
+        // Reset per-editor state. If a previous session was not reset
+        // (e.g. a caller closed the modal directly without going through
+        // closeEditor), this ensures the new session starts clean.
+        _resetEditorState();
+
         _state.cultureId = cultureId;
         _state.culture = _clone(canonical);
         _state.onSaveCallback = typeof options.onSave === 'function' ? options.onSave : null;
-        _state.listeners = [];
 
         // Determine visible tabs.
         var visibleIds = Array.isArray(options.tabs) && options.tabs.length > 0
@@ -425,10 +456,8 @@
                 _onModalMounted(root, visibleIds);
             },
             onCancel: function () {
-                _cleanup();
-                _state.culture = null;
-                _state.cultureId = null;
-                _state.root = null;
+                // Path (a): user dismissed the modal without saving.
+                _resetEditorState();
                 if (typeof options.onCancel === 'function') {
                     try { options.onCancel(); }
                     catch (e) {
@@ -565,9 +594,6 @@
     //                     always sets it, but a future refactor could
     //                     clear it early. Distinct message.
     //   render-error    — tab.render threw. Shows the error message.
-    //
-    // The prior revision only surfaced render-error and used the same
-    // class for all failure modes.
 
     function _renderTab(tabId) {
         if (!_state.root) return;
@@ -756,11 +782,6 @@
             _showToast('Culture updated', 'success');
         }
 
-        // Update working copy from the canonical response.
-        if (updateResult.data) {
-            _state.culture = _clone(updateResult.data);
-        }
-
         // Notify the caller.
         if (_state.onSaveCallback) {
             try { _state.onSaveCallback(updateResult.data); }
@@ -771,22 +792,14 @@
             }
         }
 
-        // Close the modal AND clean up tracked listeners.
-        //
-        // The prior revision only closed the modal, which left the
-        // document-level Ctrl+S handler (and every other tracked
-        // listener) installed. A second openEditor call would stack a
-        // second Ctrl+S handler, which would fire _saveCulture twice
-        // per keystroke. The listener is removed here; _state is
-        // cleared so a late-arriving event from the closing modal
-        // cannot re-enter _saveCulture.
+        // Path (b): close the modal AND reset editor state. The reset
+        // removes the document-level Ctrl+S handler (and every other
+        // tracked listener) so a second openEditor call does not stack
+        // a second handler. _resetEditorState also nulls _state, so a
+        // late-arriving event from the closing modal cannot re-enter
+        // _saveCulture.
         _closeTopModal();
-        _cleanup();
-        _state.culture = null;
-        _state.cultureId = null;
-        _state.root = null;
-        _state.activeTabId = null;
-        _state.onSaveCallback = null;
+        _resetEditorState();
     }
 
     function _showErrors(errors) {
@@ -819,7 +832,14 @@
 
         // Editor
         openEditor: openEditor,
-        closeEditor: function () { _closeTopModal(); },
+        closeEditor: function () {
+            // Path (c): programmatic close. Must run the same reset as
+            // the successful-save path; otherwise the tracked listeners
+            // (including the document-level Ctrl+S handler) leak and
+            // _state keeps pointing at a detached modal.
+            _closeTopModal();
+            _resetEditorState();
+        },
 
         // Introspection (for tests and diagnostics — not for UI)
         _getActiveTabId: function () { return _state.activeTabId; },
