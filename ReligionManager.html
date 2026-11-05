@@ -918,17 +918,17 @@
      SCRIPTS
 
      Load order:
-       - Shared modules use CultureManager.html's paths and order
-         (same filenames, same relative sequence).
+       - Shared modules use CultureManager.html's paths and order.
        - Religion-specific modules are inserted at the point where
          CultureManager inserts culture.
        - Settlement + crime enum files load BEFORE religion (religion
          law validation reads their enums at call time).
-       - responsive.js loads BEFORE collapsible.js (collapsible's load
-         guard requires RESPONSIVE_BREAKPOINTS).
-       - initializeStorage() runs inline after storage.js (character-
-         state's load guard requires masterData).
+       - responsive.js loads BEFORE collapsible.js.
+       - initializeStorage() runs inline after storage.js.
+       - loadMasterData() runs in the orchestrator's bootstrap()
+         BEFORE the domain bootstraps, so persisted religions load.
        - skill-utils.js loads BEFORE role-constants.js.
+       - household-state.js loads BEFORE household-queries.js.
      ================================================================ -->
 
 <!-- Core constants -->
@@ -1077,20 +1077,15 @@
 <script src="js/roles/modals-roles.js"></script>
 <script src="js/roles/modals-role-select.js"></script>
 
-<!-- Households -->
+<!-- Households (state MUST load before queries) -->
 <script src="js/households/household-constants.js"></script>
+<script src="js/households/household-state.js"></script>
 <script src="js/households/household-queries.js"></script>
 <script src="js/households/household-commands.js"></script>
 
 <!-- ============================================================ -->
 <!-- SETTLEMENT + CRIME ENUM SOURCES (religion law validation)    -->
 <!-- ============================================================ -->
-<!-- These two files provide the law vocabulary that               -->
-<!-- religion-validation.js / religion-commands.js read at call    -->
-<!-- time. Without them, Add Law and Edit Law fail with            -->
-<!-- "enum not loaded" errors. Both are pure definition modules    -->
-<!-- (no state, no commands, no queries) so loading them is        -->
-<!-- cheap and side-effect-free.                                   -->
 <script src="js/settlement/settlement-law-definitions.js"></script>
 <script src="js/crime/crime-constants.js"></script>
 
@@ -1234,7 +1229,20 @@
         if (isInitialized) return;
         isInitialized = true;
 
-        // initializeStorage() already ran inline after storage.js.
+        // initializeStorage() already ran inline after storage.js and
+        // created the empty masterData shell. loadMasterData() reads
+        // the persisted JSON from storage and repopulates masterData.
+        // MUST run before the domain bootstraps, because they hydrate
+        // their indexes from masterData.data. Without this call,
+        // masterData stays empty on every page load: creations write
+        // to the empty+new state (save succeeds), but a reload starts
+        // from empty again — the user's religions look "lost".
+        if (typeof window.loadMasterData === 'function') {
+            try { window.loadMasterData(); }
+            catch (e) {
+                console.error('[religion-manager] loadMasterData failed:', e);
+            }
+        }
 
         if (window.LocationBootstrap
             && typeof window.LocationBootstrap.init === 'function') {
