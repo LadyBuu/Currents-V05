@@ -657,13 +657,6 @@
             <div class="badge-strip"><span class="badge">CRUD</span><span class="badge">genealogy</span><span class="badge">relationships</span></div>
         </a>
 
-        <a class="tool-card" href="Census.html" data-label="Census &amp; Analytics">
-            <div class="card-icon" data-icon="CENSUS"></div>
-            <div class="card-title">Census &amp; Analytics</div>
-            <div class="card-desc">Population pyramids, location demographics, filters, presets — living/deceased breakdown.</div>
-            <div class="badge-strip"><span class="badge">charts</span><span class="badge">pyramid</span><span class="badge">filtering</span></div>
-        </a>
-
         <a class="tool-card" href="Household.html" data-label="Household Manager">
             <div class="card-icon" data-icon="HOUSEHOLD"></div>
             <div class="card-title">Household Manager</div>
@@ -692,20 +685,6 @@
             <div class="badge-strip"><span class="badge">alliances</span><span class="badge">bonds</span><span class="badge">fate</span></div>
         </a>
 
-        <a class="tool-card" href="LocationManager.html" data-label="Location Manager">
-            <div class="card-icon" data-icon="LOCATION"></div>
-            <div class="card-title">Location Manager</div>
-            <div class="card-desc">Place hierarchy, types, movement history, leadership assignments, capital/status flags.</div>
-            <div class="badge-strip"><span class="badge">geography</span><span class="badge">hierarchy</span><span class="badge">leadership</span></div>
-        </a>
-
-        <a class="tool-card" href="SettlementManager.html" data-label="Settlement Manager">
-            <div class="card-icon" data-icon="HOUSEHOLD"></div>
-            <div class="card-title">Settlement Manager</div>
-            <div class="card-desc">Rank, features, economy, crime, prosperity, employment, budget — the full settlement domain.</div>
-            <div class="badge-strip"><span class="badge">economy</span><span class="badge">prosperity</span><span class="badge">features</span></div>
-        </a>
-
         <a class="tool-card" href="ReligionManager.html" data-label="Religion Manager">
             <div class="card-icon" data-icon="STAR_4"></div>
             <div class="card-title">Religion Manager</div>
@@ -719,16 +698,23 @@
             <div class="card-desc">Culture editor: appearance templates, mythology, character associations, locations.</div>
             <div class="badge-strip"><span class="badge">appearance</span><span class="badge">mythology</span><span class="badge">characters</span></div>
         </a>
+
+        <a class="tool-card" href="EducationManager.html" data-label="Education Manager">
+            <div class="card-icon" data-icon="BOOK"></div>
+            <div class="card-title">Education Manager</div>
+            <div class="card-desc">Institutions, students, finances, apprenticeships, analytics, and settlement education history — scoped by location.</div>
+            <div class="badge-strip"><span class="badge">institutions</span><span class="badge">students</span><span class="badge">apprenticeships</span><span class="badge">analytics</span></div>
+        </a>
     </div>
 
     <!-- ============================================================
-         REALMS & CATASTROPHES
+         REALM OF REALMS
          ============================================================ -->
     <div class="divider">
         <span class="divider-line"></span>
         <span class="divider-text">
             <span class="icon-symbol" data-icon="WORLD" aria-hidden="true"></span>
-            REALMS &amp; CATASTROPHES
+            REALM OF REALMS
             <span class="icon-symbol" data-icon="WARNING" aria-hidden="true"></span>
         </span>
         <span class="divider-line"></span>
@@ -740,6 +726,20 @@
             <div class="card-title">Government Manager</div>
             <div class="card-desc">Government types, departments, positions, structure hierarchy — full administration editor.</div>
             <div class="badge-strip"><span class="badge">departments</span><span class="badge">positions</span><span class="badge">hierarchy</span></div>
+        </a>
+
+        <a class="tool-card" href="LocationManager.html" data-label="Location Manager">
+            <div class="card-icon" data-icon="LOCATION"></div>
+            <div class="card-title">Location Manager</div>
+            <div class="card-desc">Place hierarchy, types, movement history, leadership assignments, capital/status flags.</div>
+            <div class="badge-strip"><span class="badge">geography</span><span class="badge">hierarchy</span><span class="badge">leadership</span></div>
+        </a>
+
+        <a class="tool-card" href="SettlementManager.html" data-label="Settlement Manager">
+            <div class="card-icon" data-icon="HOUSEHOLD"></div>
+            <div class="card-title">Settlement Manager</div>
+            <div class="card-desc">Rank, features, economy, crime, prosperity, employment, budget — the full settlement domain.</div>
+            <div class="badge-strip"><span class="badge">economy</span><span class="badge">prosperity</span><span class="badge">features</span></div>
         </a>
 
         <a class="tool-card" href="EventsManager.html" data-label="Events Hub">
@@ -1161,7 +1161,8 @@
                     'identityTab_collapsed',
                     'heartbreak_collapsed',
                     'adoption_agency_state',
-                    'stillwaters_theme'
+                    'stillwaters_theme',
+                    'education_active_tab'
                 ];
                 for (var i = 0; i < keysToClear.length; i++) removeLS(keysToClear[i]);
                 try { window.location.reload(); } catch (e) {}
