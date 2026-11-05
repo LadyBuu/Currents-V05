@@ -63,13 +63,6 @@
  *         null, so the place is at least visible with its id as the
  *         display name (see _placeDisplayName).
  *
- *     Prior revisions passed the id array straight to _filterPlaces and
- *     _renderList, both of which skip anything that isn't an object —
- *     so every place id was silently dropped. Header counter said N,
- *     list showed 0, empty-state said "No places match your filters."
- *     That was a bug in the tab, not in the partial store. This
- *     revision resolves ids to records first.
- *
  *   What Edit means:
  *
  *     ReligionCommands.updatePlaceOfWorship is a documented no-op stub
@@ -80,6 +73,44 @@
  *     flag is true, Edit delegates to openEditPlaceOfWorshipModal,
  *     which is wired correctly against the stub — it will toast
  *     success and change nothing until the command becomes real.
+ *
+ * FILTER STATE
+ * ------------
+ *   Filter state is per-religion and persists in localStorage under
+ *   `religion_places_filters_<religionId>`. Four fields:
+ *
+ *     { search, type, status, sortBy }
+ *
+ *   Read on render (with validation — unknown sortBy falls back to 'name';
+ *   non-string filter values fall back to 'all' / ''). Written on every
+ *   user change. Reset on context switch (_lastContextKey), then overlaid
+ *   from persistence. Same pattern as every other religion tab and every
+ *   Education tab (Rule 3).
+ *
+ * EVENT DELEGATION
+ * ----------------
+ *   Two listener families, both anchored on the tab container:
+ *
+ *     - Filter listeners: one per filter element. Search input is
+ *       debounced 200ms; selects fire on change.
+ *     - Row-action listener: ONE click listener dispatching by
+ *       data-action (add-place / collect-tithes / edit-place /
+ *       delete-place / clear-filters). Guarded by
+ *       container.__rtPlacesRowWired for idempotency across re-renders.
+ *
+ *   The row-action listener is on `container`, not on `.rt-tab__body`
+ *   (which is replaced by every _applyFiltersInPlace). Attaching to the
+ *   stable container means the listener survives body swaps with no
+ *   re-wiring.
+ *
+ * PLACES_EDITABLE GATE
+ * --------------------
+ *   The Edit button is only rendered when PLACES_EDITABLE === true. The
+ *   dispatcher's edit-place case ALSO checks the flag before opening the
+ *   modal — defense-in-depth. If a future revision of the modal file
+ *   generates the button, or a caller hand-crafts one, the gate still
+ *   holds and the user sees an explanatory toast instead of a silent
+ *   no-op.
  *
  * DEPENDENCIES (resolved at call time — no load-time guards):
  *   - TabManager            (js/core/tab-manager.js)
@@ -99,13 +130,43 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - Filter persistence. _state.{search,type,status,sortBy} now
+ *       persist in localStorage under `religion_places_filters_<id>`.
+ *       Read on render with per-field validation, written on every
+ *       change, reset on context switch (_lastContextKey) then
+ *       overlaid from persistence. Mirrors every other religion tab
+ *       and every Education tab (Rule 3).
+ *     - Event delegation moved to the tab container. Prior revision
+ *       attached a delegated click listener to `.rt-tab__body` with a
+ *       body.__rtHandled marker and re-attached after every
+ *       _applyFiltersInPlace. That worked because _applyFiltersInPlace
+ *       always re-attached, but it was fragile: any early-return would
+ *       silently drop clicks. The listener now lives on `container`
+ *       with a container.__rtPlacesRowWired marker and survives every
+ *       body swap with no re-wiring.
+ *     - _attachHandlers split into _wireFilters (search debounce,
+ *       three selects) and _wireRowActions (single delegated click
+ *       dispatcher). Every action button gains a data-action attribute.
+ *     - The clear button is now handled by the delegated dispatcher
+ *       instead of its own addEventListener. Same for add-place.
+ *     - PLACES_EDITABLE gate now defended in TWO places: the render
+ *       path (button hidden when false) and the dispatcher (toast
+ *       instead of open when false). Defense-in-depth: if a future
+ *       caller hand-crafts an edit-place button, the gate still holds.
+ *     - _applyFiltersInPlace no longer re-attaches handlers (nothing
+ *       to re-attach). Behavior unchanged.
+ *     - _resolvePlacesForRender, _collectTithes, _freshReligion, and
+ *       the CRUD delegation paths are unchanged.
+ *     - TabManager.register('religion', 'places', renderAdapter) is
+ *       unchanged. Public surface (id, render, renderAdapter,
+ *       isEditable) is unchanged.
+ *   Previous revisions:
  *     - Fixed "1 place but 0 cards" rendering bug. The tab now resolves
  *       religion.placesOfWorship's id array to a record-or-stub array
  *       via _resolvePlacesForRender() before filtering and rendering.
  *     - CRUD delegation to canonical modals (add/edit/delete).
  *     - PLACES_EDITABLE gate retained.
  *     - Collect Tithes stays a direct command call (read-only).
- *   Previous revisions:
  *     - Filter/sort/list rendering extracted from earlier monolithic
  *       religion UI code.
  * =============================================================================
@@ -119,8 +180,12 @@
     var PLACES_EDITABLE = false;
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 1. CONSTANTS + DEPENDENCY WRAPPERS
     // =========================================================================
+
+    var FILTER_KEY_PREFIX = 'religion_places_filters_';
+
+    var _SORT_BY_VALUES = { name: true, type: true, founded: true };
 
     function _escapeHtml(str) {
         if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
@@ -226,7 +291,7 @@
     }
 
     // =========================================================================
-    // 3. TAB-LOCAL UI STATE
+    // 3. TAB-LOCAL UI STATE (persisted per religion)
     // =========================================================================
 
     var _state = {
@@ -236,11 +301,51 @@
         sortBy: 'name'
     };
 
+    var _lastContextKey = null;
+
     function _resetState() {
         _state.search = '';
         _state.type = 'all';
         _state.status = 'all';
         _state.sortBy = 'name';
+    }
+
+    function _readFilters(religionId) {
+        var d = { search: '', type: 'all', status: 'all', sortBy: 'name' };
+        if (!religionId) return d;
+        try {
+            var raw = localStorage.getItem(FILTER_KEY_PREFIX + religionId);
+            if (!raw) return d;
+            var p = JSON.parse(raw);
+            if (!p || typeof p !== 'object') return d;
+
+            if (typeof p.search === 'string') d.search = p.search;
+            if (typeof p.type === 'string' && p.type.length > 0) d.type = p.type;
+            if (typeof p.status === 'string' && p.status.length > 0) d.status = p.status;
+            if (typeof p.sortBy === 'string' && _SORT_BY_VALUES[p.sortBy]) {
+                d.sortBy = p.sortBy;
+            }
+            return d;
+        } catch (e) {
+            return d;
+        }
+    }
+
+    function _writeFilters(religionId, s) {
+        if (!religionId) return;
+        try {
+            localStorage.setItem(
+                FILTER_KEY_PREFIX + religionId,
+                JSON.stringify({
+                    search: s.search || '',
+                    type: s.type || 'all',
+                    status: s.status || 'all',
+                    sortBy: _SORT_BY_VALUES[s.sortBy] ? s.sortBy : 'name'
+                })
+            );
+        } catch (e) {
+            // localStorage quota exceeded or unavailable. Non-fatal.
+        }
     }
 
     // =========================================================================
@@ -265,7 +370,16 @@
             return;
         }
 
-        _resetState();
+        // Reset on context switch, then overlay persisted filters.
+        if (_lastContextKey !== religion.id) {
+            _resetState();
+            _lastContextKey = religion.id;
+        }
+        var saved = _readFilters(religion.id);
+        _state.search = saved.search;
+        _state.type = saved.type;
+        _state.status = saved.status;
+        _state.sortBy = saved.sortBy;
 
         var placeIds = RQ.getPlacesOfWorshipByReligion(religion.id) || [];
         var places = _resolvePlacesForRender(placeIds);
@@ -298,7 +412,8 @@
               '</div>' +
               '<div class="rt-tab__header-actions">' +
                 (!isDeprecated
-                  ? '<button type="button" class="rt-btn rt-btn--primary add-place-btn">Add Place</button>'
+                  ? '<button type="button" class="rt-btn rt-btn--primary add-place-btn"' +
+                    ' data-action="add-place">Add Place</button>'
                   : '') +
               '</div>' +
             '</div>' +
@@ -328,7 +443,8 @@
                 '<option value="type">Sort: Type</option>' +
                 '<option value="founded">Sort: Founded</option>' +
               '</select>' +
-              '<button type="button" class="rt-clear clear-places-filters">Clear</button>' +
+              '<button type="button" class="rt-clear clear-places-filters"' +
+                ' data-action="clear-filters">Clear</button>' +
             '</div>' +
 
             (filtered.length > 0
@@ -340,7 +456,8 @@
         container.innerHTML = html;
 
         _syncFilterSelects(container);
-        _attachHandlers(container, religion);
+        _wireFilters(container, religion);
+        _wireRowActions(container, religion);
     }
 
     function _syncFilterSelects(container) {
@@ -486,14 +603,17 @@
                       ? ''
                       : '<div class="rt-place-card__actions">' +
                           '<button type="button" class="rt-btn rt-btn--icon collect-tithes-btn"' +
+                            ' data-action="collect-tithes"' +
                             ' data-place-id="' + _escapeHtml(p.id) + '"' +
                             ' title="Collect tithes">Tithes</button>' +
                           (PLACES_EDITABLE
                             ? '<button type="button" class="rt-btn rt-btn--icon edit-place-btn"' +
+                                ' data-action="edit-place"' +
                                 ' data-place-id="' + _escapeHtml(p.id) + '"' +
                                 ' title="Edit">Edit</button>'
                             : '') +
                           '<button type="button" class="rt-btn rt-btn--icon rt-btn--danger delete-place-btn"' +
+                            ' data-action="delete-place"' +
                             ' data-place-id="' + _escapeHtml(p.id) + '"' +
                             ' title="Delete">Delete</button>' +
                         '</div>') +
@@ -520,14 +640,10 @@
     }
 
     // =========================================================================
-    // 7. HANDLERS
+    // 7. FILTER WIRING
     // =========================================================================
 
-    function _attachHandlers(container, religion) {
-        function rerender() {
-            renderPlacesTab(container, _freshReligion(religion.id) || religion);
-        }
-
+    function _wireFilters(container, religion) {
         var search = container.querySelector('.places-search');
         if (search) {
             var timer = null;
@@ -536,6 +652,7 @@
                 timer = setTimeout(function () {
                     timer = null;
                     _state.search = search.value || '';
+                    _writeFilters(religion.id, _state);
                     _applyFiltersInPlace(container, religion);
                 }, 200);
             });
@@ -545,6 +662,7 @@
         if (typeSel) {
             typeSel.addEventListener('change', function () {
                 _state.type = typeSel.value;
+                _writeFilters(religion.id, _state);
                 _applyFiltersInPlace(container, religion);
             });
         }
@@ -553,6 +671,7 @@
         if (statusSel) {
             statusSel.addEventListener('change', function () {
                 _state.status = statusSel.value;
+                _writeFilters(religion.id, _state);
                 _applyFiltersInPlace(container, religion);
             });
         }
@@ -561,38 +680,171 @@
         if (sortSel) {
             sortSel.addEventListener('change', function () {
                 _state.sortBy = sortSel.value;
+                _writeFilters(religion.id, _state);
                 _applyFiltersInPlace(container, religion);
             });
         }
-
-        var clearBtn = container.querySelector('.clear-places-filters');
-        if (clearBtn) {
-            clearBtn.addEventListener('click', function () {
-                _resetState();
-                rerender();
-            });
-        }
-
-        var addBtn = container.querySelector('.add-place-btn');
-        if (addBtn) {
-            addBtn.addEventListener('click', function () {
-                var openCreate = _getOpenCreatePlaceModal();
-                if (!openCreate) {
-                    _showToast(
-                        'Create Place of Worship modal is not available. ' +
-                        'Load modals-religion.js first.',
-                        'error'
-                    );
-                    return;
-                }
-                openCreate(religion.id, {
-                    onSuccess: function () { rerender(); }
-                });
-            });
-        }
-
-        _attachRowActions(container, religion);
     }
+
+    // =========================================================================
+    // 8. ROW-ACTION DELEGATION (single listener on the container)
+    // =========================================================================
+    //
+    // Attached to `container`, not to `.rt-tab__body`. The body is
+    // replaced by every _applyFiltersInPlace call; a listener on the
+    // body would need re-wiring on each swap (fragile) or would silently
+    // drop clicks if the re-wire was ever skipped. The container is
+    // stable across the entire tab lifetime, so one listener with one
+    // idempotency marker suffices.
+
+    function _wireRowActions(container, religion) {
+        if (container.__rtPlacesRowWired) return;
+        container.__rtPlacesRowWired = true;
+
+        container.addEventListener('click', function (e) {
+            var target = e.target;
+            if (!target || typeof target.closest !== 'function') return;
+
+            var btn = target.closest('[data-action]');
+            if (!btn || !container.contains(btn)) return;
+
+            var action = btn.getAttribute('data-action');
+            if (!action) return;
+
+            switch (action) {
+                case 'add-place':
+                    e.preventDefault();
+                    _actionAddPlace(religion, container);
+                    break;
+
+                case 'collect-tithes': {
+                    e.preventDefault();
+                    var cid = btn.getAttribute('data-place-id');
+                    if (cid) _actionCollectTithes(cid);
+                    break;
+                }
+
+                case 'edit-place': {
+                    e.preventDefault();
+                    // Defense-in-depth: gate is also enforced in render
+                    // (button hidden when false), but if a future caller
+                    // hand-crafts an edit-place button, the flag still
+                    // wins here.
+                    if (!PLACES_EDITABLE) {
+                        _showToast(
+                            'Editing places is disabled until the canonical ' +
+                            'place store lands.',
+                            'info'
+                        );
+                        break;
+                    }
+                    var eid = btn.getAttribute('data-place-id');
+                    if (eid) _actionEditPlace(religion, container, eid);
+                    break;
+                }
+
+                case 'delete-place': {
+                    e.preventDefault();
+                    var did = btn.getAttribute('data-place-id');
+                    if (did) _actionDeletePlace(religion, container, did);
+                    break;
+                }
+
+                case 'clear-filters':
+                    e.preventDefault();
+                    _actionClearFilters(religion, container);
+                    break;
+
+                // Unknown action: no-op.
+                default:
+                    break;
+            }
+        });
+    }
+
+    // =========================================================================
+    // 9. ACTION HANDLERS
+    // =========================================================================
+
+    function _actionAddPlace(religion, container) {
+        var openCreate = _getOpenCreatePlaceModal();
+        if (!openCreate) {
+            _showToast(
+                'Create Place of Worship modal is not available. ' +
+                'Load modals-religion.js first.',
+                'error'
+            );
+            return;
+        }
+        openCreate(religion.id, {
+            onSuccess: function () { _rerender(container, religion); }
+        });
+    }
+
+    function _actionEditPlace(religion, container, placeId) {
+        var openEdit = _getOpenEditPlaceModal();
+        if (!openEdit) {
+            _showToast(
+                'Edit Place of Worship modal is not available. ' +
+                'Load modals-religion.js first.',
+                'error'
+            );
+            return;
+        }
+        openEdit(religion.id, placeId, {
+            onSuccess: function () {
+                _rerender(container, religion);
+            }
+        });
+    }
+
+    function _actionDeletePlace(religion, container, placeId) {
+        var openDelete = _getOpenDeletePlaceModal();
+        if (!openDelete) {
+            _showToast(
+                'Delete Place of Worship modal is not available. ' +
+                'Load modals-religion.js first.',
+                'error'
+            );
+            return;
+        }
+        openDelete(religion.id, placeId, {
+            onSuccess: function () {
+                _rerender(container, religion);
+            }
+        });
+    }
+
+    function _actionCollectTithes(placeId) {
+        var RC = _getReligionCommands();
+        if (!RC) {
+            _showToast('ReligionCommands not available', 'error');
+            return;
+        }
+        var result = RC.collectTithes(placeId);
+        if (result && result.success) {
+            var amount = result.data && typeof result.data.amount === 'number'
+                ? result.data.amount
+                : 0;
+            _showToast('Collected ' + amount + ' gold in tithes', 'success');
+        } else {
+            _showToast(
+                'Failed to collect tithes: ' +
+                (result && result.reason ? result.reason : 'unknown'),
+                'error'
+            );
+        }
+    }
+
+    function _actionClearFilters(religion, container) {
+        _resetState();
+        _writeFilters(religion.id, _state);
+        _rerender(container, religion);
+    }
+
+    // =========================================================================
+    // 10. IN-PLACE FILTER RE-APPLY
+    // =========================================================================
 
     function _applyFiltersInPlace(container, religion) {
         var RQ = _getReligionQueries();
@@ -619,99 +871,12 @@
             empty.parentNode.replaceChild(fresh2, empty);
         }
 
-        _attachRowActions(container, religion);
+        // No handler re-wiring needed: the delegated click listener is
+        // on `container`, not on the body that just got swapped.
     }
 
-    function _attachRowActions(container, religion) {
-        var body = container.querySelector('.rt-tab__body');
-        if (!body) return;
-        if (body.__rtHandled) return;
-        body.__rtHandled = true;
-
-        body.addEventListener('click', function (e) {
-            var target = e.target;
-            if (!target || typeof target.closest !== 'function') return;
-
-            var collectBtn = target.closest('.collect-tithes-btn');
-            if (collectBtn) {
-                e.preventDefault();
-                var cid = collectBtn.getAttribute('data-place-id');
-                if (cid) _collectTithes(cid);
-                return;
-            }
-
-            var editBtn = target.closest('.edit-place-btn');
-            if (editBtn) {
-                e.preventDefault();
-                if (!PLACES_EDITABLE) {
-                    _showToast(
-                        'Editing places is disabled until the canonical ' +
-                        'place store lands.',
-                        'info'
-                    );
-                    return;
-                }
-                var eid = editBtn.getAttribute('data-place-id');
-                if (!eid) return;
-                var openEdit = _getOpenEditPlaceModal();
-                if (!openEdit) {
-                    _showToast(
-                        'Edit Place of Worship modal is not available. ' +
-                        'Load modals-religion.js first.',
-                        'error'
-                    );
-                    return;
-                }
-                openEdit(religion.id, eid, {
-                    onSuccess: function () {
-                        renderPlacesTab(container, _freshReligion(religion.id) || religion);
-                    }
-                });
-                return;
-            }
-
-            var delBtn = target.closest('.delete-place-btn');
-            if (delBtn) {
-                e.preventDefault();
-                var did = delBtn.getAttribute('data-place-id');
-                if (!did) return;
-                var openDelete = _getOpenDeletePlaceModal();
-                if (!openDelete) {
-                    _showToast(
-                        'Delete Place of Worship modal is not available. ' +
-                        'Load modals-religion.js first.',
-                        'error'
-                    );
-                    return;
-                }
-                openDelete(religion.id, did, {
-                    onSuccess: function () {
-                        renderPlacesTab(container, _freshReligion(religion.id) || religion);
-                    }
-                });
-            }
-        });
-    }
-
-    function _collectTithes(placeId) {
-        var RC = _getReligionCommands();
-        if (!RC) {
-            _showToast('ReligionCommands not available', 'error');
-            return;
-        }
-        var result = RC.collectTithes(placeId);
-        if (result && result.success) {
-            var amount = result.data && typeof result.data.amount === 'number'
-                ? result.data.amount
-                : 0;
-            _showToast('Collected ' + amount + ' gold in tithes', 'success');
-        } else {
-            _showToast(
-                'Failed to collect tithes: ' +
-                (result && result.reason ? result.reason : 'unknown'),
-                'error'
-            );
-        }
+    function _rerender(container, religion) {
+        renderPlacesTab(container, _freshReligion(religion.id) || religion);
     }
 
     function _freshReligion(religionId) {
@@ -721,7 +886,7 @@
     }
 
     // =========================================================================
-    // 8. TABMANAGER ADAPTER + REGISTRATION
+    // 11. TABMANAGER ADAPTER + REGISTRATION
     // =========================================================================
 
     function renderAdapter(container, context) {
@@ -739,7 +904,7 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.ReligionPlacesTab = {
