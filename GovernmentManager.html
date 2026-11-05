@@ -13,33 +13,42 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap" rel="stylesheet">
 
-    <!-- SHARED (external) -->
     <link rel="stylesheet" href="css/themes.css">
     <link rel="stylesheet" href="css/common.css">
+    <link rel="stylesheet" href="css/government-tabs.css">
 
     <style>
         /* ============================================================
-           GOVERNMENT MANAGER — INLINE CSS
+           GOVERNMENT MANAGER — SHELL LAYOUT ONLY
+           All tab-specific styles live in css/government-tabs.css.
+           This block only positions the shell: topbar, sidebar,
+           main panel, tab strip, pane container. Nothing here is
+           specific to a tab's content.
            ============================================================ */
 
-        /* ---- App shell ---- */
         html, body { height: 100%; margin: 0; overflow: hidden; }
         body { display: flex; flex-direction: column; }
         .topbar { position: relative; z-index: 100; flex-shrink: 0; }
 
-        .world-app { display: flex; flex-direction: row; flex: 1; min-height: 0; overflow: hidden; }
+        .world-app {
+            display: flex; flex-direction: row;
+            flex: 1; min-height: 0; overflow: hidden;
+        }
 
         .locations-sidebar {
             flex-shrink: 0; display: flex; flex-direction: column;
-            overflow: hidden; background: var(--bg2); border-right: 1px solid var(--border);
+            overflow: hidden; background: var(--bg2);
+            border-right: 1px solid var(--border);
         }
-
-        .sidebar-header { padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg3); }
+        .sidebar-header {
+            padding: 12px 16px; border-bottom: 1px solid var(--border);
+            background: var(--bg3);
+        }
         .sidebar-header h3 {
             margin: 0; font-family: var(--f-display); font-size: 0.65rem;
-            letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent);
+            letter-spacing: 0.1em; text-transform: uppercase;
+            color: var(--accent);
         }
-
         .place-list { flex: 1; overflow-y: auto; padding: 8px; min-height: 0; }
 
         .main-panel {
@@ -47,142 +56,18 @@
             min-width: 0; min-height: 0; overflow: hidden;
         }
 
-        .tab-content-wrapper {
-            flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
-            padding: 20px 24px;
-        }
-
-        /* ---- Sidebar tree — indent + border guide ---- */
-        .place-list .location-tree-children,
-        .locations-sidebar .location-tree-children {
-            margin-left: 0 !important;
-            padding-left: 16px !important;
-            border-left: 1px solid var(--border-light) !important;
-        }
-        .place-list .location-tree-children .location-tree-children,
-        .locations-sidebar .location-tree-children .location-tree-children {
-            padding-left: 16px !important;
-        }
-        .place-list .location-tree-children,
-        .locations-sidebar .location-tree-children {
-            display: none;
-        }
-        .place-list .location-tree-children.is-expanded,
-        .locations-sidebar .location-tree-children.is-expanded {
-            display: block;
-        }
-
-        /* ---- Topbar buttons ---- */
-        .tb-btn {
-            display: inline-flex; align-items: center; gap: 5px;
-            padding: 6px 14px; background: var(--bg2);
-            border: 1px solid var(--border); border-radius: var(--radius);
-            color: var(--text); font-family: var(--f-body); font-size: 0.7rem;
-            font-weight: 500; cursor: pointer; line-height: 1.2;
-            flex-shrink: 0;
-            transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
-        }
-        .tb-btn:hover { border-color: var(--accent); background: var(--accent-dim); color: var(--accent-light); }
-        .tb-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
-        .tb-btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
-
-        /* ---- Year input (topbar) ----
-           flex-shrink: 0 on the group and every child ensures the
-           control keeps its width. Without this, on a tight topbar the
-           group collapsed to zero width and its children visually
-           overlapped the Import button. */
-        .year-input {
-            display: inline-flex; align-items: center; gap: 5px;
-            padding: 3px 10px; background: var(--bg);
-            border: 1px solid var(--border); border-radius: var(--radius);
-            font-family: var(--f-body); font-size: 0.7rem; line-height: 1.2;
-            flex-shrink: 0;
-            flex-grow: 0;
-            min-width: max-content;
-            max-width: 260px;
-            margin-right: 6px;
-        }
-        .year-input label {
-            font-family: var(--f-display); font-size: 0.55rem;
-            letter-spacing: 0.06em; text-transform: uppercase;
-            color: var(--dim); white-space: nowrap;
-            flex-shrink: 0;
-        }
-        .year-input input {
-            width: 64px; min-width: 52px;
-            padding: 3px 6px;
-            background: transparent; border: 1px solid var(--border);
-            border-radius: calc(var(--radius) - 1px); color: var(--text);
-            font-family: var(--f-mono); font-size: 0.7rem; text-align: right;
-            flex-shrink: 0;
-        }
-        .year-input input:focus {
-            outline: none; border-color: var(--accent);
-            box-shadow: 0 0 0 2px var(--accent-soft);
-        }
-        .year-input input::-webkit-outer-spin-button,
-        .year-input input::-webkit-inner-spin-button {
-            -webkit-appearance: none; margin: 0;
-        }
-        .year-input input[type=number] { -moz-appearance: textfield; }
-        .year-input .set-btn {
-            background: var(--bg3);
-            border: 1px solid var(--border);
-            border-radius: calc(var(--radius) - 1px);
-            padding: 3px 10px;
-            font-size: 0.65rem;
-            font-weight: 500;
-            color: var(--text);
-            cursor: pointer;
-            flex-shrink: 0;
-            transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-        }
-        .year-input .set-btn:hover {
-            background: var(--accent-dim);
-            border-color: var(--accent);
-            color: var(--accent-light);
-        }
-
-        /* ---- Theme toggle ---- */
-        .theme-toggle { position: relative; display: inline-flex; flex-shrink: 0; }
-        .theme-toggle__btn { gap: 6px; }
-        .theme-toggle__menu {
-            position: absolute; top: calc(100% + 4px); right: 0; z-index: 9999;
-            min-width: 160px; max-height: 60vh; padding: 4px; margin: 0;
-            list-style: none; background: var(--surface);
-            border: 1px solid var(--line); border-radius: var(--radius);
-            box-shadow: var(--shadow); overflow-y: auto;
-        }
-        .theme-toggle__menu[hidden] { display: none; }
-        .theme-toggle__menu button {
-            display: block; width: 100%; padding: 6px 12px; text-align: left;
-            background: transparent; border: none; color: var(--text);
-            font-family: var(--f-body); font-size: 0.7rem;
-            border-radius: calc(var(--radius) - 2px); cursor: pointer;
-            transition: background-color 0.15s ease;
-        }
-        .theme-toggle__menu button:hover,
-        .theme-toggle__menu button:focus-visible {
-            background: var(--accent-dim); color: var(--accent-light); outline: none;
-        }
-
-        /* ============================================================
-           SUB-TAB STRIP
-           ============================================================ */
+        /* Tab strip */
         .manager-subtabs {
             position: sticky; top: 0;
             display: flex; align-items: stretch;
             gap: 4px;
-            padding: 8px 4px 0;
-            margin: -20px -24px 20px;
-            padding-left: 24px;
-            padding-right: 24px;
+            padding: 8px 24px 0;
             background: var(--bg);
             border-bottom: 1px solid var(--border);
             flex-wrap: wrap;
+            flex-shrink: 0;
             z-index: 10;
         }
-
         .manager-subtab {
             position: relative;
             display: inline-flex; align-items: center; gap: 8px;
@@ -209,14 +94,8 @@
             border-radius: 2px 2px 0 0;
             transition: background-color 0.15s ease;
         }
-        .manager-subtab:hover {
-            color: var(--accent-light);
-            background: var(--accent-dim);
-        }
-        .manager-subtab:hover::after {
-            background: var(--accent);
-            opacity: 0.35;
-        }
+        .manager-subtab:hover { color: var(--accent-light); background: var(--accent-dim); }
+        .manager-subtab:hover::after { background: var(--accent); opacity: 0.35; }
         .manager-subtab.active {
             color: var(--accent);
             background: var(--bg2);
@@ -224,10 +103,7 @@
             border-bottom-color: transparent;
             font-weight: 600;
         }
-        .manager-subtab.active::after {
-            background: var(--accent);
-            opacity: 1;
-        }
+        .manager-subtab.active::after { background: var(--accent); opacity: 1; }
 
         .manager-subtab-icon {
             display: inline-flex;
@@ -237,371 +113,124 @@
             flex-shrink: 0;
             opacity: 0.9;
         }
-        .manager-subtab-icon svg {
-            width: 100%; height: 100%;
-            fill: currentColor;
+        .manager-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
+
+        /* Pane container — one .tab-pane per tab, only .active is shown */
+        .tab-content-wrapper {
+            flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+            padding: 20px 24px;
+        }
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
+
+        /* Sidebar tree indentation */
+        .place-list .location-tree-children,
+        .locations-sidebar .location-tree-children {
+            margin-left: 0 !important;
+            padding-left: 16px !important;
+            border-left: 1px solid var(--border-light) !important;
+            display: none;
+        }
+        .place-list .location-tree-children.is-expanded,
+        .locations-sidebar .location-tree-children.is-expanded {
+            display: block;
         }
 
-        .manager-subpanel {
-            min-height: 200px;
-            padding-top: 4px;
-        }
-
-        /* ---- Detail containers ---- */
-        .gov-details-container, .dept-tab-container, .law-tab-container,
-        .eco-details-container, .gh-tab-container { padding: 4px; }
-
-        .gov-details-empty, .dept-details-empty, .eco-details-empty, .gh-details-empty {
-            padding: 30px 20px; text-align: center; color: var(--dim); font-size: 0.8rem;
-        }
-
-        .gov-details-header, .dept-tab-header, .law-tab-header,
-        .eco-details-header, .gh-tab-header {
-            display: flex; flex-wrap: wrap; justify-content: space-between;
-            align-items: center; gap: 12px; margin-bottom: 16px;
-            padding-bottom: 12px; border-bottom: 1px solid var(--border);
-        }
-        .gov-details-header h3, .dept-tab-header h3, .law-tab-header h3,
-        .eco-details-header h3, .gh-tab-header h3 {
-            margin: 0;
-            font-size: 1rem;
-            color: var(--accent);
-            font-family: var(--f-display);
-            letter-spacing: 0.03em;
-        }
-
-        .gov-details-actions, .dept-tab-actions, .law-tab-actions,
-        .eco-details-actions, .gh-tab-actions {
-            display: flex; gap: 8px; flex-wrap: wrap;
-        }
-
-        /* ---- Buttons inside sub-panels ---- */
-        .gov-btn, .dept-btn, .law-btn, .eco-btn, .gh-btn {
+        /* Topbar controls */
+        .tb-btn {
             display: inline-flex; align-items: center; gap: 5px;
             padding: 6px 14px; background: var(--bg2);
             border: 1px solid var(--border); border-radius: var(--radius);
             color: var(--text); font-family: var(--f-body); font-size: 0.7rem;
-            font-weight: 500; line-height: 1.2; cursor: pointer;
+            font-weight: 500; cursor: pointer; line-height: 1.2;
+            flex-shrink: 0;
             transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
         }
-        .gov-btn:hover, .dept-btn:hover, .law-btn:hover, .eco-btn:hover, .gh-btn:hover {
-            border-color: var(--accent); background: var(--accent-dim); color: var(--accent-light);
-        }
-        .gov-btn.primary, .dept-btn-add, .law-btn-add, .gh-btn-add {
-            background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
-        }
-        .gov-btn.primary:hover, .dept-btn-add:hover, .law-btn-add:hover, .gh-btn-add:hover {
-            background: var(--accent-dark); border-color: var(--accent-dark);
-        }
-        .dept-btn-delete, .law-btn-delete, .gh-btn-end {
-            color: var(--danger-lt); border-color: var(--danger-lt);
-        }
-        .dept-btn-delete:hover, .law-btn-delete:hover, .gh-btn-end:hover {
-            background: var(--danger-soft); border-color: var(--danger); color: var(--danger-lt);
-        }
-        .dept-btn-small { padding: 3px 10px; font-size: 0.6rem; }
+        .tb-btn:hover { border-color: var(--accent); background: var(--accent-dim); color: var(--accent-light); }
+        .tb-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+        .tb-btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
 
-        /* ---- Form primitives ---- */
-        .form-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
-        .form-group label {
-            font-size: 0.72rem; color: var(--accent);
-            font-family: var(--f-display); letter-spacing: 0.05em;
+        .year-input {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 3px 10px; background: var(--bg);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            font-family: var(--f-body); font-size: 0.7rem; line-height: 1.2;
+            flex-shrink: 0; flex-grow: 0;
+            min-width: max-content; max-width: 260px;
+            margin-right: 6px;
         }
-        .form-control {
-            width: 100%; padding: 8px 12px;
-            background: var(--bg); border: 1px solid var(--border);
-            border-radius: var(--radius); color: var(--text);
-            font-family: var(--f-body); font-size: 0.75rem;
-            line-height: 1.4; box-sizing: border-box;
+        .year-input label {
+            font-family: var(--f-display); font-size: 0.55rem;
+            letter-spacing: 0.06em; text-transform: uppercase;
+            color: var(--dim); white-space: nowrap; flex-shrink: 0;
         }
-        .form-control:focus {
+        .year-input input {
+            width: 64px; min-width: 52px;
+            padding: 3px 6px;
+            background: transparent; border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 1px); color: var(--text);
+            font-family: var(--f-mono); font-size: 0.7rem; text-align: right;
+            flex-shrink: 0;
+        }
+        .year-input input:focus {
             outline: none; border-color: var(--accent);
             box-shadow: 0 0 0 2px var(--accent-soft);
         }
-        .form-row { display: flex; gap: 14px; flex-wrap: wrap; }
-        .form-row .form-group { flex: 1; min-width: 140px; }
-        .form-fieldset {
-            border: 1px solid var(--border); border-radius: var(--radius);
-            padding: 12px 14px; margin: 0 0 16px 0;
+        .year-input input::-webkit-outer-spin-button,
+        .year-input input::-webkit-inner-spin-button {
+            -webkit-appearance: none; margin: 0;
         }
-        .form-fieldset legend {
-            font-size: 0.7rem; color: var(--accent);
-            font-family: var(--f-display); letter-spacing: 0.05em;
-            padding: 0 8px;
+        .year-input input[type=number] { -moz-appearance: textfield; }
+        .year-input .set-btn {
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 1px);
+            padding: 3px 10px;
+            font-size: 0.65rem; font-weight: 500;
+            color: var(--text); cursor: pointer; flex-shrink: 0;
+            transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
         }
-        .law-checkbox-label {
-            display: inline-flex; align-items: center; gap: 8px;
-            font-size: 0.72rem; color: var(--text);
-            font-family: var(--f-body);
-        }
-        .law-checkbox-label input[type="checkbox"] { accent-color: var(--accent); }
-
-        /* ---- Cards ---- */
-        .dept-card, .eco-stat-card, .gh-leader-card, .gh-official-card, .eco-settlement-details,
-        .eco-breakdown-item, .dept-position, .dept-budget-summary, .dept-empty {
-            background: var(--bg2); border: 1px solid var(--border);
-            border-radius: 8px; padding: 14px 16px; margin-bottom: 10px;
+        .year-input .set-btn:hover {
+            background: var(--accent-dim);
+            border-color: var(--accent);
+            color: var(--accent-light);
         }
 
-        .dept-header {
-            display: flex; justify-content: space-between; align-items: center;
-            flex-wrap: wrap; gap: 10px; padding-bottom: 10px;
-            border-bottom: 1px solid var(--border-light); margin-bottom: 10px;
+        .theme-toggle { position: relative; display: inline-flex; flex-shrink: 0; }
+        .theme-toggle__btn { gap: 6px; }
+        .theme-toggle__menu {
+            position: absolute; top: calc(100% + 4px); right: 0; z-index: 9999;
+            min-width: 160px; max-height: 60vh; padding: 4px; margin: 0;
+            list-style: none; background: var(--surface);
+            border: 1px solid var(--line); border-radius: var(--radius);
+            box-shadow: var(--shadow); overflow-y: auto;
+        }
+        .theme-toggle__menu[hidden] { display: none; }
+        .theme-toggle__menu button {
+            display: block; width: 100%; padding: 6px 12px; text-align: left;
+            background: transparent; border: none; color: var(--text);
+            font-family: var(--f-body); font-size: 0.7rem;
+            border-radius: calc(var(--radius) - 2px); cursor: pointer;
+            transition: background-color 0.15s ease;
+        }
+        .theme-toggle__menu button:hover,
+        .theme-toggle__menu button:focus-visible {
+            background: var(--accent-dim); color: var(--accent-light); outline: none;
         }
 
-        .dept-title, .dept-actions, .dept-name {
-            display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-        }
-        .dept-name, .eco-stat-value, .gh-leader-name, .gh-official-name {
-            font-weight: 600; color: var(--accent);
-            font-family: var(--f-display); letter-spacing: 0.02em;
-        }
-
-        /* Stats blocks */
-        .dept-stats, .law-stats-summary, .gh-stats-summary, .dept-budget-summary {
-            display: flex; flex-wrap: wrap; gap: 14px; padding: 10px 0;
-        }
-        .dept-stat, .law-stat, .gh-stat, .dept-budget-item {
-            display: flex; flex-direction: column; gap: 3px; min-width: 100px;
-        }
-        .dept-stat-label, .law-stat-label, .gh-stat-label, .dept-budget-label {
-            font-size: 0.58rem; color: var(--dim);
-            text-transform: uppercase; letter-spacing: 0.08em;
-            font-family: var(--f-display);
-        }
-        .dept-stat-value, .law-stat-value, .gh-stat-value, .dept-budget-value {
-            font-size: 1rem; font-weight: 600; color: var(--text);
-            font-family: var(--f-mono);
-        }
-        .dept-budget-shortfall .dept-budget-value { color: var(--danger-lt); }
-        .dept-budget-surplus .dept-budget-value { color: var(--ok); }
-        .dept-budget-unavailable .dept-budget-value { color: var(--dim); font-style: italic; }
-
-        /* ---- Laws tab ---- */
-        .law-list { display: flex; flex-direction: column; gap: 10px; }
-        .law-item {
-            background: var(--bg2); border: 1px solid var(--border);
-            border-radius: 8px; padding: 12px 16px;
-        }
-        .law-header {
-            display: flex; justify-content: space-between; align-items: flex-start;
-            flex-wrap: wrap; gap: 10px; margin-bottom: 8px;
-        }
-        .law-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-        .law-name {
-            font-size: 0.85rem; font-weight: 600; color: var(--accent);
-            font-family: var(--f-display); letter-spacing: 0.02em;
-        }
-        .law-status {
-            font-size: 0.58rem; font-weight: 600; letter-spacing: 0.05em;
-            font-family: var(--f-display); text-transform: uppercase;
-        }
-        .law-status.is-active { color: var(--ok); }
-        .law-status.is-inactive { color: var(--dim); }
-        .law-actions, .law-section-body { display: flex; gap: 6px; }
-        .law-description {
-            font-size: 0.7rem; color: var(--text); line-height: 1.55;
-            margin: 6px 0;
-        }
-        .law-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 0.65rem; }
-        .law-category {
-            display: inline-flex; align-items: center; gap: 5px;
-            color: var(--accent); font-size: 0.6rem; padding: 3px 10px;
-            background: var(--accent-dim); border-radius: 12px;
-            font-family: var(--f-display); letter-spacing: 0.03em;
-        }
-        .law-domain {
-            display: inline-flex; align-items: center; gap: 5px;
-            color: var(--text); font-size: 0.6rem; padding: 3px 10px;
-            background: var(--bg3); border-radius: 12px;
-            font-family: var(--f-display); letter-spacing: 0.03em;
-        }
-        .law-severity {
-            font-weight: 600; font-size: 0.6rem;
-            text-transform: uppercase; font-family: var(--f-display);
-            padding: 3px 10px; border-radius: 12px;
-            background: var(--bg3); letter-spacing: 0.04em;
-        }
-        .law-punishment {
-            display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-            padding: 8px 12px; background: var(--bg3);
-            border-left: 3px solid var(--warning); border-radius: var(--radius);
-            font-size: 0.65rem; margin-top: 8px; line-height: 1.5;
-        }
-        .law-punishment-label {
-            font-weight: 600; color: var(--dim);
-            text-transform: uppercase; letter-spacing: 0.06em;
-            font-family: var(--f-display); font-size: 0.58rem;
-        }
-        .law-punishment-type { display: inline-flex; align-items: center; gap: 5px; }
-        .law-punishment-desc { color: var(--text); }
-        .law-crime-type {
-            display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-            padding: 6px 12px; background: var(--bg3);
-            border-radius: var(--radius); font-size: 0.65rem; margin-top: 6px;
-        }
-        .law-crime-label {
-            font-weight: 600; color: var(--dim);
-            text-transform: uppercase; letter-spacing: 0.06em;
-            font-family: var(--f-display); font-size: 0.58rem;
-        }
-        .law-notes {
-            font-size: 0.65rem; color: var(--dim); font-style: italic;
-            margin-top: 8px; line-height: 1.5;
-        }
-        .law-meta-info {
-            display: flex; gap: 14px; flex-wrap: wrap;
-            font-size: 0.55rem; color: var(--tmut);
-            font-family: var(--f-mono); margin-top: 8px;
-            padding-top: 8px; border-top: 1px solid var(--border-light);
-        }
-        .law-section { margin-bottom: 20px; }
-        .law-section-header {
-            font-size: 0.7rem; font-weight: 600; color: var(--accent);
-            font-family: var(--f-display); letter-spacing: 0.06em;
-            text-transform: uppercase; margin-bottom: 8px; padding-bottom: 6px;
-            border-bottom: 1px solid var(--border-light);
-        }
-        .law-edit-form { display: flex; flex-direction: column; gap: 6px; }
-        .law-empty {
-            text-align: center; padding: 32px 24px;
-            background: var(--bg2); border: 1px dashed var(--border);
-            border-radius: var(--radius); color: var(--dim);
-            font-size: 0.78rem; line-height: 1.5;
-        }
-        .law-empty p { margin: 0 0 14px 0; }
-
-        /* ---- Economy tab ---- */
-        .eco-stats-grid {
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-            gap: 12px; margin-bottom: 20px;
-        }
-        .eco-stat-card {
-            display: flex; align-items: center; gap: 14px;
-            padding: 14px 16px; background: var(--bg2);
-            border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0;
-        }
-        .eco-stat-icon {
-            display: flex; align-items: center; justify-content: center;
-            width: 40px; height: 40px; background: var(--accent-dim);
-            border-radius: 8px; color: var(--accent); flex-shrink: 0;
-        }
-        .eco-stat-content { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-        .eco-stat-label {
-            font-size: 0.62rem; color: var(--text);
-            font-family: var(--f-display); letter-spacing: 0.04em;
-        }
-        .eco-stat-sub { font-size: 0.55rem; color: var(--dim); font-family: var(--f-mono); }
-
-        .eco-settlement-details h4 {
-            margin: 0 0 12px 0; font-size: 0.85rem; color: var(--accent);
-            font-family: var(--f-display); letter-spacing: 0.06em;
-            text-transform: uppercase;
-            padding-bottom: 6px; border-bottom: 1px solid var(--border-light);
-        }
-        .eco-prosperity, .eco-crime, .eco-justice, .eco-watch, .eco-salary-budget, .eco-religion {
-            display: flex; flex-wrap: wrap; align-items: center;
-            gap: 10px; padding: 10px 0;
-            border-bottom: 1px solid var(--border-light);
-        }
-        .eco-prosperity { flex-direction: column; align-items: stretch; }
-        .eco-prosperity-label, .eco-crime-label, .eco-justice-label,
-        .eco-watch-label, .eco-salary-label, .eco-religion-label {
-            font-size: 0.62rem; color: var(--dim);
-            text-transform: uppercase; letter-spacing: 0.06em;
-            font-family: var(--f-display); font-weight: 600;
-        }
-        .eco-prosperity-bar {
-            height: 10px; background: var(--bg3); border-radius: 5px;
-            overflow: hidden; margin: 6px 0;
-        }
-        .eco-prosperity-fill {
-            height: 100%; border-radius: 5px;
-            transition: width 0.3s ease;
-        }
-        .eco-prosperity-fill.is-ok { background: var(--ok); }
-        .eco-prosperity-fill.is-warning { background: var(--warning); }
-        .eco-prosperity-fill.is-danger { background: var(--danger-lt); }
-        .eco-prosperity-fill.is-danger-strong { background: var(--danger); }
-        .eco-prosperity-fill.is-unknown { background: var(--dim); width: 0; }
-        .eco-prosperity-value, .eco-crime-value, .eco-justice-value,
-        .eco-watch-value, .eco-salary-value, .eco-religion-value {
-            font-size: 0.75rem; color: var(--text);
-            font-family: var(--f-mono);
-        }
-        .eco-crime-value.is-ok { color: var(--ok); }
-        .eco-crime-value.is-warning { color: var(--warning); }
-        .eco-crime-value.is-danger { color: var(--danger-lt); }
-        .eco-crime-value.is-danger-strong { color: var(--danger); }
-        .eco-watch-size { color: var(--dim); font-size: 0.65rem; }
-        .eco-salary-value { color: var(--accent); }
-
-        .eco-integration-banner {
-            padding: 12px 16px; background: var(--accent-dim);
-            border-left: 3px solid var(--accent);
-            border-radius: var(--radius); margin-bottom: 16px;
-            font-size: 0.72rem; color: var(--text); line-height: 1.55;
-        }
-        .eco-integration-banner strong { color: var(--accent-light); }
-
-        .eco-edit-form { display: flex; flex-direction: column; gap: 6px; }
-        .eco-edit-warning {
-            padding: 10px 14px; background: var(--bg3);
-            border-left: 3px solid var(--warning);
-            border-radius: var(--radius); margin-bottom: 16px;
-            font-size: 0.68rem; color: var(--text); line-height: 1.55;
-        }
-        .eco-edit-warning p { margin: 0 0 6px 0; }
-        .eco-edit-warning p:last-child { margin-bottom: 0; }
-        .eco-watch-toggle {
-            display: flex; gap: 20px; flex-wrap: wrap;
-            padding: 6px 0;
-        }
-        .eco-watch-toggle label {
-            display: inline-flex; align-items: center; gap: 8px;
-            font-size: 0.72rem; color: var(--text);
-            font-family: var(--f-body); cursor: pointer;
-        }
-        .eco-watch-toggle input[type="radio"] { accent-color: var(--accent); }
-
-        /* ---- Empty states ---- */
-        .dept-empty, .law-empty, .gh-empty, .gov-details-empty,
-        .eco-details-empty, .gh-details-empty {
-            padding: 32px 24px; text-align: center; color: var(--dim);
-            font-size: 0.78rem; line-height: 1.55;
-            background: var(--bg2); border: 1px dashed var(--border);
-            border-radius: var(--radius);
-        }
-
-        /* ---- Toast / modal ---- */
-        .toast-message { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-        .toast-message svg { flex-shrink: 0; }
-        .icon-svg { display: inline-block; width: 1em; height: 1em; vertical-align: middle; fill: currentColor; }
-
-        .toast { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-        .modal-container { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-        .btn:hover { box-shadow: none !important; }
-
-        /* ---- Sidebar overlay ---- */
         .sidebar-overlay { display: none; }
         .sidebar-overlay.active {
             display: block; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.8); z-index: 999;
         }
 
-        /* ---- Empty / loading states ---- */
         .empty-state {
-            padding: 48px 24px;
-            text-align: center;
-            color: var(--dim);
-            font-size: 0.88rem;
-            line-height: 1.6;
+            padding: 48px 24px; text-align: center;
+            color: var(--dim); font-size: 0.88rem; line-height: 1.6;
         }
         .loading {
-            padding: 24px;
-            text-align: center;
-            color: var(--tmut);
-            font-size: 0.85rem;
+            padding: 24px; text-align: center;
+            color: var(--tmut); font-size: 0.85rem;
             animation: pulse 1.5s ease-in-out infinite;
         }
         @keyframes pulse {
@@ -609,27 +238,22 @@
             50% { opacity: 1; }
         }
 
-        /* ---- Mobile ---- */
         @media (max-width: 768px) {
             .world-app { flex-direction: column; }
             .locations-sidebar {
                 position: fixed; top: 0; bottom: 0; left: 0;
                 height: 100vh; width: 85%; max-width: 280px;
                 z-index: 1000; transform: translateX(-100%);
-                transition: transform 0.3s ease; box-shadow: none;
+                transition: transform 0.3s ease;
             }
             .locations-sidebar.visible { transform: translateX(0); }
             .tab-content-wrapper { padding: 16px; }
             .manager-subtabs {
-                margin: -16px -16px 16px;
-                padding-left: 16px;
-                padding-right: 16px;
+                padding-left: 16px; padding-right: 16px;
             }
             .manager-subtab {
-                flex: 1 1 auto;
-                min-width: 0;
-                padding: 10px 14px;
-                font-size: 0.72rem;
+                flex: 1 1 auto; min-width: 0;
+                padding: 10px 14px; font-size: 0.72rem;
             }
             .year-input label { display: none; }
             .year-input input { width: 52px; min-width: 44px; }
@@ -674,12 +298,10 @@
     <div id="sidebarOverlay" class="sidebar-overlay"></div>
 
     <div class="main-panel">
-        <div class="tab-content-wrapper" id="panelContent">
-            <div class="empty-state" id="emptyStateText">Select a government from the sidebar</div>
-        </div>
+        <div class="manager-subtabs" id="governmentTabStrip" role="tablist"></div>
+        <div class="tab-content-wrapper" id="panelContent" role="tabpanel"></div>
     </div>
 </div>
-
 
 <!-- ================================================================
      BLOCK 1 — CORE CONSTANTS
@@ -710,13 +332,6 @@
      ================================================================ -->
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
-<script>
-    (function () {
-        try {
-            if (typeof window.initializeStorage === 'function') window.initializeStorage();
-        } catch (e) { console.error('[boot] initializeStorage failed:', e); }
-    })();
-</script>
 <script src="js/core/accessors.js"></script>
 
 <!-- ================================================================
@@ -737,42 +352,36 @@
 <script src="js/core/exportUtils.js"></script>
 
 <!-- ================================================================
-     BLOCK 7 — SKILL TAXONOMY
+     BLOCK 7 — TAB MANAGER (must load before any tab file)
+     ================================================================ -->
+<script src="js/core/tab-manager.js"></script>
+
+<!-- ================================================================
+     BLOCK 8 — SKILL TAXONOMY
      ================================================================ -->
 <script src="js/roles/skill-utils.js"></script>
 
 <!-- ================================================================
-     BLOCK 8 — CHARACTER PURE POLICY
+     BLOCK 9 — CHARACTER PURE POLICY + STATE
      ================================================================ -->
 <script src="js/character/family-rules.js"></script>
 <script src="js/character/children-rules.js"></script>
 <script src="js/character/mortality-rules.js"></script>
-
-<!-- ================================================================
-     BLOCK 9 — CHARACTER STATE
-     ================================================================ -->
 <script src="js/character/character-state.js"></script>
 <script src="js/character/family-state.js"></script>
-
-<!-- ================================================================
-     BLOCK 10 — CHARACTER COMMANDS & QUERIES
-     ================================================================ -->
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
 <script src="js/character/family-queries.js"></script>
 <script src="js/character/family-commands.js"></script>
-
-<!-- ================================================================
-     BLOCK 11 — CHARACTER FACTORY & CREATION
-     ================================================================ -->
 <script src="js/character/character-factory.js"></script>
 <script src="js/character/character-creation-commands.js"></script>
 <script src="js/character/character-deletion-commands.js"></script>
 <script src="js/character/mortality-queries.js"></script>
 <script src="js/character/mortality-statistics.js"></script>
+<script src="js/character/character-lifecycle.js"></script>
 
 <!-- ================================================================
-     BLOCK 12 — ROLES
+     BLOCK 10 — ROLES
      ================================================================ -->
 <script src="js/roles/role-constants.js"></script>
 <script src="js/roles/role-state.js"></script>
@@ -780,7 +389,7 @@
 <script src="js/roles/role-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 13 — RANKS
+     BLOCK 11 — RANKS
      ================================================================ -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
@@ -790,7 +399,7 @@
 <script src="js/ranks/rank-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 14 — RELIGION
+     BLOCK 12 — RELIGION
      ================================================================ -->
 <script src="js/religion/religion-constants.js"></script>
 <script src="js/religion/religion-format.js"></script>
@@ -806,7 +415,7 @@
 <script src="js/religion/religion-ui-state.js"></script>
 
 <!-- ================================================================
-     BLOCK 15 — INDUSTRY
+     BLOCK 13 — INDUSTRY
      ================================================================ -->
 <script src="js/industry/industry-constants.js"></script>
 <script src="js/industry/industry-economics.js"></script>
@@ -821,7 +430,7 @@
 <script src="js/industry/industry-queries.js"></script>
 
 <!-- ================================================================
-     BLOCK 16 — HOUSEHOLDS
+     BLOCK 14 — HOUSEHOLDS
      ================================================================ -->
 <script src="js/households/household-constants.js"></script>
 <script src="js/households/household-rules.js"></script>
@@ -830,7 +439,7 @@
 <script src="js/households/household-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 17 — LOCATION
+     BLOCK 15 — LOCATION
      ================================================================ -->
 <script src="js/location/location-state.js"></script>
 <script src="js/location/location-hierarchy.js"></script>
@@ -842,7 +451,6 @@
 <script src="js/location/location-ui-list.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
-<!-- PlaceQueries façade (settlement factory + view models + modals) -->
 <script>
     (function () {
         'use strict';
@@ -850,9 +458,7 @@
             throw new Error('place-queries shim: location-state.js must load first.');
         }
         window.PlaceQueries = {
-            getPlaceById: function (id) {
-                return window.LocationState.getPlaceById(id);
-            },
+            getPlaceById: function (id) { return window.LocationState.getPlaceById(id); },
             getPlaceSummaries: function () {
                 return (window.LocationQueries && typeof window.LocationQueries.getPlaceSummaries === 'function')
                     ? window.LocationQueries.getPlaceSummaries()
@@ -863,7 +469,7 @@
 </script>
 
 <!-- ================================================================
-     BLOCK 18 — SETTLEMENT
+     BLOCK 16 — SETTLEMENT
      ================================================================ -->
 <script src="js/settlement/settlement-fiscal-definitions.js"></script>
 <script src="js/settlement/settlement-government-definitions.js"></script>
@@ -910,7 +516,7 @@
 <script src="js/settlement/settlement-ui-state.js"></script>
 
 <!-- ================================================================
-     BLOCK 19 — GOVERNMENT
+     BLOCK 17 — GOVERNMENT (domain modules)
      ================================================================ -->
 <script src="js/government/government-constants.js"></script>
 <script src="js/government/government-state.js"></script>
@@ -929,12 +535,12 @@
 <script src="js/government/settlement-law-formatters.js"></script>
 
 <!-- ================================================================
-     BLOCK 20 — CHARACTER LIFECYCLE
+     BLOCK 18 — UI STATE (active tab, selected location)
      ================================================================ -->
-<script src="js/character/character-lifecycle.js"></script>
+<script src="js/government/government-ui-state.js"></script>
 
 <!-- ================================================================
-     BLOCK 21 — SELECTORS
+     BLOCK 19 — SELECTORS
      ================================================================ -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
@@ -951,20 +557,20 @@
 <script src="js/selectors/modals-char-selector.js"></script>
 
 <!-- ================================================================
-     BLOCK 22 — RELIGION MODALS
+     BLOCK 20 — RELIGION MODALS
      ================================================================ -->
 <script src="js/religion/modals-religion.js"></script>
 <script src="js/religion/religion-bootstrap.js"></script>
 
 <!-- ================================================================
-     BLOCK 23 — CHARACTER UI MODALS
+     BLOCK 21 — CHARACTER UI MODALS
      ================================================================ -->
 <script src="js/character/character-ui-list.js"></script>
 <script src="js/character/modals-character.js"></script>
 <script src="js/character/modals-death.js"></script>
 
 <!-- ================================================================
-     BLOCK 24 — SETTLEMENT UI
+     BLOCK 22 — SETTLEMENT UI
      ================================================================ -->
 <script src="js/settlement/settlement-tabs.js"></script>
 <script src="js/settlement/settlement-ui-list.js"></script>
@@ -973,7 +579,7 @@
 <script src="js/settlement/modals-settlement-roles.js"></script>
 
 <!-- ================================================================
-     BLOCK 25 — GOVERNMENT TABS
+     BLOCK 23 — GOVERNMENT TABS (self-register with TabManager)
      ================================================================ -->
 <script src="js/tabs/government-details-tab.js"></script>
 <script src="js/tabs/government-departments-tab.js"></script>
@@ -981,400 +587,10 @@
 <script src="js/tabs/government-civil-laws-tab.js"></script>
 <script src="js/tabs/government-economy-tab.js"></script>
 
-
 <!-- ================================================================
-     SUB-TAB HOST
+     BLOCK 24 — BOOTSTRAP (configures TabManager, wires shell)
      ================================================================ -->
-<script>
-    (function () {
-        'use strict';
-        var SUBTABS = [
-            { id: 'details', label: 'Details', icon: 'CROWN', render: function (c, p) { if (window.GovernmentDetailsTab) window.GovernmentDetailsTab.render(c, p); } },
-            { id: 'departments', label: 'Departments', icon: 'HOUSEHOLD', render: function (c, p) { if (window.DepartmentsTab) window.DepartmentsTab.render(c, p); } },
-            { id: 'history', label: 'History', icon: 'TIMELINE', render: function (c, p) { if (window.GovernmentHistoryTab) window.GovernmentHistoryTab.render(c, p); } },
-            { id: 'laws', label: 'Civil Laws', icon: 'SHIELD', render: function (c, p) { if (window.LawsTab) window.LawsTab.render(c, p); } },
-            { id: 'economy', label: 'Economy', icon: 'COIN', render: function (c, p) { if (window.EconomyDetailsTab) window.EconomyDetailsTab.render(c, p); } }
-        ];
-        var _activeSubtabId = 'details';
-
-        function _icon(name) {
-            return (window.Icons && typeof window.Icons[name] === 'string') ? window.Icons[name] : '';
-        }
-        function _esc(s) {
-            return typeof window.escapeHtml === 'function'
-                ? window.escapeHtml(s)
-                : String(s == null ? '' : s);
-        }
-
-        function renderSubtabStrip(containerId, entityId) {
-            var container = document.getElementById(containerId);
-            if (!container) return;
-
-            var stripHtml = '<div class="manager-subtabs" role="tablist">';
-            for (var i = 0; i < SUBTABS.length; i++) {
-                var t = SUBTABS[i];
-                var active = t.id === _activeSubtabId ? ' active' : '';
-                stripHtml += '<button type="button" class="manager-subtab' + active + '" data-subtab-id="' + _esc(t.id) + '">' +
-                    (_icon(t.icon) ? '<span class="manager-subtab-icon">' + _icon(t.icon) + '</span>' : '') +
-                    '<span>' + _esc(t.label) + '</span></button>';
-            }
-            stripHtml += '</div>';
-            var panelHtml = '<div id="' + _esc(containerId) + '-subpanel" class="manager-subpanel" role="tabpanel"></div>';
-            container.innerHTML = stripHtml + panelHtml;
-
-            var buttons = container.querySelectorAll('.manager-subtab');
-            for (var b = 0; b < buttons.length; b++) {
-                (function (btn) {
-                    btn.addEventListener('click', function () {
-                        var id = btn.getAttribute('data-subtab-id');
-                        if (id && id !== _activeSubtabId) {
-                            _activeSubtabId = id;
-                            renderSubtabStrip(containerId, entityId);
-                        }
-                    });
-                })(buttons[b]);
-            }
-
-            var activeTab = null;
-            for (var j = 0; j < SUBTABS.length; j++) {
-                if (SUBTABS[j].id === _activeSubtabId) { activeTab = SUBTABS[j]; break; }
-            }
-            if (activeTab) activeTab.render(containerId + '-subpanel', entityId);
-        }
-
-        window.renderManagerTab = function (containerId, entityId) {
-            renderSubtabStrip(containerId, entityId);
-        };
-    })();
-</script>
-
-<!-- ================================================================
-     MANAGER INIT
-     ================================================================ -->
-<script>
-(function () {
-    'use strict';
-
-    function getIcon(name) { return (window.Icons && window.Icons[name]) ? window.Icons[name] : ''; }
-    function iconWithText(icon, text) {
-        if (!icon) return text || '';
-        return '<span style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">' + icon + '<span>' + (text || '') + '</span></span>';
-    }
-    function showToast(msg, type) { if (typeof window.showToast === 'function') window.showToast(msg, type); }
-
-    var currentPlaceId = null;
-    var isInitialized = false;
-
-    function setupUIText() {
-        var title = document.getElementById('govManagerTitle');
-        if (title) title.innerHTML = iconWithText(getIcon('CROWN'), ' GOVERNMENT MANAGER');
-        var sidebarTitle = document.getElementById('sidebarTitle');
-        if (sidebarTitle) sidebarTitle.innerHTML = iconWithText(getIcon('LOCATION'), ' GOVERNMENTS');
-        var importBtn = document.getElementById('importBtn');
-        if (importBtn) importBtn.innerHTML = iconWithText(getIcon('ARROW_RIGHT'), ' Import');
-        var exportBtn = document.getElementById('exportBtn');
-        if (exportBtn) exportBtn.innerHTML = iconWithText(getIcon('ARROW_RIGHT'), ' Export');
-        var refreshBtn = document.getElementById('refreshBtn');
-        if (refreshBtn) refreshBtn.innerHTML = iconWithText(getIcon('REFRESH'), ' Refresh');
-        var loadingText = document.getElementById('loadingText');
-        if (loadingText) loadingText.textContent = 'Loading governments...';
-        var emptyState = document.getElementById('emptyStateText');
-        if (emptyState) emptyState.textContent = 'Select a government from the sidebar';
-    }
-
-    // ---- Set Year control ---------------------------------------------
-    function setupYearControl() {
-        var input = document.getElementById('yearInput');
-        var btn = document.getElementById('setYearBtn');
-        if (!input || !btn) return;
-
-        function syncFromCanonical() {
-            try {
-                var y = (typeof window.getCurrentYear === 'function')
-                    ? window.getCurrentYear()
-                    : (window.masterData && window.masterData.data
-                        ? window.masterData.data.currentYear
-                        : null);
-                if (typeof y === 'number' && isFinite(y)) {
-                    input.value = String(y);
-                }
-            } catch (e) { /* ignore */ }
-        }
-        syncFromCanonical();
-
-        function applyYear() {
-            var raw = input.value;
-            var y = parseInt(raw, 10);
-            if (!isFinite(y)) {
-                showToast('Enter a valid year', 'error');
-                return;
-            }
-            if (typeof window.isValidYear === 'function' && window.isValidYear(y) !== true) {
-                showToast('Year out of range', 'error');
-                return;
-            }
-
-            var applied = false;
-
-            if (typeof window.setCurrentYear === 'function') {
-                try {
-                    var result = window.setCurrentYear(y);
-                    if (result === false) {
-                        showToast('Could not set year', 'error');
-                        return;
-                    }
-                    applied = true;
-                } catch (e) {
-                    showToast('Set year failed: ' + (e.message || 'unknown'), 'error');
-                    return;
-                }
-            }
-
-            if (!applied) {
-                if (!window.masterData || !window.masterData.data) {
-                    showToast('Storage not initialized', 'error');
-                    return;
-                }
-                window.masterData.data.currentYear = y;
-                if (typeof window.markDataDirty === 'function') {
-                    try { window.markDataDirty(); } catch (e) { /* ignore */ }
-                }
-                if (typeof window.saveMasterData === 'function') {
-                    try { window.saveMasterData(); } catch (e) { /* ignore */ }
-                }
-                applied = true;
-            }
-
-            if (applied) {
-                showToast('Year set to ' + y, 'success');
-                syncFromCanonical();
-                if (typeof window.renderManagerTab === 'function' && currentPlaceId) {
-                    try { window.renderManagerTab('panelContent', currentPlaceId); }
-                    catch (e) { /* ignore */ }
-                }
-                if (window.LocationUI && typeof window.LocationUI.renderLocationList === 'function') {
-                    try { setupSidebar(); } catch (e) { /* ignore */ }
-                }
-            }
-        }
-
-        btn.addEventListener('click', applyYear);
-        input.addEventListener('keydown', function (e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                applyYear();
-            }
-        });
-    }
-
-    function setupSidebar() {
-        var container = document.getElementById('placeList');
-        if (!container) return;
-
-        if (window.LocationUI && typeof window.LocationUI.renderLocationList === 'function') {
-            try {
-                window.LocationUI.renderLocationList('placeList', {
-                    selectedId: currentPlaceId,
-                    onSelect: function (placeOrId) {
-                        var id = (typeof placeOrId === 'string')
-                            ? placeOrId
-                            : (placeOrId && placeOrId.id ? placeOrId.id : null);
-                        if (!id) return;
-                        currentPlaceId = id;
-                        renderTab();
-                        if (window.innerWidth <= 768) closeSidebar();
-                    }
-                });
-                return;
-            } catch (e) { console.error(e); }
-        }
-
-        var places = (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
-        if (places && places.length > 0) {
-            var html = '<div class="place-tree">';
-            for (var i = 0; i < places.length; i++) {
-                var p = places[i];
-                var sel = (p.id === currentPlaceId);
-                html += '<div class="place-item' + (sel ? ' selected' : '') + '" data-place-id="' + p.id + '" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border);' + (sel ? 'background:var(--accent-dim);' : '') + '"><span>' + (p.displayName || p.name || 'Unknown') + '</span></div>';
-            }
-            html += '</div>';
-            container.innerHTML = html;
-            var items = container.querySelectorAll('.place-item');
-            for (var j = 0; j < items.length; j++) {
-                (function (item) {
-                    item.addEventListener('click', function () {
-                        var placeId = this.dataset.placeId;
-                        if (placeId) {
-                            currentPlaceId = placeId;
-                            renderTab();
-                            if (window.innerWidth <= 768) closeSidebar();
-                        }
-                    });
-                })(items[j]);
-            }
-        } else {
-            container.innerHTML = '<div class="empty-state">No governments found</div>';
-        }
-    }
-
-    function closeSidebar() {
-        var s = document.getElementById('locationsSidebar');
-        var o = document.getElementById('sidebarOverlay');
-        if (s) s.classList.remove('visible');
-        if (o) o.classList.remove('active');
-    }
-    function openSidebar() {
-        var s = document.getElementById('locationsSidebar');
-        var o = document.getElementById('sidebarOverlay');
-        if (s) s.classList.add('visible');
-        if (o) o.classList.add('active');
-    }
-    function toggleSidebar() {
-        if (document.getElementById('locationsSidebar').classList.contains('visible')) closeSidebar();
-        else openSidebar();
-    }
-
-    function renderTab() {
-        var panel = document.getElementById('panelContent');
-        if (!panel) return;
-
-        if (!currentPlaceId) {
-            var places = (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
-            if (places && places.length > 0) {
-                for (var i = 0; i < places.length; i++) {
-                    if (places[i].variableKey && places[i].variableKey !== 'world_root') {
-                        currentPlaceId = places[i].id;
-                        break;
-                    }
-                }
-                if (!currentPlaceId && places.length > 0) currentPlaceId = places[0].id;
-            }
-        }
-
-        if (!currentPlaceId) {
-            panel.innerHTML = '<div class="empty-state">Select a government from the sidebar</div>';
-            return;
-        }
-
-        if (typeof window.renderManagerTab === 'function') {
-            window.renderManagerTab('panelContent', currentPlaceId);
-        }
-    }
-
-    function setupTopBarActions() {
-        var importBtn = document.getElementById('importBtn');
-        if (importBtn) importBtn.onclick = function () {
-            if (typeof window.importData !== 'function') { showToast('Import not available', 'error'); return; }
-            window.importData()
-                .then(function () {
-                    if (window.GovernmentBootstrap && window.GovernmentBootstrap.reinit) {
-                        try { window.GovernmentBootstrap.reinit(); } catch (e) { /* ignore */ }
-                    }
-                    setupSidebar();
-                    renderTab();
-                    showToast('Import successful', 'success');
-                })
-                .catch(function (err) {
-                    showToast('Import failed: ' + (err && err.message ? err.message : 'unknown'), 'error');
-                });
-        };
-
-        var exportBtn = document.getElementById('exportBtn');
-        if (exportBtn) exportBtn.onclick = function () {
-            if (typeof window.exportData !== 'function') { showToast('Export not available', 'error'); return; }
-            try { window.exportData(); showToast('Export started', 'success'); }
-            catch (e) { showToast('Export failed: ' + (e.message || 'unknown'), 'error'); }
-        };
-
-        var refreshBtn = document.getElementById('refreshBtn');
-        if (refreshBtn) refreshBtn.onclick = function () {
-            if (typeof window.loadMasterData === 'function') window.loadMasterData();
-            setTimeout(function () { setupSidebar(); renderTab(); showToast('Refreshed', 'success'); }, 100);
-        };
-    }
-
-    function init() {
-        if (isInitialized) return;
-        isInitialized = true;
-
-        setupUIText();
-
-        if (typeof window.loadMasterData === 'function') window.loadMasterData();
-
-        if (window.GovernmentBootstrap) {
-            try { window.GovernmentBootstrap.init(); }
-            catch (e) { console.error('GovernmentBootstrap.init failed:', e); }
-        }
-
-        setTimeout(function () {
-            setupSidebar();
-            setupTopBarActions();
-            setupYearControl();
-            renderTab();
-
-            var menuToggle = document.getElementById('menuToggle');
-            if (menuToggle) menuToggle.addEventListener('click', toggleSidebar);
-            var overlay = document.getElementById('sidebarOverlay');
-            if (overlay) overlay.addEventListener('click', closeSidebar);
-        }, 150);
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
-    }
-})();
-</script>
-
-<!-- ================================================================
-     THEME SWITCHER
-     ================================================================ -->
-<script>
-(function () {
-    'use strict';
-    var themeBtn = document.getElementById('themeBtn');
-    var themeMenu = document.getElementById('themeMenu');
-    var themeName = document.getElementById('themeName');
-    var switcher = window.ThemeSwitcher;
-    if (!switcher) return;
-
-    function updateLabel(id) {
-        var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
-        if (themeName) themeName.textContent = label;
-    }
-    function buildMenu() {
-        var html = '';
-        for (var i = 0; i < switcher.themes.length; i++) {
-            var id = switcher.themes[i];
-            var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
-            html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' + id + '">' + label + '</button></li>';
-        }
-        if (themeMenu) themeMenu.innerHTML = html;
-    }
-    function openMenu() { if (themeMenu) { themeMenu.hidden = false; themeBtn.setAttribute('aria-expanded', 'true'); } }
-    function closeMenu() { if (themeMenu) { themeMenu.hidden = true; themeBtn.setAttribute('aria-expanded', 'false'); } }
-    if (themeBtn) themeBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        if (themeMenu.hidden) openMenu(); else closeMenu();
-    });
-    if (themeMenu) themeMenu.addEventListener('click', function (e) {
-        var btn = e.target.closest('[data-theme-id]'); if (!btn) return;
-        var id = btn.getAttribute('data-theme-id');
-        switcher.apply(id); updateLabel(id); closeMenu();
-    });
-    document.addEventListener('click', function (e) {
-        if (themeMenu && !themeMenu.hidden) {
-            if (themeMenu.contains(e.target)) return;
-            if (e.target === themeBtn) return;
-            closeMenu();
-        }
-    });
-    buildMenu();
-    var saved = switcher.getSaved();
-    if (saved) updateLabel(saved);
-})();
-</script>
+<script src="js/tabs/government-manager-bootstrap.js"></script>
 
 </body>
 </html>
