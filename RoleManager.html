@@ -1,912 +1,1554 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Role & Apprenticeship Manager</title>
-    <link rel="stylesheet" href="css/common.css" />
-    <link rel="stylesheet" href="css/selectors.css" />
-	    <link rel="stylesheet" href="css/role-manager.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover" />
+    <title>Role Manager</title>
+    <link rel="icon" href="data:," />
 
+    <script src="js/core/theme-boot.js"></script>
+
+    <link rel="stylesheet" href="css/themes.css">
+    <link rel="stylesheet" href="css/common.css">
+    <link rel="stylesheet" href="css/role-manager.css">
+
+    <style>
+        /* ============================================================
+           Role Manager — inline CSS (structural only).
+           Every visual value comes from a theme token in themes.css.
+           No hex values, no rgba() values, no hardcoded font stacks.
+           Spacing uses rem. Matches ReligionManager.html's shell.
+
+           The .role-* rules at the bottom are the shell's own bits
+           (sidebar row, tab strip); each tab file injects its own
+           style block on demand. Nothing here collides with those.
+           ============================================================ */
+
+        html, body { height: 100%; margin: 0; overflow: hidden; }
+        body {
+            display: flex;
+            flex-direction: column;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 1rem;
+            line-height: var(--lh, 1.5);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .topbar {
+            position: relative;
+            z-index: 100;
+            flex-shrink: 0;
+            background: var(--bg2);
+            padding: 0.5rem 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.625rem;
+            border-bottom: 1px solid var(--border);
+            min-height: 3rem;
+            flex-wrap: wrap;
+        }
+        .topbar .title {
+            font-family: var(--f-display);
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: var(--accent);
+            white-space: nowrap;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+        .topbar .title svg { width: 1em; height: 1em; fill: currentColor; }
+        .topbar .spacer { flex: 1; min-width: 0.75rem; }
+        .topbar .burger-menu {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 0.25rem 0.625rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        .tb-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3125rem;
+            padding: 0.375rem 0.875rem;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.7rem;
+            font-weight: 500;
+            cursor: pointer;
+            line-height: 1.2;
+        }
+        .tb-btn svg { width: 0.9em; height: 0.9em; fill: currentColor; }
+        .tb-btn:hover {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+        .tb-btn.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--accent-fg);
+        }
+        .tb-btn.primary:hover { background: var(--accent-dark); }
+        .tb-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+        .year-input {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3125rem;
+            padding: 0.1875rem 0.625rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-family: var(--f-body);
+            font-size: 0.7rem;
+            line-height: 1.2;
+        }
+        .year-input label {
+            font-family: var(--f-display);
+            font-size: 0.55rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--dim);
+            white-space: nowrap;
+        }
+        .year-input input {
+            width: 4rem;
+            padding: 0.1875rem 0.375rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-mono);
+            font-size: 0.7rem;
+            text-align: right;
+        }
+        .year-input input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .theme-toggle { position: relative; display: inline-flex; }
+        .theme-toggle__menu {
+            position: absolute;
+            top: calc(100% + 0.25rem);
+            right: 0;
+            z-index: 9999;
+            min-width: 10rem;
+            max-height: 60vh;
+            padding: 0.25rem;
+            margin: 0;
+            list-style: none;
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow-y: auto;
+        }
+        .theme-toggle__menu[hidden] { display: none; }
+        .theme-toggle__menu button {
+            display: block;
+            width: 100%;
+            padding: 0.375rem 0.75rem;
+            text-align: left;
+            background: transparent;
+            border: none;
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.7rem;
+            border-radius: var(--radius);
+            cursor: pointer;
+        }
+        .theme-toggle__menu button:hover {
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+
+        .app-layout {
+            display: flex;
+            flex-direction: row;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+        }
+        .sidebar {
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--bg2);
+            border-right: 1px solid var(--border);
+            width: 17.5rem;
+        }
+        .sidebar-header {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg3);
+        }
+        .sidebar-header h3 {
+            margin: 0;
+            font-family: var(--f-display);
+            font-size: 0.65rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+        .sidebar-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.5rem;
+            min-height: 0;
+        }
+        .main-panel {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-width: 0;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        .manager-subtabs {
+            position: sticky;
+            top: 0;
+            display: flex;
+            align-items: stretch;
+            gap: 0.25rem;
+            padding: 0.5rem 1.5rem 0;
+            margin: 0 0 1.25rem;
+            background: var(--bg2);
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+            z-index: 10;
+        }
+        .manager-subtab {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.125rem 0.6875rem;
+            background: transparent;
+            border: 1px solid transparent;
+            border-bottom: none;
+            border-radius: var(--radius) var(--radius) 0 0;
+            color: var(--dim);
+            font-family: var(--f-display);
+            font-size: 0.78rem;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .manager-subtab:hover {
+            color: var(--accent-light);
+            background: var(--accent-dim);
+        }
+        .manager-subtab.active {
+            color: var(--accent);
+            background: var(--bg2);
+            border-color: var(--border);
+            font-weight: 600;
+        }
+        .manager-subtab-icon {
+            display: inline-flex;
+            width: 1rem;
+            height: 1rem;
+            align-items: center;
+            justify-content: center;
+            color: currentColor;
+        }
+        .manager-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
+
+        .tab-content-wrapper {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 1.25rem 1.5rem;
+            background: var(--bg);
+        }
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
+
+        /* ---- Shared: hints, empty, loading ---- */
+        .ct-hint {
+            background: var(--bg2);
+            border-left: 3px solid var(--accent);
+            padding: 0.625rem 0.875rem;
+            margin-bottom: 1rem;
+            font-size: 0.7rem;
+            color: var(--dim);
+            line-height: 1.55;
+            border-radius: 0 var(--radius) var(--radius) 0;
+        }
+        .ct-empty,
+        .rt-empty {
+            padding: 1.5rem;
+            text-align: center;
+            color: var(--dim);
+            font-size: 0.8rem;
+        }
+        .ct-empty__sub,
+        .rt-empty__sub {
+            display: block;
+            margin-top: 0.375rem;
+            font-size: 0.7rem;
+            color: var(--dim);
+        }
+        .rt-unavailable {
+            padding: 1.5rem;
+            text-align: center;
+            color: var(--danger-lt);
+            font-size: 0.8rem;
+        }
+        .loading,
+        .loading-placeholder {
+            padding: 1.5rem;
+            text-align: center;
+            color: var(--dim);
+            font-size: 0.85rem;
+        }
+
+        /* ---- Sidebar row (fallback when RoleUI is absent) ---- */
+        .role-list { display: flex; flex-direction: column; gap: 0.125rem; }
+        .role-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 0.625rem;
+            border-radius: var(--radius);
+            cursor: pointer;
+            font-size: 0.78rem;
+            color: var(--text);
+        }
+        .role-row:hover { background: var(--bg3); }
+        .role-row.is-selected {
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+
+        @media (max-width: 768px) {
+            .topbar .burger-menu { display: inline-flex; }
+            .topbar { padding: 0.375rem 0.625rem; gap: 0.375rem; min-height: 2.625rem; }
+            .topbar .title { font-size: 0.75rem; }
+            .topbar .tb-btn { padding: 0.1875rem 0.625rem; font-size: 0.65rem; }
+            .year-input { padding: 0.125rem 0.375rem; }
+            .year-input label { display: none; }
+            .year-input input { width: 3.25rem; font-size: 0.65rem; }
+            .app-layout { flex-direction: column; }
+            .sidebar {
+                position: fixed;
+                top: 0; bottom: 0; left: 0;
+                height: 100vh;
+                width: 85%;
+                max-width: 17.5rem;
+                z-index: 1000;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+            }
+            .sidebar.visible { transform: translateX(0); }
+            .tab-content-wrapper { padding: 1rem; }
+            .manager-subtabs { padding-left: 1rem; padding-right: 1rem; }
+            .manager-subtab {
+                flex: 1 1 auto; min-width: 0;
+                padding: 0.625rem 0.875rem; font-size: 0.72rem;
+            }
+        }
+
+        .sidebar-overlay { display: none; }
+        .sidebar-overlay.active {
+            display: block;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--overlay, rgba(0, 0, 0, 0.6));
+            z-index: 999;
+        }
+    </style>
 </head>
 <body>
 
-    <!-- TOP BAR -->
-    <div class="topbar">
-        <button class="burger-btn" id="burgerBtn">☰</button>
-        <span class="title"> Still Waters · Role & Apprenticeship Manager</span>
-        <span class="spacer"></span>
+<div class="topbar">
+    <button id="menuToggle" class="burger-menu" type="button" aria-label="Toggle menu">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 6h18M3 12h18M3 18h18"/>
+        </svg>
+    </button>
+    <div class="title" id="roleManagerTitle">Role Manager</div>
+    <div class="spacer"></div>
 
-        <button class="btn" id="createRoleBtn">+ Role</button>
-        <button class="btn" id="refreshBtn">⟳ Refresh</button>
+    <button id="createRoleBtn" class="tb-btn primary" type="button">+ Role</button>
+    <button id="editRoleBtn" class="tb-btn" type="button" disabled>Edit</button>
+    <button id="deleteRoleBtn" class="tb-btn" type="button" disabled>Delete</button>
 
+    <div class="year-input">
         <label for="yearInput">Year</label>
-        <input type="number" class="year-input" id="yearInput" value="1250" />
-        <button class="btn" id="setYearBtn">Set</button>
-        <button class="btn" id="exportBtn">Export</button>
-        <button class="btn" id="importBtn">Import</button>
-        <input type="file" id="fileInput" accept=".json" style="display:none" />
+        <input type="number" id="yearInput" min="1" step="1">
+        <button id="setYearBtn" class="tb-btn" type="button">Set</button>
     </div>
 
-    <!-- APP LAYOUT -->
-    <div class="app-layout">
+    <button id="importBtn" class="tb-btn" type="button">Import</button>
+    <button id="exportBtn" class="tb-btn" type="button">Export</button>
+    <button id="refreshBtn" class="tb-btn" type="button">Refresh</button>
 
-        <!-- SIDEBAR -->
-        <div class="sidebar" id="sidebar">
-            <h3>Roles</h3>
-            <div class="role-count"><span id="roleCount">0</span> roles total</div>
-            <div id="roleListContainer">
-                <div class="loading-placeholder" style="text-align:center;padding:20px;color:var(--dim);font-size:0.7rem;">Loading roles...</div>
-            </div>
-        </div>
+    <input type="file" id="fileInput" accept=".json" style="display:none;" />
 
-        <!-- MAIN PANEL WITH TABS -->
-        <div class="main-panel" id="mainPanel">
-            <div class="panel-tabs" id="panelTabs">
-                <button class="tab-btn active" data-tab="details">
-                    <span class="tab-icon" id="icon-details"></span> Role Details
-                </button>
-                <button class="tab-btn" data-tab="apprenticeships">
-                    <span class="tab-icon" id="icon-apprenticeships"></span> Apprenticeships
-                </button>
-                <button class="tab-btn" data-tab="statistics">
-                    <span class="tab-icon" id="icon-statistics"></span> Analytics
-                </button>
-            </div>
+    <div class="theme-toggle" role="group" aria-label="Theme">
+        <button class="tb-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+            <span aria-hidden="true">◐</span>
+            <span id="themeName">Dark</span>
+        </button>
+        <ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden></ul>
+    </div>
+</div>
 
-            <div class="tab-content" id="tabContent">
-                <!-- DETAILS TAB -->
-                <div class="tab-pane active" id="tab-details">
-                    <div class="placeholder">Select a role from the sidebar</div>
-                </div>
-                
-                <!-- APPRENTICESHIP TAB -->
-                <div class="tab-pane" id="tab-apprenticeships">
-                    <div class="placeholder">Loading apprenticeships...</div>
-                </div>
-                
-                <!-- STATISTICS TAB -->
-                <div class="tab-pane" id="tab-statistics">
-                    <div class="placeholder">Select a role from the sidebar to view analytics</div>
-                </div>
-            </div>
+<div class="app-layout">
+    <div class="sidebar" id="roleSidebar">
+        <div class="sidebar-header"><h3 id="sidebarTitle">Roles</h3></div>
+        <div class="sidebar-list" id="roleListContainer">
+            <div class="loading">Loading roles…</div>
         </div>
     </div>
+    <div id="sidebarOverlay" class="sidebar-overlay"></div>
 
-    <!-- ============================================================ -->
-    <!-- LOAD LOCALSTORAGE DATA FIRST                                  -->
-    <!-- ============================================================ -->
-    <script>
-        (function() {
-            'use strict';
+    <div class="main-panel">
+        <div class="manager-subtabs" id="panelSubtabs" role="tablist">
+            <button class="manager-subtab active" role="tab" type="button" data-tab="details" aria-selected="true" tabindex="0">
+                <span class="manager-subtab-icon" data-icon="CIRCLE_DOT" aria-hidden="true"></span>
+                <span>Details</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button" data-tab="characters" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="PERSON" aria-hidden="true"></span>
+                <span>Characters</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button" data-tab="apprenticeships" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="BOOK" aria-hidden="true"></span>
+                <span>Apprenticeships</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button" data-tab="analytics" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="STAR_4" aria-hidden="true"></span>
+                <span>Analytics</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button" data-tab="assignments" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="PLUS" aria-hidden="true"></span>
+                <span>Assignments</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button" data-tab="categories" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="GEAR" aria-hidden="true"></span>
+                <span>Categories</span>
+            </button>
+        </div>
+
+        <div class="tab-content-wrapper" id="tabContent" role="tabpanel">
+            <div class="tab-pane active" id="tab-details"          data-tab-content="details"></div>
+            <div class="tab-pane"        id="tab-characters"       data-tab-content="characters"></div>
+            <div class="tab-pane"        id="tab-apprenticeships"  data-tab-content="apprenticeships"></div>
+            <div class="tab-pane"        id="tab-analytics"        data-tab-content="analytics"></div>
+            <div class="tab-pane"        id="tab-assignments"      data-tab-content="assignments"></div>
+            <div class="tab-pane"        id="tab-categories"       data-tab-content="categories"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ================================================================
+     SCRIPTS
+
+     Load order follows ReligionManager.html's structure, with:
+       - NO religion subsystem (not used by the Role Manager).
+       - NO culture subsystem (not used directly; culture-queries
+         aren't in the role tab dependency set).
+       - NO education subsystem (not used by the Role Manager tabs).
+       - NO household subsystem (not used).
+       - YES relationship + professional (apprenticeships require
+         them at load time, per apprenticeship-queries.js §1).
+       - YES apprenticeship (tab 3 depends on it).
+       - YES location (character projections and accessors reference it).
+       - YES culture (name-queries requires CultureQueries at load;
+         and character-factory requires it — even though we don't
+         touch names directly, dropping it breaks character-factory).
+       - YES names (name-queries is a load-time dependency of
+         character-factory.js; we don't call names but the factory
+         must load).
+
+     The three "not used" subsystems above can only be dropped if
+     their load-time dependents are also dropped. character-factory
+     requires name-queries; name-queries requires CultureQueries.
+     So culture + names stay. Religion + education + household are
+     genuinely not referenced anywhere in the tab dependency tree.
+     Verified against:
+       role-details-tab.js        → RoleState, RoleQueries, modals-roles
+       role-characters-tab.js     → RoleState, RoleQueries, RoleCommands, modals-roles
+       role-apprenticeships-tab.js → RoleState, RoleQueries,
+                                     ApprenticeshipQueries, ApprenticeshipCommands,
+                                     TEACHING_CONSTANTS, APPRENTICESHIP_STATUS,
+                                     modals-apprenticeship, modals-char-selector
+       role-analytics-tab.js      → RoleState, RoleQueries, accessors
+       role-assignments-tab.js    → RoleState, RoleQueries, CharacterState,
+                                     modals-roles
+       category-manager-tab.js    → RoleState, RoleCommands, RoleConstants,
+                                     modals-core (confirmDialog)
+     ================================================================ -->
+
+<!-- Core constants -->
+<script src="js/core/constants/constants.js"></script>
+<script src="js/core/constants/age-constants.js"></script>
+<script src="js/core/constants/character-constants.js"></script>
+<script src="js/core/constants/character-traits.js"></script>
+<script src="js/core/constants/location-constants.js"></script>
+<script src="js/core/constants/relationship-constants.js"></script>
+
+<!-- Core utilities -->
+<script src="js/core/formatting.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/randomness.js"></script>
+
+<!-- Core time -->
+<script src="js/core/time.js"></script>
+
+<!-- Core storage + inline initializeStorage() -->
+<script src="js/core/storage-schema.js"></script>
+<script src="js/core/storage.js"></script>
+<script>
+    (function () {
+        try {
+            if (typeof window.initializeStorage === 'function') window.initializeStorage();
+        } catch (e) { console.error('[boot] initializeStorage failed:', e); }
+    })();
+</script>
+
+<!-- Core accessors + PlaceQueries façade -->
+<script src="js/core/accessors.js"></script>
+<script>
+    (function () {
+        'use strict';
+        window.PlaceQueries = {
+            getPlaceById: function (id) {
+                if (!window.LocationState
+                    || typeof window.LocationState.getPlaceById !== 'function') {
+                    return null;
+                }
+                return window.LocationState.getPlaceById(id);
+            },
+            getPlaceSummaries: function () {
+                return (window.LocationQueries
+                    && typeof window.LocationQueries.getPlaceSummaries === 'function')
+                    ? window.LocationQueries.getPlaceSummaries()
+                    : [];
+            },
+            getAllPlaces: function () {
+                return (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
+            }
+        };
+    })();
+</script>
+
+<!-- Core validation, world, names -->
+<script src="js/core/validation.js"></script>
+<script src="js/core/world.js"></script>
+<script src="js/core/names.js"></script>
+
+<!-- Core UI primitives. responsive BEFORE collapsible. -->
+<script src="js/core/ui.js"></script>
+<script src="js/core/ui-state.js"></script>
+<script src="js/core/modals-core.js"></script>
+<script src="js/core/responsive.js"></script>
+<script src="js/core/collapsible.js"></script>
+<script src="js/core/tab-manager.js"></script>
+<script src="js/core/exportUtils.js"></script>
+
+<!-- Skill taxonomy + event logger -->
+<script src="js/roles/skill-utils.js"></script>
+<script src="js/events/eventLogger.js"></script>
+
+<!-- Character pure policy -->
+<script src="js/character/family-rules.js"></script>
+<script src="js/character/children-rules.js"></script>
+<script src="js/character/mortality-rules.js"></script>
+
+<!-- Character state -->
+<script src="js/character/character-state.js"></script>
+<script src="js/character/family-state.js"></script>
+<script src="js/character/children-state.js"></script>
+
+<!-- Character commands & queries -->
+<script src="js/character/character-commands.js"></script>
+<script src="js/character/character-queries.js"></script>
+<script src="js/character/family-queries.js"></script>
+<script src="js/character/family-commands.js"></script>
+
+<!-- Character aggregation + lifecycle -->
+<script src="js/character/mortality-queries.js"></script>
+<script src="js/character/mortality-statistics.js"></script>
+<script src="js/character/family-statistics.js"></script>
+<script src="js/character/character-statistics.js"></script>
+<script src="js/character/character-lifecycle.js"></script>
+
+<!-- Selectors (char selector + household selector not needed for roles;
+     only char-selector is used by role-apprenticeships-tab's Create flow) -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script>
+    if (typeof window.getFilteredLocationOptions !== 'function') {
+        window.getFilteredLocationOptions = function (selectedId) {
+            if (typeof window.buildLocationDropdown === 'function') {
+                return window.buildLocationDropdown(selectedId, null, true);
+            }
+            return '<option value="">All locations</option>';
+        };
+    }
+</script>
+<script src="js/selectors/modals-char-selector.js"></script>
+
+<!-- Character factory & creation (name-queries requires CultureQueries at load) -->
+<script src="js/character/character-factory.js"></script>
+<script src="js/character/character-generator.js"></script>
+<script src="js/character/character-creation-commands.js"></script>
+<script src="js/character/character-deletion-commands.js"></script>
+
+<!-- Character children -->
+<script src="js/character/children-queries.js"></script>
+<script src="js/character/children-generator.js"></script>
+<script src="js/character/children-commands.js"></script>
+<script src="js/character/children-statistics.js"></script>
+
+<!-- Ranks (RoleQueries.getRankSummary reads RankState.getRank;
+     the Rank Manager is not on this page, but rank data must be
+     hydrated for the summary function to return values). -->
+<script src="js/ranks/rank-constants.js"></script>
+<script src="js/ranks/rank-rules.js"></script>
+<script src="js/ranks/rank-state.js"></script>
+<script src="js/ranks/rank-queries.js"></script>
+<script src="js/ranks/rank-assignment.js"></script>
+<script src="js/ranks/rank-commands.js"></script>
+<script src="js/ranks/rank-issues.js"></script>
+<script src="js/ranks/rank-ui-list.js"></script>
+<script src="js/ranks/modals-rank.js"></script>
+<script src="js/ranks/rank-bootstrap.js"></script>
+
+<!-- Roles -->
+<script src="js/roles/role-constants.js"></script>
+<script src="js/roles/role-state.js"></script>
+<script src="js/roles/role-queries.js"></script>
+<script src="js/roles/role-commands.js"></script>
+<script src="js/roles/role-system.js"></script>
+<script src="js/roles/role-ui-list.js"></script>
+<script src="js/roles/modals-roles.js"></script>
+<script src="js/roles/modals-role-select.js"></script>
+
+<!-- Relationship domain (apprenticeship requires these at load) -->
+<script src="js/relationships/relationship-types.js"></script>
+<script src="js/relationships/relationship-utils.js"></script>
+<script src="js/relationships/relationship-state.js"></script>
+<script src="js/relationships/relationship-queries.js"></script>
+<script src="js/relationships/relationship-commands.js"></script>
+<script src="js/relationships/professional-rules.js"></script>
+<script src="js/relationships/professional-queries.js"></script>
+<script src="js/relationships/professional-commands.js"></script>
+
+<!-- Location (character projections reference currentLocationId;
+     apprenticeships location resolver needs getCurrentPlace) -->
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
+<script src="js/location/location-commands.js"></script>
+<script src="js/location/location-queries.js"></script>
+<script src="js/location/location-movement.js"></script>
+<script src="js/location/location-view-models.js"></script>
+<script src="js/location/location-ui-state.js"></script>
+<script src="js/location/location-ui-list.js"></script>
+<script src="js/location/location-presentation.js"></script>
+<script src="js/location/modals-location-helper.js"></script>
+<script src="js/location/modals-location.js"></script>
+<script src="js/location/modals-moves.js"></script>
+<script src="js/location/location-bootstrap.js"></script>
+
+<!-- Culture (name-queries requires CultureQueries at load;
+     character-factory requires name-queries) -->
+<script src="js/culture/culture-constants.js"></script>
+<script src="js/culture/culture-validation.js"></script>
+<script src="js/culture/culture-state.js"></script>
+<script src="js/culture/culture-rules.js"></script>
+<script src="js/culture/culture-commands.js"></script>
+<script src="js/culture/culture-queries.js"></script>
+<script src="js/culture/culture-generation.js"></script>
+<script src="js/culture/culture-view-models.js"></script>
+<script src="js/culture/culture-ui-list.js"></script>
+<script src="js/culture/modals-culture.js"></script>
+<script src="js/culture/culture-bootstrap.js"></script>
+
+<!-- Names (character-factory requires name-queries at load) -->
+<script src="js/names/name-queries.js"></script>
+<script src="js/names/name-rules.js"></script>
+<script src="js/names/names-state.js"></script>
+<script src="js/names/name-commands.js"></script>
+<script src="js/names/name-system.js"></script>
+<script src="js/names/modals-name.js"></script>
+
+<!-- Apprenticeship (tab 3 depends on it; relationship + professional
+     + character-commands + role-commands are all loaded above) -->
+<script src="js/apprenticeship/apprenticeship-constants.js"></script>
+<script src="js/apprenticeship/apprenticeship-rules.js"></script>
+<script src="js/apprenticeship/apprenticeship-queries.js"></script>
+<script src="js/apprenticeship/apprenticeship-commands.js"></script>
+<script src="js/apprenticeship/professional-knowledge-commands.js"></script>
+<script src="js/apprenticeship/modals-apprenticeship.js"></script>
+
+<!-- ============================================================ -->
+<!-- TABMANAGER SCOPE (before the role tab files register)         -->
+<!-- ============================================================ -->
+<script>
+(function () {
+    'use strict';
+
+    if (typeof window.TabManager === 'undefined' || !window.TabManager) {
+        return;
+    }
+
+    // The tab files read `context.role` (canonical accessor clone) and
+    // `context.onRerender` (called after every successful mutation).
+    // The sidebar's selectedRoleId drives both.
+    var context = {
+        role: null,
+        onRerender: function () {
+            if (typeof window.__roleManagerRerenderActiveTab === 'function') {
+                window.__roleManagerRerenderActiveTab();
+            }
+        }
+    };
+    window.RoleTabContext = context;
+
+    window.TabManager.configure('role', {
+        containerRoot: function () {
+            return document.getElementById('tabContent');
+        },
+        buildContext: function () {
+            if (!context.role) return null;
+            return {
+                role: context.role,
+                onRerender: context.onRerender
+            };
+        },
+        buildEmptyState: function (tabId, reason) {
+            if (reason === 'no-renderer') {
+                return 'The "' + tabId + '" tab is not available.';
+            }
+            if (reason === 'no-context') {
+                return 'Select a role from the sidebar to view this tab.';
+            }
+            if (reason === 'no-container') {
+                return '';
+            }
+            return '';
+        }
+    });
+})();
+</script>
+
+<!-- Role tab files -->
+<script src="js/tabs/role-details-tab.js"></script>
+<script src="js/tabs/role-characters-tab.js"></script>
+<script src="js/tabs/role-apprenticeships-tab.js"></script>
+<script src="js/tabs/role-analytics-tab.js"></script>
+<script src="js/tabs/role-assignments-tab.js"></script>
+
+<!-- Shared category manager (registers under BOTH 'role' and 'data' scopes) -->
+<script src="js/tabs/category-manager-tab.js"></script>
+
+<!-- ============================================================ -->
+<!-- DIAGNOSTIC HOOK — adapted from ReligionManager.html's          -->
+<!-- __religionDiag. Read-only. Reads masterData.data.roles and     -->
+<!-- masterData.data.roleCategories.                                -->
+<!-- ============================================================ -->
+<script>
+(function () {
+    'use strict';
+
+    window.__roleDiag = {
+        snapshot: function (label) {
+            label = label || 'snapshot';
+            console.group('[role-diag] ' + label);
+
+            var md = window.masterData;
+            console.log('masterData present:', !!md);
+            console.log('masterData.data present:', !!(md && md.data));
+            var inMemoryRoles = (md && md.data && md.data.roles);
+            var inMemoryCats = (md && md.data && md.data.roleCategories);
+            console.log('masterData.data.roles type:',
+                Array.isArray(inMemoryRoles) ? 'array' : typeof inMemoryRoles);
+            console.log('masterData.data.roles length:',
+                Array.isArray(inMemoryRoles) ? inMemoryRoles.length : '(not array)');
+            console.log('masterData.data.roleCategories type:',
+                inMemoryCats && typeof inMemoryCats === 'object' && !Array.isArray(inMemoryCats)
+                    ? 'object'
+                    : typeof inMemoryCats);
+            if (Array.isArray(inMemoryRoles)) {
+                console.log('masterData.data.roles content:',
+                    inMemoryRoles.map(function (r) {
+                        return r && r.id ? (r.name || r.id) : '(invalid)';
+                    }));
+            }
+
+            var keys = Object.keys(localStorage);
+            console.log('localStorage keys:', keys);
+            var storageKey = null;
+            for (var i = 0; i < keys.length; i++) {
+                var k = keys[i];
+                var v = null;
+                try { v = localStorage.getItem(k); } catch (e) {}
+                if (v && v.length > 100) {
+                    var parsed = null;
+                    try { parsed = JSON.parse(v); } catch (e) {}
+                    if (parsed && (parsed.data || parsed.schemaVersion)) {
+                        storageKey = k;
+                        console.log('detected save key:', k, 'length:', v.length);
+                        var storageRoles = parsed && parsed.data && parsed.data.roles;
+                        console.log('  storage roles type:',
+                            Array.isArray(storageRoles) ? 'array' : typeof storageRoles);
+                        console.log('  storage roles length:',
+                            Array.isArray(storageRoles) ? storageRoles.length : '(not array)');
+                        if (Array.isArray(storageRoles)) {
+                            console.log('  storage roles content:',
+                                storageRoles.map(function (r) {
+                                    return r && r.id ? (r.name || r.id) : '(invalid)';
+                                }));
+                        }
+                        console.log('  schemaVersion:', parsed.schemaVersion);
+                        console.log('  savedAt:', parsed.savedAt);
+                    }
+                }
+            }
+            if (!storageKey) {
+                console.warn('No save key detected in localStorage. ' +
+                    'Nothing has been persisted under a recognizable schema.');
+            }
+
+            if (storageKey && Array.isArray(inMemoryRoles)) {
+                var parsed = JSON.parse(localStorage.getItem(storageKey));
+                var storageRoles = parsed && parsed.data && parsed.data.roles;
+                if (Array.isArray(storageRoles)) {
+                    console.log('SAME ROLE COUNT?',
+                        inMemoryRoles.length === storageRoles.length,
+                        '(memory:', inMemoryRoles.length,
+                        'storage:', storageRoles.length, ')');
+                }
+            }
+
+            console.groupEnd();
+            return { storageKey: storageKey };
+        },
+
+        saveAndInspect: function () {
+            console.group('[role-diag] saveAndInspect');
+
+            if (typeof window.saveMasterData !== 'function') {
+                console.error('saveMasterData is not a function. Storage module not loaded.');
+                console.groupEnd();
+                return;
+            }
+
+            var before = window.__roleDiag._countInStorage();
+            console.log('storage role count BEFORE save:', before);
+
+            var ok = null;
+            try { ok = window.saveMasterData(); }
+            catch (e) {
+                console.error('saveMasterData threw:', e);
+                console.groupEnd();
+                return;
+            }
+            console.log('saveMasterData() returned:', ok);
+
+            if (typeof window.getLastSaveError === 'function') {
+                var err = window.getLastSaveError();
+                console.log('getLastSaveError():', err);
+            }
+
+            var after = window.__roleDiag._countInStorage();
+            console.log('storage role count AFTER save:', after);
+            console.log('count increased by save?', (after - before));
+
+            window.__roleDiag.snapshot('after-save');
+            console.groupEnd();
+        },
+
+        _countInStorage: function () {
+            var keys = Object.keys(localStorage);
+            for (var i = 0; i < keys.length; i++) {
+                var v = null;
+                try { v = localStorage.getItem(keys[i]); } catch (e) {}
+                if (v && v.length > 100) {
+                    var parsed = null;
+                    try { parsed = JSON.parse(v); } catch (e) {}
+                    if (parsed && parsed.data && Array.isArray(parsed.data.roles)) {
+                        return parsed.data.roles.length;
+                    }
+                }
+            }
+            return -1;
+        },
+
+        keys: function () {
+            var keys = Object.keys(localStorage);
+            console.table(keys.map(function (k) {
+                var v = localStorage.getItem(k);
+                return {
+                    key: k,
+                    length: v ? v.length : 0,
+                    preview: v ? v.slice(0, 60) : ''
+                };
+            }));
+        }
+    };
+
+    console.log('[role-diag] Diagnostic hook installed. ' +
+        'Run one of these in the console:\n' +
+        '  __roleDiag.snapshot()          — current memory vs storage\n' +
+        '  __roleDiag.saveAndInspect()    — force save, then compare\n' +
+        '  __roleDiag.keys()              — list localStorage keys\n' +
+        '  __roleDiag._countInStorage()   — count roles in storage');
+
+    setTimeout(function () {
+        window.__roleDiag.snapshot('after-load');
+    }, 500);
+})();
+</script>
+
+<!-- ============================================================ -->
+<!-- ORCHESTRATOR                                                 -->
+<!-- ============================================================ -->
+<script>
+(function () {
+    'use strict';
+
+    var roleContainer  = document.getElementById('roleListContainer');
+    var sidebar        = document.getElementById('roleSidebar');
+    var sidebarOverlay = document.getElementById('sidebarOverlay');
+    var menuToggle     = document.getElementById('menuToggle');
+    var yearInput      = document.getElementById('yearInput');
+    var setYearBtn     = document.getElementById('setYearBtn');
+    var exportBtn      = document.getElementById('exportBtn');
+    var importBtn      = document.getElementById('importBtn');
+    var fileInput      = document.getElementById('fileInput');
+    var createRoleBtn  = document.getElementById('createRoleBtn');
+    var editRoleBtn    = document.getElementById('editRoleBtn');
+    var deleteRoleBtn  = document.getElementById('deleteRoleBtn');
+    var refreshBtn     = document.getElementById('refreshBtn');
+
+    var tabButtons = Array.prototype.slice.call(
+        document.querySelectorAll('.manager-subtabs .manager-subtab')
+    );
+
+    var selectedRoleId = null;
+    var activeTabId    = 'details';
+    var isInitialized  = false;
+
+    function bootstrap() {
+        if (isInitialized) return;
+        isInitialized = true;
+
+        if (typeof window.loadMasterData === 'function') {
+            try { window.loadMasterData(); }
+            catch (e) {
+                console.error('[role-manager] loadMasterData failed:', e);
+            }
+        }
+
+        // Ensure the roles / roleCategories arrays exist before
+        // RoleState.init() reads them.
+        if (window.masterData && window.masterData.data) {
+            if (!Array.isArray(window.masterData.data.roles)) {
+                window.masterData.data.roles = [];
+            }
+            if (!window.masterData.data.roleCategories
+                || typeof window.masterData.data.roleCategories !== 'object'
+                || Array.isArray(window.masterData.data.roleCategories)) {
+                window.masterData.data.roleCategories = {};
+            }
+        }
+
+        // RoleState.init() must run AFTER masterData loads. It is
+        // mandatory (RoleState's public reads throw before it). See
+        // role-state.js::INITIALISATION CONTRACT.
+        if (window.RoleState && typeof window.RoleState.init === 'function') {
+            try { window.RoleState.init(); }
+            catch (e) {
+                console.error('[role-manager] RoleState.init failed:', e);
+            }
+        }
+
+        // These subsystems hydrate from masterData on load, but calling
+        // their bootstraps is idempotent and ensures arrays exist even
+        // when the preload block didn't seed them. Order matches the
+        // script load order above.
+        if (window.RankBootstrap && typeof window.RankBootstrap.init === 'function') {
+            try { window.RankBootstrap.init(); } catch (e) { console.error(e); }
+        }
+        if (window.LocationBootstrap && typeof window.LocationBootstrap.init === 'function') {
+            try { window.LocationBootstrap.init(); } catch (e) { console.error(e); }
+        }
+        if (window.CultureBootstrap && typeof window.CultureBootstrap.init === 'function') {
+            try { window.CultureBootstrap.init(); } catch (e) { console.error(e); }
+        }
+        if (window.TabManager && typeof window.TabManager.init === 'function') {
+            try { window.TabManager.init(); } catch (e) {
+                console.error('[role-manager] TabManager.init failed:', e);
+            }
+        }
+
+        // Sidebar refresh hook — the tab files call
+        // window.renderRoleList after mutations that change the
+        // sidebar's labels/counts. Expose it here so any tab can
+        // trigger a sidebar re-render without reaching into the
+        // orchestrator's internals.
+        window.renderRoleList = renderRoleList;
+
+        // Re-render whatever tab is currently active. Called by the
+        // TabManager context's onRerender callback that every tab
+        // uses after a successful mutation.
+        window.__roleManagerRerenderActiveTab = function () {
+            renderActiveTab();
+        };
+
+        injectIcons();
+        syncYearInput();
+        renderRoleList();
+        pickInitialSelection();
+        syncTabButtons(activeTabId);
+    }
+
+    function injectIcons() {
+        if (typeof window.Icons === 'undefined') {
+            setTimeout(injectIcons, 100);
+            return;
+        }
+        var nodes = document.querySelectorAll('[data-icon]');
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i];
+            var name = node.getAttribute('data-icon');
+            var svg = window.Icons[name] || window.Icons.CIRCLE || '';
+            node.innerHTML = svg;
+        }
+    }
+
+    function renderRoleList() {
+        if (!roleContainer) return;
+
+        var RS = window.RoleState;
+        var roles = [];
+        if (RS && typeof RS.getAllRoles === 'function') {
+            try { roles = RS.getAllRoles() || []; }
+            catch (e) {
+                console.error('[role-manager] getAllRoles failed:', e);
+                roleContainer.innerHTML =
+                    '<div class="ct-empty">Role state not initialised.</div>';
+                return;
+            }
+        }
+
+        if (!roles || roles.length === 0) {
+            roleContainer.innerHTML =
+                '<div class="ct-empty">' +
+                '<div>No roles found</div>' +
+                '<div class="ct-empty__sub">Click "+ Role" to add one</div>' +
+                '</div>';
+            return;
+        }
+
+        // Try RoleUI's sidebar-compatible renderer first.
+        var RUI = window.RoleUI;
+        if (RUI && typeof RUI.renderRoleList === 'function') {
             try {
-                var STORAGE_KEY = 'stillwaters_master';
-                var stored = localStorage.getItem(STORAGE_KEY);
-                if (stored) {
-                    var parsed = JSON.parse(stored);
-                    if (parsed && parsed.data) {
-                        window.masterData = parsed;
-                    }
-                }
-            } catch(e) {}
-
-            if (!window.masterData || !window.masterData.data) {
-                window.masterData = {
-                    version: '2.0',
-                    lastUpdated: new Date().toISOString(),
-                    data: {
-                        characters: [],
-                        places: [],
-                        ranks: [],
-                        roles: [],
-                        roleCategories: {},
-                        households: [],
-                        residences: [],
-                        relationships: [],
-                        currentYear: 1250
-                    }
-                };
-            }
-        })();
-    </script>
-
-    <!-- ============================================================ -->
-    <!-- SET TAB ICONS AFTER ICONS.JS LOADS                           -->
-    <!-- ============================================================ -->
-    <script>
-        function setTabIcons() {
-            var icons = window.Icons || {};
-            var detailsIcon = document.getElementById('icon-details');
-            var appsIcon = document.getElementById('icon-apprenticeships');
-            var statsIcon = document.getElementById('icon-statistics');
-            
-            if (detailsIcon && icons.CIRCLE_DOT) {
-                detailsIcon.innerHTML = icons.CIRCLE_DOT;
-            } else if (detailsIcon) {
-                detailsIcon.textContent = '◉';
-            }
-            
-            if (appsIcon && icons.PERSON) {
-                appsIcon.innerHTML = icons.PERSON;
-            } else if (appsIcon) {
-                appsIcon.textContent = '⌇';
-            }
-            
-            if (statsIcon && icons.CHART) {
-                statsIcon.innerHTML = icons.CHART || icons.GEAR || '▦';
-            } else if (statsIcon) {
-                statsIcon.textContent = '▦';
+                RUI.renderRoleList(roleContainer.id, {
+                    filteredRoles: roles,
+                    showStats: false,
+                    showActions: false,
+                    selectedId: selectedRoleId,
+                    rowClass: 'role-row',
+                    onSelect: function (id) { selectRole(id); },
+                    onEdit: null,
+                    onDelete: null
+                });
+                // RoleUI.renderRoleList expects a container ID, not an
+                // element. That matches the canon signature in
+                // role-ui-list.js. Re-bind selection highlight because
+                // its rows carry `.role-row` and it toggles inline
+                // styles (not our .is-selected class). We layer our
+                // highlight on top.
+                _highlightSidebarSelection();
+                return;
+            } catch (e) {
+                console.warn('[role-manager] RoleUI.renderRoleList failed, falling back:', e);
             }
         }
+        renderRoleListFallback(roles);
+    }
 
-        // Try immediately, and again after icons load
-        if (document.readyState === 'complete') {
-            setTimeout(setTabIcons, 100);
+    function _highlightSidebarSelection() {
+        if (!roleContainer) return;
+        var rows = roleContainer.querySelectorAll('[data-role-id]');
+        for (var i = 0; i < rows.length; i++) {
+            rows[i].classList.toggle(
+                'is-selected',
+                rows[i].getAttribute('data-role-id') === selectedRoleId
+            );
         }
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(setTabIcons, 200);
+    }
+
+    function renderRoleListFallback(roles) {
+        var sorted = roles.slice().sort(function (a, b) {
+            return String(a.name || '').localeCompare(String(b.name || ''));
         });
-    </script>
-
-    <!-- ============================================================ -->
-    <!-- CORE - NO SYSTEM DEPENDENCIES                                -->
-    <!-- ============================================================ -->
-    <script src="js/core/constants.js"></script>
-    <script src="js/core/randomness.js"></script>
-    <script src="js/core/collections.js"></script>
-    <script src="js/core/validation.js"></script>
-    <script src="js/core/formatting.js"></script>
-    <script src="js/core/time.js"></script>
-    <script src="js/core/ids.js"></script>
-    <script src="js/core/storage.js"></script>
-    <script src="js/core/accessors.js"></script>
-    <script src="js/core/world.js"></script>
-    <script src="js/core/names.js"></script>
-    <script src="js/core/state.js"></script>
-    <script src="js/core/integrity.js"></script>
-    <script src="js/core/icons.js"></script>
-    <script src="js/core/ui.js"></script>
-    <script src="js/core/collapsible.js"></script>
-    <script src="js/core/responsive.js"></script>
-    <script src="js/core/modals-core.js"></script>
-    <script src="js/core/exportUtils.js"></script>
-    <script src="js/core/query-helpers.js"></script>
-    <script src="js/core/family-accessors.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- SELECTORS                                                    -->
-    <!-- ============================================================ -->
-    <script src="js/selectors/selector-base.js"></script>
-    <script src="js/selectors/locationDropdown.js"></script>
-    <script src="js/selectors/modals-char-selector.js"></script>
-    <script src="js/selectors/modals-household-selector.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- ROLE SYSTEM                                                  -->
-    <!-- ============================================================ -->
-    <script src="js/roles/role-constants.js"></script>
-    <script src="js/roles/skill-utils.js"></script>
-    <script src="js/roles/role-state.js"></script>
-    <script src="js/roles/role-queries.js"></script>
-    <script src="js/roles/role-commands.js"></script>
-    <script src="js/roles/role-ui-list.js"></script>
-    <script src="js/roles/modals-roles.js"></script>
-    <script src="js/roles/modals-role-select.js"></script>
-    <script src="js/roles/role-system.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- CHARACTER SYSTEM                                             -->
-    <!-- ============================================================ -->
-    <script src="js/character/character-state.js"></script>
-    <script src="js/character/character-commands.js"></script>
-    <script src="js/character/character-queries.js"></script>
-    <script src="js/character/character-lifecycle.js"></script>
-    <script src="js/character/character-ui-list.js"></script>
-    <script src="js/character/modals-character.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- CHILDREN/PREGNANCY SYSTEM                                    -->
-    <!-- ============================================================ -->
-    <script src="js/children/children-state.js"></script>
-    <script src="js/children/children-queries.js"></script>
-    <script src="js/children/children-commands.js"></script>
-    <script src="js/children/children-lifecycle.js"></script>
-    <script src="js/children/pregnancy-service.js"></script>
-    <script src="js/children/surrogacy-service.js"></script>
-    <script src="js/children/adoption-service.js"></script>
-    <script src="js/children/modals-birth.js"></script>
-    <script src="js/children/modals-surrogacy.js"></script>
-    <script src="js/children/modals-adoption.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- LOCATION SYSTEM                                              -->
-    <!-- ============================================================ -->
-    <script src="js/location/location-state.js"></script>
-    <script src="js/location/location-commands.js"></script>
-    <script src="js/location/location-queries.js"></script>
-    <script src="js/location/location-hierarchy.js"></script>
-    <script src="js/location/location-movement.js"></script>
-    <script src="js/location/location-ui-list.js"></script>
-    <script src="js/location/modals-location.js"></script>
-    <script src="js/location/modals-moves.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- RELIGION SYSTEM                                              -->
-    <!-- ============================================================ -->
-    <script src="js/religion/religion-constants.js"></script>
-    <script src="js/religion/religion-state.js"></script>
-    <script src="js/religion/religion-inheritance.js"></script>
-    <script src="js/religion/religion-laws.js"></script>
-    <script src="js/religion/religion-queries.js"></script>
-    <script src="js/religion/religion-commands.js"></script>
-    <script src="js/religion/religion-ui-list.js"></script>
-    <script src="js/religion/modals-religion.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- CULTURE SYSTEM                                               -->
-    <!-- ============================================================ -->
-    <script src="js/culture/culture-constants.js"></script>
-    <script src="js/culture/culture-state.js"></script>
-    <script src="js/culture/culture-queries.js"></script>
-    <script src="js/culture/culture-commands.js"></script>
-    <script src="js/culture/culture-generation.js"></script>
-    <script src="js/culture/culture-ui-list.js"></script>
-    <script src="js/culture/modals-culture.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- SETTLEMENT SYSTEM                                            -->
-    <!-- ============================================================ -->
-    <script src="js/settlement/settlement-state.js"></script>
-    <script src="js/settlement/settlement-commands-core.js"></script>
-    <script src="js/settlement/settlement-ranks.js"></script>
-    <script src="js/settlement/settlement-features.js"></script>
-    <script src="js/settlement/settlement-economy-core.js"></script>
-    <script src="js/settlement/settlement-prosperity.js"></script>
-    <script src="js/settlement/settlement-enterprises.js"></script>
-    <script src="js/settlement/settlement-government.js"></script>
-    <script src="js/settlement/settlement-budget.js"></script>
-    <script src="js/settlement/settlement-commands-writes.js"></script>
-    <script src="js/settlement/settlement-commands-annual.js"></script>
-    <script src="js/settlement/settlement-queries.js"></script>
-    <script src="js/settlement/settlement-crud.js"></script>
-    <script src="js/settlement/settlement-ui-list.js"></script>
-    <script src="js/settlement/modals-settlement-core.js"></script>
-    <script src="js/settlement/modals-settlement-economy.js"></script>
-    <script src="js/settlement/modals-settlement-roles.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- GOVERNMENT SYSTEM                                            -->
-    <!-- ============================================================ -->
-    <script src="js/government/government-state.js"></script>
-    <script src="js/government/government-economy.js"></script>
-    <script src="js/government/government-assignment.js"></script>
-    <script src="js/government/government-laws.js"></script>
-    <script src="js/government/government-queries.js"></script>
-    <script src="js/government/government-commands.js"></script>
-    <script src="js/government/government-ui-list.js"></script>
-    <script src="js/government/modals-government.js"></script>
-    <script src="js/government/modals-government-departments.js"></script>
-    <script src="js/government/modals-government-positions.js"></script>
-    <script src="js/government/modals-government-assign.js"></script>
-    <script src="js/government/modals-government-economy.js"></script>
-    <script src="js/government/government-system.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- INDUSTRY SYSTEM                                              -->
-    <!-- ============================================================ -->
-    <script src="js/industry/industry-types.js"></script>
-    <script src="js/industry/industry-state.js"></script>
-    <script src="js/industry/industry-queries.js"></script>
-    <script src="js/industry/industry-commands.js"></script>
-    <script src="js/industry/industry-processor.js"></script>
-    <script src="js/industry/industry-ui-list.js"></script>
-    <script src="js/industry/modals-industry.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- HOUSEHOLD SYSTEM                                             -->
-    <!-- ============================================================ -->
-    <script src="js/households/household-state.js"></script>
-    <script src="js/households/household-queries.js"></script>
-    <script src="js/households/household-commands.js"></script>
-    <script src="js/households/household-economy.js"></script>
-    <script src="js/households/household-assignment.js"></script>
-    <script src="js/households/household-servant.js"></script>
-    <script src="js/households/household-ui-list.js"></script>
-    <script src="js/households/modals-household.js"></script>
-    <script src="js/households/modals-household-economy.js"></script>
-    <script src="js/households/modals-household-snapshot.js"></script>
-    <script src="js/households/modals-household-staff.js"></script>
-    <script src="js/households/modals-assign-staff.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- RESIDENCE SYSTEM                                             -->
-    <!-- ============================================================ -->
-    <script src="js/households/residence-system.js"></script>
-    <script src="js/households/modals-residence.js"></script>
-    <script src="js/households/modals-residence-history.js"></script>
-    <script src="js/households/modals-residence-vacancy.js"></script>
-    <script src="js/households/modals-residence-staff.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- NAME SYSTEM                                                  -->
-    <!-- ============================================================ -->
-    <script src="js/names/name-state.js"></script>
-    <script src="js/names/name-queries.js"></script>
-    <script src="js/names/name-commands.js"></script>
-    <script src="js/names/name-rules.js"></script>
-    <script src="js/names/name-system.js"></script>
-    <script src="js/names/modals-name.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- MORTALITY SYSTEM                                             -->
-    <!-- ============================================================ -->
-    <script src="js/mortality/mortality-state.js"></script>
-    <script src="js/mortality/mortality-queries.js"></script>
-    <script src="js/mortality/mortality-commands.js"></script>
-    <script src="js/mortality/modals-death.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- CRIME SYSTEM                                                 -->
-    <!-- ============================================================ -->
-    <script src="js/crime/crime-constants.js"></script>
-    <script src="js/crime/crime-state.js"></script>
-    <script src="js/crime/crime-queries.js"></script>
-    <script src="js/crime/crime-commands.js"></script>
-    <script src="js/crime/crime-law-integration.js"></script>
-    <script src="js/crime/vendetta-system.js"></script>
-    <script src="js/crime/crime-ui-stats.js"></script>
-    <script src="js/crime/modals-crime.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- RANK SYSTEM                                                  -->
-    <!-- ============================================================ -->
-    <script src="js/ranks/rank-constants.js"></script>
-    <script src="js/ranks/rank-state.js"></script>
-    <script src="js/ranks/rank-queries.js"></script>
-    <script src="js/ranks/rank-assignments.js"></script>
-    <script src="js/ranks/rank-commands.js"></script>
-    <script src="js/ranks/rank-issues.js"></script>
-    <script src="js/ranks/rank-ui-list.js"></script>
-    <script src="js/ranks/modals-rank.js"></script>
-    <script src="js/tabs/rank-manager-tab.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- RELATIONSHIP SYSTEM                                          -->
-    <!-- ============================================================ -->
-    <script src="js/relationships/relationship-types.js"></script>
-    <script src="js/relationships/relationship-registry.js"></script>
-    <script src="js/relationships/relationship-queries.js"></script>
-    <script src="js/relationships/romance-logic.js"></script>
-    <script src="js/relationships/friendship-logic.js"></script>
-    <script src="js/relationships/professional-logic.js"></script>
-    <script src="js/relationships/family-logic.js"></script>
-    <script src="js/relationships/jealousy-system.js"></script>
-    <script src="js/relationships/affair-system.js"></script>
-    <script src="js/relationships/relationshipFinder.js"></script>
-    <script src="js/relationships/modals-relationship.js"></script>
-    <script src="js/relationships/modals-friendship.js"></script>
-    <script src="js/relationships/modals-family.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- CENSUS SYSTEM                                                -->
-    <!-- ============================================================ -->
-    <script src="js/events/census-core.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- SOCIAL EVENTS SYSTEM                                         -->
-    <!-- ============================================================ -->
-    <script src="js/events/social-events-system.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- TIMELINE SYSTEM                                              -->
-    <!-- ============================================================ -->
-    <script src="js/events/timeline-core.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- APPRENTICESHIP SYSTEM                                        -->
-    <!-- ============================================================ -->
-    <script src="js/apprenticeship/apprenticeship-constants.js"></script>
-    <script src="js/apprenticeship/apprenticeship-system.js"></script>
-    <script src="js/apprenticeship/modals-apprenticeship.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- TABS                                                        -->
-    <!-- ============================================================ -->
-    <script src="js/tabs/apprenticeship-tab.js"></script>
-    <script src="js/tabs/roles-tab.js"></script>
-    <script src="js/tabs/roles-analytics-tab.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- EDUCATION SYSTEM                                             -->
-    <!-- ============================================================ -->
-    <script src="js/education/education-constants.js"></script>
-    <script src="js/education/education-state.js"></script>
-    <script src="js/education/education-history.js"></script>
-    <script src="js/education/education-learning.js"></script>
-    <script src="js/education/education-commands.js"></script>
-    <script src="js/education/education-queries.js"></script>
-    <script src="js/education/education-annual.js"></script>
-    <script src="js/education/education-ui-list.js"></script>
-    <script src="js/education/modals-education.js"></script>
-    <script src="js/education/education-system.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- DISASTER SYSTEM                                              -->
-    <!-- ============================================================ -->
-    <script src="js/disaster/disaster-constants.js"></script>
-    <script src="js/disaster/disaster-state.js"></script>
-    <script src="js/disaster/disaster-queries.js"></script>
-    <script src="js/disaster/disaster-damage.js"></script>
-    <script src="js/disaster/disaster-commands.js"></script>
-    <script src="js/disaster/disaster-ui-stats.js"></script>
-    <script src="js/disaster/modals-disaster.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- ORCHESTRATORS                                               -->
-    <!-- ============================================================ -->
-    <script src="js/events/annualProcessing.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- MAIN APP SCRIPT                                              -->
-    <!-- ============================================================ -->
-    <script>
-        (function() {
-            'use strict';
-
-            var sidebar = document.getElementById('sidebar');
-            var burgerBtn = document.getElementById('burgerBtn');
-            var roleListContainer = document.getElementById('roleListContainer');
-            var exportBtn = document.getElementById('exportBtn');
-            var importBtn = document.getElementById('importBtn');
-            var fileInput = document.getElementById('fileInput');
-            var yearInput = document.getElementById('yearInput');
-            var setYearBtn = document.getElementById('setYearBtn');
-            var createRoleBtn = document.getElementById('createRoleBtn');
-            var refreshBtn = document.getElementById('refreshBtn');
-
-            var isInitialized = false;
-
-            // ============================================================
-            // SIDEBAR TOGGLE
-            // ============================================================
-            function toggleSidebar() {
-                sidebar.classList.toggle('open');
+        var html = '<div class="role-list">';
+        for (var i = 0; i < sorted.length; i++) {
+            var r = sorted[i];
+            if (!r || !r.id) continue;
+            var sel = r.id === selectedRoleId ? ' is-selected' : '';
+            var catLabel = '';
+            if (r.category && window.RoleConstants && window.RoleConstants.DEFAULT_ROLE_CATEGORIES
+                && window.RoleConstants.DEFAULT_ROLE_CATEGORIES[r.category]) {
+                catLabel = ' · ' + window.RoleConstants.DEFAULT_ROLE_CATEGORIES[r.category].name;
             }
-
-            function closeSidebar() {
-                sidebar.classList.remove('open');
-            }
-
-            burgerBtn.addEventListener('click', toggleSidebar);
-
-            document.addEventListener('click', function(e) {
-                if (window.innerWidth <= 768) {
-                    if (!sidebar.contains(e.target) && e.target !== burgerBtn) {
-                        closeSidebar();
-                    }
-                }
-            });
-
-            document.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape') closeSidebar();
-            });
-
-            window.addEventListener('resize', function() {
-                if (window.innerWidth > 768) closeSidebar();
-            });
-
-            // ============================================================
-            // GET/SET FULL DATA
-            // ============================================================
-            function getFullData() {
-                if (typeof window.masterData !== 'undefined' && window.masterData) {
-                    return window.masterData;
-                }
-                return null;
-            }
-
-            function setFullData(data) {
-                if (data && data.data) {
-                    window.masterData = data;
-                } else if (data && data.roles) {
-                    window.masterData = {
-                        version: '2.0',
-                        lastUpdated: new Date().toISOString(),
-                        data: data
-                    };
-                } else {
-                    return false;
-                }
-
-                try {
-                    localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData));
-                } catch(e) {}
-
-                if (typeof window.saveMasterData === 'function') {
-                    window.saveMasterData(true);
-                }
-                if (typeof window.invalidateAccessorCaches === 'function') {
-                    window.invalidateAccessorCaches();
-                }
-                if (typeof window.RoleState !== 'undefined' &&
-                    typeof window.RoleState._rebuildCaches === 'function') {
-                    window.RoleState._rebuildCaches();
-                }
-
-                return true;
-            }
-
-            // ============================================================
-            // RENDER ROLE LIST
-            // ============================================================
-            function renderRoleList() {
-                if (!roleListContainer) return;
-
-                var RQ = window.RoleQueries;
-                var RUI = window.RoleUI;
-
-                if (!RQ || !RUI || typeof RUI.renderRoleList !== 'function') {
-                    roleListContainer.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.7rem;">Loading roles...</div>';
-                    return;
-                }
-
-                var roles = RQ.getRoles({});
-                if (!roles || roles.length === 0) {
-                    roleListContainer.innerHTML = 
-                        '<div style="text-align:center;padding:30px;color:var(--dim);font-size:0.7rem;">' +
-                        'No roles found. Click "+ Role" to create one.' +
-                        '</div>';
-                    document.getElementById('roleCount').textContent = '0';
-                    return;
-                }
-
-                document.getElementById('roleCount').textContent = roles.length;
-
-                var selectedId = null;
-                if (typeof window.RolesTab !== 'undefined') {
-                    selectedId = window.RolesTab.getSelectedRole ? window.RolesTab.getSelectedRole() : window.RolesTab._selectedRoleId;
-                }
-                if (!selectedId && window._selectedRoleId) {
-                    selectedId = window._selectedRoleId;
-                }
-
-                try {
-                    RUI.renderRoleList('roleListContainer', {
-                        filteredRoles: roles,
-                        selectedId: selectedId,
-                        showStats: false,
-                        showActions: false,
-                        rowClass: 'role-sidebar-item',
-                        onSelect: function(roleId) {
-                            if (typeof window.RolesTab !== 'undefined') {
-                                if (typeof window.RolesTab.setSelectedRole === 'function') {
-                                    window.RolesTab.setSelectedRole(roleId);
-                                } else {
-                                    window.RolesTab._selectedRoleId = roleId;
-                                    window._selectedRoleId = roleId;
-                                    if (typeof window.RolesTab.renderRoleDetail === 'function') {
-                                        window.RolesTab.renderRoleDetail('tab-details');
-                                    }
-                                }
-                            } else {
-                                window._selectedRoleId = roleId;
-                            }
-                            
-                            if (typeof window.ApprenticeshipTab !== 'undefined' && 
-                                typeof window.ApprenticeshipTab.setSelectedRole === 'function') {
-                                window.ApprenticeshipTab.setSelectedRole(roleId);
-                            }
-                            
-                            if (typeof window.RolesAnalyticsTab !== 'undefined' && 
-                                typeof window.RolesAnalyticsTab.setSelectedRole === 'function') {
-                                window.RolesAnalyticsTab.setSelectedRole(roleId);
-                            } else if (typeof window.RolesAnalyticsTab !== 'undefined') {
-                                window.RolesAnalyticsTab._selectedRoleId = roleId;
-                                window._selectedRoleId = roleId;
-                                if (typeof window.RolesAnalyticsTab.renderAnalyticsTab === 'function') {
-                                    window.RolesAnalyticsTab.renderAnalyticsTab('tab-statistics');
-                                }
-                            }
-                            
-                            renderRoleList();
-                            if (window.innerWidth <= 768) closeSidebar();
-                        },
-                        onEdit: function(roleId) {
-                            if (typeof window.openEditRoleModal === 'function') {
-                                window.openEditRoleModal(roleId, function() {
-                                    renderRoleList();
-                                    if (typeof window.RolesTab !== 'undefined' && 
-                                        typeof window.RolesTab.renderRoleDetail === 'function') {
-                                        window.RolesTab.renderRoleDetail('tab-details');
-                                    }
-                                });
-                            }
-                        },
-                        onDelete: function(roleId) {
-                            if (typeof window.openDeleteRoleModal === 'function') {
-                                window.openDeleteRoleModal(roleId, function() {
-                                    if (typeof window.RolesTab !== 'undefined') {
-                                        window.RolesTab._selectedRoleId = null;
-                                        window._selectedRoleId = null;
-                                        if (typeof window.RolesTab.renderRoleDetail === 'function') {
-                                            window.RolesTab.renderRoleDetail('tab-details');
-                                        }
-                                    }
-                                    renderRoleList();
-                                });
-                            }
-                        },
-                        emptyMessage: 'No roles found'
-                    });
-
-                } catch(e) {
-                    console.error('renderRoleList error:', e);
-                    roleListContainer.innerHTML = '<div style="text-align:center;padding:20px;color:var(--danger);font-size:0.7rem;">Error loading roles</div>';
-                }
-            }
-
-            // ============================================================
-            // IMPORT / EXPORT
-            // ============================================================
-            exportBtn.addEventListener('click', function() {
-                var data = getFullData();
-                if (!data) {
-                    alert('No data to export');
-                    return;
-                }
-                var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-                var url = URL.createObjectURL(blob);
-                var a = document.createElement('a');
-                a.href = url;
-                a.download = 'stillwaters_export_' + Date.now() + '.json';
-                a.click();
-                URL.revokeObjectURL(url);
-            });
-
-            importBtn.addEventListener('click', function() {
-                fileInput.value = '';
-                fileInput.click();
-            });
-
-            fileInput.addEventListener('change', function() {
-                var file = this.files[0];
-                if (!file) return;
-
-                var reader = new FileReader();
-                reader.onload = function(e) {
-                    try {
-                        var imported = JSON.parse(e.target.result);
-                        var dataToImport = null;
-
-                        if (imported.data && imported.version) {
-                            dataToImport = imported;
-                        } else if (imported.roles || imported.characters || imported.relationships) {
-                            dataToImport = {
-                                version: '2.0',
-                                lastUpdated: new Date().toISOString(),
-                                data: imported
-                            };
-                        } else if (imported.data) {
-                            dataToImport = {
-                                version: '2.0',
-                                lastUpdated: new Date().toISOString(),
-                                data: imported.data
-                            };
-                        }
-
-                        if (!dataToImport) {
-                            alert('Invalid format: Could not recognize data structure.');
-                            return;
-                        }
-
-                        if (setFullData(dataToImport)) {
-                            renderRoleList();
-                            if (typeof window.RolesTab !== 'undefined' && 
-                                typeof window.RolesTab.renderRoleDetail === 'function') {
-                                window.RolesTab.renderRoleDetail('tab-details');
-                            }
-                            if (typeof window.ApprenticeshipTab !== 'undefined' && 
-                                typeof window.ApprenticeshipTab.renderApprenticeshipList === 'function') {
-                                window.ApprenticeshipTab.renderApprenticeshipList('tab-apprenticeships');
-                            }
-                            if (typeof window.RolesAnalyticsTab !== 'undefined' && 
-                                typeof window.RolesAnalyticsTab.renderAnalyticsTab === 'function') {
-                                window.RolesAnalyticsTab.renderAnalyticsTab('tab-statistics');
-                            }
-                        } else {
-                            alert('Import failed');
-                        }
-                    } catch(err) {
-                        alert('Invalid JSON: ' + err.message);
-                    }
-                };
-                reader.readAsText(file);
-                this.value = '';
-            });
-
-            // ============================================================
-            // YEAR SETTER
-            // ============================================================
-            setYearBtn.addEventListener('click', function() {
-                var val = parseInt(yearInput.value, 10);
-                if (!isNaN(val) && window.masterData) {
-                    window.masterData.data.currentYear = val;
-                    try {
-                        localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData));
-                    } catch(e) {}
-                    if (typeof window.saveMasterData === 'function') {
-                        window.saveMasterData(true);
-                    }
-                }
-            });
-
-            // ============================================================
-            // BUTTON HANDLERS
-            // ============================================================
-            createRoleBtn.addEventListener('click', function() {
-                if (typeof window.openCreateRoleModal === 'function') {
-                    window.openCreateRoleModal(function() {
-                        renderRoleList();
-                        if (typeof window.RolesTab !== 'undefined' && 
-                            typeof window.RolesTab.renderRoleDetail === 'function') {
-                            window.RolesTab.renderRoleDetail('tab-details');
-                        }
-                        if (typeof window.RolesAnalyticsTab !== 'undefined' && 
-                            typeof window.RolesAnalyticsTab.renderAnalyticsTab === 'function') {
-                            window.RolesAnalyticsTab.renderAnalyticsTab('tab-statistics');
-                        }
-                    });
-                } else {
-                    alert('Role system not loaded');
-                }
-            });
-
-            refreshBtn.addEventListener('click', function() {
-                renderRoleList();
-                if (typeof window.RolesTab !== 'undefined' && 
-                    typeof window.RolesTab.renderRoleDetail === 'function') {
-                    window.RolesTab.renderRoleDetail('tab-details');
-                }
-                if (typeof window.ApprenticeshipTab !== 'undefined' && 
-                    typeof window.ApprenticeshipTab.renderApprenticeshipList === 'function') {
-                    window.ApprenticeshipTab.renderApprenticeshipList('tab-apprenticeships');
-                }
-                if (typeof window.RolesAnalyticsTab !== 'undefined' && 
-                    typeof window.RolesAnalyticsTab.renderAnalyticsTab === 'function') {
-                    window.RolesAnalyticsTab.renderAnalyticsTab('tab-statistics');
-                }
-            });
-
-            // ============================================================
-            // TAB CLICK HANDLERS
-            // ============================================================
-            document.querySelectorAll('[data-tab]').forEach(function(tabBtn) {
-                tabBtn.addEventListener('click', function(e) {
-                    var tabId = this.dataset.tab;
-                    
-                    document.querySelectorAll('[data-tab]').forEach(function(t) {
-                        t.classList.remove('active');
-                    });
-                    this.classList.add('active');
-                    
-                    document.querySelectorAll('.tab-pane').forEach(function(pane) {
-                        pane.classList.remove('active');
-                        pane.style.display = 'none';
-                    });
-                    
-                    var targetPane = document.getElementById('tab-' + tabId);
-                    if (targetPane) {
-                        targetPane.classList.add('active');
-                        targetPane.style.display = 'block';
-                        
-                        switch (tabId) {
-                            case 'details':
-                                if (typeof window.RolesTab !== 'undefined' && 
-                                    typeof window.RolesTab.renderRoleDetail === 'function') {
-                                    window.RolesTab.renderRoleDetail('tab-details');
-                                }
-                                break;
-                            case 'apprenticeships':
-                                if (typeof window.ApprenticeshipTab !== 'undefined' && 
-                                    typeof window.ApprenticeshipTab.renderApprenticeshipList === 'function') {
-                                    window.ApprenticeshipTab.renderApprenticeshipList('tab-apprenticeships');
-                                }
-                                break;
-                            case 'statistics':
-                                if (typeof window.RolesAnalyticsTab !== 'undefined' && 
-                                    typeof window.RolesAnalyticsTab.renderAnalyticsTab === 'function') {
-                                    var roleId = window._selectedRoleId || 
-                                                 (window.RolesTab ? window.RolesTab._selectedRoleId : null);
-                                    if (roleId && typeof window.RolesAnalyticsTab.setSelectedRole === 'function') {
-                                        window.RolesAnalyticsTab.setSelectedRole(roleId);
-                                    } else {
-                                        window.RolesAnalyticsTab.renderAnalyticsTab('tab-statistics');
-                                    }
-                                }
-                                break;
-                        }
-                    }
+            html += '<div class="role-row' + sel + '" data-role-id="' + escapeHtml(r.id) + '">' +
+                '<span>' + escapeHtml(r.name || r.id) + '</span>' +
+                (catLabel ? '<span style="font-size:0.55rem;color:var(--dim);">' + escapeHtml(catLabel) + '</span>' : '') +
+                '</div>';
+        }
+        html += '</div>';
+        roleContainer.innerHTML = html;
+        var rows = roleContainer.querySelectorAll('[data-role-id]');
+        for (var j = 0; j < rows.length; j++) {
+            (function (row) {
+                row.addEventListener('click', function () {
+                    var id = row.getAttribute('data-role-id');
+                    if (id) selectRole(id);
                 });
+            })(rows[j]);
+        }
+    }
+
+    function pickInitialSelection() {
+        if (selectedRoleId) return;
+        var RS = window.RoleState;
+        if (!RS || typeof RS.getAllRoles !== 'function') return;
+        var roles = [];
+        try { roles = RS.getAllRoles() || []; }
+        catch (e) { return; }
+        if (roles.length > 0 && roles[0] && roles[0].id) {
+            selectRole(roles[0].id);
+        }
+    }
+
+    function selectRole(id) {
+        if (!id) return;
+        selectedRoleId = id;
+
+        if (editRoleBtn)   editRoleBtn.disabled   = false;
+        if (deleteRoleBtn) deleteRoleBtn.disabled = false;
+
+        // Update the tab context. Every tab reads `context.role`.
+        if (window.RoleTabContext) {
+            var fresh = null;
+            try {
+                fresh = (window.RoleState && typeof window.RoleState.getRole === 'function')
+                    ? window.RoleState.getRole(id)
+                    : null;
+            } catch (e) {
+                console.error('[role-manager] getRole failed:', e);
+            }
+            window.RoleTabContext.role = fresh || null;
+        }
+
+        // Sidebar highlight.
+        var items = roleContainer ? roleContainer.querySelectorAll('[data-role-id]') : [];
+        for (var i = 0; i < items.length; i++) {
+            items[i].classList.toggle(
+                'is-selected',
+                items[i].getAttribute('data-role-id') === id
+            );
+        }
+
+        renderActiveTab();
+        if (window.innerWidth <= 768) closeSidebar();
+    }
+
+    function activateTab(tabId) {
+        activeTabId = tabId;
+        syncTabButtons(tabId);
+        renderActiveTab();
+    }
+
+    function syncTabButtons(tabId) {
+        for (var i = 0; i < tabButtons.length; i++) {
+            var btn = tabButtons[i];
+            var isActive = btn.dataset.tab === tabId;
+            btn.classList.toggle('active', isActive);
+            btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            btn.setAttribute('tabindex', isActive ? '0' : '-1');
+        }
+        var panes = document.querySelectorAll('#tabContent .tab-pane');
+        for (var j = 0; j < panes.length; j++) {
+            panes[j].classList.toggle(
+                'active',
+                panes[j].getAttribute('data-tab-content') === tabId
+            );
+        }
+    }
+
+    for (var i = 0; i < tabButtons.length; i++) {
+        (function (btn) {
+            btn.addEventListener('click', function () {
+                activateTab(btn.dataset.tab);
             });
+        })(tabButtons[i]);
+    }
 
-            // ============================================================
-            // INIT
-            // ============================================================
-            function init() {
-                if (isInitialized) return;
-                isInitialized = true;
-
-                if (typeof window.RolesTab !== 'undefined' && 
-                    typeof window.RolesTab.init === 'function') {
-                    window.RolesTab.init('tab-details');
-                }
-
-                if (typeof window.ApprenticeshipTab !== 'undefined' && 
-                    typeof window.ApprenticeshipTab.init === 'function') {
-                    window.ApprenticeshipTab.init('tab-apprenticeships');
-                }
-
-                if (typeof window.RolesAnalyticsTab !== 'undefined' && 
-                    typeof window.RolesAnalyticsTab.init === 'function') {
-                    window.RolesAnalyticsTab.init('tab-statistics');
-                }
-
-                if (typeof window.RoleState === 'undefined' || 
-                    typeof window.RoleQueries === 'undefined') {
-                    roleListContainer.innerHTML = 
-                        '<div style="text-align:center;padding:20px;color:var(--danger);font-size:0.7rem;">' +
-                        'Role system not loaded. Check script paths.' +
-                        '</div>';
+    function renderActiveTab() {
+        if (window.TabManager && typeof window.TabManager.has === 'function') {
+            try {
+                if (window.TabManager.has('role', activeTabId)) {
+                    window.TabManager.activate('role', activeTabId);
                     return;
                 }
-
-                renderRoleList();
-
-                var roles = window.RoleQueries.getRoles({});
-                if (roles && roles.length > 0) {
-                    var firstRoleId = roles[0].id;
-                    window._selectedRoleId = firstRoleId;
-                    
-                    if (typeof window.RolesTab !== 'undefined') {
-                        if (typeof window.RolesTab.setSelectedRole === 'function') {
-                            window.RolesTab.setSelectedRole(firstRoleId);
-                        } else {
-                            window.RolesTab._selectedRoleId = firstRoleId;
-                            if (typeof window.RolesTab.renderRoleDetail === 'function') {
-                                window.RolesTab.renderRoleDetail('tab-details');
-                            }
-                        }
-                    }
-                    
-                    if (typeof window.ApprenticeshipTab !== 'undefined' && 
-                        typeof window.ApprenticeshipTab.setSelectedRole === 'function') {
-                        window.ApprenticeshipTab.setSelectedRole(firstRoleId);
-                    }
-                    
-                    if (typeof window.RolesAnalyticsTab !== 'undefined' && 
-                        typeof window.RolesAnalyticsTab.setSelectedRole === 'function') {
-                        window.RolesAnalyticsTab.setSelectedRole(firstRoleId);
-                    }
-                    
-                    renderRoleList();
-                }
-
-                var firstTab = document.querySelector('[data-tab]');
-                if (firstTab) {
-                    firstTab.click();
-                }
+                window.TabManager.render('role', activeTabId);
+                return;
+            } catch (e) {
+                console.error(
+                    '[role-manager] TabManager activate/render failed for "' +
+                    activeTabId + '":', e
+                );
             }
+        }
 
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', function() {
-                    setTimeout(init, 500);
-                });
-            } else {
-                setTimeout(init, 500);
+        // Fallback if TabManager isn't available (shouldn't happen
+        // under the documented load order, but the page should still
+        // show something meaningful).
+        var container = document.getElementById('tab-' + activeTabId);
+        if (!container) return;
+        container.innerHTML =
+            '<div class="ct-empty">Tab system not available. ' +
+            'Load js/core/tab-manager.js.</div>';
+    }
+
+    function escapeHtml(value) {
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(value);
+        if (value === null || value === undefined) return '';
+        return String(value)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function openSidebar() {
+        if (sidebar) sidebar.classList.add('visible');
+        if (sidebarOverlay) sidebarOverlay.classList.add('active');
+    }
+    function closeSidebar() {
+        if (sidebar) sidebar.classList.remove('visible');
+        if (sidebarOverlay) sidebarOverlay.classList.remove('active');
+    }
+    function toggleSidebar() {
+        if (!sidebar) return;
+        if (sidebar.classList.contains('visible')) closeSidebar();
+        else openSidebar();
+    }
+    if (menuToggle) menuToggle.addEventListener('click', toggleSidebar);
+    if (sidebarOverlay) sidebarOverlay.addEventListener('click', closeSidebar);
+    window.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeSidebar();
+    });
+
+    function syncYearInput() {
+        if (!yearInput) return;
+        try {
+            var y = (typeof window.getCurrentYear === 'function')
+                ? window.getCurrentYear()
+                : (window.masterData && window.masterData.data
+                    ? window.masterData.data.currentYear
+                    : null);
+            if (typeof y === 'number' && isFinite(y)) {
+                yearInput.value = String(y);
             }
+        } catch (e) { /* ignore */ }
+    }
 
-        })();
-    </script>
+    if (setYearBtn) setYearBtn.addEventListener('click', function () {
+        var val = parseInt(yearInput.value, 10);
+        if (!isFinite(val)) { window.alert('Enter a valid year.'); return; }
+        if (typeof window.isValidYear === 'function' && !window.isValidYear(val)) {
+            window.alert('Year is outside the allowed range.');
+            return;
+        }
+        if (window.masterData && window.masterData.data) {
+            window.masterData.data.currentYear = val;
+        }
+        if (typeof window.markDataDirty === 'function') window.markDataDirty();
+        if (typeof window.saveMasterData === 'function') window.saveMasterData();
+        renderActiveTab();
+    });
+
+    if (exportBtn) exportBtn.addEventListener('click', function () {
+        if (typeof window.exportData === 'function') { window.exportData(); return; }
+        if (typeof window.exportToJSON === 'function' && window.masterData) {
+            window.exportToJSON(window.masterData, 'stillwaters'); return;
+        }
+        window.alert('Export module not available.');
+    });
+
+    if (importBtn && fileInput) {
+        importBtn.addEventListener('click', function () {
+            fileInput.value = ''; fileInput.click();
+        });
+        fileInput.addEventListener('change', function () {
+            var file = this.files && this.files[0];
+            if (!file) return;
+            var reader = new FileReader();
+            reader.onload = function (ev) {
+                try {
+                    var parsed = JSON.parse(ev.target.result);
+                    var dataToInstall = null;
+                    if (parsed && parsed.data && parsed.data.roles !== undefined) dataToInstall = parsed.data;
+                    else if (parsed && parsed.roles !== undefined) dataToInstall = parsed;
+                    else if (parsed && parsed.data) dataToInstall = parsed.data;
+                    if (!dataToInstall) { window.alert('Unrecognized import format.'); return; }
+
+                    if (typeof window.normalizeMasterData !== 'function') {
+                        window.alert('Schema module not available; cannot import.'); return;
+                    }
+                    window.masterData = window.normalizeMasterData({
+                        schemaVersion: window.STORAGE_SCHEMA_VERSION,
+                        savedAt: new Date().toISOString(),
+                        data: dataToInstall
+                    });
+                    if (typeof window.invalidateAccessorCaches === 'function') window.invalidateAccessorCaches();
+                    if (typeof window.markDataDirty === 'function') window.markDataDirty();
+                    if (typeof window.saveMasterData === 'function' && !window.saveMasterData()) {
+                        window.alert('Save failed after import.'); return;
+                    }
+
+                    // Re-hydrate RoleState from the freshly-installed
+                    // masterData. RoleState.init() short-circuits if
+                    // already initialised, so a full reload of the
+                    // state is required. There is no public reload()
+                    // on RoleState; the clean path is a page reload.
+                    window.alert('Import complete. Reloading to re-hydrate role state…');
+                    window.location.reload();
+                } catch (err) {
+                    window.alert('Invalid JSON: ' + err.message);
+                }
+            };
+            reader.onerror = function () { window.alert('Failed to read file.'); };
+            reader.readAsText(file);
+            this.value = '';
+        });
+    }
+
+    if (refreshBtn) refreshBtn.addEventListener('click', function () {
+        window.location.reload();
+    });
+
+    function openCreateRole() {
+        if (typeof window.openCreateRoleModal !== 'function') {
+            window.alert('Create Role modal not loaded (modals-roles.js).');
+            return;
+        }
+        window.openCreateRoleModal(function (newRoleId) {
+            renderRoleList();
+            if (newRoleId) selectRole(newRoleId);
+        });
+    }
+
+    function openEditRole(id) {
+        if (typeof window.openEditRoleModal !== 'function') {
+            window.alert('Edit Role modal not loaded (modals-roles.js).');
+            return;
+        }
+        window.openEditRoleModal(id, function () {
+            renderRoleList();
+            // Refresh the current tab's context with the fresh role
+            // clone (the edit may have changed fields the tab reads).
+            if (window.RoleTabContext) {
+                var fresh = null;
+                try {
+                    fresh = (window.RoleState && typeof window.RoleState.getRole === 'function')
+                        ? window.RoleState.getRole(id)
+                        : null;
+                } catch (e) { /* ignore */ }
+                window.RoleTabContext.role = fresh || null;
+            }
+            renderActiveTab();
+        });
+    }
+
+    function openDeleteRole(id) {
+        if (typeof window.openDeleteRoleModal !== 'function') {
+            window.alert('Delete Role modal not loaded (modals-roles.js).');
+            return;
+        }
+        window.openDeleteRoleModal(id, function () {
+            if (selectedRoleId === id) {
+                selectedRoleId = null;
+                if (editRoleBtn)   editRoleBtn.disabled   = true;
+                if (deleteRoleBtn) deleteRoleBtn.disabled = true;
+                if (window.RoleTabContext) window.RoleTabContext.role = null;
+            }
+            renderRoleList();
+            pickInitialSelection();
+        });
+    }
+
+    if (createRoleBtn) createRoleBtn.addEventListener('click', openCreateRole);
+    if (editRoleBtn)   editRoleBtn.addEventListener('click', function () {
+        if (selectedRoleId) openEditRole(selectedRoleId);
+    });
+    if (deleteRoleBtn) deleteRoleBtn.addEventListener('click', function () {
+        if (selectedRoleId) openDeleteRole(selectedRoleId);
+    });
+
+    window.addEventListener('masterDataUpdated', function () {
+        renderRoleList();
+        if (selectedRoleId) {
+            if (window.RoleTabContext) {
+                var fresh = null;
+                try {
+                    fresh = (window.RoleState && typeof window.RoleState.getRole === 'function')
+                        ? window.RoleState.getRole(selectedRoleId)
+                        : null;
+                } catch (e) { /* ignore */ }
+                window.RoleTabContext.role = fresh || null;
+            }
+            renderActiveTab();
+        }
+    });
+
+    function onDomReady(fn) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', fn);
+        } else {
+            fn();
+        }
+    }
+    onDomReady(bootstrap);
+})();
+</script>
+
+<!-- ============================================================ -->
+<!-- THEME SWITCHER                                               -->
+<!-- ============================================================ -->
+<script>
+(function () {
+    'use strict';
+
+    var STORAGE_KEY = 'stillwaters_theme';
+
+    var THEMES = [
+        { id: 'dark',            label: 'Dark' },
+        { id: 'light',           label: 'Light' },
+        { id: 'vaporwave',       label: 'Vaporwave' },
+        { id: 'pastel',          label: 'Pastel' },
+        { id: 'carnival',        label: 'Carnival' },
+        { id: 'maximal',         label: 'Maximal' },
+        { id: 'gits',            label: 'GITS' },
+        { id: 'nouveau',         label: 'Nouveau' },
+        { id: 'ukiyo-e',         label: 'Ukiyo-e' },
+        { id: 'nature',          label: 'Nature' },
+        { id: 'kmt',             label: 'KMT' },
+        { id: 'gaslight',        label: 'Gaslight' },
+        { id: 'grotesque',       label: 'Grotesque' },
+        { id: 'illuminated',     label: 'Illuminated' },
+        { id: 'discowing',       label: 'Discowing' },
+        { id: 'choc-cake',       label: 'Choc Cake' },
+        { id: 'dada',            label: 'Dada' },
+        { id: 'brutalist',       label: 'Brutalist' },
+        { id: 'orchestrion',     label: 'Orchestrion' },
+        { id: 'rococo',          label: 'Rococo' },
+        { id: 'nautical-tile',   label: 'Nautical Tile' }
+    ];
+
+    var byId = {};
+    for (var i = 0; i < THEMES.length; i++) byId[THEMES[i].id] = THEMES[i];
+
+    var themeBtn  = document.getElementById('themeBtn');
+    var themeMenu = document.getElementById('themeMenu');
+    var themeName = document.getElementById('themeName');
+
+    function apply(id) {
+        if (!byId[id]) id = 'dark';
+        document.documentElement.setAttribute('data-theme', id);
+        themeName.textContent = byId[id].label;
+        try { localStorage.setItem(STORAGE_KEY, id); } catch (e) {}
+    }
+
+    function buildMenu() {
+        var html = '';
+        for (var i = 0; i < THEMES.length; i++) {
+            html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' +
+                THEMES[i].id + '">' + THEMES[i].label + '</button></li>';
+        }
+        themeMenu.innerHTML = html;
+    }
+
+    function openMenu() {
+        themeMenu.hidden = false;
+        themeBtn.setAttribute('aria-expanded', 'true');
+    }
+    function closeMenu() {
+        themeMenu.hidden = true;
+        themeBtn.setAttribute('aria-expanded', 'false');
+    }
+
+    if (themeBtn) themeBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (themeMenu.hidden) openMenu(); else closeMenu();
+    });
+
+    if (themeMenu) themeMenu.addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-theme-id]');
+        if (!btn) return;
+        apply(btn.getAttribute('data-theme-id'));
+        closeMenu();
+    });
+
+    document.addEventListener('click', function (e) {
+        if (!themeMenu || themeMenu.hidden) return;
+        if (themeMenu.contains(e.target)) return;
+        if (e.target === themeBtn) return;
+        closeMenu();
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && themeMenu && !themeMenu.hidden) closeMenu();
+    });
+
+    var saved = null;
+    try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+
+    buildMenu();
+
+    if (saved && byId[saved]) {
+        apply(saved);
+    } else {
+        var mq = window.matchMedia('(prefers-color-scheme: light)');
+        apply(mq.matches ? 'light' : 'dark');
+        mq.addEventListener('change', function (ev) {
+            var check;
+            try { check = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+            if (!check) apply(ev.matches ? 'light' : 'dark');
+        });
+    }
+
+    window.ThemeSwitcher = { apply: apply, themes: THEMES.slice() };
+})();
+</script>
 
 </body>
 </html>
