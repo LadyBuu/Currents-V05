@@ -102,19 +102,12 @@
  *     - Fixed "1 place but 0 cards" rendering bug. The tab now resolves
  *       religion.placesOfWorship's id array to a record-or-stub array
  *       via _resolvePlacesForRender() before filtering and rendering.
- *       Prior revisions passed the raw id array (strings) to
- *       _filterPlaces and _renderList, both of which skip non-object
- *       entries. Header counter (places.length) said N; list loop
- *       dropped every entry; empty state said "No places match your
- *       filters."
  *     - CRUD delegation to canonical modals (add/edit/delete).
  *     - PLACES_EDITABLE gate retained.
- *     - Collect Tithes stays a direct command call (read-only, no
- *       persist needed).
+ *     - Collect Tithes stays a direct command call (read-only).
  *   Previous revisions:
  *     - Filter/sort/list rendering extracted from earlier monolithic
  *       religion UI code.
- *     - CRUD delegation added.
  * =============================================================================
  */
 
@@ -194,20 +187,6 @@
     // =========================================================================
     // 2. RESOLVE PLACE IDS TO RECORDS
     // =========================================================================
-    //
-    // religion.placesOfWorship is an array of ids (strings). This helper
-    // turns it into an array of objects so _filterPlaces and _renderList
-    // (both of which skip non-objects) can render every place.
-    //
-    // For each id:
-    //   1. Try ReligionQueries.getPlaceOfWorship(id). Today this returns
-    //      { id, religionId, religionName } from the state index.
-    //   2. If the lookup returns null (e.g. the id is stale or the
-    //      state index doesn't have it), fall back to { id }.
-    //   3. Drop entries whose id is not a non-empty string.
-    //
-    // Returns an array of objects. The objects may be sparse (only id
-    // and religion metadata); _placeDisplayName handles that.
 
     function _resolvePlacesForRender(placeIds) {
         if (!Array.isArray(placeIds) || placeIds.length === 0) return [];
@@ -227,8 +206,6 @@
             }
 
             if (rec && typeof rec === 'object') {
-                // Ensure the record carries its id even if the
-                // underlying index entry is incomplete.
                 if (!rec.id) {
                     var copy = {};
                     for (var k in rec) {
