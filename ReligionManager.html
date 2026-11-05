@@ -14,17 +14,16 @@
     <style>
         /* ============================================================
            Religion Manager — inline CSS
-           STRUCTURAL ONLY. Every visual value (color, radius, shadow,
-           font family, font weight, line height, transition duration)
-           comes from a theme token in themes.css. No hex values, no
-           rgba() values, no hardcoded font stacks, no hardcoded px
-           for design values. Spacing uses rem.
+           STRUCTURAL ONLY. Every visual value comes from a theme token
+           in themes.css. No hex values, no rgba() values, no hardcoded
+           font stacks, no hardcoded px for design values. Spacing uses
+           rem.
 
            Structure mirrors CultureManager.html so both manager pages
            share a common shell. The .rt-* rules at the bottom are the
            religion tab content styles that the five religion tab files
            emit; they are NOT shell chrome and are preserved verbatim
-           from the prior religion.css so the tabs render identically.
+           from religion.css so the tabs render identically.
            ============================================================ */
 
         html, body { height: 100%; margin: 0; overflow: hidden; }
@@ -337,8 +336,8 @@
 
         /* ============================================================
            RELIGION TAB CONTENT (.rt-*)
-           These classes are emitted by the five religion tab files.
-           Ported verbatim from religion.css.
+           Emitted by the five religion tab files. Ported verbatim
+           from religion.css.
            ============================================================ */
 
         .rt-tab { display: flex; flex-direction: column; gap: 1rem; }
@@ -916,35 +915,20 @@
 </div>
 
 <!-- ================================================================
-     SCRIPTS — BYTE-FOR-BYTE COPY OF CultureManager.html's SCRIPT
-     CHAIN, with only the religion-specific block and religion tab
-     files added at the end.
+     SCRIPTS
 
-     Order:
-       Core constants / utilities / time / storage / accessors
-         / validation / world / names
-       Core UI primitives
-       Skill taxonomy + event logger
-       Character (state, rules, queries, commands, factory, generator,
-                  children, statistics, lifecycle)
-       Selectors
-       Ranks (all)
-       Roles (all)
-       Religion (all 14 modules + bootstrap)
-       Location (all)
-       Culture (before names — name-queries requires CultureQueries)
-       Names
-       Character UI modals
-       Culture editor + tabs
-       (Religion TabManager.configure block)
-       Religion tab files
-       Orchestrator
-       Theme switcher
-
-     This is the same working load order CultureManager.html uses
-     for every non-religion module. Religion is inserted at the point
-     where CultureManager inserts culture, and the religion tabs are
-     inserted alongside the culture tabs.
+     Load order:
+       - Shared modules use CultureManager.html's paths and order
+         (same filenames, same relative sequence).
+       - Religion-specific modules are inserted at the point where
+         CultureManager inserts culture.
+       - Settlement + crime enum files load BEFORE religion (religion
+         law validation reads their enums at call time).
+       - responsive.js loads BEFORE collapsible.js (collapsible's load
+         guard requires RESPONSIVE_BREAKPOINTS).
+       - initializeStorage() runs inline after storage.js (character-
+         state's load guard requires masterData).
+       - skill-utils.js loads BEFORE role-constants.js.
      ================================================================ -->
 
 <!-- Core constants -->
@@ -965,7 +949,7 @@
 <!-- Core time -->
 <script src="js/core/time.js"></script>
 
-<!-- Core storage + PlaceQueries façade -->
+<!-- Core storage + inline initializeStorage() -->
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
 <script>
@@ -975,6 +959,8 @@
         } catch (e) { console.error('[boot] initializeStorage failed:', e); }
     })();
 </script>
+
+<!-- Core accessors + PlaceQueries façade -->
 <script src="js/core/accessors.js"></script>
 <script>
     (function () {
@@ -1005,7 +991,7 @@
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
 
-<!-- Core UI primitives -->
+<!-- Core UI primitives. responsive BEFORE collapsible. -->
 <script src="js/core/ui.js"></script>
 <script src="js/core/ui-state.js"></script>
 <script src="js/core/modals-core.js"></script>
@@ -1014,10 +1000,8 @@
 <script src="js/core/tab-manager.js"></script>
 <script src="js/core/exportUtils.js"></script>
 
-<!-- Skill taxonomy -->
+<!-- Skill taxonomy + event logger -->
 <script src="js/roles/skill-utils.js"></script>
-
-<!-- Event logger -->
 <script src="js/events/eventLogger.js"></script>
 
 <!-- Character pure policy -->
@@ -1057,6 +1041,7 @@
     }
 </script>
 <script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
 
 <!-- Character factory & creation -->
 <script src="js/character/character-factory.js"></script>
@@ -1092,7 +1077,24 @@
 <script src="js/roles/modals-roles.js"></script>
 <script src="js/roles/modals-role-select.js"></script>
 
-<!-- Religion -->
+<!-- Households -->
+<script src="js/households/household-constants.js"></script>
+<script src="js/households/household-queries.js"></script>
+<script src="js/households/household-commands.js"></script>
+
+<!-- ============================================================ -->
+<!-- SETTLEMENT + CRIME ENUM SOURCES (religion law validation)    -->
+<!-- ============================================================ -->
+<!-- These two files provide the law vocabulary that               -->
+<!-- religion-validation.js / religion-commands.js read at call    -->
+<!-- time. Without them, Add Law and Edit Law fail with            -->
+<!-- "enum not loaded" errors. Both are pure definition modules    -->
+<!-- (no state, no commands, no queries) so loading them is        -->
+<!-- cheap and side-effect-free.                                   -->
+<script src="js/settlement/settlement-law-definitions.js"></script>
+<script src="js/crime/crime-constants.js"></script>
+
+<!-- Religion (canonical order) -->
 <script src="js/religion/religion-constants.js"></script>
 <script src="js/religion/religion-format.js"></script>
 <script src="js/religion/religion-validation.js"></script>
@@ -1123,7 +1125,7 @@
 <script src="js/location/modals-moves.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
-<!-- Culture (before names — name-queries.js requires CultureQueries) -->
+<!-- Culture (before names — name-queries requires CultureQueries) -->
 <script src="js/culture/culture-constants.js"></script>
 <script src="js/culture/culture-validation.js"></script>
 <script src="js/culture/culture-state.js"></script>
@@ -1144,7 +1146,7 @@
 <script src="js/names/name-system.js"></script>
 <script src="js/names/modals-name.js"></script>
 
-<!-- Character UI modals (need culture-queries for projections) -->
+<!-- Character UI modals -->
 <script src="js/character/character-ui-list.js"></script>
 <script src="js/character/modals-character.js"></script>
 <script src="js/character/modals-children-birth.js"></script>
@@ -1153,7 +1155,7 @@
 <script src="js/character/modals-death.js"></script>
 <script src="js/character/character-system.js"></script>
 
-<!-- Culture editor host + the four tabs -->
+<!-- Culture editor host + tabs -->
 <script src="js/tabs/culture-editor-tab.js"></script>
 <script src="js/tabs/culture-appearance-tab.js"></script>
 <script src="js/tabs/culture-mythology-tab.js"></script>
@@ -1233,7 +1235,6 @@
         isInitialized = true;
 
         // initializeStorage() already ran inline after storage.js.
-        // Domain bootstraps only.
 
         if (window.LocationBootstrap
             && typeof window.LocationBootstrap.init === 'function') {
