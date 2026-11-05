@@ -18,7 +18,7 @@
  *     EducationState.hydrateFromMasterData → TabManager.configure →
  *     initial tab render
  *
- * It does NOT own the six education tabs. Each tab file self-registers
+ * It does NOT own the seven education tabs. Each tab file self-registers
  * with TabManager.register('education', '<tabId>', renderFn) at its
  * own load. This file does not reference any specific tab id except
  * DEFAULT_ACTIVE_TAB_ID ('overview'), which it also pushes to
@@ -117,7 +117,7 @@
  *     - Written for the Education Manager's TabManager-based host.
  *     - buildContext computes the education summary / health once
  *       per render and passes it to the tab via context.educationState.
- *     - setKnownTabIds called at init; the six tab ids are declared
+ *     - setKnownTabIds called at init; the seven tab ids are declared
  *       here as KNOWN_TAB_IDS and pushed to EducationUIState so the
  *       module can validate the persisted activeTabId.
  *     - Explicit EducationState.hydrateFromMasterData call; the
@@ -151,6 +151,7 @@
         'students',
         'finances',
         'analytics',
+        'apprenticeships',
         'history'
     ];
 
@@ -367,6 +368,7 @@
             var isActive = buttons[i].getAttribute('data-tab') === tabId;
             buttons[i].classList.toggle('active', isActive);
             buttons[i].setAttribute('aria-selected', isActive ? 'true' : 'false');
+            buttons[i].setAttribute('tabindex', isActive ? '0' : '-1');
         }
     }
 
