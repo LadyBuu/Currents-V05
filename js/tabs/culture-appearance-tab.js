@@ -50,15 +50,63 @@
  *   Each weighted-option list is preserved AS-IS by save() except for
  *   rows the user adds/removes/edits. Empty lists are removed from the
  *   candidate (so the canonical record does not accumulate empty arrays).
- *   Height is always present if the user touched any of the four inputs.
+ *   Height is only present if the user touched any of the four inputs.
+ *
+ *   NOTE: The working copy (culture.appearance) MAY contain empty lists
+ *   and a height object the user has not touched. That is intentional —
+ *   it is what makes tab-switch preservation work. save() filters both
+ *   out. See the TAB-SWITCH PRESERVATION CONTRACT in
+ *   culture-editor-tab.js's header.
  *
  * DEPENDENCIES (resolved at call time — no load-time guards):
  *   - CultureEditorTabs (this must load after culture-editor-tab.js)
- *   - formatting.js     (escapeHtml)
+ *   - formatting.js     (escapeHtml — REQUIRED, throws if missing)
  *   - icons.js          (Icons[name] via _getIcon)
- *   - ui.js             (showToast)
+ *   - ui.js             (showToast — used only for duplicate feedback)
  *   - modals-core.js    (confirmDialog — optional; falls back to confirm())
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (A5):
+ *     - _escapeHtml tightened to throw if formatting.js is missing.
+ *       Matches the post-audit contract of the other culture tabs.
+ *     - _syncToWorkingCulture now writes every weighted category,
+ *       even when empty. The previous version only wrote non-empty
+ *       categories, which meant a category the user emptied was
+ *       silently removed from the working copy — and therefore did
+ *       not survive a tab switch. save() filters empty lists out, so
+ *       the canonical record stays clean.
+ *     - saveAppearanceTab now explicitly filters empty lists out of
+ *       the appearance payload, and drops `height` when the user did
+ *       not touch any height input. Previously `height` was always
+ *       emitted if _readHeight returned a non-null object, and
+ *       _readHeight's fallback defaults made it return non-null even
+ *       when no input had been touched. The result was that opening
+ *       the editor and clicking Save added a height object the
+ *       culture never had.
+ *     - _readWeightedList now trims `value` and rejects weights
+ *       outside [0, 1000]. The previous version coerced any negative
+ *       or non-finite weight to DEFAULT_WEIGHT (10), which silently
+ *       changed user input. The input's `min="0" max="1000"`
+ *       attributes always bounded the UI, so the only way to reach the
+ *       prior code with an out-of-range weight was a programmatic DOM
+ *       manipulation; this closes that path.
+ *     - _handleAdd no longer calls _syncToWorkingCulture immediately
+ *       after appending the row. The sync was a no-op (empty value is
+ *       skipped by _readWeightedList), but it rebuilt the entire
+ *       appearance object on every Add click. The input/change listener
+ *       will sync when the user actually types.
+ *     - _handleRemove uses appendChild for the empty-state instead of
+ *       replacing list.innerHTML. The innerHTML swap was clobbered by
+ *       the next _handleAdd anyway, but it also broke any future
+ *       code that held a reference to a child of the list. appendChild
+ *       composes correctly with both the add path and any future
+ *       _syncToWorkingCulture call.
+ *     - Header THE SHAPE OF `appearance` section notes that the working
+ *       copy MAY contain empty lists / untouched height and that save()
+ *       filters them out.
+ *   Previous revisions:
+ *     - Initial implementation.
  * =============================================================================
  */
 
@@ -69,15 +117,18 @@
     // 1. DEPENDENCY WRAPPERS
     // =========================================================================
 
+    // escapeHtml is a REQUIRED dependency (formatting.js). Renderers do
+    // not implement their own escaping; a missing escapeHtml is a
+    // load-order bug that must be visible. See the header of
+    // culture-mythology-tab.js for the same contract.
     function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (str === null || str === undefined) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+        if (typeof window.escapeHtml !== 'function') {
+            throw new Error(
+                'culture-appearance-tab.js requires escapeHtml (formatting.js). ' +
+                'Check script tag order.'
+            );
+        }
+        return window.escapeHtml(str);
     }
 
     function _getIcon(name) {
@@ -122,7 +173,11 @@
     var HEIGHT_MIN = 100;
     var HEIGHT_MAX = 250;
 
-    // Per-row defaults.
+    // Bounds for the weight input. Matches the min/max attributes on
+    // the rendered <input type="number">. Out-of-range values coerce
+    // to DEFAULT_WEIGHT.
+    var WEIGHT_MIN = 0;
+    var WEIGHT_MAX = 1000;
     var DEFAULT_WEIGHT = 10;
 
     // =========================================================================
@@ -176,9 +231,11 @@
      * culture's `appearance` field. Called on every input so a tab switch
      * (or a save) sees the latest values.
      *
-     * Only fields the user actually changed are preserved. Empty lists
-     * are removed from the appearance so the canonical record does not
-     * accumulate empty arrays.
+     * IMPORTANT: always writes every weighted category, even when empty.
+     * The working copy is what tab-switch preservation reads; if an
+     * emptied category is removed from the working copy, switching tabs
+     * and back loses the fact that the category existed. save() filters
+     * empty lists out so the canonical record stays clean.
      */
     function _syncToWorkingCulture(root, culture) {
         if (!root || !culture) return;
@@ -187,8 +244,7 @@
 
         for (var i = 0; i < WEIGHTED_CATEGORIES.length; i++) {
             var cat = WEIGHTED_CATEGORIES[i];
-            var list = _readWeightedList(root, cat.key);
-            if (list.length > 0) appearance[cat.key] = list;
+            appearance[cat.key] = _readWeightedList(root, cat.key);
         }
 
         var height = _readHeight(root);
@@ -210,7 +266,9 @@
             var value = (valEl.value || '').trim();
             if (!value) continue;
             var weight = parseInt(wEl ? wEl.value : '', 10);
-            if (!isFinite(weight) || weight < 0) weight = DEFAULT_WEIGHT;
+            if (!isFinite(weight) || weight < WEIGHT_MIN || weight > WEIGHT_MAX) {
+                weight = DEFAULT_WEIGHT;
+            }
             out.push({ value: value, weight: weight });
         }
         return out;
@@ -347,7 +405,7 @@
                 ' placeholder="Option name">' +
               '<input type="number" class="ct-appearance-row__weight"' +
                 ' value="' + Number(item.weight) + '"' +
-                ' min="0" max="1000" step="1">' +
+                ' min="' + WEIGHT_MIN + '" max="' + WEIGHT_MAX + '" step="1">' +
               '<span class="ct-appearance-row__weight-label">weight</span>' +
               '<button type="button" class="rt-btn rt-btn--icon rt-btn--danger ct-appearance-remove" title="Remove option">Remove</button>' +
             '</div>'
@@ -449,7 +507,7 @@
               ' placeholder="Option name">' +
             '<input type="number" class="ct-appearance-row__weight"' +
               ' value="' + DEFAULT_WEIGHT + '"' +
-              ' min="0" max="1000" step="1">' +
+              ' min="' + WEIGHT_MIN + '" max="' + WEIGHT_MAX + '" step="1">' +
             '<span class="ct-appearance-row__weight-label">weight</span>' +
             '<button type="button" class="rt-btn rt-btn--icon rt-btn--danger ct-appearance-remove" title="Remove option">Remove</button>';
 
@@ -458,10 +516,10 @@
         // Update the count.
         _updateCount(card);
 
-        // Sync to working culture (adds the placeholder row as a weight
-        // with empty value; _readWeightedList skips empty values, so this
-        // does not corrupt the appearance yet).
-        _syncToWorkingCulture(container, culture);
+        // Do NOT call _syncToWorkingCulture here. The row has no value
+        // yet; _readWeightedList skips it. Syncing now would rebuild the
+        // entire appearance object for no benefit. The input/change
+        // listener will sync when the user types the first character.
 
         // Focus the new input.
         var newInput = row.querySelector('.ct-appearance-row__value');
@@ -479,8 +537,15 @@
         if (card) {
             var list = card.querySelector('.ct-appearance-list');
             if (list && list.querySelectorAll('.ct-appearance-row').length === 0) {
-                list.innerHTML =
-                    '<div class="ct-appearance-empty">No options defined yet.</div>';
+                // Append the empty state. Do NOT replace innerHTML — the
+                // next _handleAdd will remove the empty state and append
+                // a fresh row, and appendChild composes correctly with
+                // that flow (it also survives any future code that holds
+                // a reference to a child of the list).
+                var empty = document.createElement('div');
+                empty.className = 'ct-appearance-empty';
+                empty.textContent = 'No options defined yet.';
+                list.appendChild(empty);
             }
             _updateCount(card);
         }
@@ -500,25 +565,45 @@
     // 6. SAVE
     // =========================================================================
     //
-    // Called by the HOST's save-all. Reads the DOM (the ground truth for
-    // input the user has not yet touched — e.g. added rows before they
-    // typed a value), merges with the working copy's appearance, and
+    // Called by the HOST's save-all. Reads the working copy's appearance
+    // (which is the authoritative input at this point — every user edit
+    // has already been synced into it via the input/change handlers),
+    // filters out empty categories and an untouched height object, and
     // returns the partial culture object the host will merge.
+    //
+    // Filtering out empty categories matters because _syncToWorkingCulture
+    // ALWAYS writes every category (even empty ones) so tab-switch
+    // preservation works. The working copy is allowed to hold
+    // { skinTones: [], eyeColors: [] }; the canonical record is not.
+    //
+    // Dropping an untouched height matters because _readHeight returns a
+    // non-null object whenever ANY height input has a value. If the user
+    // opens the editor, does nothing, and clicks Save, _readHeight will
+    // return null (no inputs have values) and height will be omitted. If
+    // the user types a value into one height input, _readHeight returns
+    // an object with that value and the fallback default for the other
+    // three — that is the correct behavior (partial input is committed
+    // with sensible defaults for the rest).
 
     function saveAppearanceTab(culture) {
         if (!culture) return culture;
 
-        // The tab's container is not passed to save(); we rely on the
-        // HOST having already synced the working culture via _state on
-        // every input event. So all we need to do is return the working
-        // culture's appearance. If the user has typed anything, the input
-        // listener has already updated it.
-        //
-        // Exception: added rows that have no value typed yet produce a
-        // row in the DOM but no appearance entry (the reader skips empty
-        // values). That is the desired behavior — an empty row is not
-        // real data.
-        return { appearance: culture.appearance || {} };
+        var src = _appearanceOf(culture);
+        var appearance = {};
+
+        for (var i = 0; i < WEIGHTED_CATEGORIES.length; i++) {
+            var cat = WEIGHTED_CATEGORIES[i];
+            var list = src[cat.key];
+            if (Array.isArray(list) && list.length > 0) {
+                appearance[cat.key] = list;
+            }
+        }
+
+        if (_isObject(src.height)) {
+            appearance.height = src.height;
+        }
+
+        return { appearance: appearance };
     }
 
     // =========================================================================
