@@ -27,30 +27,49 @@
  *
  * LAW ENUM SOURCE
  * ---------------
- *   The prior revision of validateLawInput read flat window globals
- *   (window.LAW_TYPES, window.LAW_CATEGORIES, window.LAW_DOMAINS,
- *   window.LAW_SEVERITY, window.CRIME_TYPES). None of those exist in
- *   the current tree; the enums live on namespaced modules:
+ *   Law vocabulary is split across two modules with two different
+ *   shapes:
  *
- *     window.SettlementLawDefinitions.LAW_TYPES
- *     window.SettlementLawDefinitions.LAW_CATEGORIES
- *     window.SettlementLawDefinitions.LAW_DOMAINS
- *     window.SettlementLawDefinitions.LAW_SEVERITIES
- *     window.CrimeConstants.CRIME_TYPES
+ *     SettlementLawDefinitions (js/settlement/settlement-law-definitions.js)
+ *       LAW_TYPES      array of { id, name, ... }  ← not a plain object
+ *       LAW_DOMAINS    array of { id, name }
+ *       LAW_SEVERITIES array of { id, name }
+ *       (no LAW_CATEGORIES — categories are not a settlement concept)
  *
+ *     CrimeConstants (js/crime/crime-constants.js)
+ *       CRIME_TYPES    object of { KEY: 'string' }   ← plain object
+ *       LAW_CATEGORIES object of { KEY: 'string' }
+ *       LAW_SEVERITY   object of { KEY: 'string' }   ← SINGULAR, not SEVERITIES
+ *
+ *   The rest of this module (and religion-commands.js) expects every
+ *   enum to be a PLAIN OBJECT whose values are the canonical strings.
+ *   That is what _enumIsAvailable / _isValidEnumAgainst assume. Two of
+ *   the five enums are arrays-of-objects upstream, and two live on a
+ *   different module under different names. _normalizeEnum normalizes
+ *   all five into the shape the consumers expect, so nothing downstream
+ *   has to know about the upstream shape.
+ *
+ *   Prior revisions read flat window globals (window.LAW_TYPES,
+ *   window.LAW_CATEGORIES, window.LAW_DOMAINS, window.LAW_SEVERITY,
+ *   window.CRIME_TYPES). None of those exist in the current tree; the
+ *   enums live on namespaced modules with the shapes documented above.
  *   Because the flat globals were missing, _isValidEnum received {} as
  *   the enum, Object.values({}) returned [], and indexOf(value) returned
  *   -1 for EVERY value. Every religion law failed validation. That is
- *   the same bug class settlement-review #8 flagged (RELATIONSHIP_STATUS
- *   hardcoded fallback used even when canonical was present). The current
- *   revision resolves the canonical source and only treats a value as
- *   invalid when the enum is populated but the value is not in it.
+ *   the same bug class settlement-review #8 flagged.
+ *
+ *   The previous revision fixed the module lookup (SettlementLawDefinitions.*,
+ *   CrimeConstants.CRIME_TYPES) but did NOT handle the shape mismatch:
+ *   LAW_TYPES and LAW_DOMAINS are arrays of objects, so _enumIsAvailable
+ *   returned false and every value was still rejected; LAW_CATEGORIES
+ *   did not exist on SettlementLawDefinitions at all, and LAW_SEVERITIES
+ *   is on CrimeConstants under the singular name LAW_SEVERITY. The
+ *   current revision normalizes all five sources into the plain-object
+ *   shape the rest of the module expects.
  *
  *   When the canonical source is not loaded at all, validation FAILS
  *   LOUDLY (returns an error naming the missing enum) rather than
- *   silently rejecting every value. This matches religion-commands.js's
- *   _readLawEnums() contract: the enum is either populated (validate
- *   against it) or null (report "not available" as an error).
+ *   silently rejecting every value.
  *
  * DEPENDENCIES:
  *   - religion-constants.js: ReligionConstants
@@ -64,24 +83,44 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - _readLawEnums() now normalizes upstream shapes. The settlement
+ *       and crime bundles export law vocabulary in two different shapes
+ *       (arrays of objects vs. plain objects), under two different sets
+ *       of field names, on two different modules. Prior revisions read
+ *       the wrong module for categories and the wrong field name for
+ *       severities, producing null enums for both, and every law
+ *       create/update failed with "Law category enum not loaded" /
+ *       "Law severity enum not loaded".
+ *
+ *       The fix introduces _normalizeEnum(raw, valueKey), which accepts
+ *       either shape and returns a plain object { value: value, ... }.
+ *       Sources:
+ *         types      → SettlementLawDefinitions.LAW_TYPES   (array)
+ *         domains    → SettlementLawDefinitions.LAW_DOMAINS (array)
+ *         categories → CrimeConstants.LAW_CATEGORIES        (object)
+ *         severities → CrimeConstants.LAW_SEVERITY          (object, SINGULAR)
+ *                      fallback: SettlementLawDefinitions.LAW_SEVERITIES (array)
+ *         crimeTypes → CrimeConstants.CRIME_TYPES           (object)
+ *
+ *       The downstream shape (plain object of string→string) is
+ *       unchanged, so _enumIsAvailable / _isValidEnumAgainst /
+ *       _resolveEnums all keep working without modification.
  *     - validateLawInput accepts an options.enums argument. religion-
  *       commands.js::addLaw and ::updateLaw pass the resolved enum map
- *       (from _readLawEnums()) so validation does not have to re-resolve
- *       the globals. Callers that do not pass options.enums get the
- *       canonical resolution applied here (same namespaced source).
- *     - _readLawEnums() added. Reads canonical namespaced source
- *       (SettlementLawDefinitions.*, CrimeConstants.CRIME_TYPES). Returns
- *       null per missing enum, not {}.
+ *       (from its own _readLawEnums()) so validation does not have to
+ *       re-resolve the globals. Callers that do not pass options.enums
+ *       get the canonical resolution applied here (same namespaced
+ *       source, same normalization).
  *     - _isValidEnumAgainst(enumObj, value) added. Semantics: if the
  *       enum is null (source unavailable), the check is skipped (caller
  *       reports the missing source separately); if the enum is populated
  *       but value not present, the value is rejected. Prior revisions
  *       treated a null enum as "everything invalid," which is
  *       indistinguishable from a missing source.
- *     - validateLawInput now reports "enum not loaded: X" errors when the
- *       canonical source is missing, so the failure is actionable rather
- *       than "Invalid law domain: behavior" (a message that lied about
- *       which input was wrong).
+ *     - validateLawInput now reports "enum not loaded: X" errors when
+ *       the canonical source is missing, so the failure is actionable
+ *       rather than "Invalid law domain: behavior" (a message that lied
+ *       about which input was wrong).
  *     - _isValidYear renamed to isValidYear (not exported before; still
  *       internal — validateYear remains the public surface).
  *     - No behavioral change to validateReligionCreate /
@@ -163,13 +202,57 @@
     // 3. LAW ENUM RESOLUTION
     // =========================================================================
     //
-    // Resolves law vocabulary from canonical namespaced modules. Each
-    // enum is returned as the module's object, or null if the module
-    // (or its field) is not loaded.
+    // See the LAW ENUM SOURCE section in the header for the full
+    // explanation. Short version:
     //
-    // Prior revisions read flat window.LAW_* globals. Those globals do
-    // not exist in the current tree; the code was validating against {}
-    // and rejecting every value.
+    //   SettlementLawDefinitions.LAW_TYPES / .LAW_DOMAINS
+    //     → arrays of { id, name, ... }, not plain objects
+    //   SettlementLawDefinitions.LAW_CATEGORIES
+    //     → does not exist
+    //   SettlementLawDefinitions.LAW_SEVERITIES
+    //     → array of { id, name, ... }
+    //   CrimeConstants.LAW_CATEGORIES
+    //     → plain object (the correct source for categories)
+    //   CrimeConstants.LAW_SEVERITY  (SINGULAR)
+    //     → plain object (the correct source for severities)
+    //   CrimeConstants.CRIME_TYPES
+    //     → plain object
+    //
+    // _normalizeEnum turns arrays-of-objects and plain objects into a
+    // uniform plain-object shape so the rest of this module does not
+    // have to know about the upstream divergence.
+
+    function _normalizeEnum(raw, valueKey) {
+        if (!raw) return null;
+
+        // Case A: plain object { KEY: 'string', ... }
+        if (!Array.isArray(raw) && typeof raw === 'object') {
+            var out = {};
+            for (var k in raw) {
+                if (!Object.prototype.hasOwnProperty.call(raw, k)) continue;
+                var v = raw[k];
+                if (typeof v === 'string' && v.length > 0) {
+                    out[v] = v;
+                }
+            }
+            return Object.keys(out).length > 0 ? out : null;
+        }
+
+        // Case B: array of objects [{ id: 'law', name: 'Law' }, ...]
+        if (Array.isArray(raw)) {
+            var outArr = {};
+            for (var i = 0; i < raw.length; i++) {
+                var entry = raw[i];
+                if (!entry || typeof entry !== 'object') continue;
+                var id = entry[valueKey];
+                if (typeof id !== 'string' || id.length === 0) continue;
+                outArr[id] = id;
+            }
+            return Object.keys(outArr).length > 0 ? outArr : null;
+        }
+
+        return null;
+    }
 
     function _readLawEnums() {
         var out = {
@@ -180,28 +263,33 @@
             crimeTypes: null
         };
 
-        if (typeof window.SettlementLawDefinitions !== 'undefined'
-            && window.SettlementLawDefinitions) {
-            var sld = window.SettlementLawDefinitions;
-            if (sld.LAW_TYPES && typeof sld.LAW_TYPES === 'object') {
-                out.types = sld.LAW_TYPES;
-            }
-            if (sld.LAW_CATEGORIES && typeof sld.LAW_CATEGORIES === 'object') {
-                out.categories = sld.LAW_CATEGORIES;
-            }
-            if (sld.LAW_DOMAINS && typeof sld.LAW_DOMAINS === 'object') {
-                out.domains = sld.LAW_DOMAINS;
-            }
-            if (sld.LAW_SEVERITIES && typeof sld.LAW_SEVERITIES === 'object') {
-                out.severities = sld.LAW_SEVERITIES;
-            }
+        var sld = (typeof window.SettlementLawDefinitions !== 'undefined')
+            ? window.SettlementLawDefinitions
+            : null;
+        var cc = (typeof window.CrimeConstants !== 'undefined')
+            ? window.CrimeConstants
+            : null;
+
+        if (sld && sld.LAW_TYPES) {
+            out.types = _normalizeEnum(sld.LAW_TYPES, 'id');
         }
 
-        if (typeof window.CrimeConstants !== 'undefined'
-            && window.CrimeConstants
-            && window.CrimeConstants.CRIME_TYPES
-            && typeof window.CrimeConstants.CRIME_TYPES === 'object') {
-            out.crimeTypes = window.CrimeConstants.CRIME_TYPES;
+        if (sld && sld.LAW_DOMAINS) {
+            out.domains = _normalizeEnum(sld.LAW_DOMAINS, 'id');
+        }
+
+        if (cc && cc.LAW_CATEGORIES) {
+            out.categories = _normalizeEnum(cc.LAW_CATEGORIES, 'id');
+        }
+
+        if (cc && cc.LAW_SEVERITY) {
+            out.severities = _normalizeEnum(cc.LAW_SEVERITY, 'id');
+        } else if (sld && sld.LAW_SEVERITIES) {
+            out.severities = _normalizeEnum(sld.LAW_SEVERITIES, 'id');
+        }
+
+        if (cc && cc.CRIME_TYPES) {
+            out.crimeTypes = _normalizeEnum(cc.CRIME_TYPES, 'id');
         }
 
         return out;
@@ -319,7 +407,7 @@
     //
     // Enum resolution: uses options.enums when provided (from
     // religion-commands.js), otherwise resolves locally via the canonical
-    // namespaced source.
+    // namespaced source (same normalization as commands).
     //
     // Semantic difference from prior revisions: an enum that is null
     // (source not loaded) is reported as "enum not loaded" and does NOT
@@ -359,7 +447,7 @@
         // --- category ---
         if (data.lawCategory !== undefined && data.lawCategory !== null) {
             if (!_enumIsAvailable(enums.categories)) {
-                errors.push('Law category enum not loaded: SettlementLawDefinitions.LAW_CATEGORIES');
+                errors.push('Law category enum not loaded: CrimeConstants.LAW_CATEGORIES');
             } else if (!_isValidEnumAgainst(enums.categories, data.lawCategory)) {
                 errors.push('Invalid law category: ' + data.lawCategory);
             }
@@ -377,7 +465,7 @@
         // --- severity ---
         if (data.severity !== undefined && data.severity !== null) {
             if (!_enumIsAvailable(enums.severities)) {
-                errors.push('Law severity enum not loaded: SettlementLawDefinitions.LAW_SEVERITIES');
+                errors.push('Law severity enum not loaded: CrimeConstants.LAW_SEVERITY');
             } else if (!_isValidEnumAgainst(enums.severities, data.severity)) {
                 errors.push('Invalid law severity: ' + data.severity);
             }
