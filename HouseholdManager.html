@@ -1,1068 +1,1104 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Household Manager</title>
-    <link rel="stylesheet" href="css/common.css" />
-    <link rel="stylesheet" href="css/selectors.css" />
-    <link rel="stylesheet" href="css/household-manager.css" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Household Manager — Still Waters</title>
+
+    <!-- ================================================================= -->
+    <!-- External stylesheets — ONLY these two.                            -->
+    <!-- ================================================================= -->
+    <link rel="stylesheet" href="css/theme.css">
+    <link rel="stylesheet" href="css/common.css">
+
+    <!-- ================================================================= -->
+    <!-- Inline styles — manager layout + household-tab classes.           -->
+    <!-- All colors reference theme tokens from theme.css. No hardcoded   -->
+    <!-- hex. No font stacks. No emoji.                                    -->
+    <!-- ================================================================= -->
+    <style>
+        /* ============================================================= */
+        /* 1. MANAGER SHELL LAYOUT                                       */
+        /* ============================================================= */
+
+        body {
+            margin: 0;
+            padding: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--font-body, sans-serif);
+            font-size: 14px;
+        }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 16px;
+            background: var(--bg2);
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .topbar .title {
+            font-size: 0.9rem;
+            font-weight: bold;
+            color: var(--accent);
+        }
+
+        .topbar .spacer { flex: 1; }
+
+        .topbar .year-input {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .topbar .year-input label {
+            font-size: 0.6rem;
+            color: var(--dim);
+        }
+
+        .topbar .year-input input {
+            width: 60px;
+            padding: 3px 6px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-size: 0.65rem;
+        }
+
+        .topbar button {
+            padding: 4px 10px;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-size: 0.6rem;
+            cursor: pointer;
+            transition: background 0.1s;
+        }
+
+        .topbar button:hover { background: var(--bg2); }
+
+        .app-layout {
+            display: flex;
+            min-height: calc(100vh - 40px);
+        }
+
+        .sidebar {
+            width: 240px;
+            min-width: 240px;
+            background: var(--bg2);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .sidebar-header {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .sidebar-header h3 {
+            margin: 0;
+            font-size: 0.7rem;
+            color: var(--accent);
+            font-weight: bold;
+        }
+
+        .sidebar-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 4px;
+        }
+
+        .main-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-width: 0;
+        }
+
+        .manager-subtabs {
+            display: flex;
+            gap: 2px;
+            padding: 6px 12px 0;
+            background: var(--bg2);
+            border-bottom: 1px solid var(--border);
+            overflow-x: auto;
+        }
+
+        .manager-subtab {
+            padding: 6px 14px;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-bottom: none;
+            border-radius: 6px 6px 0 0;
+            color: var(--text);
+            font-size: 0.6rem;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background 0.1s, color 0.1s;
+        }
+
+        .manager-subtab:hover { background: var(--bg2); }
+
+        .manager-subtab.active {
+            background: var(--bg);
+            color: var(--accent);
+            font-weight: bold;
+            border-color: var(--border);
+            border-bottom: 2px solid var(--bg);
+            margin-bottom: -1px;
+        }
+
+        .tab-content-wrapper {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+        }
+
+        .tab-pane {
+            display: none;
+            padding: 16px;
+        }
+
+        .tab-pane.active { display: block; }
+
+        /* ============================================================= */
+        /* 2. HOUSEHOLD-TAB CELLS (from TabRuntime)                      */
+        /* ============================================================= */
+
+        .hh-cell {
+            background: var(--bg3);
+            padding: 6px;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .hh-cell-label { font-size: 0.5rem; color: var(--dim); }
+        .hh-cell-value { font-size: 0.85rem; font-weight: bold; }
+
+        .hh-cell-detail { padding: 8px; border-radius: 6px; }
+        .hh-cell-detail .hh-cell-value { font-size: 0.75rem; font-weight: normal; }
+
+        .hh-kv-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 2px 0;
+            font-size: 0.6rem;
+            border-bottom: 1px solid var(--border-light);
+        }
+        .hh-kv-label { color: var(--dim); }
+        .hh-kv-value { text-align: right; }
+        .hh-kv-list  { background: var(--bg2); border-radius: 6px; padding: 8px; }
+
+        /* ============================================================= */
+        /* 3. SECTION HEADERS / EMPTY / FAILURE                          */
+        /* ============================================================= */
+
+        .hh-section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+
+        .hh-section-title { font-size: 0.6rem; color: var(--accent); }
+
+        .hh-empty {
+            text-align: center;
+            padding: 20px;
+            color: var(--dim);
+            font-size: 0.65rem;
+        }
+
+        .hh-failure {
+            text-align: center;
+            padding: 20px;
+            color: var(--danger);
+            font-size: 0.65rem;
+        }
+
+        .hh-unavailable {
+            padding: 16px;
+            color: var(--warn);
+            font-size: 0.65rem;
+        }
+
+        .hh-tab {
+            max-width: 750px;
+            margin: 0 auto;
+        }
+
+        .hh-tab-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .hh-tab-title { font-size: 0.75rem; color: var(--accent); margin: 0; }
+        .hh-tab-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+        .hh-tab-footer {
+            font-size: 0.5rem;
+            color: var(--dim);
+            text-align: center;
+            padding-top: 8px;
+        }
+
+        /* ============================================================= */
+        /* 4. BUTTONS                                                    */
+        /* ============================================================= */
+
+        .hh-btn {
+            padding: 3px 10px;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-size: 0.55rem;
+            cursor: pointer;
+            transition: background 0.1s, border-color 0.1s;
+        }
+
+        .hh-btn:hover { background: var(--bg2); }
+
+        .hh-btn-primary {
+            background: var(--accent-dim);
+            border-color: var(--accent);
+        }
+
+        .hh-btn-accent {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--text-inverse);
+        }
+
+        .hh-btn-danger {
+            background: var(--danger);
+            border-color: var(--danger);
+            color: var(--text-inverse);
+        }
+
+        .hh-btn-subtle { background: transparent; }
+
+        .hh-icon-btn {
+            padding: 1px 6px;
+            background: none;
+            border: none;
+            color: var(--accent);
+            font-size: 0.4rem;
+            cursor: pointer;
+            transition: color 0.1s;
+        }
+
+        .hh-icon-btn:hover { color: var(--accent-bright, var(--accent)); }
+        .hh-icon-btn-danger { color: var(--danger); }
+        .hh-icon-btn-success { color: var(--success); }
+
+        /* ============================================================= */
+        /* 5. SIDEBAR LIST ITEMS                                         */
+        /* ============================================================= */
+
+        .hh-sidebar-list {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            padding: 4px;
+        }
+
+        .hh-sidebar-item {
+            padding: 8px 10px;
+            border-radius: 4px;
+            border-left: 3px solid transparent;
+            cursor: pointer;
+            background: var(--bg3);
+            transition: background 0.1s, border-color 0.1s;
+        }
+
+        .hh-sidebar-item:hover { background: var(--bg2); }
+
+        .hh-sidebar-item.active {
+            background: var(--accent-dim);
+            border-left-color: var(--accent);
+        }
+
+        .hh-sidebar-item-name {
+            font-size: 0.7rem;
+            font-weight: bold;
+            color: var(--text);
+        }
+
+        .hh-sidebar-item-meta {
+            display: flex;
+            gap: 8px;
+            margin-top: 2px;
+            font-size: 0.5rem;
+            color: var(--dim);
+        }
+
+        .hh-sidebar-status-active    { color: var(--success); }
+        .hh-sidebar-status-vacant    { color: var(--warn); }
+        .hh-sidebar-status-empty     { color: var(--dim); }
+        .hh-sidebar-status-declining { color: var(--warn); }
+        .hh-sidebar-status-deprecated{ color: var(--dim); }
+        .hh-sidebar-status-destroyed { color: var(--danger); }
+        .hh-sidebar-status-bankrupt  { color: var(--danger); }
+        .hh-sidebar-status-unknown   { color: var(--dim); }
+
+        /* ============================================================= */
+        /* 6. OVERVIEW TAB                                               */
+        /* ============================================================= */
+
+        .hh-overview-header {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+
+        .hh-overview-title {
+            font-size: 1rem;
+            color: var(--accent);
+            margin: 0;
+        }
+
+        .hh-overview-subtitle {
+            font-size: 0.6rem;
+            color: var(--dim);
+            margin-top: 2px;
+        }
+
+        .hh-overview-status {
+            font-size: 0.65rem;
+            font-weight: bold;
+            text-align: right;
+        }
+
+        .hh-overview-status-meta {
+            font-size: 0.5rem;
+            color: var(--dim);
+        }
+
+        .hh-status-active    { color: var(--success); }
+        .hh-status-vacant    { color: var(--warn); }
+        .hh-status-empty     { color: var(--dim); }
+        .hh-status-declining { color: var(--warn); }
+        .hh-status-abandoned { color: var(--danger); }
+        .hh-status-deprecated{ color: var(--dim); }
+        .hh-status-destroyed { color: var(--danger); }
+        .hh-status-bankrupt  { color: var(--danger); }
+        .hh-status-unknown   { color: var(--dim); }
+
+        .hh-overview-grid {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 6px 16px;
+            font-size: 0.7rem;
+            margin: 12px 0;
+            padding: 12px;
+            background: var(--bg3);
+            border-radius: 6px;
+        }
+
+        .hh-overview-grid-label { color: var(--dim); }
+        .hh-overview-grid-value { color: var(--text); }
+
+        .hh-overview-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+        }
+
+        .hh-name-history {
+            margin-top: 4px;
+            padding: 6px;
+            background: var(--bg3);
+            border-radius: 4px;
+        }
+
+        .hh-name-history-title {
+            font-size: 0.5rem;
+            color: var(--dim);
+            margin-bottom: 2px;
+        }
+
+        .hh-name-history-entry {
+            font-size: 0.45rem;
+            color: var(--dim);
+            line-height: 1.5;
+        }
+
+        .hh-name-history-more {
+            font-size: 0.45rem;
+            color: var(--dim);
+            margin-top: 2px;
+        }
+
+        /* ============================================================= */
+        /* 7. MEMBERS TAB                                                */
+        /* ============================================================= */
+
+        .hh-member-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 10px;
+            background: var(--bg3);
+            border-radius: 4px;
+            margin-bottom: 2px;
+            border-left: 3px solid var(--border);
+        }
+
+        .hh-member-row.head     { border-left-color: var(--accent); }
+        .hh-member-row.deceased { opacity: 0.6; border-left-color: var(--dim); }
+
+        .hh-member-info {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .hh-member-name { font-size: 0.7rem; }
+        .hh-member-name.head { font-weight: bold; }
+        .hh-member-gender { font-size: 0.7rem; color: var(--dim); }
+        .hh-member-age { font-size: 0.5rem; color: var(--dim); }
+        .hh-member-status-living   { font-size: 0.55rem; color: var(--success); }
+        .hh-member-status-deceased { font-size: 0.55rem; color: var(--dim); }
+        .hh-member-role { font-size: 0.5rem; color: var(--accent); }
+        .hh-member-dept { font-size: 0.45rem; color: var(--dim); }
+        .hh-member-joined { font-size: 0.45rem; color: var(--dim); }
+
+        .hh-member-badge {
+            padding: 1px 8px;
+            border-radius: 10px;
+            font-size: 0.45rem;
+        }
+        .hh-member-badge.head   { background: var(--accent-dim); color: var(--accent); }
+        .hh-member-badge.family { background: var(--bg2); color: var(--dim); }
+        .hh-member-badge.staff  { background: var(--bg2); color: var(--accent); }
+
+        .hh-member-actions {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .hh-members-section { margin-bottom: 12px; }
+        .hh-members-section-former .hh-member-list { opacity: 0.7; }
+
+        /* ============================================================= */
+        /* 8. DEPARTMENTS TAB                                            */
+        /* ============================================================= */
+
+        .hh-dept-card {
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+        }
+
+        .hh-dept-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+
+        .hh-dept-title-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .hh-dept-title { font-size: 0.7rem; font-weight: bold; }
+        .hh-dept-stat  { font-size: 0.5rem; color: var(--dim); }
+        .hh-dept-head  { font-size: 0.45rem; color: var(--accent); }
+        .hh-dept-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+
+        .hh-dept-staff-list   { margin-top: 4px; padding-left: 12px; }
+        .hh-dept-staff-empty  { font-size: 0.5rem; color: var(--dim); padding: 4px 12px; }
+        .hh-dept-staff-row    { display: flex; justify-content: space-between; align-items: center; padding: 2px 6px; font-size: 0.55rem; }
+        .hh-dept-staff-row.deceased { opacity: 0.5; }
+        .hh-dept-staff-info   { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+        .hh-dept-staff-actions{ display: flex; gap: 4px; }
+        .hh-dept-staff-head   { color: var(--accent); font-size: 0.45rem; }
+        .hh-dept-staff-role   { color: var(--dim); font-size: 0.45rem; }
+
+        .hh-dept-pos-list { margin-top: 4px; padding-left: 12px; border-top: 1px solid var(--border-light); padding-top: 4px; }
+        .hh-dept-pos-row  {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 2px 6px;
+            font-size: 0.5rem;
+            border-left: 2px solid var(--accent-dim);
+            margin-bottom: 2px;
+        }
+        .hh-dept-pos-row-unassigned { border-left-color: var(--warn); }
+        .hh-dept-pos-info     { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+        .hh-dept-pos-name     { font-weight: 500; }
+        .hh-dept-pos-role     { color: var(--accent); font-size: 0.4rem; }
+        .hh-dept-pos-assigned { color: var(--dim); font-size: 0.4rem; }
+        .hh-dept-pos-unassigned { color: var(--warn); font-size: 0.4rem; }
+        .hh-dept-pos-actions  { display: flex; gap: 4px; }
+
+        .hh-dept-unassigned { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-light); }
+        .hh-dept-unassigned-title { font-size: 0.55rem; color: var(--warn); margin-bottom: 4px; }
+
+        /* ============================================================= */
+        /* 9. ECONOMY TAB                                                */
+        /* ============================================================= */
+
+        .hh-econ-grid { display: grid; gap: 8px; margin-bottom: 12px; }
+        .hh-econ-grid-2 { grid-template-columns: 1fr 1fr; }
+        .hh-econ-grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+        .hh-econ-grid-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+        .hh-econ-grid-5 { grid-template-columns: 1fr 1fr 1fr 1fr 1fr; }
+
+        .hh-econ-net {
+            text-align: center;
+            padding: 8px;
+            background: var(--bg);
+            border-radius: 4px;
+            margin-bottom: 12px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+
+        .hh-econ-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+        .hh-econ-enterprise {
+            background: var(--bg3);
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+        }
+        .hh-econ-enterprise-empty {
+            background: var(--bg3);
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            font-size: 0.6rem;
+            color: var(--dim);
+        }
+        .hh-econ-enterprise-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+        .hh-econ-enterprise-title { font-size: 0.6rem; color: var(--accent); }
+        .hh-econ-enterprise-meta  { font-size: 0.55rem; color: var(--dim); }
+        .hh-econ-enterprise-total { font-size: 0.55rem; margin-bottom: 4px; }
+        .hh-econ-enterprise-list  { max-height: 120px; overflow-y: auto; }
+        .hh-econ-enterprise-row   {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 8px;
+            background: var(--bg);
+            border-radius: 4px;
+            margin-bottom: 2px;
+            font-size: 0.6rem;
+        }
+        .hh-econ-enterprise-name { font-size: 0.6rem; }
+        .hh-econ-enterprise-more { text-align: center; font-size: 0.5rem; color: var(--dim); padding-top: 4px; }
+
+        .hh-resource-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+        .hh-resource-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background: var(--bg2);
+            border-radius: 6px;
+        }
+        .hh-resource-label    { font-size: 0.7rem; }
+        .hh-resource-controls { display: flex; align-items: center; gap: 8px; }
+        .hh-resource-value    { font-size: 1rem; font-weight: bold; }
+
+        /* ============================================================= */
+        /* 10. HOLDINGS TAB                                              */
+        /* ============================================================= */
+
+        .hh-holding-section { margin-bottom: 12px; }
+        .hh-holding-section-meta { font-size: 0.5rem; color: var(--success); }
+        .hh-holding-list { display: flex; flex-direction: column; gap: 6px; }
+
+        .hh-holding-card {
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 12px;
+        }
+        .hh-holding-card.demolished { opacity: 0.5; }
+
+        .hh-holding-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+
+        .hh-holding-title {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+            font-size: 0.75rem;
+            font-weight: bold;
+        }
+
+        .hh-holding-type   { font-size: 0.5rem; color: var(--dim); margin-left: 4px; }
+        .hh-holding-status { font-size: 0.45rem; margin-left: 4px; }
+
+        .hh-holding-badge {
+            font-size: 0.4rem;
+            padding: 1px 6px;
+            border-radius: 8px;
+            background: var(--accent-dim);
+            color: var(--accent);
+            margin-left: 4px;
+        }
+
+        .hh-holding-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            font-size: 0.5rem;
+            color: var(--dim);
+            margin-top: 4px;
+        }
+
+        .hh-holding-meta-dim { font-size: 0.5rem; color: var(--dim); }
+        .hh-holding-actions  { display: flex; gap: 4px; align-items: center; }
+
+        /* ============================================================= */
+        /* 11. ACTIVITY TAB                                              */
+        /* ============================================================= */
+
+        .hh-activity-total  { font-size: 0.55rem; color: var(--dim); }
+
+        .hh-activity-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-bottom: 12px;
+            padding: 6px;
+            background: var(--bg2);
+            border-radius: 4px;
+        }
+
+        .hh-activity-chip {
+            background: var(--bg3);
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.5rem;
+        }
+
+        .hh-activity-events-section { margin-bottom: 12px; }
+        .hh-activity-events { max-height: 500px; overflow-y: auto; }
+
+        .hh-activity-event {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 10px;
+            background: var(--bg2);
+            border-radius: 4px;
+            margin-bottom: 2px;
+            border-left: 3px solid var(--border);
+            cursor: pointer;
+            transition: background 0.1s;
+        }
+        .hh-activity-event:hover { background: var(--bg3); }
+
+        .hh-activity-event-inner {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .hh-activity-icon   { font-size: 0.6rem; }
+        .hh-activity-year   { font-size: 0.6rem; font-weight: bold; color: var(--dim); min-width: 40px; }
+        .hh-activity-label  { font-size: 0.6rem; font-weight: bold; }
+        .hh-activity-amount { font-size: 0.55rem; margin-left: 8px; }
+        .hh-activity-amount-positive { color: var(--success); }
+        .hh-activity-amount-negative { color: var(--danger); }
+        .hh-activity-detail {
+            font-size: 0.5rem;
+            color: var(--dim);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+        }
+        .hh-activity-source { font-size: 0.4rem; color: var(--dim); }
+
+        .hh-activity-priority-important {
+            background: var(--danger);
+            color: var(--text-inverse);
+            padding: 1px 6px;
+            border-radius: 8px;
+            font-size: 0.4rem;
+        }
+        .hh-activity-priority-major {
+            background: var(--warn);
+            color: var(--text-inverse);
+            padding: 1px 6px;
+            border-radius: 8px;
+            font-size: 0.4rem;
+        }
+
+        .hh-activity-event-actions { display: flex; gap: 4px; flex-shrink: 0; }
+
+        .hh-activity-detail-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            padding: 12px;
+            background: var(--bg2);
+            border-radius: 8px;
+            border-left: 4px solid var(--border);
+        }
+
+        .hh-activity-detail-title { font-size: 0.8rem; font-weight: bold; }
+        .hh-activity-detail-meta  { font-size: 0.6rem; color: var(--dim); }
+
+        .hh-activity-raw-pre {
+            font-size: 0.5rem;
+            color: var(--dim);
+            max-height: 150px;
+            overflow: auto;
+            background: var(--bg);
+            padding: 8px;
+            border-radius: 4px;
+            margin: 0;
+        }
+
+        /* ============================================================= */
+        /* 12. FILTER BAR (members + activity)                           */
+        /* ============================================================= */
+
+        .hh-filter-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 12px;
+            padding: 8px;
+            background: var(--bg2);
+            border-radius: 6px;
+            align-items: center;
+        }
+
+        .hh-filter-search {
+            flex: 2;
+            min-width: 100px;
+            padding: 4px 8px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-size: 0.6rem;
+            color: var(--text);
+        }
+
+        .hh-filter-select {
+            padding: 4px 6px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-size: 0.6rem;
+            color: var(--text);
+        }
+
+        .hh-filter-year {
+            width: 60px;
+            padding: 4px 6px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-size: 0.6rem;
+            color: var(--text);
+        }
+
+        .hh-filter-sep {
+            font-size: 0.5rem;
+            color: var(--dim);
+            align-self: center;
+        }
+
+        /* ============================================================= */
+        /* 13. MODAL FORM PRIMITIVES (used inside openModal content)     */
+        /* ============================================================= */
+
+        .hh-modal-form { padding: 4px; }
+
+        .hh-modal-current {
+            background: var(--bg3);
+            padding: 8px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            font-size: 0.6rem;
+        }
+
+        .hh-form-group {
+            margin-bottom: 12px;
+        }
+
+        .hh-form-group label {
+            display: block;
+            font-size: 0.7rem;
+            color: var(--accent);
+            margin-bottom: 4px;
+        }
+
+        .hh-form-group input[type="text"],
+        .hh-form-group input[type="number"],
+        .hh-form-group select,
+        .hh-form-group textarea {
+            width: 100%;
+            padding: 8px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 0.8rem;
+            color: var(--text);
+            box-sizing: border-box;
+        }
+
+        .hh-form-group textarea {
+            resize: vertical;
+            min-height: 60px;
+        }
+
+        .hh-form-group input[readonly] {
+            background: var(--bg2);
+            cursor: pointer;
+        }
+
+        .hh-form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .hh-form-hint {
+            font-size: 0.55rem;
+            color: var(--dim);
+            margin-top: 4px;
+        }
+
+        .hh-inline-actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .hh-inline-actions input {
+            flex: 1;
+            min-width: 60px;
+        }
+
+        /* ============================================================= */
+        /* 14. UTILITY                                                   */
+        /* ============================================================= */
+
+        .placeholder {
+            text-align: center;
+            padding: 40px;
+            color: var(--dim);
+            font-size: 0.7rem;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: var(--dim);
+            font-size: 0.6rem;
+        }
+    </style>
 </head>
 <body>
 
-    <!-- TOP BAR -->
-    <div class="topbar">
-        <button class="burger-btn" id="burgerBtn">☰</button>
-        <span class="title">Household Manager</span>
-        <span class="spacer"></span>
+<!-- ================================================================= -->
+<!-- TOPBAR                                                            -->
+<!-- ================================================================= -->
 
-        <!-- Action buttons -->
-        <button class="btn" id="addHouseholdBtn">Add Household</button>
+<div class="topbar">
+    <div class="title" id="householdManagerTitle">Household Manager</div>
+    <div class="spacer"></div>
 
+    <div class="year-input">
         <label for="yearInput">Year</label>
-        <input type="number" class="year-input" id="yearInput" value="1250" />
-        <button class="btn" id="setYearBtn">Set</button>
-        <button class="btn" id="exportBtn">Export</button>
-        <button class="btn" id="importBtn">Import</button>
-        <input type="file" id="fileInput" accept=".json" style="display:none" />
+        <input type="number" id="yearInput">
+        <button id="setYearBtn">Set</button>
     </div>
 
-    <!-- APP LAYOUT -->
-    <div class="app-layout">
+    <button id="importBtn">Import</button>
+    <button id="exportBtn">Export</button>
+    <button id="refreshBtn">Refresh</button>
+    <input type="file" id="fileInput" accept=".json" style="display:none;">
+</div>
 
-        <!-- SIDEBAR -->
-        <div class="sidebar" id="sidebar">
-            <h3>Households</h3>
-            <div id="householdListContainer">
-                <div class="loading-placeholder">Loading households...</div>
-            </div>
+<!-- ================================================================= -->
+<!-- LAYOUT                                                            -->
+<!-- ================================================================= -->
+
+<div class="app-layout">
+
+    <!-- Sidebar: household list -->
+    <div class="sidebar" id="householdSidebar">
+        <div class="sidebar-header">
+            <h3 id="sidebarTitle">Households</h3>
         </div>
-
-        <!-- MAIN PANEL WITH TABS -->
-        <div class="main-panel" id="mainPanel">
-            <div class="panel-tabs" id="panelTabs">
-                <button class="tab-btn active" data-tab="details">
-                    <span class="tab-icon">◈</span> Overview
-                </button>
-                <button class="tab-btn" data-tab="members">
-                    <span class="tab-icon">▦</span> Members
-                </button>
-                <button class="tab-btn" data-tab="economy">
-                    <span class="tab-icon">◉</span> Economy
-                </button>
-                <button class="tab-btn" data-tab="positions">
-                    <span class="tab-icon">⚿</span> Departments
-                </button>
-                <button class="tab-btn" data-tab="holdings">
-                    <span class="tab-icon">⌂</span> Holdings
-                </button>
-            </div>
-
-            <div class="tab-content" id="tabContent">
-                <!-- OVERVIEW TAB -->
-                <div class="tab-pane active" id="tab-details">
-                    <div class="placeholder">Select a household from the sidebar</div>
-                </div>
-
-                <!-- MEMBERS TAB -->
-                <div class="tab-pane" id="tab-members">
-                    <div class="placeholder">Select a household from the sidebar</div>
-                </div>
-
-                <!-- ECONOMY TAB -->
-                <div class="tab-pane" id="tab-economy">
-                    <div class="placeholder">Select a household from the sidebar</div>
-                </div>
-
-                <!-- DEPARTMENTS / POSITIONS TAB -->
-                <div class="tab-pane" id="tab-positions">
-                    <div class="placeholder">Select a household from the sidebar</div>
-                </div>
-
-                <!-- HOLDINGS TAB -->
-                <div class="tab-pane" id="tab-holdings">
-                    <div class="placeholder">Select a household from the sidebar</div>
-                </div>
-            </div>
+        <div class="sidebar-list" id="householdListContainer">
+            <div class="loading">Loading…</div>
         </div>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- LOAD LOCALSTORAGE DATA FIRST (BEFORE ANY SYSTEMS)            -->
-    <!-- ============================================================ -->
-    <script>
-        (function() {
-            'use strict';
-            try {
-                var STORAGE_KEY = 'stillwaters_master';
-                var stored = localStorage.getItem(STORAGE_KEY);
-                if (stored) {
-                    var parsed = JSON.parse(stored);
-                    if (parsed && parsed.data) {
-                        window.masterData = parsed;
-                        console.log('[PRELOAD] Loaded from localStorage');
-                    }
-                }
-            } catch(e) {
-                console.warn('[PRELOAD] Failed to load from localStorage:', e.message);
-            }
-
-            if (!window.masterData || !window.masterData.data) {
-                window.masterData = {
-                    version: '2.0',
-                    lastUpdated: new Date().toISOString(),
-                    data: {
-                        characters: [],
-                        places: [],
-                        ranks: [],
-                        roles: [],
-                        locationTypes: [],
-                        governmentTypes: [],
-                        households: [],
-                        householdPositions: [],
-                        householdAssignments: [],
-                        residences: [],
-                        currentYear: 1250
-                    }
-                };
-                console.log('[PRELOAD] Created empty masterData');
-            }
-
-            // Ensure household-related arrays exist even if a legacy save
-            // omitted them. Structural shape only — no domain defaults.
-            if (!Array.isArray(window.masterData.data.households)) {
-                window.masterData.data.households = [];
-            }
-            if (!Array.isArray(window.masterData.data.householdPositions)) {
-                window.masterData.data.householdPositions = [];
-            }
-            if (!Array.isArray(window.masterData.data.householdAssignments)) {
-                window.masterData.data.householdAssignments = [];
-            }
-            if (!Array.isArray(window.masterData.data.residences)) {
-                window.masterData.data.residences = [];
-            }
-        })();
-    </script>
-
-    <!-- ============================================================ -->
-    <!-- CORE - NO SYSTEM DEPENDENCIES                                -->
-    <!-- ============================================================ -->
-    <script src="js/core/constants.js"></script>
-    <script src="js/core/randomness.js"></script>
-    <script src="js/core/collections.js"></script>
-    <script src="js/core/validation.js"></script>
-    <script src="js/core/formatting.js"></script>
-    <script src="js/core/time.js"></script>
-    <script src="js/core/ids.js"></script>
-    <script src="js/core/storage.js"></script>
-    <script src="js/core/accessors.js"></script>
-    <script src="js/core/world.js"></script>
-    <script src="js/core/names.js"></script>
-    <script src="js/core/state.js"></script>
-    <script src="js/core/integrity.js"></script>
-    <script src="js/core/icons.js"></script>
-    <script src="js/core/ui.js"></script>
-    <script src="js/core/collapsible.js"></script>
-    <script src="js/core/responsive.js"></script>
-    <script src="js/core/modals-core.js"></script>
-    <script src="js/core/exportUtils.js"></script>
-    <script src="js/core/query-helpers.js"></script>
-    <script src="js/core/family-accessors.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- SELECTORS                                                    -->
-    <!-- ============================================================ -->
-    <script src="js/selectors/selector-base.js"></script>
-    <script src="js/selectors/locationDropdown.js"></script>
-    <script src="js/selectors/modals-char-selector.js"></script>
-    <script src="js/selectors/modals-household-selector.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- ROLE SYSTEM                                                  -->
-    <!-- ============================================================ -->
-    <script src="js/roles/role-constants.js"></script>
-    <script src="js/roles/skill-utils.js"></script>
-    <script src="js/roles/role-state.js"></script>
-    <script src="js/roles/role-queries.js"></script>
-    <script src="js/roles/role-commands.js"></script>
-    <script src="js/roles/role-ui-list.js"></script>
-    <script src="js/roles/modals-roles.js"></script>
-    <script src="js/roles/modals-role-select.js"></script>
-    <script src="js/roles/role-system.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- CHARACTER SYSTEM                                             -->
-    <!-- ============================================================ -->
-    <script src="js/character/character-state.js"></script>
-    <script src="js/character/character-commands.js"></script>
-    <script src="js/character/character-queries.js"></script>
-    <script src="js/character/character-lifecycle.js"></script>
-    <script src="js/character/character-ui-list.js"></script>
-    <script src="js/character/modals-character.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- CHILDREN/PREGNANCY SYSTEM                                    -->
-    <!-- ============================================================ -->
-    <script src="js/children/children-state.js"></script>
-    <script src="js/children/children-queries.js"></script>
-    <script src="js/children/children-commands.js"></script>
-    <script src="js/children/children-lifecycle.js"></script>
-    <script src="js/children/pregnancy-service.js"></script>
-    <script src="js/children/surrogacy-service.js"></script>
-    <script src="js/children/adoption-service.js"></script>
-    <script src="js/children/modals-birth.js"></script>
-    <script src="js/children/modals-surrogacy.js"></script>
-    <script src="js/children/modals-adoption.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- LOCATION SYSTEM                                              -->
-    <!-- ============================================================ -->
-    <script src="js/location/location-state.js"></script>
-    <script src="js/location/location-commands.js"></script>
-    <script src="js/location/location-queries.js"></script>
-    <script src="js/location/location-hierarchy.js"></script>
-    <script src="js/location/location-movement.js"></script>
-    <script src="js/location/location-ui-list.js"></script>
-    <script src="js/location/modals-location.js"></script>
-    <script src="js/location/modals-moves.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- RELIGION SYSTEM                                              -->
-    <!-- ============================================================ -->
-    <script src="js/religion/religion-constants.js"></script>
-    <script src="js/religion/religion-state.js"></script>
-    <script src="js/religion/religion-inheritance.js"></script>
-    <script src="js/religion/religion-laws.js"></script>
-    <script src="js/religion/religion-queries.js"></script>
-    <script src="js/religion/religion-commands.js"></script>
-    <script src="js/religion/religion-ui-list.js"></script>
-    <script src="js/religion/modals-religion.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- CULTURE SYSTEM                                               -->
-    <!-- ============================================================ -->
-    <script src="js/culture/culture-constants.js"></script>
-    <script src="js/culture/culture-state.js"></script>
-    <script src="js/culture/culture-queries.js"></script>
-    <script src="js/culture/culture-commands.js"></script>
-    <script src="js/culture/culture-generation.js"></script>
-    <script src="js/culture/culture-ui-list.js"></script>
-    <script src="js/culture/modals-culture.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- SETTLEMENT SYSTEM                                            -->
-    <!-- ============================================================ -->
-    <script src="js/settlement/settlement-state.js"></script>
-    <script src="js/settlement/settlement-commands-core.js"></script>
-    <script src="js/settlement/settlement-ranks.js"></script>
-    <script src="js/settlement/settlement-features.js"></script>
-    <script src="js/settlement/settlement-economy-core.js"></script>
-    <script src="js/settlement/settlement-prosperity.js"></script>
-    <script src="js/settlement/settlement-enterprises.js"></script>
-    <script src="js/settlement/settlement-government.js"></script>
-    <script src="js/settlement/settlement-budget.js"></script>
-    <script src="js/settlement/settlement-commands-writes.js"></script>
-    <script src="js/settlement/settlement-commands-annual.js"></script>
-    <script src="js/settlement/settlement-queries.js"></script>
-    <script src="js/settlement/settlement-crud.js"></script>
-    <script src="js/settlement/settlement-ui-list.js"></script>
-    <script src="js/settlement/modals-settlement-core.js"></script>
-    <script src="js/settlement/modals-settlement-economy.js"></script>
-    <script src="js/settlement/modals-settlement-roles.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- GOVERNMENT SYSTEM                                            -->
-    <!-- ============================================================ -->
-    <script src="js/government/government-state.js"></script>
-    <script src="js/government/government-economy.js"></script>
-    <script src="js/government/government-assignment.js"></script>
-    <script src="js/government/government-laws.js"></script>
-    <script src="js/government/government-queries.js"></script>
-    <script src="js/government/government-commands.js"></script>
-    <script src="js/government/government-ui-list.js"></script>
-    <script src="js/government/modals-government.js"></script>
-    <script src="js/government/modals-government-departments.js"></script>
-    <script src="js/government/modals-government-positions.js"></script>
-    <script src="js/government/modals-government-assign.js"></script>
-    <script src="js/government/modals-government-economy.js"></script>
-    <script src="js/government/government-system.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- INDUSTRY SYSTEM                                              -->
-    <!-- ============================================================ -->
-    <script src="js/industry/industry-types.js"></script>
-    <script src="js/industry/industry-state.js"></script>
-    <script src="js/industry/industry-queries.js"></script>
-    <script src="js/industry/industry-commands.js"></script>
-    <script src="js/industry/industry-processor.js"></script>
-    <script src="js/industry/industry-ui-list.js"></script>
-    <script src="js/industry/modals-industry.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- EDUCATION SYSTEM                                             -->
-    <!-- ============================================================ -->
-    <script src="js/education/education-constants.js"></script>
-    <script src="js/education/education-state.js"></script>
-    <script src="js/education/education-history.js"></script>
-    <script src="js/education/education-learning.js"></script>
-    <script src="js/education/education-commands.js"></script>
-    <script src="js/education/education-queries.js"></script>
-    <script src="js/education/education-annual.js"></script>
-    <script src="js/education/education-ui-list.js"></script>
-    <script src="js/education/modals-education.js"></script>
-    <script src="js/education/education-system.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- HOUSEHOLD SYSTEM - CONVERGED (v6.1)                          -->
-    <!-- ============================================================ -->
-    <!--
-        Load order is critical:
-          1. Foundation (constants, rules, view-models) — no state deps
-          2. Storage (state) — owns canonical arrays
-          3. Reads (queries) — reads state
-          4. Writes (commands) — only module that persists
-          5. Economy — reads/writes via commands
-          6. Orchestrators (assignment, servant)
-          7. Residence — canonical residence storage
-          8. Bootstrap — verifies + hydrates everything above
-
-        Every module (2-7) verifies its cross-domain deps at load.
-        Bootstrap is the last line of verification + exposes window.Household.
-    -->
-
-    <!-- 1. FOUNDATION — vocabulary, policy, presentation defaults -->
-    <script src="js/households/household-constants.js"></script>
-    <script src="js/households/household-rules.js"></script>
-    <script src="js/households/household-view-models.js"></script>
-
-    <!-- 2. STATE — canonical storage, indexes, subscriptions -->
-    <script src="js/households/household-state.js"></script>
-
-    <!-- 3. QUERIES — semantic reads, defensive snapshots -->
-    <script src="js/households/household-queries.js"></script>
-
-    <!-- 4. COMMANDS — canonical mutations, persist() boundary -->
-    <script src="js/households/household-commands.js"></script>
-
-    <!-- 5. ECONOMY — wealth, resources, trade, annual processing -->
-    <script src="js/households/household-economy.js"></script>
-
-    <!-- 6. ORCHESTRATORS — cross-operation coordination -->
-    <script src="js/households/household-assignment.js"></script>
-    <script src="js/households/household-servant.js"></script>
-
-    <!-- 7. RESIDENCE — canonical residence storage -->
-    <script src="js/households/residence-system.js"></script>
-
-    <!-- 8. BOOTSTRAP — verify, hydrate, expose window.Household -->
-    <script src="js/households/household-bootstrap.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- HOUSEHOLD UI                                                 -->
-    <!-- ============================================================ -->
-    <script src="js/households/household-ui-list.js"></script>
-    <script src="js/households/modals-household.js"></script>
-    <script src="js/households/modals-household-economy.js"></script>
-    <script src="js/households/modals-household-snapshot.js"></script>
-    <script src="js/households/modals-household-staff.js"></script>
-
-    <!-- Residence modals -->
-    <script src="js/households/modals-residence.js"></script>
-    <script src="js/households/modals-residence-rental.js"></script>
-    <script src="js/households/modals-residence-owner.js"></script>
-    <script src="js/households/modals-residence-staff.js"></script>
-
-    <!-- DEPRECATED / SHIM FILES — safe to remove once callers migrate -->
-    <!--
-        modals-assign-staff.js          — verification shim; delete when no caller uses legacy names
-        modals-residence-history.js     — verification shim; delete when no caller uses legacy names
-        modals-residence-vacancy.js     — verification shim; delete when no caller uses legacy names
-        modals-residence-snapshot.js    — DEPRECATED stub; delete immediately (registers nothing)
-
-        Leaving them loaded is safe — the shims verify the canonical modules are
-        present and throw loudly if they're not. The stub warns on every load.
-    -->
-
-    <!-- ============================================================ -->
-    <!-- TAB COMPONENTS - Household Tabs                              -->
-    <!-- ============================================================ -->
-    <script src="js/tabs/household-overview-tab.js"></script>
-    <script src="js/tabs/household-members-tab.js"></script>
-    <script src="js/tabs/household-economy-tab.js"></script>
-    <script src="js/tabs/household-departments-tab.js"></script>
-    <script src="js/tabs/household-holdings-tab.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- NAME SYSTEM                                                  -->
-    <!-- ============================================================ -->
-    <script src="js/names/name-state.js"></script>
-    <script src="js/names/name-queries.js"></script>
-    <script src="js/names/name-commands.js"></script>
-    <script src="js/names/name-rules.js"></script>
-    <script src="js/names/name-system.js"></script>
-    <script src="js/names/modals-name.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- MORTALITY SYSTEM                                             -->
-    <!-- ============================================================ -->
-    <script src="js/mortality/mortality-state.js"></script>
-    <script src="js/mortality/mortality-queries.js"></script>
-    <script src="js/mortality/mortality-commands.js"></script>
-    <script src="js/mortality/modals-death.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- CRIME SYSTEM                                                 -->
-    <!-- ============================================================ -->
-    <script src="js/crime/crime-constants.js"></script>
-    <script src="js/crime/crime-state.js"></script>
-    <script src="js/crime/crime-queries.js"></script>
-    <script src="js/crime/crime-commands.js"></script>
-    <script src="js/crime/crime-law-integration.js"></script>
-    <script src="js/crime/vendetta-system.js"></script>
-    <script src="js/crime/crime-ui-stats.js"></script>
-    <script src="js/crime/modals-crime.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- RANK SYSTEM                                                  -->
-    <!-- ============================================================ -->
-    <script src="js/ranks/rank-constants.js"></script>
-    <script src="js/ranks/rank-state.js"></script>
-    <script src="js/ranks/rank-queries.js"></script>
-    <script src="js/ranks/rank-assignments.js"></script>
-    <script src="js/ranks/rank-commands.js"></script>
-    <script src="js/ranks/rank-issues.js"></script>
-    <script src="js/ranks/rank-ui-list.js"></script>
-    <script src="js/ranks/modals-rank.js"></script>
-    <script src="js/tabs/rank-manager-tab.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- RELATIONSHIP SYSTEM                                          -->
-    <!-- ============================================================ -->
-    <script src="js/relationships/relationship-types.js"></script>
-    <script src="js/relationships/relationship-registry.js"></script>
-    <script src="js/relationships/relationship-queries.js"></script>
-    <script src="js/relationships/romance-logic.js"></script>
-    <script src="js/relationships/friendship-logic.js"></script>
-    <script src="js/relationships/professional-logic.js"></script>
-    <script src="js/relationships/family-logic.js"></script>
-    <script src="js/relationships/jealousy-system.js"></script>
-    <script src="js/relationships/affair-system.js"></script>
-    <script src="js/relationships/relationshipFinder.js"></script>
-    <script src="js/relationships/modals-relationship.js"></script>
-    <script src="js/relationships/modals-friendship.js"></script>
-    <script src="js/relationships/modals-family.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- CENSUS SYSTEM                                                -->
-    <!-- ============================================================ -->
-    <script src="js/events/census-core.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- SOCIAL EVENTS SYSTEM                                         -->
-    <!-- ============================================================ -->
-    <script src="js/events/social-events-system.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- TIMELINE SYSTEM                                              -->
-    <!-- ============================================================ -->
-    <script src="js/events/timeline-core.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- APPRENTICESHIP SYSTEM                                        -->
-    <!-- ============================================================ -->
-    <script src="js/apprenticeship/apprenticeship-constants.js"></script>
-    <script src="js/apprenticeship/apprenticeship-system.js"></script>
-    <script src="js/apprenticeship/modals-apprenticeship.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- DISASTER SYSTEM                                              -->
-    <!-- ============================================================ -->
-    <script src="js/disaster/disaster-constants.js"></script>
-    <script src="js/disaster/disaster-state.js"></script>
-    <script src="js/disaster/disaster-queries.js"></script>
-    <script src="js/disaster/disaster-damage.js"></script>
-    <script src="js/disaster/disaster-commands.js"></script>
-    <script src="js/disaster/disaster-ui-stats.js"></script>
-    <script src="js/disaster/modals-disaster.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- ORCHESTRATORS                                                -->
-    <!-- ============================================================ -->
-    <script src="js/events/annualProcessing.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- ORCHESTRATOR — Household Manager page logic                  -->
-    <!-- ============================================================ -->
-
-    <script>
-        (function() {
-            'use strict';
-
-            var listContainer = document.getElementById('householdListContainer');
-            var burgerBtn = document.getElementById('burgerBtn');
-            var sidebar = document.getElementById('sidebar');
-            var exportBtn = document.getElementById('exportBtn');
-            var importBtn = document.getElementById('importBtn');
-            var fileInput = document.getElementById('fileInput');
-            var yearInput = document.getElementById('yearInput');
-            var setYearBtn = document.getElementById('setYearBtn');
-
-            var selectedId = null;
-            var isInitialized = false;
-            var _renderTimeout = null;
-
-            // ============================================================
-            // Sanity: verify the converged household modules loaded.
-            // Bootstrap verifies internally; we surface the result here
-            // so the page fails visibly if something is missing.
-            // ============================================================
-            function _verifyHouseholdModules() {
-                if (typeof window.HouseholdConstants === 'undefined') {
-                    console.error('[HouseholdManager] HouseholdConstants is missing. ' +
-                        'Load household-constants.js before the other household modules.');
-                    return false;
-                }
-                if (typeof window.HouseholdRules === 'undefined') {
-                    console.error('[HouseholdManager] HouseholdRules is missing. ' +
-                        'Load household-rules.js before the other household modules.');
-                    return false;
-                }
-                if (typeof window.HouseholdViewModels === 'undefined') {
-                    console.error('[HouseholdManager] HouseholdViewModels is missing. ' +
-                        'Load household-view-models.js before the other household modules.');
-                    return false;
-                }
-                if (typeof window.HouseholdBootstrap === 'undefined') {
-                    console.error('[HouseholdManager] HouseholdBootstrap is missing. ' +
-                        'Load household-bootstrap.js after the household core.');
-                    return false;
-                }
-                if (typeof window.HouseholdQueries === 'undefined') {
-                    console.error('[HouseholdManager] HouseholdQueries is missing.');
-                    return false;
-                }
-                if (typeof window.HouseholdCommands === 'undefined') {
-                    console.error('[HouseholdManager] HouseholdCommands is missing.');
-                    return false;
-                }
-                if (typeof window.HouseholdCommands.persist !== 'function') {
-                    console.error('[HouseholdManager] HouseholdCommands.persist is missing. ' +
-                        'The commands module is loaded but does not expose persist(). ' +
-                        'Check the load order — the commands file must be the converged version.');
-                    return false;
-                }
-                return true;
-            }
-
-            // ============================================================
-            // Add Household button
-            // ============================================================
-            document.getElementById('addHouseholdBtn').addEventListener('click', function() {
-                if (typeof window.openCreateHouseholdModal === 'function') {
-                    window.openCreateHouseholdModal(function(household) {
-                        if (household) {
-                            selectedId = household.id;
-                            window._currentHouseholdId = selectedId;
-                            renderHouseholdList();
-                            renderActiveTab();
-                        }
-                    });
-                } else {
-                    window._showToast('Create household modal not available', 'error');
-                }
-            });
-
-            // ============================================================
-            // TAB SWITCHING
-            // ============================================================
-            var tabButtons = document.querySelectorAll('.tab-btn');
-            var tabPanes = {
-                details: document.getElementById('tab-details'),
-                members: document.getElementById('tab-members'),
-                economy: document.getElementById('tab-economy'),
-                positions: document.getElementById('tab-positions'),
-                holdings: document.getElementById('tab-holdings')
-            };
-
-            window._currentHouseholdId = null;
-
-            function renderActiveTab() {
-                if (!selectedId) {
-                    Object.keys(tabPanes).forEach(function(key) {
-                        if (tabPanes[key].classList.contains('active')) {
-                            tabPanes[key].innerHTML = '<div class="placeholder">Select a household from the sidebar</div>';
-                        }
-                    });
-                    return;
-                }
-
-                window._currentHouseholdId = selectedId;
-
-                var activeTab = document.querySelector('.tab-btn.active');
-                if (!activeTab) return;
-
-                var tabId = activeTab.dataset.tab;
-
-                if (tabId === 'details') {
-                    if (typeof window.renderHouseholdOverviewTab === 'function') {
-                        window.renderHouseholdOverviewTab('tab-details', selectedId);
-                    } else {
-                        tabPanes.details.innerHTML = '<div class="placeholder">Overview tab not loaded</div>';
-                    }
-                } else if (tabId === 'members') {
-                    if (typeof window.renderHouseholdMembersTab === 'function') {
-                        window.renderHouseholdMembersTab('tab-members', selectedId);
-                    } else {
-                        tabPanes.members.innerHTML = '<div class="placeholder">Members tab not loaded</div>';
-                    }
-                } else if (tabId === 'economy') {
-                    if (typeof window.renderHouseholdEconomyTab === 'function') {
-                        window.renderHouseholdEconomyTab('tab-economy', selectedId);
-                    } else {
-                        tabPanes.economy.innerHTML = '<div class="placeholder">Economy tab not loaded</div>';
-                    }
-                } else if (tabId === 'positions') {
-                    if (typeof window.renderHouseholdDepartmentsTab === 'function') {
-                        window.renderHouseholdDepartmentsTab('tab-positions', selectedId);
-                    } else {
-                        tabPanes.positions.innerHTML = '<div class="placeholder">Departments tab not loaded</div>';
-                    }
-                } else if (tabId === 'holdings') {
-                    if (typeof window.renderHouseholdHoldingsTab === 'function') {
-                        window.renderHouseholdHoldingsTab('tab-holdings', selectedId);
-                    } else {
-                        tabPanes.holdings.innerHTML = '<div class="placeholder">Holdings tab not loaded</div>';
-                    }
-                }
-            }
-
-            function switchTab(tabId) {
-                tabButtons.forEach(function(btn) {
-                    btn.classList.toggle('active', btn.dataset.tab === tabId);
-                });
-
-                Object.keys(tabPanes).forEach(function(key) {
-                    tabPanes[key].classList.toggle('active', key === tabId);
-                });
-
-                renderActiveTab();
-            }
-
-            tabButtons.forEach(function(btn) {
-                btn.addEventListener('click', function() {
-                    switchTab(this.dataset.tab);
-                });
-            });
-
-            // ============================================================
-            // SIDEBAR TOGGLE
-            // ============================================================
-            function toggleSidebar() {
-                sidebar.classList.toggle('open');
-            }
-
-            function closeSidebar() {
-                sidebar.classList.remove('open');
-            }
-
-            burgerBtn.addEventListener('click', toggleSidebar);
-
-            document.addEventListener('click', function(e) {
-                if (window.innerWidth <= 768) {
-                    if (!sidebar.contains(e.target) && e.target !== burgerBtn) {
-                        closeSidebar();
-                    }
-                }
-            });
-
-            document.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape') closeSidebar();
-            });
-
-            window.addEventListener('resize', function() {
-                if (window.innerWidth > 768) closeSidebar();
-            });
-
-            // ============================================================
-            // GET/SET FULL DATA
-            // ============================================================
-            function getFullData() {
-                if (typeof window.masterData !== 'undefined' && window.masterData) {
-                    return window.masterData;
-                }
-                return null;
-            }
-
-            function setFullData(data) {
-                if (data && data.data) {
-                    window.masterData = data;
-                } else if (data && data.places) {
-                    window.masterData = {
-                        version: '2.0',
-                        lastUpdated: new Date().toISOString(),
-                        data: data
-                    };
-                } else {
-                    return false;
-                }
-
-                // Ensure structural shape on household arrays — no domain defaults.
-                var d = window.masterData.data;
-                if (!Array.isArray(d.households)) d.households = [];
-                if (!Array.isArray(d.householdPositions)) d.householdPositions = [];
-                if (!Array.isArray(d.householdAssignments)) d.householdAssignments = [];
-                if (!Array.isArray(d.residences)) d.residences = [];
-
-                try {
-                    localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData));
-                } catch(e) {}
-
-                if (typeof window.saveMasterData === 'function') {
-                    window.saveMasterData(true);
-                }
-                if (typeof window.invalidateAccessorCaches === 'function') {
-                    window.invalidateAccessorCaches();
-                }
-
-                // Re-hydrate all household modules from the new data.
-                try {
-                    if (typeof window.HouseholdState !== 'undefined' &&
-                        typeof window.HouseholdState.hydrateFromMasterData === 'function') {
-                        window.HouseholdState.hydrateFromMasterData();
-                    } else if (typeof window.HouseholdState !== 'undefined' &&
-                        typeof window.HouseholdState.refresh === 'function') {
-                        window.HouseholdState.refresh();
-                    }
-                } catch (e) {
-                    console.warn('[HouseholdManager] HouseholdState hydration failed:', e);
-                }
-
-                try {
-                    if (typeof window.ResidenceSystem !== 'undefined' &&
-                        typeof window.ResidenceSystem.hydrateFromMasterData === 'function') {
-                        window.ResidenceSystem.hydrateFromMasterData();
-                    }
-                } catch (e) {
-                    console.warn('[HouseholdManager] ResidenceSystem hydration failed:', e);
-                }
-
-                return true;
-            }
-
-            // ============================================================
-            // RENDER HOUSEHOLD LIST
-            // ============================================================
-            function renderHouseholdList() {
-                if (!listContainer) return;
-
-                if (_renderTimeout) {
-                    clearTimeout(_renderTimeout);
-                    _renderTimeout = null;
-                }
-
-                var HQ = window.HouseholdQueries;
-                var HUI = window.mountHouseholdList;
-
-                if (!HQ || typeof HUI !== 'function') {
-                    listContainer.innerHTML = '<div class="loading-placeholder">Loading households...</div>';
-                    return;
-                }
-
-                // Read households via Queries (not State). Queries returns
-                // defensive projections, which is what the UI should render.
-                var households;
-                try {
-                    households = HQ.getAllHouseholds();
-                } catch (e) {
-                    console.warn('[HouseholdManager] getHouseholds failed:', e);
-                    listContainer.innerHTML = '<div class="error-state">Error loading households</div>';
-                    return;
-                }
-
-                if (!households || households.length === 0) {
-                    listContainer.innerHTML = '<div class="empty-state">No households found</div>';
-                    // Still reset the selection so stale IDs don't persist.
-                    selectedId = null;
-                    window._currentHouseholdId = null;
-                    return;
-                }
-
-                try {
-                    HUI('householdListContainer', function(householdId) {
-                        if (!householdId) return;
-                        selectedId = householdId;
-                        window._currentHouseholdId = householdId;
-                        renderActiveTab();
-                        if (window.innerWidth <= 768) closeSidebar();
-                    }, {
-                        preserveSelection: true,
-                        selectedId: selectedId || undefined
-                    });
-
-                    // Reconcile: if the selected household no longer exists
-                    // in the fresh list, clear the selection.
-                    if (selectedId) {
-                        var found = false;
-                        for (var i = 0; i < households.length; i++) {
-                            if (households[i].id === selectedId) {
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found) {
-                            selectedId = null;
-                            window._currentHouseholdId = null;
-                        }
-                    }
-
-                    // Auto-select the first household if none is selected.
-                    if (!selectedId && households.length > 0) {
-                        selectedId = households[0].id;
-                        window._currentHouseholdId = selectedId;
-                        _renderTimeout = setTimeout(function() {
-                            renderHouseholdList();
-                            renderActiveTab();
-                            _renderTimeout = null;
-                        }, 50);
-                    }
-                } catch (e) {
-                    console.warn('[HouseholdManager] mountHouseholdList failed:', e);
-                    listContainer.innerHTML = '<div class="error-state">Error loading households</div>';
-                }
-            }
-
-            // ============================================================
-            // IMPORT / EXPORT
-            // ============================================================
-            exportBtn.addEventListener('click', function() {
-                var data = getFullData();
-                if (!data) {
-                    alert('No data to export');
-                    return;
-                }
-                var blob = new Blob([JSON.stringify(data, null, 2)], {
-                    type: 'application/json'
-                });
-                var url = URL.createObjectURL(blob);
-                var a = document.createElement('a');
-                a.href = url;
-                a.download = 'stillwaters_households_' + Date.now() + '.json';
-                a.click();
-                URL.revokeObjectURL(url);
-            });
-
-            importBtn.addEventListener('click', function() {
-                fileInput.value = '';
-                fileInput.click();
-            });
-
-            fileInput.addEventListener('change', function() {
-                var file = this.files[0];
-                if (!file) return;
-
-                var reader = new FileReader();
-                reader.onload = function(e) {
-                    try {
-                        var imported = JSON.parse(e.target.result);
-                        var dataToImport = null;
-
-                        if (imported.data && imported.version) {
-                            dataToImport = imported;
-                        } else if (imported.places || imported.characters) {
-                            dataToImport = {
-                                version: '2.0',
-                                lastUpdated: new Date().toISOString(),
-                                data: imported
-                            };
-                        } else if (imported.data) {
-                            dataToImport = {
-                                version: '2.0',
-                                lastUpdated: new Date().toISOString(),
-                                data: imported.data
-                            };
-                        }
-
-                        if (!dataToImport) {
-                            alert('Invalid format: Could not recognize data structure.');
-                            return;
-                        }
-
-                        if (setFullData(dataToImport)) {
-                            renderHouseholdList();
-                            renderActiveTab();
-                        } else {
-                            alert('Import failed');
-                        }
-                    } catch (err) {
-                        alert('Invalid JSON: ' + err.message);
-                    }
-                };
-                reader.readAsText(file);
-                this.value = '';
-            });
-
-            // ============================================================
-            // YEAR SETTER
-            // ============================================================
-            setYearBtn.addEventListener('click', function() {
-                var val = parseInt(yearInput.value, 10);
-                if (isNaN(val) || !window.masterData) return;
-
-                window.masterData.data.currentYear = val;
-                try {
-                    localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData));
-                } catch(e) {}
-                if (typeof window.saveMasterData === 'function') {
-                    window.saveMasterData(true);
-                }
-
-                // Refresh household state so any year-dependent queries
-                // (heir discovery, historical snapshots) use the new year.
-                if (typeof window.HouseholdState !== 'undefined' &&
-                    typeof window.HouseholdState.refresh === 'function') {
-                    try {
-                        window.HouseholdState.refresh();
-                    } catch (e) {
-                        console.warn('[HouseholdManager] HouseholdState.refresh failed:', e);
-                    }
-                }
-
-                // Re-render the active tab so year-dependent displays update.
-                renderActiveTab();
-            });
-
-            // ============================================================
-            // FORCE RENDER ON HOUSEHOLD SELECTION (backup path)
-            // ============================================================
-            // The primary path is the mountHouseholdList onSelect callback.
-            // This backup listener catches the case where the click handler
-            // fires before the list re-renders.
-            document.addEventListener('click', function(e) {
-                var item = e.target.closest('.household-item');
-                if (item && item.dataset.id) {
-                    var id = item.dataset.id;
-                    setTimeout(function() {
-                        if (selectedId === id) {
-                            window._currentHouseholdId = id;
-                            renderActiveTab();
-                        }
-                    }, 150);
-                }
-            });
-
-            // ============================================================
-            // DEBUG: Log module presence on load
-            // ============================================================
-            console.log('[HouseholdManager] Household modules:');
-            console.log('  HouseholdConstants:', typeof window.HouseholdConstants);
-            console.log('  HouseholdRules:', typeof window.HouseholdRules);
-            console.log('  HouseholdViewModels:', typeof window.HouseholdViewModels);
-            console.log('  HouseholdState:', typeof window.HouseholdState);
-            console.log('  HouseholdQueries:', typeof window.HouseholdQueries);
-            console.log('  HouseholdCommands:', typeof window.HouseholdCommands);
-            console.log('  HouseholdCommands.persist:', window.HouseholdCommands
-                ? typeof window.HouseholdCommands.persist : 'N/A');
-            console.log('  HouseholdEconomy:', typeof window.HouseholdEconomy);
-            console.log('  HouseholdAssignment:', typeof window.HouseholdAssignment);
-            console.log('  HouseholdServant:', typeof window.HouseholdServant);
-            console.log('  ResidenceSystem:', typeof window.ResidenceSystem);
-            console.log('  HouseholdBootstrap:', typeof window.HouseholdBootstrap);
-            console.log('  Household namespace:', typeof window.Household);
-            console.log('[HouseholdManager] Tab functions:');
-            console.log('  renderHouseholdOverviewTab:', typeof window.renderHouseholdOverviewTab);
-            console.log('  renderHouseholdMembersTab:', typeof window.renderHouseholdMembersTab);
-            console.log('  renderHouseholdEconomyTab:', typeof window.renderHouseholdEconomyTab);
-            console.log('  renderHouseholdDepartmentsTab:', typeof window.renderHouseholdDepartmentsTab);
-            console.log('  renderHouseholdHoldingsTab:', typeof window.renderHouseholdHoldingsTab);
-
-            // ============================================================
-            // INIT
-            // ============================================================
-            function init() {
-                if (isInitialized) return;
-                isInitialized = true;
-
-                // Verify the converged household modules are loaded.
-                // If any is missing, the page still renders — but every
-                // household operation will fail with a clear error.
-                if (!_verifyHouseholdModules()) {
-                    console.warn('[HouseholdManager] Household modules are not fully loaded. ' +
-                        'Some operations will not work.');
-                }
-
-                // Ask bootstrap to re-verify + re-hydrate. Bootstrap is
-                // idempotent; if it already auto-initialized at load, this
-                // is a no-op that returns {success: true, alreadyInitialized: true}.
-                if (window.HouseholdBootstrap &&
-                    typeof window.HouseholdBootstrap.init === 'function') {
-                    try {
-                        var bootResult = window.HouseholdBootstrap.init();
-                        if (bootResult && bootResult.success === false) {
-                            console.warn('[HouseholdManager] Bootstrap reported failure:', bootResult);
-                        }
-                    } catch (e) {
-                        console.error('[HouseholdManager] Bootstrap.init threw:', e);
-                    }
-                }
-
-                // Sync the year input with masterData.
-                if (window.masterData && window.masterData.data &&
-                    typeof window.masterData.data.currentYear === 'number') {
-                    yearInput.value = window.masterData.data.currentYear;
-                }
-
-                // Register tab renderers if the tab modules provide a
-                // registration hook. These are best-effort — the tabs also
-                // work via their direct `renderHousehold*Tab` entry points.
-                if (typeof window.registerOverviewTabRenderer === 'function') {
-                    window.registerOverviewTabRenderer();
-                }
-                if (typeof window.registerMembersTabRenderer === 'function') {
-                    window.registerMembersTabRenderer();
-                }
-                if (typeof window.registerEconomyTabRenderer === 'function') {
-                    window.registerEconomyTabRenderer();
-                }
-                if (typeof window.registerDepartmentsTabRenderer === 'function') {
-                    window.registerDepartmentsTabRenderer();
-                }
-                if (typeof window.registerHoldingsTabRenderer === 'function') {
-                    window.registerHoldingsTabRenderer();
-                }
-
-                // Initial render.
-                setTimeout(function() {
-                    var HQ = window.HouseholdQueries;
-                    if (HQ) {
-                        var households;
-                        try {
-                            households = HQ.getAllHouseholds();
-                        } catch (e) {
-                            households = [];
-                        }
-                        if (households && households.length > 0 && !selectedId) {
-                            selectedId = households[0].id;
-                            window._currentHouseholdId = selectedId;
-                        }
-                    }
-
-                    renderHouseholdList();
-
-                    setTimeout(function() {
-                        renderActiveTab();
-                    }, 100);
-                }, 300);
-            }
-
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', init);
-            } else {
-                setTimeout(init, 50);
-            }
-
-        })();
-    </script>
+    <!-- Main panel: tab strip + panes -->
+    <div class="main-panel">
+
+        <div class="manager-subtabs" id="householdsTabStrip" role="tablist">
+            <button type="button" class="manager-subtab" data-tab="details"   role="tab" aria-selected="true">Overview</button>
+            <button type="button" class="manager-subtab" data-tab="members"   role="tab" aria-selected="false">Members</button>
+            <button type="button" class="manager-subtab" data-tab="positions" role="tab" aria-selected="false">Departments</button>
+            <button type="button" class="manager-subtab" data-tab="economy"   role="tab" aria-selected="false">Economy</button>
+            <button type="button" class="manager-subtab" data-tab="holdings"  role="tab" aria-selected="false">Holdings</button>
+            <button type="button" class="manager-subtab" data-tab="activity"  role="tab" aria-selected="false">Activity</button>
+        </div>
+
+        <div class="tab-content-wrapper" id="panelContent" role="tabpanel">
+            <div class="tab-pane active" id="households-pane-details"   data-tab-content="details"></div>
+            <div class="tab-pane"        id="households-pane-members"   data-tab-content="members"></div>
+            <div class="tab-pane"        id="households-pane-positions" data-tab-content="positions"></div>
+            <div class="tab-pane"        id="households-pane-economy"   data-tab-content="economy"></div>
+            <div class="tab-pane"        id="households-pane-holdings"  data-tab-content="holdings"></div>
+            <div class="tab-pane"        id="households-pane-activity"  data-tab-content="activity"></div>
+        </div>
+
+    </div>
+</div>
+
+<!-- ================================================================= -->
+<!-- SCRIPTS — exact order per §8 of the playbook                      -->
+<!-- ================================================================= -->
+
+<!-- 1. Theme boot -->
+<script src="js/core/theme-boot.js"></script>
+
+<!-- 2. Core constants -->
+<script src="js/core/constants/constants.js"></script>
+<script src="js/core/constants/age-constants.js"></script>
+<script src="js/core/constants/character-constants.js"></script>
+<script src="js/core/constants/character-traits.js"></script>
+<script src="js/core/constants/location-constants.js"></script>
+<script src="js/core/constants/relationship-constants.js"></script>
+
+<!-- 3. Core utilities -->
+<script src="js/core/formatting.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/randomness.js"></script>
+
+<!-- 4. Time -->
+<script src="js/core/time.js"></script>
+
+<!-- 5. Storage -->
+<script src="js/core/storage-schema.js"></script>
+<script src="js/core/storage.js"></script>
+<script>
+    try { if (typeof initializeStorage === 'function') initializeStorage(); } catch (e) {}
+</script>
+
+<!-- 6. Accessors -->
+<script src="js/core/accessors.js"></script>
+
+<!-- 7. UI primitives -->
+<script src="js/core/ui.js"></script>
+<script src="js/core/ui-state.js"></script>
+<script src="js/core/modals-core.js"></script>
+<script src="js/core/responsive.js"></script>
+<script src="js/core/collapsible.js"></script>
+<script src="js/core/exportUtils.js"></script>
+<script src="js/core/tab-manager.js"></script>
+
+<!-- 8. Character policy -->
+<script src="js/character/family-rules.js"></script>
+<script src="js/character/character-state.js"></script>
+<script src="js/character/character-commands.js"></script>
+<script src="js/character/character-queries.js"></script>
+<script src="js/character/family-queries.js"></script>
+<script src="js/character/family-commands.js"></script>
+
+<!-- 9. Household domain -->
+<script src="js/households/household-constants.js"></script>
+<script src="js/households/household-rules.js"></script>
+<script src="js/households/household-view-models.js"></script>
+<script src="js/households/household-orchestration.js"></script>
+<script src="js/households/household-state.js"></script>
+<script src="js/households/household-queries.js"></script>
+<script src="js/households/household-commands.js"></script>
+<script src="js/households/household-economy.js"></script>
+<script src="js/households/household-assignment.js"></script>
+<script src="js/households/household-servant.js"></script>
+<script src="js/households/residence-system.js"></script>
+<script src="js/households/household-bootstrap.js"></script>
+
+<!-- 10. Runtime — must load before any tab -->
+<script src="js/households/household-tab-runtime.js"></script>
+
+<!-- 11. Household modals the tabs delegate to -->
+<script src="js/households/modals-helper.js"></script>
+<script src="js/households/modals-household.js"></script>
+<script src="js/households/modals-household-economy.js"></script>
+<script src="js/households/modals-household-snapshot.js"></script>
+<script src="js/households/modals-household-staff.js"></script>
+<script src="js/households/modals-residence.js"></script>
+<script src="js/households/modals-residence-owner.js"></script>
+<script src="js/households/modals-residence-rental.js"></script>
+<script src="js/households/modals-residence-staff.js"></script>
+
+<!-- 12. Selectors -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
+
+<!-- 13. Household tabs — self-register with TabManager at load -->
+<script src="js/households/household-overview-tab.js"></script>
+<script src="js/households/household-members-tab.js"></script>
+<script src="js/households/household-departments-tab.js"></script>
+<script src="js/households/household-economy-tab.js"></script>
+<script src="js/households/household-holdings-tab.js"></script>
+<script src="js/households/household-activity-tab.js"></script>
+
+<!-- 14. Bootstrap — configures TabManager, wires shell -->
+<script src="js/households/household-manager-bootstrap.js"></script>
 
 </body>
 </html>
