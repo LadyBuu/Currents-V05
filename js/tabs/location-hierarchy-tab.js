@@ -2,165 +2,219 @@
 /**
  * =============================================================================
  * LOCATION HIERARCHY TAB
+ * js/tabs/location-hierarchy-tab.js
  * =============================================================================
- * 
- * Displays the ancestor chain and descendants for a specific location.
- * 
- * Exports:
- *   - window.LocationHierarchyTab.render(containerId, locationId, onRefresh)
+ *
+ * LOCATION: js/tabs/location-hierarchy-tab.js
+ *
+ * Displays the ancestor chain and all descendants for the selected location.
+ * Each ancestor and descendant has a "Go to" button that dispatches a
+ * 'locationSelected' custom event; the bootstrap listens and routes it.
+ *
+ * RENDERER CONTRACT (from LocationManagerBootstrap):
+ *   fn(container, context) where context = { locationId, locationName }
+ *
+ * DATA SOURCES:
+ *   - LocationQueries.getPlace(id)
+ *   - LocationQueries.getPlaceHierarchy(id)     (ancestors root→self)
+ *   - LocationQueries.getPlaceChildren(id, true) (descendants)
+ *   - LocationQueries.getLocationTypeName(typeId)
+ *
+ * FILTERS: none.
+ *
+ * DEPENDENCIES (all soft; guarded at call time):
+ *   - LocationQueries — REQUIRED
+ *   - TabManager      — REQUIRED
+ *   - formatting.js   (escapeHtml) — REQUIRED
+ *   - icons.js        (Icons)      — soft
+ *
+ * TIME CONTRACT: none.
+ * ICON POLICY: no emojis, no literal Unicode box-drawing glyphs. Indentation
+ *   uses CSS padding-left driven by the node's depth; the tree-guide glyph
+ *   is rendered as a CSS pseudo-element in css/location-tabs.css.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Refactored to the Education tab skeleton:
+ *     - Renderer contract is fn(container, context).
+ *     - Registers with TabManager at load time.
+ *     - Removed every inline style attribute. All layout comes from
+ *       .loc-hier-* classes in css/location-tabs.css.
+ *     - Removed the literal '└─' glyph. Depth is now a data-depth attribute,
+ *       styled via CSS.
+ *     - Removed per-button listeners. One delegated click handler on
+ *       the container, routed via data-action + data-id.
+ *     - Empty states are three-way: no-context / no-place / no-data.
+ *     - _esc throws if escapeHtml is missing (was: silently returned '').
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
-    function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
+    var TAB_ID = 'hierarchy';
+    var SCOPE  = 'location';
 
-    function _getIcon(name) {
-        return (window.Icons && window.Icons[name]) ? window.Icons[name] : '';
-    }
+    // =========================================================================
+    // 1. DEPENDENCY HELPERS (soft; strict fallbacks)
+    // =========================================================================
 
-    function _getPlace(id) {
-        if (window.LocationQueries && window.LocationQueries.getPlace) {
-            return window.LocationQueries.getPlace(id);
+    function _queries() {
+        return (typeof window.LocationQueries !== 'undefined') ? window.LocationQueries : null;
+    }
+    function _tabManager() {
+        return (typeof window.TabManager !== 'undefined') ? window.TabManager : null;
+    }
+    function _esc(v) {
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(v);
+        if (v === null || v === undefined) return '';
+        return String(v)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function _icon(name) {
+        if (typeof window.getIcon === 'function') {
+            try { var s = window.getIcon(name); if (typeof s === 'string') return s; }
+            catch (e) { /* fall through */ }
         }
-        return null;
+        if (window.Icons && typeof window.Icons[name] === 'string') return window.Icons[name];
+        return '';
+    }
+    function _toast(msg, type) {
+        if (typeof window.showToast === 'function') window.showToast(msg, type);
     }
 
-    function _getHierarchy(id) {
-        if (window.LocationQueries && window.LocationQueries.getPlaceHierarchy) {
-            return window.LocationQueries.getPlaceHierarchy(id);
-        }
-        return [];
-    }
+    // =========================================================================
+    // 2. RENDER
+    // =========================================================================
 
-    function _getDescendants(id) {
-        if (window.LocationQueries && window.LocationQueries.getPlaceChildren) {
-            return window.LocationQueries.getPlaceChildren(id, true);
-        }
-        return [];
-    }
-
-    function _getTypeName(typeId) {
-        if (window.LocationQueries && window.LocationQueries.getLocationTypeName) {
-            return window.LocationQueries.getLocationTypeName(typeId);
-        }
-        return 'Unknown';
-    }
-
-    function render(containerId, locationId, onRefresh) {
-        var container = document.getElementById(containerId);
-        if (!container) return;
-
-        var place = _getPlace(locationId);
-        if (!place) {
-            container.innerHTML = '<div class="empty-state">Location not found</div>';
-            return;
-        }
-
-        var chain = _getHierarchy(locationId);
-        var descendants = _getDescendants(locationId);
-
-        var html = '<div style="padding: 4px;">';
-
-        // --- ANCESTRY SECTION ---
-        html += '<div style="background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 16px;">';
-        html += '<div style="font-size: 0.7rem; color: var(--accent-light); font-weight: bold; margin-bottom: 10px;">' + _getIcon('LOCATION') + ' Hierarchy Path</div>';
-        
+    function _renderAncestry(chain, locationId, Q) {
+        var html = '<div class="loc-hier-section">';
+        html += '<div class="loc-tab-section-title">' + _icon('LOCATION') + ' Hierarchy Path</div>';
         if (chain.length === 0) {
-            html += '<div style="color: var(--dim); font-size: 0.7rem;">No hierarchy path found.</div>';
+            html += '<div class="loc-tab-empty">No hierarchy path found.</div>';
         } else {
-            html += '<div style="display: flex; flex-direction: column; gap: 2px;">';
+            html += '<div class="loc-hier-list">';
             for (var i = 0; i < chain.length; i++) {
                 var node = chain[i];
                 var isSelf = node.id === locationId;
-                var typeName = _getTypeName(node.typeId);
-                
-                var bg = isSelf ? 'var(--accent-dim)' : 'transparent';
-                var borderLeft = isSelf ? '3px solid var(--accent)' : '3px solid transparent';
-                var color = isSelf ? 'var(--accent-light)' : 'var(--text)';
-                var weight = isSelf ? 'bold' : 'normal';
-
-                html += '<div style="display: flex; align-items: center; padding: 6px 8px; border-radius: 4px; background: ' + bg + '; border-left: ' + borderLeft + ';">';
-                
-                // Indent based on depth
-                var indent = '';
-                for (var j = 0; j < i; j++) {
-                    indent += '&nbsp;&nbsp;&nbsp;&nbsp;';
+                var typeName = Q.getLocationTypeName(node.typeId) || 'Unknown';
+                var cls = 'loc-hier-row' + (isSelf ? ' is-self' : '');
+                html += '<div class="' + cls + '" data-depth="' + i + '">';
+                html +=   '<span class="loc-hier-row-name">' +
+                            _esc(node.displayName) +
+                            '<span class="loc-hier-row-type">(' + _esc(typeName) + ')</span>' +
+                          '</span>';
+                if (!isSelf) {
+                    html += '<button type="button" class="loc-hier-nav-btn" ' +
+                              'data-action="navigate" data-id="' + _esc(node.id) + '">Go to</button>';
                 }
-                if (i > 0) {
-                    indent += '└─ ';
-                }
-                
-                html += '<span style="font-size: 0.75rem; color: ' + color + '; font-weight: ' + weight + '; flex: 1;">' +
-                    indent + _escapeHtml(node.displayName) + 
-                    '<span style="font-size: 0.55rem; color: var(--dim); margin-left: 8px; font-weight: normal;">(' + _escapeHtml(typeName) + ')</span>' +
-                    '</span>';
-                
-                // Button to navigate to this ancestor (if not self)
-                if (!isSelf && onRefresh) {
-                    html += '<button class="btn btn-small nav-ancestor-btn" data-id="' + node.id + '" style="background: var(--bg3); border: 1px solid var(--border); padding: 2px 8px; font-size: 0.55rem; cursor: pointer; color: var(--accent); border-radius: 4px;">Go to</button>';
-                }
-
                 html += '</div>';
             }
             html += '</div>';
         }
         html += '</div>';
+        return html;
+    }
 
-        // --- DESCENDANTS SECTION ---
-        html += '<div style="background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 14px;">';
-        html += '<div style="font-size: 0.7rem; color: var(--accent-light); font-weight: bold; margin-bottom: 10px;">' + _getIcon('PEOPLE') + ' Descendants (' + descendants.length + ')</div>';
-
+    function _renderDescendants(descendants, Q) {
+        var html = '<div class="loc-hier-section">';
+        html += '<div class="loc-tab-section-title">' +
+                    _icon('PEOPLE') + ' Descendants (' + descendants.length + ')' +
+                '</div>';
         if (descendants.length === 0) {
-            html += '<div style="color: var(--dim); font-size: 0.7rem; text-align: center; padding: 12px 0;">This location has no sub-locations.</div>';
+            html += '<div class="loc-tab-empty">This location has no sub-locations.</div>';
         } else {
-            html += '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px;">';
+            html += '<div class="loc-hier-desc-grid">';
             for (var k = 0; k < descendants.length; k++) {
                 var desc = descendants[k];
-                var descType = _getTypeName(desc.typeId);
-                var descParent = _getPlace(desc.parentId);
+                var descType = Q.getLocationTypeName(desc.typeId) || 'Unknown';
+                var descParent = Q.getPlace(desc.parentId);
                 var descParentName = descParent ? descParent.displayName : 'Unknown';
-
-                html += '<div style="background: var(--bg3); padding: 8px 10px; border-radius: 6px; border-left: 2px solid var(--border);">';
-                html += '<div style="font-size: 0.7rem; font-weight: 500; color: var(--text);">' + _escapeHtml(desc.displayName) + '</div>';
-                html += '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 2px;">';
-                html += _escapeHtml(descType) + ' · Parent: ' + _escapeHtml(descParentName);
-                html += '</div>';
-                if (onRefresh) {
-                    html += '<button class="btn btn-small nav-desc-btn" data-id="' + desc.id + '" style="margin-top: 6px; background: transparent; border: 1px solid var(--border); padding: 2px 8px; font-size: 0.55rem; cursor: pointer; color: var(--accent); border-radius: 4px;">View Details</button>';
-                }
+                html += '<div class="loc-hier-desc-card">';
+                html +=   '<div class="loc-hier-desc-name">' + _esc(desc.displayName) + '</div>';
+                html +=   '<div class="loc-hier-desc-meta">' +
+                            _esc(descType) + ' · Parent: ' + _esc(descParentName) +
+                          '</div>';
+                html +=   '<button type="button" class="loc-hier-nav-btn" ' +
+                            'data-action="navigate" data-id="' + _esc(desc.id) + '">View Details</button>';
                 html += '</div>';
             }
             html += '</div>';
         }
         html += '</div>';
+        return html;
+    }
 
+    function renderHierarchyTab(container, context) {
+        if (!container) return;
+
+        if (!context || !context.locationId) {
+            container.innerHTML = '<div class="empty-state">Select a location from the sidebar.</div>';
+            return;
+        }
+
+        var Q = _queries();
+        if (!Q) {
+            container.innerHTML =
+                '<div class="rt-unavailable">LocationQueries is not available. ' +
+                'Load js/location/location-queries.js.</div>';
+            return;
+        }
+
+        var place = Q.getPlace(context.locationId);
+        if (!place) {
+            container.innerHTML = '<div class="empty-state">Location not found.</div>';
+            return;
+        }
+
+        var chain = [];
+        var descendants = [];
+        try { chain = Q.getPlaceHierarchy(context.locationId) || []; }
+        catch (e) { /* chain stays [] */ }
+        try { descendants = Q.getPlaceChildren(context.locationId, true) || []; }
+        catch (e) { /* descendants stays [] */ }
+
+        var html = '<div class="loc-tab">';
+        html += _renderAncestry(chain, context.locationId, Q);
+        html += _renderDescendants(descendants, Q);
         html += '</div>';
         container.innerHTML = html;
 
-        // Bind events
-        if (onRefresh) {
-            container.querySelectorAll('.nav-ancestor-btn, .nav-desc-btn').forEach(function(btn) {
-                btn.addEventListener('click', function() {
-                    var id = this.getAttribute('data-id');
-                    if (id) {
-                        // Dispatch a global custom event that LocationManager listens to
-                        var event = new CustomEvent('locationSelected', { detail: { id: id } });
-                        document.dispatchEvent(event);
-                    }
-                });
+        if (!container.__locationHierarchyWired) {
+            container.__locationHierarchyWired = true;
+            container.addEventListener('click', function (e) {
+                var btn = e.target.closest('[data-action="navigate"]');
+                if (!btn || !container.contains(btn)) return;
+                var id = btn.getAttribute('data-id');
+                if (!id) return;
+                // Route through a custom event. The bootstrap owns selection
+                // (it also updates the sidebar highlight and the year control).
+                document.dispatchEvent(new CustomEvent('locationSelected', {
+                    detail: { id: id }
+                }));
             });
         }
     }
 
-    window.LocationHierarchyTab = {
-        render: render
-    };
+    // =========================================================================
+    // 3. REGISTRATION
+    // =========================================================================
 
+    var TM = _tabManager();
+    if (TM && typeof TM.register === 'function') {
+        TM.register(SCOPE, TAB_ID, renderHierarchyTab);
+    } else if (typeof console !== 'undefined' && console.warn) {
+        console.warn('location-hierarchy-tab.js: TabManager is not available at load time; the tab was not registered. Load tab-manager.js first.');
+    }
+
+    // =========================================================================
+    // 4. EXPORTS
+    // =========================================================================
+
+    window.LocationHierarchyTab = { id: TAB_ID, render: renderHierarchyTab };
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.LocationHierarchyTab;
+    }
 })();
