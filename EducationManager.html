@@ -22,7 +22,7 @@
            Shell (topbar / sidebar / tabs / inputs) mirrors the Religion
            Manager and Culture Manager pages so the three managers read
            as one product. The .edu-* rules at the bottom are the tab
-           content styles the six education tab files emit; they are
+           content styles the seven education tab files emit; they are
            NOT shell chrome.
            ============================================================ */
 
@@ -335,9 +335,9 @@
 
         /* ============================================================
            EDUCATION TAB CONTENT (.edu-*)
-           Emitted by the six education tab files. These are the
-           styles the tabs already reference via `class="edu-manager-*"`
-           names, added to the page's inline block so the tabs render
+           Emitted by the seven education tab files. These are the
+           styles the tabs reference via `class="edu-manager-*"` names,
+           added to the page's inline block so the tabs render
            correctly without a page-local CSS file.
            ============================================================ */
 
@@ -737,6 +737,10 @@
                 <span class="manager-subtab-icon" data-icon="STAR_4" aria-hidden="true"></span>
                 <span>Analytics</span>
             </button>
+            <button class="manager-subtab" role="tab" type="button" data-tab="apprenticeships" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="PERSON" aria-hidden="true"></span>
+                <span>Apprenticeships</span>
+            </button>
             <button class="manager-subtab" role="tab" type="button" data-tab="history" aria-selected="false" tabindex="-1">
                 <span class="manager-subtab-icon" data-icon="TIMELINE" aria-hidden="true"></span>
                 <span>History</span>
@@ -749,6 +753,7 @@
             <div class="tab-pane"        id="education-pane-students"     data-tab-content="students"></div>
             <div class="tab-pane"        id="education-pane-finances"     data-tab-content="finances"></div>
             <div class="tab-pane"        id="education-pane-analytics"    data-tab-content="analytics"></div>
+            <div class="tab-pane"        id="education-pane-apprenticeships" data-tab-content="apprenticeships"></div>
             <div class="tab-pane"        id="education-pane-history"      data-tab-content="history"></div>
         </div>
     </div>
@@ -771,13 +776,17 @@
        - skill-utils.js loads BEFORE role-constants.js.
        - household-state.js and household-rules.js load BEFORE
          household-queries.js.
-       - Tab files load AFTER education-manager-bootstrap.js has
-         configure()d the scope? No — TabManager.configure is inside
-         the bootstrap, and the bootstrap loads LAST. The tab files
-         register() before the bootstrap's configure(). This is fine:
-         register() populates _renderers[scope], configure() populates
-         _configs[scope], and TabManager.render() reads both. Order of
-         those two operations doesn't matter.
+       - The apprenticeship subsystem loads AFTER education-history but
+         BEFORE the six education tab files (the tab file needs the
+         apprenticeship constants + queries + commands + modals at
+         load time).
+       - The seven tab files load AFTER education-manager-bootstrap.js
+         has configure()d the scope? No — TabManager.configure is
+         inside the bootstrap, and the bootstrap loads LAST. The tab
+         files register() before the bootstrap's configure(). This is
+         fine: register() populates _renderers[scope], configure()
+         populates _configs[scope], and TabManager.render() reads both.
+         Order of those two operations doesn't matter.
      ================================================================ -->
 
 <!-- Core constants -->
@@ -982,6 +991,18 @@
 <script src="js/settlement/settlement-ui-state.js"></script>
 
 <!-- ============================================================ -->
+<!-- RELATIONSHIP (needed by apprenticeship)                       -->
+<!-- ============================================================ -->
+<script src="js/relationships/relationship-types.js"></script>
+<script src="js/relationships/relationship-state.js"></script>
+<script src="js/relationships/relationship-queries.js"></script>
+<script src="js/relationships/relationship-commands.js"></script>
+<script src="js/relationships/relationship-utils.js"></script>
+<script src="js/relationships/professional-rules.js"></script>
+<script src="js/relationships/professional-queries.js"></script>
+<script src="js/relationships/professional-commands.js"></script>
+
+<!-- ============================================================ -->
 <!-- RELIGION                                                       -->
 <!-- ============================================================ -->
 <script src="js/religion/religion-constants.js"></script>
@@ -1072,23 +1093,34 @@
 <script src="js/systems/education/modals-education.js"></script>
 
 <!-- ============================================================ -->
+<!-- APPRENTICESHIP SUBSYSTEM (needed by the Apprenticeships tab)  -->
+<!-- ============================================================ -->
+<script src="js/apprenticeship/apprenticeship-constants.js"></script>
+<script src="js/apprenticeship/apprenticeship-rules.js"></script>
+<script src="js/apprenticeship/apprenticeship-queries.js"></script>
+<script src="js/apprenticeship/apprenticeship-commands.js"></script>
+<script src="js/apprenticeship/professional-knowledge-commands.js"></script>
+<script src="js/apprenticeship/modals-apprenticeship.js"></script>
+
+<!-- ============================================================ -->
 <!-- EDUCATION MANAGER — UI STATE + TABS                            -->
 <!-- ============================================================ -->
 
 <!-- EducationUIState loads before the bootstrap (bootstrap reads it in configure) -->
 <script src="js/systems/education/education-ui-state.js"></script>
 
-<!-- Six tab files. Each registers itself with TabManager at load time. -->
+<!-- Seven tab files. Each registers itself with TabManager at load time. -->
 <script src="js/tabs/education-overview-tab.js"></script>
 <script src="js/tabs/education-institutions-tab.js"></script>
 <script src="js/tabs/education-students-tab.js"></script>
 <script src="js/tabs/education-finances-tab.js"></script>
 <script src="js/tabs/education-analytics-tab.js"></script>
+<script src="js/tabs/education-apprenticeship-tab.js"></script>
 <script src="js/tabs/education-history-tab.js"></script>
 
 <!-- Bootstrap loads LAST. Its init() calls TabManager.configure('education', …),
      TabManager.init(), wires the sidebar + topbar, and does the first render.
-     By the time it runs, all six tab files have registered. -->
+     By the time it runs, all seven tab files have registered. -->
 <script src="js/tabs/education-manager-bootstrap.js"></script>
 
 <!-- ============================================================ -->
