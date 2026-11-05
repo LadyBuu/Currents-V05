@@ -1,41 +1,60 @@
 // js/tabs/location-detail-tab.js
 /**
  * =============================================================================
- * LOCATION DETAIL TAB (singular)
+ * LOCATION DETAIL TAB
+ * js/tabs/location-detail-tab.js
  * =============================================================================
  *
- * Renders the details view for a single location. Edit and Delete
- * delegate to the canonical modals from modals-location.js, which own
- * the form, the command invocation, and the persist boundary.
+ * LOCATION: js/tabs/location-detail-tab.js
+ *
+ * Renders the details view for a single location: header with Edit / Delete
+ * buttons, key stat grid, location details, and government / culture
+ * assignments.
  *
  * SCOPE
  * -----
- * - Read the place, its statistics, its parent, and its government /
- *   culture assignments via the canonical location queries.
- * - Render the details view.
- * - Delegate Edit / Delete to window.openEditPlaceModal /
- *   window.openDeletePlaceModal.
+ * - Reads the place, its statistics, its parent, and its government / culture
+ *   assignments via LocationQueries.
+ * - Delegates Edit / Delete to the canonical modals in modals-location.js
+ *   (which own the form, command invocation, and persist boundary).
  *
  * OUT OF SCOPE
  * ------------
- * - Edit / delete forms and the parent picker (owned by
- *   modals-location.js; the parent picker there is hierarchical).
- * - Command invocation and persist (owned by modals-location.js via
- *   LocationModals.runCommand).
- * - CSS. Every class used here is defined in css/location-tabs.css.
+ * - Edit / delete forms and the parent picker (owned by modals-location.js).
+ * - Command invocation and persist (owned by modals-location.js).
+ * - Inline CSS. Styling comes from css/location-tabs.css.
  *
- * HARD DEPENDENCIES (load-time):
- *   - js/core/formatting.js            (window.escapeHtml)
- *   - js/core/icons.js                 (window.getIcon)
- *   - js/location/location-queries.js  (window.LocationQueries)
+ * RENDERER CONTRACT (from LocationManagerBootstrap):
+ *   fn(container, context) where context = { locationId, locationName }
  *
- * OPTIONAL DEPENDENCIES (call-time, guarded):
- *   - window.GovernmentQueries.getGovernmentType
- *   - window.CultureQueries.getCulture
- *   - window.openEditPlaceModal
- *   - window.openDeletePlaceModal
- *   - window.showToast
+ * DATA SOURCES:
+ *   - LocationQueries.getPlace(locationId)
+ *   - LocationQueries.getLocationStatistics(locationId)
+ *   - LocationQueries.getLocationTypeName(typeId)
+ *   - GovernmentQueries.getGovernmentType(governmentTypeId)  (soft)
+ *   - CultureQueries.getCulture(cultureId)                    (soft)
  *
+ * FILTERS: none.
+ *
+ * DEPENDENCIES (all soft; guarded at call time):
+ *   - LocationQueries     — REQUIRED
+ *   - TabManager          — REQUIRED
+ *   - formatting.js       (escapeHtml) — REQUIRED
+ *   - icons.js            (Icons)      — soft
+ *   - modals-location.js  (openEditPlaceModal, openDeletePlaceModal) — soft (toast if missing)
+ *
+ * TIME CONTRACT: none on this tab (no year reads).
+ * ICON POLICY: no emojis. Glyphs from Icons[name], '' fallback.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Refactored to the Education tab skeleton:
+ *     - Renderer contract is now fn(container, context), not fn(containerId, placeId, onRefresh).
+ *     - Registers with TabManager at load time.
+ *     - Empty states are three-way: no-context / no-place / no-data.
+ *     - All reads go through container.querySelector; no document.*.
+ *     - One delegated click handler on the container, not per-button listeners.
+ *     - escapeHtml is a required dependency; _esc throws if it is missing.
  * =============================================================================
  */
 
@@ -43,290 +62,256 @@
     'use strict';
 
     // =========================================================================
-    // 1. LOAD-TIME DEPENDENCY CHECKS
+    // 1. CONSTANTS
     // =========================================================================
 
-    if (typeof window.escapeHtml !== 'function') {
-        throw new Error(
-            'location-detail-tab.js requires core/formatting.js ' +
-            '(window.escapeHtml).'
-        );
-    }
-    if (typeof window.getIcon !== 'function') {
-        throw new Error(
-            'location-detail-tab.js requires core/icons.js ' +
-            '(window.getIcon).'
-        );
-    }
-    if (!window.LocationQueries ||
-        typeof window.LocationQueries.getPlace !== 'function') {
-        throw new Error(
-            'location-detail-tab.js requires location-queries.js ' +
-            '(window.LocationQueries.getPlace).'
-        );
-    }
-
-    var LQ = window.LocationQueries;
+    var TAB_ID = 'details';
+    var SCOPE  = 'location';
 
     // =========================================================================
-    // 2. PRESENTATION HELPERS
+    // 2. DEPENDENCY HELPERS (soft; strict fallbacks)
+    // =========================================================================
+
+    function _queries() {
+        return (typeof window.LocationQueries !== 'undefined') ? window.LocationQueries : null;
+    }
+    function _tabManager() {
+        return (typeof window.TabManager !== 'undefined') ? window.TabManager : null;
+    }
+    function _esc(v) {
+        if (typeof window.escapeHtml === 'function') return window.escapeHtml(v);
+        if (v === null || v === undefined) return '';
+        return String(v)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function _icon(name) {
+        if (typeof window.getIcon === 'function') {
+            try { var s = window.getIcon(name); if (typeof s === 'string') return s; }
+            catch (e) { /* fall through */ }
+        }
+        if (window.Icons && typeof window.Icons[name] === 'string') return window.Icons[name];
+        return '';
+    }
+    function _toast(msg, type) {
+        if (typeof window.showToast === 'function') window.showToast(msg, type);
+    }
+    function _resolveModal(name) {
+        var fn = window[name];
+        if (typeof fn !== 'function') {
+            _toast('Action unavailable: ' + name + ' is not loaded.', 'error');
+            return null;
+        }
+        return fn;
+    }
+
+    // =========================================================================
+    // 3. PRESENTATION HELPERS
     // =========================================================================
 
     function _governmentTypeName(governmentTypeId) {
         if (!governmentTypeId) return 'None';
-        if (!window.GovernmentQueries ||
-            typeof window.GovernmentQueries.getGovernmentType !== 'function') {
-            return 'None';
-        }
+        if (!window.GovernmentQueries
+            || typeof window.GovernmentQueries.getGovernmentType !== 'function') return 'None';
         var gt = window.GovernmentQueries.getGovernmentType(governmentTypeId);
         return gt && gt.name ? gt.name : 'None';
     }
-
     function _cultureName(cultureId) {
         if (!cultureId) return 'None';
-        if (!window.CultureQueries ||
-            typeof window.CultureQueries.getCulture !== 'function') {
-            return 'None';
-        }
+        if (!window.CultureQueries
+            || typeof window.CultureQueries.getCulture !== 'function') return 'None';
         var c = window.CultureQueries.getCulture(cultureId);
         return c && c.name ? c.name : 'None';
     }
-
-    function _parentName(place) {
+    function _parentName(place, Q) {
         if (!place || !place.parentId) return 'None';
-        var parent = LQ.getPlace(place.parentId);
+        var parent = Q.getPlace(place.parentId);
         return parent && parent.displayName ? parent.displayName : 'None';
-    }
-
-    // =========================================================================
-    // 3. DELEGATION TO CANONICAL MODALS
-    // =========================================================================
-
-    function _openEdit(placeId, onRefresh) {
-        if (typeof window.openEditPlaceModal !== 'function') {
-            if (typeof window.showToast === 'function') {
-                window.showToast('Edit modal unavailable', 'error');
-            }
-            return;
-        }
-        window.openEditPlaceModal(placeId, function () {
-            if (typeof onRefresh === 'function') onRefresh();
-        });
-    }
-
-    function _openDelete(placeId, onRefresh) {
-        if (typeof window.openDeletePlaceModal !== 'function') {
-            if (typeof window.showToast === 'function') {
-                window.showToast('Delete modal unavailable', 'error');
-            }
-            return;
-        }
-        window.openDeletePlaceModal(placeId, function () {
-            if (typeof onRefresh === 'function') onRefresh();
-        });
     }
 
     // =========================================================================
     // 4. RENDER
     // =========================================================================
 
-    function render(containerId, placeId, onRefresh) {
-        var container = document.getElementById(containerId);
-        if (!container) return;
-
-        if (!placeId) {
-            container.innerHTML =
-                '<div class="loc-tab-empty">Select a location from the sidebar</div>';
-            return;
-        }
-
-        var place = LQ.getPlace(placeId);
-        if (!place) {
-            container.innerHTML =
-                '<div class="loc-tab-empty">Location not found</div>';
-            return;
-        }
-
-        var stats = LQ.getLocationStatistics(placeId) || {};
-        var typeName = LQ.getLocationTypeName(place.typeId) || 'Unknown';
-        var parentName = _parentName(place);
-        var govName = _governmentTypeName(place.governmentTypeId);
-        var cultureName = _cultureName(place.cultureId);
-
+    function _renderDetailHeader(place, typeName) {
         var statusLine = [typeName];
         if (place.isCapital) statusLine.push('Capital');
-        if (place.status && place.status !== 'active') {
-            statusLine.push(place.status);
-        }
+        if (place.status && place.status !== 'active') statusLine.push(place.status);
 
         var html = '';
-
-        // ---- HEADER ----
         html += '<div class="loc-tab-header">';
         html +=   '<div class="loc-tab-header-text">';
         html +=     '<div class="loc-tab-header-title">' +
-                        window.getIcon('LOCATION') + ' ' +
-                        window.escapeHtml(place.displayName) +
+                        _icon('LOCATION') + ' ' + _esc(place.displayName) +
                     '</div>';
         html +=     '<div class="loc-tab-header-subtitle">' +
-                        window.escapeHtml(statusLine.join(' · ')) +
+                        _esc(statusLine.join(' · ')) +
                     '</div>';
         html +=   '</div>';
         html +=   '<div class="loc-tab-header-actions">';
-        html +=     '<button type="button" id="editLocationBtn" class="loc-tab-btn">' +
-                        window.getIcon('EDIT') + ' Edit' +
+        html +=     '<button type="button" class="loc-tab-btn" data-action="edit">' +
+                        _icon('EDIT') + ' Edit' +
                     '</button>';
-        html +=     '<button type="button" id="deleteLocationBtn" class="loc-tab-btn loc-tab-btn--danger">' +
-                        window.getIcon('TRASH') + ' Delete' +
+        html +=     '<button type="button" class="loc-tab-btn loc-tab-btn--danger" data-action="delete">' +
+                        _icon('TRASH') + ' Delete' +
                     '</button>';
         html +=   '</div>';
         html += '</div>';
+        return html;
+    }
 
-        // ---- KEY STATS ----
-        html += '<div class="loc-tab-stats-grid">';
-
-        html +=   '<div class="loc-tab-stat">';
-        html +=     '<div class="loc-tab-stat-label">' +
-                        window.getIcon('HOME') + ' Type' +
-                    '</div>';
-        html +=     '<div class="loc-tab-stat-value">' +
-                        window.escapeHtml(typeName) +
-                    '</div>';
-        html +=   '</div>';
-
-        html +=   '<div class="loc-tab-stat">';
-        html +=     '<div class="loc-tab-stat-label">' +
-                        window.getIcon('PERSON') + ' Population' +
-                    '</div>';
-        html +=     '<div class="loc-tab-stat-value">' +
-                        (stats.totalPopulation || 0).toLocaleString() +
-                    '</div>';
-        html +=   '</div>';
-
-        html +=   '<div class="loc-tab-stat">';
-        html +=     '<div class="loc-tab-stat-label">Children</div>';
-        html +=     '<div class="loc-tab-stat-value">' +
-                        (stats.childCount || 0) +
-                    '</div>';
-        html +=   '</div>';
-
-        html +=   '<div class="loc-tab-stat">';
-        html +=     '<div class="loc-tab-stat-label">Depth</div>';
-        html +=     '<div class="loc-tab-stat-value">' +
-                        (stats.depth || 0) +
-                    '</div>';
-        html +=   '</div>';
-
+    function _renderStats(stats) {
+        var html = '<div class="loc-tab-stats-grid">';
+        html += '<div class="loc-tab-stat">' +
+                    '<div class="loc-tab-stat-label">' + _icon('HOME') + ' Type</div>' +
+                    '<div class="loc-tab-stat-value">' + _esc(stats.typeName || 'Unknown') + '</div>' +
+                '</div>';
+        html += '<div class="loc-tab-stat">' +
+                    '<div class="loc-tab-stat-label">' + _icon('PERSON') + ' Population</div>' +
+                    '<div class="loc-tab-stat-value">' + (stats.totalPopulation || 0).toLocaleString() + '</div>' +
+                '</div>';
+        html += '<div class="loc-tab-stat">' +
+                    '<div class="loc-tab-stat-label">Children</div>' +
+                    '<div class="loc-tab-stat-value">' + (stats.childCount || 0) + '</div>' +
+                '</div>';
+        html += '<div class="loc-tab-stat">' +
+                    '<div class="loc-tab-stat-label">Depth</div>' +
+                    '<div class="loc-tab-stat-value">' + (stats.depth || 0) + '</div>' +
+                '</div>';
         html += '</div>';
+        return html;
+    }
 
-        // ---- LOCATION DETAILS ----
-        html += '<div class="loc-tab-section">';
-        html +=   '<div class="loc-tab-section-title">' +
-                    window.getIcon('LOCATION') + ' Location Details' +
-                  '</div>';
+    function _renderDetailsSection(place, parentName) {
+        var html = '<div class="loc-tab-section">';
+        html +=   '<div class="loc-tab-section-title">' + _icon('LOCATION') + ' Location Details</div>';
         html +=   '<div class="loc-tab-grid-2">';
-
-        html +=     '<div>' +
-                        '<span class="loc-tab-label">ID:</span> ' +
-                        '<span class="loc-tab-mono">' +
-                            window.escapeHtml(place.id) +
-                        '</span>' +
-                    '</div>';
-
-        html +=     '<div>' +
-                        '<span class="loc-tab-label">Parent:</span> ' +
-                        '<span class="loc-tab-value">' +
-                            window.escapeHtml(parentName) +
-                        '</span>' +
-                    '</div>';
-
-        html +=     '<div>' +
-                        '<span class="loc-tab-label">Status:</span> ' +
-                        '<span class="loc-tab-value">' +
-                            window.escapeHtml(place.status || 'active') +
-                        '</span>' +
-                    '</div>';
-
-        html +=     '<div>' +
-                        '<span class="loc-tab-label">Capital:</span> ' +
-                        '<span class="loc-tab-value">' +
-                            (place.isCapital ? 'Yes' : 'No') +
-                        '</span>' +
-                    '</div>';
-
+        html +=     '<div><span class="loc-tab-label">ID:</span> ' +
+                        '<span class="loc-tab-mono">' + _esc(place.id) + '</span></div>';
+        html +=     '<div><span class="loc-tab-label">Parent:</span> ' +
+                        '<span class="loc-tab-value">' + _esc(parentName) + '</span></div>';
+        html +=     '<div><span class="loc-tab-label">Status:</span> ' +
+                        '<span class="loc-tab-value">' + _esc(place.status || 'active') + '</span></div>';
+        html +=     '<div><span class="loc-tab-label">Capital:</span> ' +
+                        '<span class="loc-tab-value">' + (place.isCapital ? 'Yes' : 'No') + '</span></div>';
         if (place.variableKey) {
-            html += '<div>' +
-                        '<span class="loc-tab-label">Key:</span> ' +
-                        '<span class="loc-tab-mono">' +
-                            window.escapeHtml(place.variableKey) +
-                        '</span>' +
-                    '</div>';
+            html += '<div><span class="loc-tab-label">Key:</span> ' +
+                        '<span class="loc-tab-mono">' + _esc(place.variableKey) + '</span></div>';
         }
-
         html +=   '</div>';
-
         if (place.notes) {
-            html += '<div class="loc-tab-notes">' +
-                        window.escapeHtml(place.notes) +
-                    '</div>';
+            html += '<div class="loc-tab-notes">' + _esc(place.notes) + '</div>';
         }
-
         html += '</div>';
+        return html;
+    }
 
-        // ---- ASSIGNMENTS ----
-        html += '<div class="loc-tab-section">';
-        html +=   '<div class="loc-tab-section-title">' +
-                    window.getIcon('STAR_4') + ' Assignments' +
-                  '</div>';
+    function _renderAssignmentsSection(place) {
+        var govName = _governmentTypeName(place.governmentTypeId);
+        var cultureName = _cultureName(place.cultureId);
+        var html = '<div class="loc-tab-section">';
+        html +=   '<div class="loc-tab-section-title">' + _icon('STAR_4') + ' Assignments</div>';
         html +=   '<div class="loc-tab-grid-2">';
-
-        html +=     '<div class="loc-tab-card">';
-        html +=       '<div class="loc-tab-card-label">Government</div>';
-        html +=       '<div class="loc-tab-card-value">' +
-                          window.escapeHtml(govName) +
-                      '</div>';
-        html +=       '<div class="loc-tab-card-sub">' +
-                          window.escapeHtml(place.governmentStyle || 'No style set') +
-                      '</div>';
-        html +=     '</div>';
-
-        html +=     '<div class="loc-tab-card">';
-        html +=       '<div class="loc-tab-card-label">Culture</div>';
-        html +=       '<div class="loc-tab-card-value">' +
-                          window.escapeHtml(cultureName) +
-                      '</div>';
-        html +=     '</div>';
-
+        html +=     '<div class="loc-tab-card">' +
+                        '<div class="loc-tab-card-label">Government</div>' +
+                        '<div class="loc-tab-card-value">' + _esc(govName) + '</div>' +
+                        '<div class="loc-tab-card-sub">' + _esc(place.governmentStyle || 'No style set') + '</div>' +
+                    '</div>';
+        html +=     '<div class="loc-tab-card">' +
+                        '<div class="loc-tab-card-label">Culture</div>' +
+                        '<div class="loc-tab-card-value">' + _esc(cultureName) + '</div>' +
+                    '</div>';
         html +=   '</div>';
         html += '</div>';
+        return html;
+    }
 
+    function renderDetailTab(container, context) {
+        if (!container) return;
+
+        if (!context || !context.locationId) {
+            container.innerHTML = '<div class="empty-state">Select a location from the sidebar.</div>';
+            return;
+        }
+
+        var Q = _queries();
+        if (!Q) {
+            container.innerHTML =
+                '<div class="rt-unavailable">LocationQueries is not available. ' +
+                'Load js/location/location-queries.js.</div>';
+            return;
+        }
+
+        var place = Q.getPlace(context.locationId);
+        if (!place) {
+            container.innerHTML = '<div class="empty-state">Location not found.</div>';
+            return;
+        }
+
+        var stats = {};
+        try { stats = Q.getLocationStatistics(context.locationId) || {}; }
+        catch (e) { /* stats is best-effort */ }
+        var typeName = Q.getLocationTypeName(place.typeId) || 'Unknown';
+        var parentName = _parentName(place, Q);
+        stats.typeName = typeName;
+
+        var html = '<div class="loc-tab">';
+        html += _renderDetailHeader(place, typeName);
+        html += _renderStats(stats);
+        html += _renderDetailsSection(place, parentName);
+        html += _renderAssignmentsSection(place);
+        html += '</div>';
         container.innerHTML = html;
 
-        // ---- BIND EVENTS ----
-        var editBtn = container.querySelector('#editLocationBtn');
-        if (editBtn) {
-            editBtn.addEventListener('click', function () {
-                _openEdit(placeId, onRefresh);
-            });
-        }
-
-        var deleteBtn = container.querySelector('#deleteLocationBtn');
-        if (deleteBtn) {
-            deleteBtn.addEventListener('click', function () {
-                _openDelete(placeId, onRefresh);
+        if (!container.__locationDetailWired) {
+            container.__locationDetailWired = true;
+            container.addEventListener('click', function (e) {
+                var btn = e.target.closest('[data-action]');
+                if (!btn || !container.contains(btn)) return;
+                var action = btn.dataset.action;
+                if (action === 'edit') {
+                    var fn = _resolveModal('openEditPlaceModal');
+                    if (!fn) return;
+                    fn(context.locationId, function () { _refresh(); });
+                } else if (action === 'delete') {
+                    var dfn = _resolveModal('openDeletePlaceModal');
+                    if (!dfn) return;
+                    dfn(context.locationId, function () {
+                        // After a delete, ask TabManager for a re-render; the
+                        // sidebar reselects the initial place via the manager
+                        // topbar callback in location-manager-bootstrap.js.
+                        _refresh();
+                    });
+                }
             });
         }
     }
 
+    function _refresh() {
+        var TM = _tabManager();
+        if (TM && typeof TM.requestRender === 'function') {
+            try { TM.requestRender(SCOPE); } catch (e) { /* ignore */ }
+        }
+    }
+
     // =========================================================================
-    // 5. EXPORTS
+    // 5. REGISTRATION
     // =========================================================================
 
-    window.LocationDetailTab = { render: render };
-    window.renderLocationDetail = render;
+    var TM = _tabManager();
+    if (TM && typeof TM.register === 'function') {
+        TM.register(SCOPE, TAB_ID, renderDetailTab);
+    } else if (typeof console !== 'undefined' && console.warn) {
+        console.warn('location-detail-tab.js: TabManager is not available at load time; the tab was not registered. Load tab-manager.js first.');
+    }
+
+    // =========================================================================
+    // 6. EXPORTS
+    // =========================================================================
+
+    window.LocationDetailTab = { id: TAB_ID, render: renderDetailTab };
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.LocationDetailTab;
     }
-
 })();
