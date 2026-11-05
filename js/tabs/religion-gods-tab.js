@@ -35,17 +35,38 @@
  *   onSuccess BEFORE closing. The tab's onSuccess callback re-renders the
  *   tab; it does NOT need to persist, toast, or close anything.
  *
- *   Prior revisions of this tab built their own add/edit/delete forms
- *   locally. That duplicated modals-religion.js's god modals, and the two
- *   copies drifted:
- *     - The tab used a free-text <input> for god domain; the modal used a
- *       <select> of the domain enum. Same record, two different input
- *       shapes, and users who typed a domain the enum didn't know about
- *       created a record the modal couldn't edit cleanly.
- *     - The tab used a free-text <input> for parent god id; the modal used
- *       a <select> of the religion's existing gods. Same class of drift.
- *   The tab now delegates every write to the canonical modal, which
- *   eliminates both drifts by construction.
+ * FILTER STATE
+ * ------------
+ *   Filter state is per-religion and persists in localStorage under
+ *   `religion_gods_filters_<religionId>`. Switching to a different
+ *   religion loads that religion's saved filters; switching back restores
+ *   them. The semantics:
+ *
+ *     - _lastContextKey tracks the last rendered religionId.
+ *     - When the context changes, _resetState() runs first (so a fresh
+ *       religion is never polluted by the previous religion's filters),
+ *       then _readFilters(religionId) overlays persisted values.
+ *     - Every user change writes to localStorage via _writeFilters.
+ *
+ *   This mirrors every Education tab's per-context filter persistence
+ *   (Rule 3 of the manager playbook).
+ *
+ * EVENT DELEGATION
+ * ----------------
+ *   Two delegated listeners, both anchored on the tab container:
+ *
+ *     - Filter listener: one per filter element (search input is
+ *       debounced 200ms; selects fire on change; clear button on click).
+ *     - Row-action listener: ONE click listener dispatching by
+ *       data-action (add-god / edit-god / delete-god / clear-filters).
+ *       Guarded by container.__rtGodsRowWired for idempotency across
+ *       re-renders.
+ *
+ *   The row-action listener is on `container`, not on `.rt-tab__body`.
+ *   `.rt-tab__body` is replaced by every _applyFiltersInPlace call; a
+ *   listener attached there would need re-wiring on each swap (and would
+ *   silently drop clicks if the re-wire was ever skipped). Attaching to
+ *   the stable container sidesteps the entire class of bug.
  *
  * DEPENDENCIES (resolved at call time — no load-time guards):
  *   - TabManager            (js/core/tab-manager.js)
@@ -69,33 +90,46 @@
  * domain display-name resolver, route it through ReligionFormat and use it
  * for the badge — but do not build a second input path here.
  *
- * INLINE STYLES: none. All classes are in css/religion-tabs.css.
+ * INLINE STYLES: none. All classes are in css/religion-tabs.css (or the
+ * shell's inline style block). If this file is edited to add a
+ * style="" attribute, that is a regression.
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - CRUD delegation. Every add/edit/delete now calls the canonical
- *       religion modal (openAddGodModal / openEditGodModal /
- *       openDeleteGodModal) instead of building a local form. Deleted
- *       local: _openAddGod, _openEditGod, _confirmDeleteGod, _readVal,
- *       _selectOption.
- *     - Fixes input-shape drift:
- *         * God domain: was a free-text <input> here and a <select> of
- *           the domain enum in the modal. Now the modal is the only
- *           input path; domain is a <select>.
- *         * Parent god: was a free-text <input> for a raw id here and a
- *           <select> of the religion's existing gods in the modal. Now
- *           the modal is the only input path; parent is a <select>.
- *     - The tab's list rendering is unchanged: god cards with name,
- *       symbol, domain / gender / alignment badges, description, and
- *       parent-god footnote.
- *     - _applyFiltersInPlace and the delegated row-action listener are
- *       unchanged.
- *     - TabManager.register('religion', 'gods', renderAdapter) is
- *       unchanged. renderAdapter is unchanged. The ReligionGodsTab
- *       export is unchanged.
- *     - The public surface (id, render, renderAdapter) is unchanged.
+ *     - Filter persistence. _state.{search,domain,sortBy} now persist in
+ *       localStorage under `religion_gods_filters_<religionId>`. Read on
+ *       render, written on every change. Reset on context switch
+ *       (_lastContextKey), then overlaid from persistence. Mirrors
+ *       Education's per-context filter pattern (Rule 3).
+ *     - Event delegation moved to the tab container. Prior revision
+ *       attached a delegated click listener to `.rt-tab__body` with a
+ *       body.__rtHandled marker and re-attached after every
+ *       _applyFiltersInPlace. This worked because _applyFiltersInPlace
+ *       always re-attached, but it was fragile: any early-return in that
+ *       function would silently drop clicks. Now the listener lives on
+ *       `container` with a container.__rtGodsRowWired marker and
+ *       survives every body swap with no re-wiring.
+ *     - _attachHandlers split into _wireFilters (search input debounce,
+ *       select change, clear button) and _wireRowActions (single
+ *       delegated click dispatcher). Every action button gains a
+ *       data-action attribute; the dispatcher switches on it.
+ *     - The clear button is now handled by the delegated listener
+ *       instead of its own addEventListener. Same for add-god. Fewer
+ *       closures, one code path.
+ *     - _applyFiltersInPlace no longer re-attaches handlers (nothing to
+ *       re-attach). Behavior unchanged from the user's perspective.
+ *     - CRUD delegation unchanged. _freshReligion unchanged.
+ *       TabManager.register('religion', 'gods', renderAdapter)
+ *       unchanged. Public surface (id, render, renderAdapter) unchanged.
  *   Previous revisions:
+ *     - CRUD delegation to canonical modals (openAddGodModal /
+ *       openEditGodModal / openDeleteGodModal). Deleted local
+ *       _openAddGod, _openEditGod, _confirmDeleteGod, _readVal,
+ *       _selectOption.
+ *     - Fixed input-shape drift: god domain is now a <select> in the
+ *       modal (was a free-text <input> here and a <select> there);
+ *       parent god is now a <select> (was a free-text id here).
  *     - Filter/sort/list rendering extracted from earlier monolithic
  *       religion UI code.
  * =============================================================================
@@ -105,8 +139,10 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 1. CONSTANTS + DEPENDENCY WRAPPERS
     // =========================================================================
+
+    var FILTER_KEY_PREFIX = 'religion_gods_filters_';
 
     function _escapeHtml(str) {
         if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
@@ -152,7 +188,7 @@
     }
 
     // =========================================================================
-    // 2. TAB-LOCAL UI STATE
+    // 2. TAB-LOCAL UI STATE (persisted per religion)
     // =========================================================================
 
     var _state = {
@@ -161,10 +197,50 @@
         sortBy: 'name'
     };
 
+    var _lastContextKey = null;
+
     function _resetState() {
         _state.search = '';
         _state.domain = 'all';
         _state.sortBy = 'name';
+    }
+
+    function _readFilters(religionId) {
+        var defaults = { search: '', domain: 'all', sortBy: 'name' };
+        if (!religionId) return defaults;
+        try {
+            var raw = localStorage.getItem(FILTER_KEY_PREFIX + religionId);
+            if (!raw) return defaults;
+            var p = JSON.parse(raw);
+            if (!p || typeof p !== 'object') return defaults;
+            if (typeof p.search === 'string') defaults.search = p.search;
+            if (typeof p.domain === 'string' && p.domain.length > 0) {
+                defaults.domain = p.domain;
+            }
+            if (p.sortBy === 'name' || p.sortBy === 'domain') {
+                defaults.sortBy = p.sortBy;
+            }
+            return defaults;
+        } catch (e) {
+            return defaults;
+        }
+    }
+
+    function _writeFilters(religionId, s) {
+        if (!religionId) return;
+        try {
+            localStorage.setItem(
+                FILTER_KEY_PREFIX + religionId,
+                JSON.stringify({
+                    search: s.search || '',
+                    domain: s.domain || 'all',
+                    sortBy: s.sortBy || 'name'
+                })
+            );
+        } catch (e) {
+            // localStorage quota exceeded or unavailable. Non-fatal:
+            // the tab still works, it just doesn't remember filters.
+        }
     }
 
     // =========================================================================
@@ -189,7 +265,15 @@
             return;
         }
 
-        _resetState();
+        // Reset on context switch, then overlay persisted filters.
+        if (_lastContextKey !== religion.id) {
+            _resetState();
+            _lastContextKey = religion.id;
+        }
+        var saved = _readFilters(religion.id);
+        _state.search = saved.search;
+        _state.domain = saved.domain;
+        _state.sortBy = saved.sortBy;
 
         var gods = RQ.getGodsByReligion(religion.id) || [];
         var isDeprecated = religion.isDeprecated === true;
@@ -225,7 +309,8 @@
               '</div>' +
               '<div class="rt-tab__header-actions">' +
                 (!isDeprecated
-                  ? '<button type="button" class="rt-btn rt-btn--primary add-god-btn">Add God</button>'
+                  ? '<button type="button" class="rt-btn rt-btn--primary add-god-btn"' +
+                    ' data-action="add-god">Add God</button>'
                   : '') +
               '</div>' +
             '</div>' +
@@ -242,7 +327,8 @@
                 '<option value="name">Sort: Name</option>' +
                 '<option value="domain">Sort: Domain</option>' +
               '</select>' +
-              '<button type="button" class="rt-clear clear-gods-filters">Clear</button>' +
+              '<button type="button" class="rt-clear clear-gods-filters"' +
+                ' data-action="clear-filters">Clear</button>' +
             '</div>' +
 
             // ---- List ----
@@ -254,13 +340,15 @@
 
         container.innerHTML = html;
 
-        // Restore filter selections after innerHTML assignment.
+        // Restore select values after innerHTML assignment. The search
+        // input gets its value via the `value` attribute in the template.
         var df = container.querySelector('.gods-domain-filter');
         if (df) df.value = _state.domain;
         var sf = container.querySelector('.gods-sort-by');
         if (sf) sf.value = _state.sortBy;
 
-        _attachHandlers(container, religion);
+        _wireFilters(container, religion);
+        _wireRowActions(container, religion);
     }
 
     function _renderEmpty(hadGods) {
@@ -310,7 +398,6 @@
                 var ad = String(a.domain || '');
                 var bd = String(b.domain || '');
                 if (ad !== bd) return ad.localeCompare(bd);
-                // Stable secondary sort by name.
                 var an = String(a.displayName || a.name || '');
                 var bn = String(b.displayName || b.name || '');
                 return an.localeCompare(bn);
@@ -368,9 +455,11 @@
                       ? ''
                       : '<div class="rt-god-card__actions">' +
                           '<button type="button" class="rt-btn rt-btn--icon edit-god-btn"' +
+                            ' data-action="edit-god"' +
                             ' data-god-id="' + _escapeHtml(g.id) + '"' +
                             ' title="Edit">Edit</button>' +
                           '<button type="button" class="rt-btn rt-btn--icon rt-btn--danger delete-god-btn"' +
+                            ' data-action="delete-god"' +
                             ' data-god-id="' + _escapeHtml(g.id) + '"' +
                             ' title="Delete">Delete</button>' +
                         '</div>') +
@@ -395,15 +484,10 @@
     }
 
     // =========================================================================
-    // 6. HANDLERS
+    // 6. FILTER WIRING
     // =========================================================================
 
-    function _attachHandlers(container, religion) {
-        function rerender() {
-            renderGodsTab(container, _freshReligion(religion.id) || religion);
-        }
-
-        // ---- Search (debounced) ----
+    function _wireFilters(container, religion) {
         var search = container.querySelector('.gods-search');
         if (search) {
             var timer = null;
@@ -412,6 +496,7 @@
                 timer = setTimeout(function () {
                     timer = null;
                     _state.search = search.value || '';
+                    _writeFilters(religion.id, _state);
                     _applyFiltersInPlace(container, religion);
                 }, 200);
             });
@@ -421,6 +506,7 @@
         if (domainSel) {
             domainSel.addEventListener('change', function () {
                 _state.domain = domainSel.value;
+                _writeFilters(religion.id, _state);
                 _applyFiltersInPlace(container, religion);
             });
         }
@@ -429,43 +515,133 @@
         if (sortSel) {
             sortSel.addEventListener('change', function () {
                 _state.sortBy = sortSel.value;
+                _writeFilters(religion.id, _state);
                 _applyFiltersInPlace(container, religion);
             });
         }
-
-        var clearBtn = container.querySelector('.clear-gods-filters');
-        if (clearBtn) {
-            clearBtn.addEventListener('click', function () {
-                _resetState();
-                rerender();
-            });
-        }
-
-        // ---- Add god (delegate to canonical modal) ----
-        var addBtn = container.querySelector('.add-god-btn');
-        if (addBtn) {
-            addBtn.addEventListener('click', function () {
-                var openAdd = _getOpenAddGodModal();
-                if (!openAdd) {
-                    _showToast(
-                        'Add God modal is not available. Load modals-religion.js first.',
-                        'error'
-                    );
-                    return;
-                }
-                openAdd(religion.id, {
-                    onSuccess: function () {
-                        // The modal has already toasted and persisted.
-                        // We only re-render with the fresh religion.
-                        rerender();
-                    }
-                });
-            });
-        }
-
-        // ---- Row actions (delegated) ----
-        _attachRowActions(container, religion);
     }
+
+    // =========================================================================
+    // 7. ROW-ACTION DELEGATION (single listener on the container)
+    // =========================================================================
+    //
+    // Attached to `container`, not to `.rt-tab__body`. The body is
+    // replaced by every _applyFiltersInPlace call; a listener on the
+    // body would need re-wiring on each swap (fragile) or would silently
+    // drop clicks if the re-wire was ever skipped. The container is
+    // stable across the entire tab lifetime, so one listener with one
+    // idempotency marker suffices.
+
+    function _wireRowActions(container, religion) {
+        if (container.__rtGodsRowWired) return;
+        container.__rtGodsRowWired = true;
+
+        container.addEventListener('click', function (e) {
+            var target = e.target;
+            if (!target || typeof target.closest !== 'function') return;
+
+            var btn = target.closest('[data-action]');
+            if (!btn || !container.contains(btn)) return;
+
+            var action = btn.getAttribute('data-action');
+            if (!action) return;
+
+            switch (action) {
+                case 'add-god':
+                    e.preventDefault();
+                    _actionAddGod(religion, container);
+                    break;
+
+                case 'edit-god': {
+                    e.preventDefault();
+                    var eid = btn.getAttribute('data-god-id');
+                    if (eid) _actionEditGod(religion, container, eid);
+                    break;
+                }
+
+                case 'delete-god': {
+                    e.preventDefault();
+                    var did = btn.getAttribute('data-god-id');
+                    if (did) _actionDeleteGod(religion, container, did);
+                    break;
+                }
+
+                case 'clear-filters':
+                    e.preventDefault();
+                    _actionClearFilters(religion, container);
+                    break;
+
+                // Unknown action: no-op. New actions add a case here and
+                // a data-action="..." to the button.
+                default:
+                    break;
+            }
+        });
+    }
+
+    // =========================================================================
+    // 8. ACTION HANDLERS
+    // =========================================================================
+
+    function _actionAddGod(religion, container) {
+        var openAdd = _getOpenAddGodModal();
+        if (!openAdd) {
+            _showToast(
+                'Add God modal is not available. Load modals-religion.js first.',
+                'error'
+            );
+            return;
+        }
+        openAdd(religion.id, {
+            onSuccess: function () {
+                // The modal has already toasted and persisted. We only
+                // re-render with the fresh religion.
+                _rerender(container, religion);
+            }
+        });
+    }
+
+    function _actionEditGod(religion, container, godId) {
+        var openEdit = _getOpenEditGodModal();
+        if (!openEdit) {
+            _showToast(
+                'Edit God modal is not available. Load modals-religion.js first.',
+                'error'
+            );
+            return;
+        }
+        openEdit(religion.id, godId, {
+            onSuccess: function () {
+                _rerender(container, religion);
+            }
+        });
+    }
+
+    function _actionDeleteGod(religion, container, godId) {
+        var openDelete = _getOpenDeleteGodModal();
+        if (!openDelete) {
+            _showToast(
+                'Delete God modal is not available. Load modals-religion.js first.',
+                'error'
+            );
+            return;
+        }
+        openDelete(religion.id, godId, {
+            onSuccess: function () {
+                _rerender(container, religion);
+            }
+        });
+    }
+
+    function _actionClearFilters(religion, container) {
+        _resetState();
+        _writeFilters(religion.id, _state);
+        _rerender(container, religion);
+    }
+
+    // =========================================================================
+    // 9. IN-PLACE FILTER RE-APPLY
+    // =========================================================================
 
     function _applyFiltersInPlace(container, religion) {
         var RQ = _getReligionQueries();
@@ -491,60 +667,12 @@
             empty.parentNode.replaceChild(fresh2, empty);
         }
 
-        _attachRowActions(container, religion);
+        // No handler re-wiring needed: the delegated click listener is
+        // on `container`, not on the body that just got swapped.
     }
 
-    function _attachRowActions(container, religion) {
-        var body = container.querySelector('.rt-tab__body');
-        if (!body) return;
-        if (body.__rtHandled) return;
-        body.__rtHandled = true;
-
-        body.addEventListener('click', function (e) {
-            var target = e.target;
-            if (!target || typeof target.closest !== 'function') return;
-
-            var editBtn = target.closest('.edit-god-btn');
-            if (editBtn) {
-                e.preventDefault();
-                var eid = editBtn.getAttribute('data-god-id');
-                if (!eid) return;
-                var openEdit = _getOpenEditGodModal();
-                if (!openEdit) {
-                    _showToast(
-                        'Edit God modal is not available. Load modals-religion.js first.',
-                        'error'
-                    );
-                    return;
-                }
-                openEdit(religion.id, eid, {
-                    onSuccess: function () {
-                        renderGodsTab(container, _freshReligion(religion.id) || religion);
-                    }
-                });
-                return;
-            }
-
-            var delBtn = target.closest('.delete-god-btn');
-            if (delBtn) {
-                e.preventDefault();
-                var did = delBtn.getAttribute('data-god-id');
-                if (!did) return;
-                var openDelete = _getOpenDeleteGodModal();
-                if (!openDelete) {
-                    _showToast(
-                        'Delete God modal is not available. Load modals-religion.js first.',
-                        'error'
-                    );
-                    return;
-                }
-                openDelete(religion.id, did, {
-                    onSuccess: function () {
-                        renderGodsTab(container, _freshReligion(religion.id) || religion);
-                    }
-                });
-            }
-        });
+    function _rerender(container, religion) {
+        renderGodsTab(container, _freshReligion(religion.id) || religion);
     }
 
     /**
@@ -569,7 +697,7 @@
     }
 
     // =========================================================================
-    // 7. TABMANAGER ADAPTER + REGISTRATION
+    // 10. TABMANAGER ADAPTER + REGISTRATION
     // =========================================================================
 
     function renderAdapter(container, context) {
@@ -587,7 +715,7 @@
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.ReligionGodsTab = {
