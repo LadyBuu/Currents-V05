@@ -1,0 +1,1504 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover" />
+    <title>Character Manager</title>
+    <link rel="icon" href="data:," />
+
+    <script src="js/core/theme-boot.js"></script>
+
+    <link rel="stylesheet" href="css/themes.css">
+    <link rel="stylesheet" href="css/common.css">
+
+    <style>
+        /* ============================================================
+           Character Manager — inline CSS
+
+           Only css/themes.css and css/common.css are external.
+           Everything below is inline, including the character-tab-*
+           and character-row* classes that the Identity tab and the
+           bootstrap emit.
+
+           STRUCTURAL ONLY. Every visual value comes from a theme
+           token in themes.css. No hex values, no rgba() values, no
+           hardcoded font stacks, no hardcoded px for design values.
+           Spacing uses rem.
+           ============================================================ */
+
+        html, body { height: 100%; margin: 0; overflow: hidden; }
+        body {
+            display: flex;
+            flex-direction: column;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 1rem;
+            line-height: var(--lh, 1.5);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ============================================================
+           TOPBAR
+           ============================================================ */
+        .topbar {
+            position: relative;
+            z-index: 100;
+            flex-shrink: 0;
+            background: var(--bg2);
+            padding: 0.5rem 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.625rem;
+            border-bottom: 1px solid var(--border);
+            min-height: 3rem;
+            flex-wrap: wrap;
+        }
+        .topbar .title {
+            font-family: var(--f-display);
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: var(--accent);
+            white-space: nowrap;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+        .topbar .title svg { width: 1em; height: 1em; fill: currentColor; }
+        .topbar .spacer { flex: 1; min-width: 0.75rem; }
+        .topbar .burger-menu {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 0.25rem 0.625rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        .tb-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3125rem;
+            padding: 0.375rem 0.875rem;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.7rem;
+            font-weight: 500;
+            cursor: pointer;
+            line-height: 1.2;
+        }
+        .tb-btn svg { width: 0.9em; height: 0.9em; fill: currentColor; }
+        .tb-btn:hover {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+        .tb-btn.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--accent-fg);
+        }
+        .tb-btn.primary:hover { background: var(--accent-dark); }
+        .tb-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+        .year-input {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3125rem;
+            padding: 0.1875rem 0.625rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-family: var(--f-body);
+            font-size: 0.7rem;
+            line-height: 1.2;
+        }
+        .year-input label {
+            font-family: var(--f-display);
+            font-size: 0.55rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--dim);
+            white-space: nowrap;
+        }
+        .year-input input {
+            width: 4rem;
+            padding: 0.1875rem 0.375rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-mono);
+            font-size: 0.7rem;
+            text-align: right;
+        }
+        .year-input input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .theme-toggle { position: relative; display: inline-flex; }
+        .theme-toggle__menu {
+            position: absolute;
+            top: calc(100% + 0.25rem);
+            right: 0;
+            z-index: 9999;
+            min-width: 10rem;
+            max-height: 60vh;
+            padding: 0.25rem;
+            margin: 0;
+            list-style: none;
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow-y: auto;
+        }
+        .theme-toggle__menu[hidden] { display: none; }
+        .theme-toggle__menu button {
+            display: block;
+            width: 100%;
+            padding: 0.375rem 0.75rem;
+            text-align: left;
+            background: transparent;
+            border: none;
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.7rem;
+            border-radius: var(--radius);
+            cursor: pointer;
+        }
+        .theme-toggle__menu button:hover {
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+
+        /* ============================================================
+           LAYOUT
+           ============================================================ */
+        .app-layout {
+            display: flex;
+            flex-direction: row;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+        }
+        .sidebar {
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--bg2);
+            border-right: 1px solid var(--border);
+            width: 17.5rem;
+        }
+        .sidebar-header {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg3);
+        }
+        .sidebar-header h3 {
+            margin: 0;
+            font-family: var(--f-display);
+            font-size: 0.65rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+        .sidebar-search {
+            padding: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .sidebar-search input {
+            width: 100%;
+            padding: 0.375rem 0.5rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.72rem;
+            box-sizing: border-box;
+        }
+        .sidebar-search input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .sidebar-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.5rem;
+            min-height: 0;
+        }
+        .main-panel {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-width: 0;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        /* ============================================================
+           TAB STRIP
+           ============================================================ */
+        .manager-subtabs {
+            position: sticky;
+            top: 0;
+            display: flex;
+            align-items: stretch;
+            gap: 0.25rem;
+            padding: 0.5rem 1.5rem 0;
+            margin: 0 0 1.25rem;
+            background: var(--bg2);
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+            z-index: 10;
+        }
+        .manager-subtab {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.125rem 0.6875rem;
+            background: transparent;
+            border: 1px solid transparent;
+            border-bottom: none;
+            border-radius: var(--radius) var(--radius) 0 0;
+            color: var(--dim);
+            font-family: var(--f-display);
+            font-size: 0.78rem;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .manager-subtab:hover {
+            color: var(--accent-light);
+            background: var(--accent-dim);
+        }
+        .manager-subtab.active {
+            color: var(--accent);
+            background: var(--bg2);
+            border-color: var(--border);
+            font-weight: 600;
+        }
+        .manager-subtab-icon {
+            display: inline-flex;
+            width: 1rem;
+            height: 1rem;
+            align-items: center;
+            justify-content: center;
+            color: currentColor;
+        }
+        .manager-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
+
+        .tab-content-wrapper {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 1.25rem 1.5rem;
+            background: var(--bg);
+        }
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
+
+        /* ============================================================
+           SHARED STATES
+           ============================================================ */
+        .loading {
+            padding: 1.5rem;
+            text-align: center;
+            color: var(--dim);
+            font-size: 0.85rem;
+        }
+        .empty-state,
+        .error-state {
+            padding: 1.5rem;
+            text-align: center;
+            color: var(--dim);
+            font-size: 0.8rem;
+        }
+        .error-state { color: var(--danger-lt); }
+
+        /* ============================================================
+           SIDEBAR OVERLAY (mobile)
+           ============================================================ */
+        .sidebar-overlay { display: none; }
+        .sidebar-overlay.active {
+            display: block;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--overlay, rgba(0, 0, 0, 0.6));
+            z-index: 999;
+        }
+
+        /* ============================================================
+           CHARACTER ROW (emitted by character-view-models.js::compactRow
+           and character-ui-list.js::renderCharacterList)
+           ============================================================ */
+        .character-row {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.375rem;
+            width: 100%;
+            padding: 0.375rem 0.5rem;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.72rem;
+            text-align: left;
+            cursor: pointer;
+        }
+        .character-row:hover {
+            background: var(--bg3);
+            border-color: var(--border);
+        }
+        .character-row--selected,
+        .character-row.selected {
+            background: var(--accent-dim);
+            border-color: var(--accent);
+            color: var(--accent-light);
+        }
+        .character-row--deceased { opacity: 0.72; }
+        .character-row__rank {
+            color: var(--accent);
+            font-family: var(--f-display);
+            font-size: 0.65rem;
+            min-width: 1rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .character-row__gender {
+            display: inline-flex;
+            width: 0.9em;
+            height: 0.9em;
+            align-items: center;
+            justify-content: center;
+            color: var(--dim);
+        }
+        .character-row__gender svg {
+            width: 100%; height: 100%; fill: currentColor;
+        }
+        .character-row__name {
+            color: var(--accent);
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            word-break: break-word;
+        }
+        .character-row__name:hover { text-decoration: underline; }
+        .character-row__deceased-mark {
+            color: var(--danger-lt);
+            font-size: 0.75rem;
+            margin-left: 0.125rem;
+        }
+        .character-row__age,
+        .character-row__location,
+        .character-row__detail {
+            color: var(--dim);
+            font-family: var(--f-mono);
+            font-size: 0.6rem;
+        }
+        .character-row__detail { color: var(--accent-dim); }
+        .character-empty-message {
+            padding: 1.5rem 1rem;
+            text-align: center;
+            color: var(--dim);
+            font-size: 0.8rem;
+        }
+
+        /* ============================================================
+           CHARACTER TAB CONTENT (.character-tab-*)
+           ============================================================ */
+        .character-tab {
+            max-width: 60rem;
+            margin: 0 auto;
+        }
+
+        /* ---- Section (collapsible container) ---- */
+        .character-tab-section {
+            margin-bottom: 1rem;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+            background: var(--bg2);
+        }
+        .character-tab-section__header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: var(--bg3);
+            border: none;
+            border-bottom: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--f-display);
+            font-size: 0.78rem;
+            font-weight: 600;
+            text-align: left;
+            cursor: pointer;
+        }
+        .character-tab-section__header:hover {
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+        .character-tab-section__toggle {
+            display: inline-flex;
+            width: 1rem;
+            align-items: center;
+            justify-content: center;
+            color: var(--accent);
+            font-size: 0.65rem;
+        }
+        .character-tab-section__icon {
+            display: inline-flex;
+            width: 1rem;
+            height: 1rem;
+            align-items: center;
+            justify-content: center;
+            color: var(--accent);
+        }
+        .character-tab-section__icon svg {
+            width: 100%; height: 100%; fill: currentColor;
+        }
+        .character-tab-section__title {
+            flex: 1;
+            min-width: 0;
+        }
+        .character-tab-section__body {
+            display: none;
+            padding: 1rem;
+            background: var(--bg2);
+        }
+        .character-tab-section.is-expanded .character-tab-section__body {
+            display: block;
+        }
+
+        /* ---- Subhead (within a section) ---- */
+        .character-tab-subhead {
+            margin: 0.75rem 0 0.375rem;
+            padding-bottom: 0.25rem;
+            border-bottom: 1px solid var(--border);
+            font-family: var(--f-display);
+            font-size: 0.6rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--accent);
+        }
+
+        /* ---- Field row ---- */
+        .character-tab-field {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: flex-start;
+            margin-bottom: 0.75rem;
+        }
+        .character-tab-field:last-child { margin-bottom: 0; }
+        .character-tab-field__label {
+            flex: 0 0 10rem;
+            font-family: var(--f-display);
+            font-size: 0.62rem;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--dim);
+            padding-top: 0.375rem;
+        }
+        .character-tab-field__value {
+            flex: 1;
+            min-width: 0;
+            font-family: var(--f-body);
+            font-size: 0.75rem;
+            color: var(--text);
+        }
+
+        /* ---- Inputs ---- */
+        .character-tab-input {
+            width: 100%;
+            padding: 0.375rem 0.5rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.75rem;
+            box-sizing: border-box;
+        }
+        .character-tab-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            background: var(--bg3);
+        }
+        textarea.character-tab-input {
+            resize: vertical;
+            min-height: 3rem;
+        }
+        .character-tab-input-row {
+            display: flex;
+            gap: 0.375rem;
+            align-items: center;
+        }
+        .character-tab-input-row .character-tab-input {
+            flex: 1;
+        }
+
+        /* ---- Buttons ---- */
+        .character-tab-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3125rem;
+            padding: 0.375rem 0.75rem;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.68rem;
+            font-weight: 500;
+            cursor: pointer;
+            line-height: 1.2;
+        }
+        .character-tab-btn:hover {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+        .character-tab-btn.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--accent-fg);
+        }
+        .character-tab-btn.primary:hover {
+            background: var(--accent-dark);
+        }
+        .character-tab-btn.danger {
+            background: transparent;
+            border-color: var(--danger-lt);
+            color: var(--danger-lt);
+        }
+        .character-tab-btn.danger:hover {
+            background: var(--danger-soft);
+            color: var(--danger-lt);
+        }
+        .character-tab-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        .character-tab-btn-small {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.1875rem 0.5rem;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.6rem;
+            font-weight: 500;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .character-tab-btn-small:hover {
+            border-color: var(--accent);
+            color: var(--accent-light);
+        }
+        .character-tab-btn-small.danger {
+            color: var(--danger-lt);
+            border-color: var(--danger-lt);
+        }
+        .character-tab-btn-small.danger:hover {
+            background: var(--danger-soft);
+        }
+        .character-tab-actions {
+            display: flex;
+            gap: 0.375rem;
+            flex-wrap: wrap;
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--border);
+        }
+
+        /* ---- Notes and hints ---- */
+        .character-tab-note {
+            color: var(--dim);
+            font-size: 0.65rem;
+            font-style: italic;
+        }
+        .character-tab-preview {
+            font-family: var(--f-display);
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        /* ---- Empty and unavailable states ---- */
+        .character-tab-empty {
+            padding: 1rem;
+            text-align: center;
+            color: var(--dim);
+            font-size: 0.7rem;
+            font-style: italic;
+        }
+        .character-tab-unavailable {
+            padding: 0.75rem 1rem;
+            background: var(--warning-soft, rgba(200, 112, 64, 0.12));
+            border-left: 3px solid var(--warning, #c87040);
+            border-radius: 0 var(--radius) var(--radius) 0;
+            color: var(--text);
+            font-size: 0.7rem;
+            line-height: 1.5;
+        }
+        .character-tab-empty--error {
+            color: var(--danger-lt);
+            background: var(--danger-soft);
+            border-left: 3px solid var(--danger-lt);
+            border-radius: 0 var(--radius) var(--radius) 0;
+        }
+
+        /* ---- Checkbox rows ---- */
+        .character-tab-checkbox {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            font-size: 0.7rem;
+            color: var(--text);
+            cursor: pointer;
+        }
+        .character-tab-checkbox input[type="checkbox"] {
+            margin: 0;
+        }
+
+        /* ---- Random source row ---- */
+        .character-tab-random-source {
+            margin-bottom: 0.75rem;
+            padding: 0.5rem 0.75rem;
+            background: var(--bg3);
+            border-radius: var(--radius);
+            border: 1px solid var(--border);
+        }
+
+        /* ---- Traits grid ---- */
+        .character-tab-traits {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        .character-tab-traits > label {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+        .character-tab-traits > label {
+            /* fallback to grid via parent when JS emits a flat label list */
+        }
+        .character-tab-traits {
+            /* fallback to grid via parent when JS emits a flat label list */
+        }
+        .character-tab-traits .character-tab-trait {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.125rem 0.375rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-size: 0.68rem;
+            cursor: pointer;
+        }
+        .character-tab-traits .character-tab-trait:hover {
+            border-color: var(--accent);
+        }
+        .character-tab-traits .character-tab-trait input[type="checkbox"] {
+            margin: 0;
+        }
+        .character-tab-traits {
+            /* the flat labels produced by _renderTraitGrid are .character-tab-trait; wrap via JS parent */
+        }
+        /* grid container actually emitted by the tab is .character-tab-traits
+           with child .character-tab-trait labels and a .character-tab-input-row
+           holding the Randomize/Clear buttons. Below is the grid layout. */
+        .character-tab-traits {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+            gap: 0.25rem;
+            align-items: center;
+        }
+        .character-tab-traits .character-tab-input-row {
+            grid-column: 1 / -1;
+            margin-top: 0.5rem;
+        }
+
+        /* ---- History list (surname + religion) ---- */
+        .character-tab-history {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+            margin-bottom: 0.5rem;
+        }
+        .character-tab-history__row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.375rem 0.625rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+        }
+        .character-tab-history__row.is-current {
+            border-left: 3px solid var(--accent);
+            background: var(--accent-dim);
+        }
+        .character-tab-history__main {
+            flex: 1;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+            min-width: 0;
+        }
+        .character-tab-history__year {
+            font-family: var(--f-mono);
+            font-size: 0.65rem;
+            color: var(--accent);
+            min-width: 3rem;
+        }
+        .character-tab-history__value {
+            font-family: var(--f-body);
+            font-size: 0.72rem;
+            color: var(--text);
+            word-break: break-word;
+        }
+        .character-tab-history__reason {
+            font-size: 0.6rem;
+            color: var(--dim);
+            font-style: italic;
+        }
+        .character-tab-history__badge {
+            font-size: 0.55rem;
+            padding: 0.0625rem 0.375rem;
+            border-radius: 0.625rem;
+            background: var(--accent);
+            color: var(--accent-fg);
+        }
+        .character-tab-history__actions {
+            display: flex;
+            gap: 0.25rem;
+            flex-shrink: 0;
+        }
+
+        /* ---- Rank rows ---- */
+        .character-tab-rank-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+            padding: 0.5rem 0.75rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 0.375rem;
+        }
+        .character-tab-rank-row--active {
+            border-left-color: var(--accent);
+            background: var(--accent-dim);
+        }
+        .character-tab-rank-row--former { opacity: 0.75; }
+        .character-tab-rank-main {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex: 1;
+            min-width: 0;
+        }
+        .character-tab-rank-symbol {
+            font-family: var(--f-display);
+            font-size: 1.1rem;
+            color: var(--accent);
+            min-width: 1.25rem;
+            text-align: center;
+        }
+        .character-tab-rank-name {
+            font-family: var(--f-display);
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: var(--text);
+            word-break: break-word;
+        }
+        .character-tab-rank-meta {
+            width: 100%;
+            font-size: 0.6rem;
+            color: var(--dim);
+            font-family: var(--f-mono);
+            margin-top: 0.125rem;
+        }
+        .character-tab-rank-actions {
+            display: flex;
+            gap: 0.25rem;
+            flex-wrap: wrap;
+            flex-shrink: 0;
+        }
+
+        /* ---- Save bar ---- */
+        .character-tab-savebar {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            flex-wrap: wrap;
+            position: sticky;
+            bottom: 0;
+            z-index: 5;
+            padding: 0.75rem 1rem;
+            margin-top: 1.5rem;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+        }
+        .character-tab-dirty-note {
+            font-size: 0.65rem;
+            color: var(--accent);
+            font-style: italic;
+        }
+
+        /* ============================================================
+           RESPONSIVE
+           ============================================================ */
+        @media (max-width: 768px) {
+            .topbar .burger-menu { display: inline-flex; }
+            .topbar { padding: 0.375rem 0.625rem; gap: 0.375rem; min-height: 2.625rem; }
+            .topbar .title { font-size: 0.75rem; }
+            .topbar .tb-btn { padding: 0.1875rem 0.625rem; font-size: 0.65rem; }
+            .year-input { padding: 0.125rem 0.375rem; }
+            .year-input label { display: none; }
+            .year-input input { width: 3.25rem; font-size: 0.65rem; }
+            .app-layout { flex-direction: column; }
+            .sidebar {
+                position: fixed;
+                top: 0; bottom: 0; left: 0;
+                height: 100vh;
+                width: 85%;
+                max-width: 17.5rem;
+                z-index: 1000;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+            }
+            .sidebar.visible { transform: translateX(0); }
+            .tab-content-wrapper { padding: 1rem; }
+            .manager-subtabs { padding-left: 1rem; padding-right: 1rem; }
+            .manager-subtab {
+                flex: 1 1 auto; min-width: 0;
+                padding: 0.625rem 0.875rem; font-size: 0.72rem;
+            }
+            .character-tab-field {
+                flex-direction: column;
+                gap: 0.25rem;
+            }
+            .character-tab-field__label {
+                flex: 0 0 auto;
+                padding-top: 0;
+            }
+            .character-tab-history__row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .character-tab-history__actions {
+                justify-content: flex-end;
+            }
+            .character-tab-rank-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .character-tab-rank-actions {
+                justify-content: flex-end;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <button id="menuToggle" class="burger-menu" type="button" aria-label="Toggle menu">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 6h18M3 12h18M3 18h18"/>
+        </svg>
+    </button>
+    <div class="title" id="characterManagerTitle">Character Manager</div>
+    <div class="spacer"></div>
+
+    <div class="year-input">
+        <label for="yearInput">Year</label>
+        <input type="number" id="yearInput" min="1" step="1">
+        <button id="setYearBtn" class="tb-btn" type="button">Set</button>
+    </div>
+
+    <button id="addCharacterBtn" class="tb-btn primary" type="button">Add</button>
+    <button id="generateCharacterBtn" class="tb-btn" type="button">Random</button>
+    <button id="importBtn" class="tb-btn" type="button">Import</button>
+    <button id="exportBtn" class="tb-btn" type="button">Export</button>
+    <button id="refreshBtn" class="tb-btn" type="button">Refresh</button>
+
+    <input type="file" id="fileInput" accept=".json" style="display:none;" />
+
+    <div class="theme-toggle" role="group" aria-label="Theme">
+        <button class="tb-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+            <span aria-hidden="true">◐</span>
+            <span id="themeName">Dark</span>
+        </button>
+        <ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden></ul>
+    </div>
+</div>
+
+<div class="app-layout">
+    <div class="sidebar" id="characterSidebar">
+        <div class="sidebar-header"><h3 id="sidebarTitle">Characters</h3></div>
+        <div class="sidebar-search">
+            <input type="search" id="characterSearchInput" placeholder="Search characters…" autocomplete="off">
+        </div>
+        <div class="sidebar-list" id="characterListContainer">
+            <div class="loading">Loading characters…</div>
+        </div>
+    </div>
+    <div id="sidebarOverlay" class="sidebar-overlay"></div>
+
+    <div class="main-panel">
+        <div class="manager-subtabs" id="characterTabStrip" role="tablist">
+            <button class="manager-subtab active" role="tab" type="button"
+                    data-tab="identity" aria-selected="true" tabindex="0">
+                <span class="manager-subtab-icon" data-icon="PERSON" aria-hidden="true"></span>
+                <span>Identity</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button"
+                    data-tab="location" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="LOCATION" aria-hidden="true"></span>
+                <span>Location</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button"
+                    data-tab="family" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="FAMILY_TREE" aria-hidden="true"></span>
+                <span>Family</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button"
+                    data-tab="romance" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="HEART" aria-hidden="true"></span>
+                <span>Romance</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button"
+                    data-tab="friendship" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="FRIENDSHIP" aria-hidden="true"></span>
+                <span>Friendship</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button"
+                    data-tab="skills" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="ROLES" aria-hidden="true"></span>
+                <span>Skills</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button"
+                    data-tab="overview" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="CENSUS" aria-hidden="true"></span>
+                <span>Overview</span>
+            </button>
+        </div>
+
+        <div class="tab-content-wrapper" id="panelContent" role="tabpanel">
+            <div class="tab-pane active" id="character-pane-identity"   data-tab-content="identity"></div>
+            <div class="tab-pane"        id="character-pane-location"   data-tab-content="location"></div>
+            <div class="tab-pane"        id="character-pane-family"     data-tab-content="family"></div>
+            <div class="tab-pane"        id="character-pane-romance"    data-tab-content="romance"></div>
+            <div class="tab-pane"        id="character-pane-friendship" data-tab-content="friendship"></div>
+            <div class="tab-pane"        id="character-pane-skills"     data-tab-content="skills"></div>
+            <div class="tab-pane"        id="character-pane-overview"   data-tab-content="overview"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ================================================================
+     SCRIPTS — load order matches the documented sequence.
+     ================================================================ -->
+
+<!-- ---- Core constants ---- -->
+<script src="js/core/constants/constants.js"></script>
+<script src="js/core/constants/age-constants.js"></script>
+<script src="js/core/constants/character-constants.js"></script>
+<script src="js/core/constants/character-traits.js"></script>
+<script src="js/core/constants/location-constants.js"></script>
+<script src="js/core/constants/relationship-constants.js"></script>
+
+<!-- ---- Core utilities ---- -->
+<script src="js/core/formatting.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/randomness.js"></script>
+
+<!-- ---- Time ---- -->
+<script src="js/core/time.js"></script>
+
+<!-- ---- Storage + initializeStorage() ---- -->
+<script src="js/core/storage-schema.js"></script>
+<script src="js/core/storage.js"></script>
+<script>
+    (function () {
+        try {
+            if (typeof window.initializeStorage === 'function') window.initializeStorage();
+        } catch (e) { console.error('[boot] initializeStorage failed:', e); }
+    })();
+</script>
+
+<!-- ---- Accessors + PlaceQueries shim ---- -->
+<script src="js/core/accessors.js"></script>
+<script>
+    (function () {
+        'use strict';
+        window.PlaceQueries = {
+            getPlaceById: function (id) {
+                if (!window.LocationState
+                    || typeof window.LocationState.getPlaceById !== 'function') {
+                    return null;
+                }
+                return window.LocationState.getPlaceById(id);
+            },
+            getPlaceSummaries: function () {
+                return (window.LocationQueries
+                    && typeof window.LocationQueries.getPlaceSummaries === 'function')
+                    ? window.LocationQueries.getPlaceSummaries()
+                    : [];
+            },
+            getAllPlaces: function () {
+                return (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
+            }
+        };
+    })();
+</script>
+
+<!-- ---- World + names ---- -->
+<script src="js/core/world.js"></script>
+<script src="js/core/names.js"></script>
+
+<!-- ---- Core UI primitives (responsive before collapsible) ---- -->
+<script src="js/core/ui.js"></script>
+<script src="js/core/ui-state.js"></script>
+<script src="js/core/modals-core.js"></script>
+<script src="js/core/responsive.js"></script>
+<script src="js/core/collapsible.js"></script>
+<script src="js/core/exportUtils.js"></script>
+<script src="js/core/tab-manager.js"></script>
+
+<!-- ---- Skill taxonomy + event logger ---- -->
+<script src="js/roles/skill-utils.js"></script>
+<script src="js/events/eventLogger.js"></script>
+
+<!-- ---- Location ---- -->
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
+<script src="js/location/location-commands.js"></script>
+<script src="js/location/location-queries.js"></script>
+<script src="js/location/location-movement.js"></script>
+<script src="js/location/location-view-models.js"></script>
+<script src="js/location/location-ui-state.js"></script>
+<script src="js/location/location-ui-list.js"></script>
+<script src="js/location/location-presentation.js"></script>
+<script src="js/location/modals-location-helper.js"></script>
+<script src="js/location/modals-location.js"></script>
+<script src="js/location/modals-moves.js"></script>
+<script src="js/location/location-bootstrap.js"></script>
+
+<!-- ---- Religion ---- -->
+<script src="js/religion/religion-constants.js"></script>
+<script src="js/religion/religion-format.js"></script>
+<script src="js/religion/religion-validation.js"></script>
+<script src="js/religion/religion-state.js"></script>
+<script src="js/religion/religion-queries.js"></script>
+<script src="js/religion/religion-rules.js"></script>
+<script src="js/religion/religion-commands.js"></script>
+<script src="js/religion/religion-laws.js"></script>
+<script src="js/religion/religion-inheritance.js"></script>
+<script src="js/religion/religion-view-models.js"></script>
+<script src="js/religion/religion-render.js"></script>
+<script src="js/religion/religion-ui-state.js"></script>
+<script src="js/religion/modals-religion.js"></script>
+<script src="js/religion/religion-bootstrap.js"></script>
+
+<!-- ---- Culture (after PlaceQueries shim + ReligionQueries) ---- -->
+<script src="js/culture/culture-constants.js"></script>
+<script src="js/culture/culture-validation.js"></script>
+<script src="js/culture/culture-state.js"></script>
+<script src="js/culture/culture-rules.js"></script>
+<script src="js/culture/culture-commands.js"></script>
+<script src="js/culture/culture-queries.js"></script>
+<script src="js/culture/culture-generation.js"></script>
+<script src="js/culture/culture-view-models.js"></script>
+<script src="js/culture/culture-ui-list.js"></script>
+<script src="js/culture/modals-culture.js"></script>
+<script src="js/culture/culture-bootstrap.js"></script>
+
+<!-- ---- Names (after CultureQueries) ---- -->
+<script src="js/names/name-queries.js"></script>
+<script src="js/names/name-rules.js"></script>
+<script src="js/names/names-state.js"></script>
+<script src="js/names/name-commands.js"></script>
+<script src="js/names/name-system.js"></script>
+<script src="js/names/modals-name.js"></script>
+
+<!-- ---- Character subsystem (rules → state → commands → queries) ---- -->
+<script src="js/character/family-rules.js"></script>
+<script src="js/character/children-rules.js"></script>
+<script src="js/character/mortality-rules.js"></script>
+
+<script src="js/character/character-state.js"></script>
+<script src="js/character/family-state.js"></script>
+<script src="js/character/children-state.js"></script>
+
+<script src="js/character/character-commands.js"></script>
+<script src="js/character/character-queries.js"></script>
+<script src="js/character/family-queries.js"></script>
+<script src="js/character/family-commands.js"></script>
+
+<script src="js/character/mortality-queries.js"></script>
+<script src="js/character/mortality-statistics.js"></script>
+<script src="js/character/family-statistics.js"></script>
+<script src="js/character/character-statistics.js"></script>
+<script src="js/character/character-lifecycle.js"></script>
+
+<script src="js/character/character-factory.js"></script>
+<script src="js/character/character-generator.js"></script>
+<script src="js/character/character-creation-commands.js"></script>
+<script src="js/character/character-deletion-commands.js"></script>
+
+<script src="js/character/children-queries.js"></script>
+<script src="js/character/children-generator.js"></script>
+<script src="js/character/children-commands.js"></script>
+<script src="js/character/children-statistics.js"></script>
+
+<script src="js/character/character-ui-list.js"></script>
+<script src="js/character/character-system.js"></script>
+
+<!-- ---- Character Manager modules ---- -->
+<script src="js/character/character-ui-state.js"></script>
+<script src="js/character/character-view-models.js"></script>
+
+<script src="js/tabs/character-identity-tab.js"></script>
+
+<script src="js/character/character-manager-bootstrap.js"></script>
+
+<!-- ---- Topbar wiring (inline) ---- -->
+<script>
+(function () {
+    'use strict';
+
+    function _toast(msg, type) {
+        if (typeof window.showToast === 'function') {
+            try { window.showToast(msg, type || 'info'); } catch (e) {}
+        } else if (typeof console !== 'undefined' && console.warn) {
+            console.warn('[character-manager] ' + (type || 'info') + ': ' + msg);
+        }
+    }
+
+    function _refreshAll() {
+        if (window.CharacterManagerBootstrap
+            && typeof window.CharacterManagerBootstrap.refreshSidebar === 'function') {
+            window.CharacterManagerBootstrap.refreshSidebar();
+        }
+        if (window.CharacterManagerBootstrap
+            && typeof window.CharacterManagerBootstrap.renderActive === 'function') {
+            window.CharacterManagerBootstrap.renderActive();
+        }
+    }
+
+    // ---- Year input -----------------------------------------------------
+    var yearInput = document.getElementById('yearInput');
+    var setYearBtn = document.getElementById('setYearBtn');
+
+    function _syncYearInput() {
+        if (!yearInput) return;
+        if (typeof window.getCurrentYear === 'function') {
+            try { yearInput.value = window.getCurrentYear(); }
+            catch (e) { yearInput.value = ''; }
+        }
+    }
+
+    if (setYearBtn) {
+        setYearBtn.addEventListener('click', function () {
+            if (!yearInput) return;
+            var y = parseInt(yearInput.value, 10);
+            if (!Number.isInteger(y)) {
+                _toast('Please enter a valid year.', 'error');
+                return;
+            }
+            if (typeof window.isValidYear === 'function'
+                && window.isValidYear(y) !== true) {
+                _toast('Please enter a valid year.', 'error');
+                return;
+            }
+            if (typeof window.setCurrentYear === 'function') {
+                try { window.setCurrentYear(y); } catch (e) {}
+            } else if (window.masterData && window.masterData.data) {
+                window.masterData.data.currentYear = y;
+                if (typeof window.markDataDirty === 'function') {
+                    window.markDataDirty();
+                }
+            }
+            _refreshAll();
+            _toast('Year set to ' + y + '.', 'success');
+        });
+    }
+    if (yearInput) {
+        yearInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && setYearBtn) setYearBtn.click();
+        });
+    }
+    _syncYearInput();
+
+    // ---- Add character --------------------------------------------------
+    var addBtn = document.getElementById('addCharacterBtn');
+    if (addBtn) {
+        addBtn.addEventListener('click', function () {
+            if (typeof window.openCreateCharacterModal === 'function') {
+                window.openCreateCharacterModal(function () {
+                    _refreshAll();
+                    _toast('Character created.', 'success');
+                });
+            } else {
+                _toast('Create-character modal is not loaded.', 'error');
+            }
+        });
+    }
+
+    // ---- Random character ----------------------------------------------
+    var generateBtn = document.getElementById('generateCharacterBtn');
+    if (generateBtn) {
+        generateBtn.addEventListener('click', function () {
+            if (typeof window.CharacterCreationCommands === 'undefined'
+                || !window.CharacterCreationCommands
+                || typeof window.CharacterCreationCommands.createRandomCharacter !== 'function') {
+                _toast('Random generation is not available.', 'error');
+                return;
+            }
+            var result = window.CharacterCreationCommands.createRandomCharacter();
+            if (!result || result.success !== true) {
+                _toast('Random generation failed: ' +
+                    (result && result.reason ? result.reason : 'unknown'), 'error');
+                return;
+            }
+            if (result.data && result.data.id
+                && window.CharacterUIState
+                && typeof window.CharacterUIState.setSelectedCharacterId === 'function') {
+                window.CharacterUIState.setSelectedCharacterId(result.data.id);
+            }
+            _refreshAll();
+            _toast('Random character created.', 'success');
+        });
+    }
+
+    // ---- Import ---------------------------------------------------------
+    var importBtn = document.getElementById('importBtn');
+    var fileInput = document.getElementById('fileInput');
+    if (importBtn && fileInput) {
+        importBtn.addEventListener('click', function () {
+            fileInput.click();
+        });
+        fileInput.addEventListener('change', function () {
+            var f = fileInput.files && fileInput.files[0];
+            if (!f) return;
+            var reader = new FileReader();
+            reader.onload = function (e) {
+                var parsed = null;
+                try { parsed = JSON.parse(e.target.result); }
+                catch (err) {
+                    _toast('Invalid JSON file.', 'error');
+                    return;
+                }
+                var data = parsed && parsed.data ? parsed.data : parsed;
+                if (!data || typeof data !== 'object') {
+                    _toast('Unexpected JSON shape.', 'error');
+                    return;
+                }
+                if (!window.masterData) window.masterData = { data: {} };
+                if (!window.masterData.data) window.masterData.data = {};
+                var keys = Object.keys(data);
+                for (var i = 0; i < keys.length; i++) {
+                    window.masterData.data[keys[i]] = data[keys[i]];
+                }
+                if (typeof window.markDataDirty === 'function') {
+                    window.markDataDirty();
+                }
+                if (typeof window.CharacterState !== 'undefined'
+                    && typeof window.CharacterState.refresh === 'function') {
+                    try { window.CharacterState.refresh(); } catch (err) {}
+                }
+                try {
+                    window.dispatchEvent(new CustomEvent('masterDataUpdated'));
+                } catch (err) {}
+                _refreshAll();
+                _syncYearInput();
+                _toast('Import complete.', 'success');
+            };
+            reader.readAsText(f);
+            fileInput.value = '';
+        });
+    }
+
+    // ---- Export ---------------------------------------------------------
+    var exportBtn = document.getElementById('exportBtn');
+    if (exportBtn) {
+        exportBtn.addEventListener('click', function () {
+            var source = window.masterData && window.masterData.data
+                ? window.masterData.data : {};
+            var exportData = {
+                type: 'master',
+                version: '2.0',
+                exportDate: new Date().toISOString(),
+                data: source
+            };
+            var blob = new Blob([JSON.stringify(exportData, null, 2)],
+                { type: 'application/json' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'stillwaters_export_' +
+                new Date().toISOString().slice(0, 19).replace(/:/g, '-') + '.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            var n = (source.characters && source.characters.length) || 0;
+            _toast('Exported ' + n + ' characters with all data.', 'success');
+        });
+    }
+
+    // ---- Refresh --------------------------------------------------------
+    var refreshBtn = document.getElementById('refreshBtn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', function () {
+            if (typeof window.loadMasterData === 'function') {
+                try { window.loadMasterData(); } catch (e) {}
+            }
+            if (typeof window.invalidateAccessorCaches === 'function') {
+                try { window.invalidateAccessorCaches(); } catch (e) {}
+            }
+            if (typeof window.CharacterState !== 'undefined'
+                && typeof window.CharacterState.refresh === 'function') {
+                try { window.CharacterState.refresh(); } catch (e) {}
+            }
+            _refreshAll();
+            _syncYearInput();
+            _toast('Refreshed.', 'success');
+        });
+    }
+
+    // ---- Mobile sidebar -------------------------------------------------
+    var burgerBtn = document.getElementById('menuToggle');
+    var sidebar = document.getElementById('characterSidebar');
+    var overlay = document.getElementById('sidebarOverlay');
+
+    if (burgerBtn && sidebar && overlay) {
+        burgerBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            sidebar.classList.add('visible');
+            overlay.classList.add('active');
+        });
+        overlay.addEventListener('click', function () {
+            sidebar.classList.remove('visible');
+            overlay.classList.remove('active');
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape'
+                && sidebar.classList.contains('visible')) {
+                sidebar.classList.remove('visible');
+                overlay.classList.remove('active');
+            }
+        });
+    }
+
+    // ---- Tab strip icon injection --------------------------------------
+    (function injectTabIcons() {
+        var icons = window.Icons || {};
+        var slots = document.querySelectorAll('[data-icon]');
+        for (var i = 0; i < slots.length; i++) {
+            var name = slots[i].getAttribute('data-icon');
+            if (name && icons[name]) {
+                slots[i].innerHTML = icons[name];
+            }
+        }
+    })();
+
+    // ---- Theme switcher -------------------------------------------------
+    (function () {
+        var themeBtn = document.getElementById('themeBtn');
+        var themeMenu = document.getElementById('themeMenu');
+        var themeName = document.getElementById('themeName');
+        var switcher = window.ThemeSwitcher;
+        if (!switcher) return;
+
+        function labelFor(id) {
+            return id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+        }
+        function updateLabel(id) {
+            if (themeName) themeName.textContent = labelFor(id);
+        }
+        function buildMenu() {
+            var html = '';
+            for (var i = 0; i < switcher.themes.length; i++) {
+                var id = switcher.themes[i];
+                html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' +
+                    id + '">' + labelFor(id) + '</button></li>';
+            }
+            if (themeMenu) themeMenu.innerHTML = html;
+        }
+        function openMenu() {
+            if (!themeMenu) return;
+            themeMenu.hidden = false;
+            themeBtn.setAttribute('aria-expanded', 'true');
+        }
+        function closeMenu() {
+            if (!themeMenu) return;
+            themeMenu.hidden = true;
+            themeBtn.setAttribute('aria-expanded', 'false');
+        }
+
+        if (themeBtn) themeBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (themeMenu.hidden) openMenu(); else closeMenu();
+        });
+        if (themeMenu) themeMenu.addEventListener('click', function (e) {
+            var btn = e.target.closest('[data-theme-id]');
+            if (!btn) return;
+            var id = btn.getAttribute('data-theme-id');
+            switcher.apply(id); updateLabel(id); closeMenu();
+        });
+        document.addEventListener('click', function (e) {
+            if (themeMenu && !themeMenu.hidden) {
+                if (themeMenu.contains(e.target)) return;
+                if (e.target === themeBtn) return;
+                closeMenu();
+            }
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && themeMenu && !themeMenu.hidden) closeMenu();
+        });
+
+        buildMenu();
+        var saved = switcher.getSaved && switcher.getSaved();
+        if (saved) updateLabel(saved);
+    })();
+})();
+</script>
+
+</body>
+</html>
