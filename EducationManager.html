@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover" />
+    <title>Education Manager</title>
+    <link rel="icon" href="data:," />
+
+    <script src="js/core/theme-boot.js"></script>
+
+    <link rel="stylesheet" href="css/themes.css">
+    <link rel="stylesheet" href="css/common.css">
+
+    <style>
+        /* ============================================================
+           Education Manager — inline CSS
+           STRUCTURAL ONLY. Every visual value comes from a theme token
+           in themes.css. No hex values, no rgba() values, no hardcoded
+           font stacks, no hardcoded px for design values. Spacing uses
+           rem.
+
+           Shell (topbar / sidebar / tabs / inputs) mirrors the Religion
+           Manager and Culture Manager pages so the three managers read
+           as one product. The .edu-* rules at the bottom are the tab
+           content styles the six education tab files emit; they are
+           NOT shell chrome.
+           ============================================================ */
+
+        html, body { height: 100%; margin: 0; overflow: hidden; }
+        body {
+            display: flex;
+            flex-direction: column;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 1rem;
+            line-height: var(--lh, 1.5);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ---- Topbar ---- */
+        .topbar {
+            position: relative;
+            z-index: 100;
+            flex-shrink: 0;
+            background: var(--bg2);
+            padding: 0.5rem 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.625rem;
+            border-bottom: 1px solid var(--border);
+            min-height: 3rem;
+            flex-wrap: wrap;
+        }
+        .topbar .title {
+            font-family: var(--f-display);
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: var(--accent);
+            white-space: nowrap;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+        .topbar .title svg { width: 1em; height: 1em; fill: currentColor; }
+        .topbar .spacer { flex: 1; min-width: 0.75rem; }
+        .topbar .burger-menu {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 0.25rem 0.625rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        .tb-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3125rem;
+            padding: 0.375rem 0.875rem;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.7rem;
+            font-weight: 500;
+            cursor: pointer;
+            line-height: 1.2;
+        }
+        .tb-btn svg { width: 0.9em; height: 0.9em; fill: currentColor; }
+        .tb-btn:hover {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+        .tb-btn.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--accent-fg);
+        }
+        .tb-btn.primary:hover { background: var(--accent-dark); }
+        .tb-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+        .year-input {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3125rem;
+            padding: 0.1875rem 0.625rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-family: var(--f-body);
+            font-size: 0.7rem;
+            line-height: 1.2;
+        }
+        .year-input label {
+            font-family: var(--f-display);
+            font-size: 0.55rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--dim);
+            white-space: nowrap;
+        }
+        .year-input input {
+            width: 4rem;
+            padding: 0.1875rem 0.375rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-mono);
+            font-size: 0.7rem;
+            text-align: right;
+        }
+        .year-input input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .theme-toggle { position: relative; display: inline-flex; }
+        .theme-toggle__menu {
+            position: absolute;
+            top: calc(100% + 0.25rem);
+            right: 0;
+            z-index: 9999;
+            min-width: 10rem;
+            max-height: 60vh;
+            padding: 0.25rem;
+            margin: 0;
+            list-style: none;
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow-y: auto;
+        }
+        .theme-toggle__menu[hidden] { display: none; }
+        .theme-toggle__menu button {
+            display: block;
+            width: 100%;
+            padding: 0.375rem 0.75rem;
+            text-align: left;
+            background: transparent;
+            border: none;
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.7rem;
+            border-radius: var(--radius);
+            cursor: pointer;
+        }
+        .theme-toggle__menu button:hover {
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+
+        /* ---- Layout ---- */
+        .app-layout {
+            display: flex;
+            flex-direction: row;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+        }
+        .sidebar {
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--bg2);
+            border-right: 1px solid var(--border);
+            width: 17.5rem;
+        }
+        .sidebar-header {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg3);
+        }
+        .sidebar-header h3 {
+            margin: 0;
+            font-family: var(--f-display);
+            font-size: 0.65rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+        .sidebar-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.5rem;
+            min-height: 0;
+        }
+        .main-panel {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-width: 0;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        .manager-subtabs {
+            position: sticky;
+            top: 0;
+            display: flex;
+            align-items: stretch;
+            gap: 0.25rem;
+            padding: 0.5rem 1.5rem 0;
+            margin: 0 0 1.25rem;
+            background: var(--bg2);
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+            z-index: 10;
+        }
+        .manager-subtab {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.125rem 0.6875rem;
+            background: transparent;
+            border: 1px solid transparent;
+            border-bottom: none;
+            border-radius: var(--radius) var(--radius) 0 0;
+            color: var(--dim);
+            font-family: var(--f-display);
+            font-size: 0.78rem;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .manager-subtab:hover {
+            color: var(--accent-light);
+            background: var(--accent-dim);
+        }
+        .manager-subtab.active {
+            color: var(--accent);
+            background: var(--bg2);
+            border-color: var(--border);
+            font-weight: 600;
+        }
+        .manager-subtab-icon {
+            display: inline-flex;
+            width: 1rem;
+            height: 1rem;
+            align-items: center;
+            justify-content: center;
+            color: currentColor;
+        }
+        .manager-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
+
+        .tab-content-wrapper {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 1.25rem 1.5rem;
+            background: var(--bg);
+        }
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
+
+        /* ---- Shared: hint, empty, loading, error ---- */
+        .ct-hint {
+            background: var(--bg2);
+            border-left: 3px solid var(--accent);
+            padding: 0.625rem 0.875rem;
+            margin-bottom: 1rem;
+            font-size: 0.7rem;
+            color: var(--dim);
+            line-height: 1.55;
+            border-radius: 0 var(--radius) var(--radius) 0;
+        }
+
+        .ct-empty,
+        .rt-empty {
+            padding: 1.5rem;
+            text-align: center;
+            color: var(--dim);
+            font-size: 0.8rem;
+        }
+        .ct-empty__sub,
+        .rt-empty__sub {
+            display: block;
+            margin-top: 0.375rem;
+            font-size: 0.7rem;
+            color: var(--dim);
+        }
+        .rt-unavailable {
+            padding: 1.5rem;
+            text-align: center;
+            color: var(--danger-lt);
+            font-size: 0.8rem;
+        }
+        .loading,
+        .loading-placeholder {
+            padding: 1.5rem;
+            text-align: center;
+            color: var(--dim);
+            font-size: 0.85rem;
+        }
+        .empty-state,
+        .error-state {
+            padding: 1.5rem;
+            text-align: center;
+            color: var(--dim);
+            font-size: 0.8rem;
+        }
+        .error-state { color: var(--danger-lt); }
+
+        /* ============================================================
+           EDUCATION TAB CONTENT (.edu-*)
+           Emitted by the six education tab files. These are the
+           styles the tabs already reference via `class="edu-manager-*"`
+           names, added to the page's inline block so the tabs render
+           correctly without a page-local CSS file.
+           ============================================================ */
+
+        /* ---- Header: title / subtitle / actions row ---- */
+        .edu-manager-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+        .edu-manager-title {
+            margin: 0;
+            font-family: var(--f-display);
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--accent-light);
+            letter-spacing: 0.02em;
+        }
+        .edu-manager-subtitle {
+            margin: 0.125rem 0 0 0;
+            font-family: var(--f-mono);
+            font-size: 0.65rem;
+            color: var(--dim);
+        }
+        .edu-manager-actions {
+            display: flex;
+            gap: 0.375rem;
+            flex-wrap: wrap;
+        }
+
+        /* ---- Buttons ---- */
+        .edu-manager-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3125rem;
+            padding: 0.3125rem 0.75rem;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.68rem;
+            font-weight: 500;
+            cursor: pointer;
+            line-height: 1.2;
+        }
+        .edu-manager-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent-light);
+        }
+        .edu-manager-btn--primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--accent-fg);
+        }
+        .edu-manager-btn--primary:hover {
+            background: var(--accent-dark);
+            color: var(--accent-fg);
+        }
+        .edu-manager-btn--danger {
+            border-color: var(--danger-lt);
+            color: var(--danger-lt);
+        }
+        .edu-manager-btn--danger:hover {
+            background: var(--danger-soft);
+        }
+        .edu-manager-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        /* ---- Stat cards (summary row) ---- */
+        .edu-manager-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        .edu-manager-stat {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 0.625rem 0.75rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.125rem;
+            min-width: 0;
+        }
+        .edu-manager-stat-label {
+            font-family: var(--f-display);
+            font-size: 0.55rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--dim);
+        }
+        .edu-manager-stat-value {
+            font-family: var(--f-mono);
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text);
+        }
+        .edu-manager-stat-value--ok { color: var(--ok); }
+        .edu-manager-stat-value--warn { color: var(--warn); }
+        .edu-manager-stat-value--bad { color: var(--danger-lt); }
+        .edu-manager-stat-value--accent { color: var(--accent-light); }
+        .edu-manager-stat-hint {
+            font-size: 0.55rem;
+            color: var(--dim);
+            line-height: 1.45;
+            margin-top: 0.125rem;
+        }
+
+        /* ---- Filter bar ---- */
+        .edu-manager-filters {
+            display: flex;
+            gap: 0.375rem;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+        .edu-manager-filters input[type="search"],
+        .edu-manager-filters input[type="text"],
+        .edu-manager-filters input[type="number"],
+        .edu-manager-filters select {
+            padding: 0.3125rem 0.5rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.72rem;
+            box-sizing: border-box;
+        }
+        .edu-manager-filters input[type="search"]:focus,
+        .edu-manager-filters input[type="text"]:focus,
+        .edu-manager-filters input[type="number"]:focus,
+        .edu-manager-filters select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .edu-manager-filters label {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            font-size: 0.7rem;
+            color: var(--text);
+        }
+
+        /* ---- List rows ---- */
+        .edu-manager-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+        .edu-manager-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 0.75rem;
+            padding: 0.625rem 0.875rem;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--border);
+            border-radius: var(--radius);
+        }
+        .edu-manager-row--selected {
+            border-left-color: var(--accent);
+            background: var(--accent-dim);
+        }
+        .edu-manager-row-main { flex: 1; min-width: 0; }
+        .edu-manager-row-title {
+            font-family: var(--f-display);
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+            flex-wrap: wrap;
+        }
+        .edu-manager-row-meta {
+            display: flex;
+            gap: 0.625rem;
+            flex-wrap: wrap;
+            font-family: var(--f-mono);
+            font-size: 0.6rem;
+            color: var(--dim);
+            margin-top: 0.125rem;
+        }
+        .edu-manager-row-actions {
+            display: flex;
+            gap: 0.25rem;
+            flex-shrink: 0;
+            flex-wrap: wrap;
+            align-items: flex-start;
+        }
+
+        /* ---- Empty / warning / error banners ---- */
+        .edu-manager-empty {
+            padding: 2rem 1rem;
+            text-align: center;
+            color: var(--dim);
+            font-size: 0.8rem;
+        }
+        .edu-manager-empty-icon {
+            display: inline-flex;
+            width: 2rem;
+            height: 2rem;
+            align-items: center;
+            justify-content: center;
+            color: var(--accent);
+            opacity: 0.5;
+            margin-bottom: 0.5rem;
+        }
+        .edu-manager-empty-icon svg {
+            width: 100%;
+            height: 100%;
+            fill: currentColor;
+        }
+        .edu-manager-empty-hint {
+            font-size: 0.65rem;
+            color: var(--dim);
+            margin-top: 0.375rem;
+        }
+        .edu-manager-error {
+            padding: 1.25rem 1rem;
+            text-align: center;
+            color: var(--danger-lt);
+            font-size: 0.75rem;
+        }
+        .edu-manager-warning {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.625rem;
+            padding: 0.625rem 0.875rem;
+            background: var(--warning-soft);
+            border-left: 3px solid var(--warning);
+            border-radius: 0 var(--radius) var(--radius) 0;
+            font-size: 0.7rem;
+            color: var(--text);
+            line-height: 1.55;
+            margin-bottom: 0.75rem;
+        }
+        .edu-manager-warning svg {
+            width: 1em;
+            height: 1em;
+            fill: currentColor;
+            color: var(--warning);
+            flex-shrink: 0;
+            margin-top: 0.125rem;
+        }
+
+        /* ---- Card / column layouts ---- */
+        .edu-manager-card {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 0.75rem 1rem;
+            margin-bottom: 0.75rem;
+        }
+        .edu-manager-card-title {
+            font-family: var(--f-display);
+            font-size: 0.72rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--accent-light);
+            margin: 0 0 0.5rem 0;
+        }
+        .edu-manager-card-body { font-size: 0.72rem; color: var(--text); }
+        .edu-manager-columns {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+            gap: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+
+        /* ---- Sidebar fallback list (used only if LocationUI is absent) ---- */
+        .place-list { padding: 0.25rem; }
+        .place-list .place-item {
+            padding: 0.375rem 0.5rem;
+            border-radius: var(--radius);
+            cursor: pointer;
+            font-size: 0.78rem;
+            color: var(--text);
+            margin: 0.125rem 0;
+        }
+        .place-list .place-item:hover { background: var(--bg3); }
+        .place-list .place-item.selected {
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+
+        /* ---- Responsive ---- */
+        @media (max-width: 768px) {
+            .topbar .burger-menu { display: inline-flex; }
+            .topbar { padding: 0.375rem 0.625rem; gap: 0.375rem; min-height: 2.625rem; }
+            .topbar .title { font-size: 0.75rem; }
+            .topbar .tb-btn { padding: 0.1875rem 0.625rem; font-size: 0.65rem; }
+            .year-input { padding: 0.125rem 0.375rem; }
+            .year-input label { display: none; }
+            .year-input input { width: 3.25rem; font-size: 0.65rem; }
+            .app-layout { flex-direction: column; }
+            .sidebar {
+                position: fixed;
+                top: 0; bottom: 0; left: 0;
+                height: 100vh;
+                width: 85%;
+                max-width: 17.5rem;
+                z-index: 1000;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+            }
+            .sidebar.visible { transform: translateX(0); }
+            .tab-content-wrapper { padding: 1rem; }
+            .manager-subtabs { padding-left: 1rem; padding-right: 1rem; }
+            .manager-subtab {
+                flex: 1 1 auto; min-width: 0;
+                padding: 0.625rem 0.875rem; font-size: 0.72rem;
+            }
+            .edu-manager-row { flex-direction: column; align-items: stretch; }
+            .edu-manager-row-actions { justify-content: flex-end; }
+        }
+
+        .sidebar-overlay { display: none; }
+        .sidebar-overlay.active {
+            display: block;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--overlay, rgba(0, 0, 0, 0.6));
+            z-index: 999;
+        }
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <button id="menuToggle" class="burger-menu" type="button" aria-label="Toggle menu">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 6h18M3 12h18M3 18h18"/>
+        </svg>
+    </button>
+    <div class="title" id="eduManagerTitle">Education Manager</div>
+    <div class="spacer"></div>
+
+    <div class="year-input">
+        <label for="yearInput">Year</label>
+        <input type="number" id="yearInput" min="1" step="1">
+        <button id="setYearBtn" class="tb-btn" type="button">Set</button>
+    </div>
+
+    <button id="importBtn" class="tb-btn" type="button">Import</button>
+    <button id="exportBtn" class="tb-btn" type="button">Export</button>
+    <button id="refreshBtn" class="tb-btn" type="button">Refresh</button>
+
+    <input type="file" id="fileInput" accept=".json" style="display:none;" />
+
+    <div class="theme-toggle" role="group" aria-label="Theme">
+        <button class="tb-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+            <span aria-hidden="true">◐</span>
+            <span id="themeName">Dark</span>
+        </button>
+        <ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden></ul>
+    </div>
+</div>
+
+<div class="app-layout">
+    <div class="sidebar" id="locationsSidebar">
+        <div class="sidebar-header"><h3 id="sidebarTitle">Locations</h3></div>
+        <div class="sidebar-list place-list" id="placeList">
+            <div class="loading">Loading locations…</div>
+        </div>
+    </div>
+    <div id="sidebarOverlay" class="sidebar-overlay"></div>
+
+    <div class="main-panel">
+        <div class="manager-subtabs" id="educationTabStrip" role="tablist">
+            <button class="manager-subtab active" role="tab" type="button" data-tab="overview" aria-selected="true" tabindex="0">
+                <span class="manager-subtab-icon" data-icon="CIRCLE_DOT" aria-hidden="true"></span>
+                <span>Overview</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button" data-tab="institutions" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="HOME" aria-hidden="true"></span>
+                <span>Institutions</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button" data-tab="students" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="PERSON" aria-hidden="true"></span>
+                <span>Students</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button" data-tab="finances" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="COIN" aria-hidden="true"></span>
+                <span>Finances</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button" data-tab="analytics" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="STAR_4" aria-hidden="true"></span>
+                <span>Analytics</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button" data-tab="history" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="TIMELINE" aria-hidden="true"></span>
+                <span>History</span>
+            </button>
+        </div>
+
+        <div class="tab-content-wrapper" id="panelContent" role="tabpanel">
+            <div class="tab-pane active" id="education-pane-overview"     data-tab-content="overview"></div>
+            <div class="tab-pane"        id="education-pane-institutions" data-tab-content="institutions"></div>
+            <div class="tab-pane"        id="education-pane-students"     data-tab-content="students"></div>
+            <div class="tab-pane"        id="education-pane-finances"     data-tab-content="finances"></div>
+            <div class="tab-pane"        id="education-pane-analytics"    data-tab-content="analytics"></div>
+            <div class="tab-pane"        id="education-pane-history"      data-tab-content="history"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ================================================================
+     SCRIPTS
+
+     Load order:
+       - Shared modules use ReligionManager.html's paths and order.
+       - Education-specific modules are inserted at the point where
+         ReligionManager inserts religion.
+       - settlement-state.js and SettlementState.getEducationBudget
+         load BEFORE education-annual.js (its LOAD-TIME METHOD CHECK).
+       - education-annual.js loads after education-commands.js and
+         after settlement-state.js.
+       - responsive.js loads BEFORE collapsible.js.
+       - initializeStorage() runs inline after storage.js.
+       - loadMasterData() runs inside education-manager-bootstrap.js.
+       - skill-utils.js loads BEFORE role-constants.js.
+       - household-state.js and household-rules.js load BEFORE
+         household-queries.js.
+       - Tab files load AFTER education-manager-bootstrap.js has
+         configure()d the scope? No — TabManager.configure is inside
+         the bootstrap, and the bootstrap loads LAST. The tab files
+         register() before the bootstrap's configure(). This is fine:
+         register() populates _renderers[scope], configure() populates
+         _configs[scope], and TabManager.render() reads both. Order of
+         those two operations doesn't matter.
+     ================================================================ -->
+
+<!-- Core constants -->
+<script src="js/core/constants/constants.js"></script>
+<script src="js/core/constants/age-constants.js"></script>
+<script src="js/core/constants/character-constants.js"></script>
+<script src="js/core/constants/character-traits.js"></script>
+<script src="js/core/constants/location-constants.js"></script>
+<script src="js/core/constants/relationship-constants.js"></script>
+
+<!-- Core utilities -->
+<script src="js/core/formatting.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/randomness.js"></script>
+
+<!-- Core time -->
+<script src="js/core/time.js"></script>
+
+<!-- Core storage + inline initializeStorage() -->
+<script src="js/core/storage-schema.js"></script>
+<script src="js/core/storage.js"></script>
+<script>
+    (function () {
+        try {
+            if (typeof window.initializeStorage === 'function') window.initializeStorage();
+        } catch (e) { console.error('[boot] initializeStorage failed:', e); }
+    })();
+</script>
+
+<!-- Core accessors + PlaceQueries façade -->
+<script src="js/core/accessors.js"></script>
+<script>
+    (function () {
+        'use strict';
+        window.PlaceQueries = {
+            getPlaceById: function (id) {
+                if (!window.LocationState
+                    || typeof window.LocationState.getPlaceById !== 'function') {
+                    return null;
+                }
+                return window.LocationState.getPlaceById(id);
+            },
+            getPlaceSummaries: function () {
+                return (window.LocationQueries
+                    && typeof window.LocationQueries.getPlaceSummaries === 'function')
+                    ? window.LocationQueries.getPlaceSummaries()
+                    : [];
+            },
+            getAllPlaces: function () {
+                return (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
+            }
+        };
+    })();
+</script>
+
+<!-- Core validation, world, names -->
+<script src="js/core/validation.js"></script>
+<script src="js/core/world.js"></script>
+<script src="js/core/names.js"></script>
+
+<!-- Core UI primitives. responsive BEFORE collapsible. -->
+<script src="js/core/ui.js"></script>
+<script src="js/core/ui-state.js"></script>
+<script src="js/core/modals-core.js"></script>
+<script src="js/core/responsive.js"></script>
+<script src="js/core/collapsible.js"></script>
+<script src="js/core/tab-manager.js"></script>
+<script src="js/core/exportUtils.js"></script>
+
+<!-- Skill taxonomy + event logger -->
+<script src="js/roles/skill-utils.js"></script>
+<script src="js/events/eventLogger.js"></script>
+
+<!-- Character pure policy -->
+<script src="js/character/family-rules.js"></script>
+<script src="js/character/children-rules.js"></script>
+<script src="js/character/mortality-rules.js"></script>
+
+<!-- Character state -->
+<script src="js/character/character-state.js"></script>
+<script src="js/character/family-state.js"></script>
+<script src="js/character/children-state.js"></script>
+
+<!-- Character commands & queries -->
+<script src="js/character/character-commands.js"></script>
+<script src="js/character/character-queries.js"></script>
+<script src="js/character/family-queries.js"></script>
+<script src="js/character/family-commands.js"></script>
+
+<!-- Character aggregation + lifecycle -->
+<script src="js/character/mortality-queries.js"></script>
+<script src="js/character/mortality-statistics.js"></script>
+<script src="js/character/family-statistics.js"></script>
+<script src="js/character/character-statistics.js"></script>
+<script src="js/character/character-lifecycle.js"></script>
+
+<!-- Selectors -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script>
+    if (typeof window.getFilteredLocationOptions !== 'function') {
+        window.getFilteredLocationOptions = function (selectedId) {
+            if (typeof window.buildLocationDropdown === 'function') {
+                return window.buildLocationDropdown(selectedId, null, true);
+            }
+            return '<option value="">All locations</option>';
+        };
+    }
+</script>
+<script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
+
+<!-- Character factory & creation -->
+<script src="js/character/character-factory.js"></script>
+<script src="js/character/character-generator.js"></script>
+<script src="js/character/character-creation-commands.js"></script>
+<script src="js/character/character-deletion-commands.js"></script>
+
+<!-- Character children -->
+<script src="js/character/children-queries.js"></script>
+<script src="js/character/children-generator.js"></script>
+<script src="js/character/children-commands.js"></script>
+<script src="js/character/children-statistics.js"></script>
+
+<!-- Ranks -->
+<script src="js/ranks/rank-constants.js"></script>
+<script src="js/ranks/rank-rules.js"></script>
+<script src="js/ranks/rank-state.js"></script>
+<script src="js/ranks/rank-queries.js"></script>
+<script src="js/ranks/rank-assignment.js"></script>
+<script src="js/ranks/rank-commands.js"></script>
+<script src="js/ranks/rank-issues.js"></script>
+<script src="js/ranks/rank-ui-list.js"></script>
+<script src="js/ranks/modals-rank.js"></script>
+<script src="js/ranks/rank-bootstrap.js"></script>
+
+<!-- Roles -->
+<script src="js/roles/role-constants.js"></script>
+<script src="js/roles/role-state.js"></script>
+<script src="js/roles/role-queries.js"></script>
+<script src="js/roles/role-commands.js"></script>
+<script src="js/roles/role-system.js"></script>
+<script src="js/roles/role-ui-list.js"></script>
+<script src="js/roles/modals-roles.js"></script>
+<script src="js/roles/modals-role-select.js"></script>
+
+<!-- Households. state + rules MUST load before queries. -->
+<script src="js/households/household-constants.js"></script>
+<script src="js/households/household-state.js"></script>
+<script src="js/households/household-rules.js"></script>
+<script src="js/households/household-queries.js"></script>
+<script src="js/households/household-commands.js"></script>
+<script src="js/households/household-economy.js"></script>
+
+<!-- ============================================================ -->
+<!-- SETTLEMENT                                                     -->
+<!-- ============================================================ -->
+<script src="js/settlement/settlement-fiscal-definitions.js"></script>
+<script src="js/settlement/settlement-government-definitions.js"></script>
+<script src="js/settlement/settlement-rank-definitions.js"></script>
+<script src="js/settlement/settlement-law-definitions.js"></script>
+<script src="js/settlement/settlement-finance-definitions.js"></script>
+<script src="js/settlement/settlement-prosperity-definitions.js"></script>
+<script src="js/settlement/settlement-feature-definitions.js"></script>
+<script src="js/settlement/settlement-education-definitions.js"></script>
+
+<script src="js/settlement/settlement-rank-rules.js"></script>
+<script src="js/settlement/settlement-fiscal-rules.js"></script>
+<script src="js/settlement/settlement-government-rules.js"></script>
+<script src="js/settlement/settlement-feature-rules.js"></script>
+<script src="js/settlement/settlement-law-rules.js"></script>
+
+<script src="js/settlement/settlement-state.js"></script>
+<script src="js/settlement/settlement-command-commit.js"></script>
+
+<script src="js/settlement/settlement-rank-queries.js"></script>
+<script src="js/settlement/settlement-queries.js"></script>
+<script src="js/settlement/settlement-feature-queries.js"></script>
+<script src="js/settlement/settlement-law-queries.js"></script>
+<script src="js/settlement/settlement-education-queries.js"></script>
+<script src="js/settlement/settlement-religion-queries.js"></script>
+<script src="js/settlement/settlement-employment-queries.js"></script>
+<script src="js/settlement/settlement-economy-queries.js"></script>
+<script src="js/settlement/settlement-crime-queries.js"></script>
+<script src="js/settlement/settlement-prosperity-queries.js"></script>
+
+<script src="js/settlement/settlement-feature-commands.js"></script>
+<script src="js/settlement/settlement-government-commands.js"></script>
+<script src="js/settlement/settlement-fiscal-commands.js"></script>
+<script src="js/settlement/settlement-law-commands.js"></script>
+<script src="js/settlement/settlement-wealth-commands.js"></script>
+<script src="js/settlement/settlement-debt-commands.js"></script>
+<script src="js/settlement/settlement-rank-commands.js"></script>
+<script src="js/settlement/settlement-specialization-commands.js"></script>
+
+<script src="js/settlement/settlement-factory.js"></script>
+<script src="js/settlement/settlement-annual-processor.js"></script>
+
+<script src="js/settlement/settlement-view-models.js"></script>
+<script src="js/settlement/settlement-ui-state.js"></script>
+
+<!-- ============================================================ -->
+<!-- RELIGION                                                       -->
+<!-- ============================================================ -->
+<script src="js/religion/religion-constants.js"></script>
+<script src="js/religion/religion-format.js"></script>
+<script src="js/religion/religion-validation.js"></script>
+<script src="js/religion/religion-state.js"></script>
+<script src="js/religion/religion-queries.js"></script>
+<script src="js/religion/religion-rules.js"></script>
+<script src="js/religion/religion-commands.js"></script>
+<script src="js/religion/religion-laws.js"></script>
+<script src="js/religion/religion-inheritance.js"></script>
+<script src="js/religion/religion-view-models.js"></script>
+<script src="js/religion/religion-render.js"></script>
+<script src="js/religion/religion-ui-state.js"></script>
+<script src="js/religion/modals-religion.js"></script>
+<script src="js/religion/religion-bootstrap.js"></script>
+
+<!-- ============================================================ -->
+<!-- LOCATION                                                       -->
+<!-- ============================================================ -->
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
+<script src="js/location/location-commands.js"></script>
+<script src="js/location/location-queries.js"></script>
+<script src="js/location/location-movement.js"></script>
+<script src="js/location/location-view-models.js"></script>
+<script src="js/location/location-ui-state.js"></script>
+<script src="js/location/location-ui-list.js"></script>
+<script src="js/location/location-presentation.js"></script>
+<script src="js/location/modals-location-helper.js"></script>
+<script src="js/location/modals-location.js"></script>
+<script src="js/location/modals-moves.js"></script>
+<script src="js/location/location-bootstrap.js"></script>
+
+<!-- ============================================================ -->
+<!-- CULTURE (before names — name-queries requires CultureQueries) -->
+<!-- ============================================================ -->
+<script src="js/culture/culture-constants.js"></script>
+<script src="js/culture/culture-validation.js"></script>
+<script src="js/culture/culture-state.js"></script>
+<script src="js/culture/culture-rules.js"></script>
+<script src="js/culture/culture-commands.js"></script>
+<script src="js/culture/culture-queries.js"></script>
+<script src="js/culture/culture-generation.js"></script>
+<script src="js/culture/culture-view-models.js"></script>
+<script src="js/culture/culture-ui-list.js"></script>
+<script src="js/culture/modals-culture.js"></script>
+<script src="js/culture/culture-bootstrap.js"></script>
+
+<!-- ============================================================ -->
+<!-- NAMES (after culture)                                          -->
+<!-- ============================================================ -->
+<script src="js/names/name-queries.js"></script>
+<script src="js/names/name-rules.js"></script>
+<script src="js/names/names-state.js"></script>
+<script src="js/names/name-commands.js"></script>
+<script src="js/names/name-system.js"></script>
+<script src="js/names/modals-name.js"></script>
+
+<!-- ============================================================ -->
+<!-- EDUCATION SUBSYSTEM                                            -->
+<!--                                                                -->
+<!-- Order matches education-doc.txt Part 4 (Groups E1–E10).       -->
+<!-- settlement-state.js is already loaded above;                    -->
+<!-- SettlementState.getEducationBudget exists by the time          -->
+<!-- education-annual.js runs its LOAD-TIME METHOD CHECK.           -->
+<!-- ============================================================ -->
+
+<!-- E1: constants -->
+<script src="js/systems/education/education-constants.js"></script>
+<!-- E2: rules -->
+<script src="js/systems/education/education-rules.js"></script>
+<!-- E3: state -->
+<script src="js/systems/education/education-state.js"></script>
+<!-- E4: learning -->
+<script src="js/systems/education/education-learning.js"></script>
+<!-- E5: history -->
+<script src="js/systems/education/education-history.js"></script>
+<!-- E6: queries -->
+<script src="js/systems/education/education-queries.js"></script>
+<!-- E7: commands -->
+<script src="js/systems/education/education-commands.js"></script>
+<!-- E8: annual (SettlementState.getEducationBudget is already available) -->
+<script src="js/systems/education/education-annual.js"></script>
+<!-- E9: UI list -->
+<script src="js/systems/education/education-ui-list.js"></script>
+<!-- E10: modals -->
+<script src="js/systems/education/modals-education.js"></script>
+
+<!-- ============================================================ -->
+<!-- EDUCATION MANAGER — UI STATE + TABS                            -->
+<!-- ============================================================ -->
+
+<!-- EducationUIState loads before the bootstrap (bootstrap reads it in configure) -->
+<script src="js/systems/education/education-ui-state.js"></script>
+
+<!-- Six tab files. Each registers itself with TabManager at load time. -->
+<script src="js/tabs/education-overview-tab.js"></script>
+<script src="js/tabs/education-institutions-tab.js"></script>
+<script src="js/tabs/education-students-tab.js"></script>
+<script src="js/tabs/education-finances-tab.js"></script>
+<script src="js/tabs/education-analytics-tab.js"></script>
+<script src="js/tabs/education-history-tab.js"></script>
+
+<!-- Bootstrap loads LAST. Its init() calls TabManager.configure('education', …),
+     TabManager.init(), wires the sidebar + topbar, and does the first render.
+     By the time it runs, all six tab files have registered. -->
+<script src="js/tabs/education-manager-bootstrap.js"></script>
+
+<!-- ============================================================ -->
+<!-- THEME SWITCHER                                                 -->
+<!-- ============================================================ -->
+<script>
+(function () {
+    'use strict';
+
+    var themeBtn  = document.getElementById('themeBtn');
+    var themeMenu = document.getElementById('themeMenu');
+    var themeName = document.getElementById('themeName');
+    var switcher  = window.ThemeSwitcher;
+    if (!switcher) return;
+
+    function labelFor(id) {
+        return id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+    }
+    function updateLabel(id) {
+        if (themeName) themeName.textContent = labelFor(id);
+    }
+    function buildMenu() {
+        var html = '';
+        for (var i = 0; i < switcher.themes.length; i++) {
+            var id = switcher.themes[i];
+            html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' +
+                id + '">' + labelFor(id) + '</button></li>';
+        }
+        if (themeMenu) themeMenu.innerHTML = html;
+    }
+    function openMenu()  { if (!themeMenu) return; themeMenu.hidden = false; themeBtn.setAttribute('aria-expanded', 'true'); }
+    function closeMenu() { if (!themeMenu) return; themeMenu.hidden = true; themeBtn.setAttribute('aria-expanded', 'false'); }
+
+    if (themeBtn) themeBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (themeMenu.hidden) openMenu(); else closeMenu();
+    });
+    if (themeMenu) themeMenu.addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-theme-id]');
+        if (!btn) return;
+        var id = btn.getAttribute('data-theme-id');
+        switcher.apply(id); updateLabel(id); closeMenu();
+    });
+    document.addEventListener('click', function (e) {
+        if (themeMenu && !themeMenu.hidden) {
+            if (themeMenu.contains(e.target)) return;
+            if (e.target === themeBtn) return;
+            closeMenu();
+        }
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && themeMenu && !themeMenu.hidden) closeMenu();
+    });
+
+    buildMenu();
+    var saved = switcher.getSaved && switcher.getSaved();
+    if (saved) updateLabel(saved);
+})();
+</script>
+
+</body>
+</html>
