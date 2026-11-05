@@ -43,7 +43,10 @@
  *
  * It is created through the same masterData write path every other
  * writer uses, and it marks data dirty. It is the only place the tab
- * touches masterData directly.
+ * touches masterData directly. (A future NameCommands.ensureNameList
+ * would move this into the command layer; until then, the direct write
+ * is documented and non-destructive — it only creates an empty
+ * structure, never overwrites user data.)
  *
  * EDITING MODEL
  * -------------
@@ -61,13 +64,17 @@
  * The rules editor is a card below the lists. It lets the user pick a
  * rule type, edit the type-specific fields, and save the rules object
  * through NameCommands.setCultureSurnameRules. The rules are validated
- * through NameRules.validateRules before the command is called.
+ * through NameRules.validateRules before the command is called. A Clear
+ * button calls NameCommands.clearCultureSurnameRules (which sets the
+ * rules to null) and persists. Clearing does NOT go through
+ * setCultureSurnameRules because a null rules object intentionally
+ * fails that command's validation; clearCultureSurnameRules is the
+ * dedicated command for the "no rules configured" state.
  *
  * CONTRACTS
  * ---------
  *   - Reads are scoped to `container.querySelector(...)`. Never `document`.
- *   - No inline `style=""`. Classes live in CultureManager.html's inline
- *     <style> block.
+ *   - No inline `style=""`. Classes live in css/culture-tabs.css.
  *   - No emojis. Icons via _getIcon(name) — '' for unknown.
  *   - escapeHtml is a REQUIRED dependency (formatting.js).
  *   - Uses window.getCurrentYear only for display if ever needed;
@@ -76,11 +83,47 @@
  * DEPENDENCIES:
  *   - CultureEditorTabs
  *   - NameQueries
- *   - NameCommands (incl. persist)
+ *   - NameCommands (incl. persist, clearCultureSurnameRules)
  *   - NameRules
- *   - NamesState (subscribe — optional)
  *   - formatting.js (escapeHtml — REQUIRED)
  *   - ui.js (showToast)
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (A3):
+ *     - _handleClearRules now calls NameCommands.clearCultureSurnameRules
+ *       instead of writing masterData.data.nameLists[culture.id].rules
+ *       directly. The direct write bypassed the command layer's
+ *       markDataDirty / publish contract and was the only destructive
+ *       masterData write in the tab. This matches the playbook's
+ *       "only commands.js writes" rule.
+ *     - _handleClearRules now only calls NC.persist() on command
+ *       success. The prior version called persist() unconditionally;
+ *       with the direct write, persist could never be reached on
+ *       failure, but with a command that can return { success: false }
+ *       the unconditional persist would have written a stale in-memory
+ *       state. Fixed.
+ *     - _maybeSubscribeToNameState DELETED. The prior version
+ *       subscribed to NamesState but did nothing in the handler ("this
+ *       is a no-op for the tab's own writes"). The subscription was a
+ *       dead listener that leaked on every render. External writers
+ *       that want the tab to refresh should fire masterDataUpdated,
+ *       which the bootstrap already handles by re-rendering the
+ *       active tab.
+ *     - _handleApplyBulk failure toast capped at 3 messages plus
+ *       "(+N more)". An unbounded join('; ') on a large bulk edit
+ *       produced a wall of text.
+ *     - _renderRulesCard signature tightened: removed the unused
+ *       `culture` parameter.
+ *     - _escapeHtml error message tightened to match the other culture
+ *       tabs (already strict; no behavior change).
+ *     - Header EDITEDING MODEL section documents the
+ *       clearCultureSurnameRules dependency and why clearing does not
+ *       go through setCultureSurnameRules.
+ *     - Header DEPENDENCIES corrected: NamesState subscription is
+ *       removed.
+ *   Previous revisions:
+ *     - Initial implementation.
  * =============================================================================
  */
 
@@ -117,12 +160,6 @@
         return typeof window.NameRules !== 'undefined' ? window.NameRules : null;
     }
 
-    function _getNameState() {
-        return typeof window.NamesState !== 'undefined'
-            ? window.NamesState
-            : (typeof window.NameState !== 'undefined' ? window.NameState : null);
-    }
-
     // =========================================================================
     // 2. STATE
     // =========================================================================
@@ -146,7 +183,10 @@
     // =========================================================================
     //
     // See THE NAME LIST IS CREATED ON FIRST RENDER in the module header.
-    // This is the only place in the tab that touches masterData directly.
+    // This is the only place in the tab that touches masterData directly
+    // (and it only creates an empty structure — never overwrites user
+    // data). A future NameCommands.ensureNameList would move this into
+    // the command layer.
 
     function _ensureNameList(cultureId) {
         if (typeof cultureId !== 'string' || cultureId.length === 0) return false;
@@ -165,16 +205,28 @@
             rules: null
         };
 
+        _markNameDataDirty();
+        return true;
+    }
+
+    /**
+     * Shared side-effect set for name-list mutations that happen outside
+     * NameCommands (currently only _ensureNameList). Marks masterData
+     * dirty and publishes a nameListChanged event through NamesState
+     * when available.
+     */
+    function _markNameDataDirty() {
         if (typeof window.markDataDirty === 'function') {
             try { window.markDataDirty(); }
             catch (e) { /* non-fatal */ }
         }
-        var NS = _getNameState();
+        var NS = (typeof window.NamesState !== 'undefined')
+            ? window.NamesState
+            : (typeof window.NameState !== 'undefined' ? window.NameState : null);
         if (NS && typeof NS.publish === 'function') {
-            try { NS.publish('nameListChanged', { cultureId: cultureId, action: 'created' }); }
+            try { NS.publish('nameListChanged', { action: 'created' }); }
             catch (e) { /* non-fatal */ }
         }
-        return true;
     }
 
     // =========================================================================
@@ -219,15 +271,13 @@
                 _renderNameListCard(culture, 'female', list) +
                 _renderNameListCard(culture, 'surnames', list) +
               '</div>' +
-              _renderRulesCard(culture, rules) +
+              _renderRulesCard(rules) +
             '</div>';
 
         container.innerHTML = html;
 
         _attachNameListEvents(container, culture);
         _attachRulesEvents(container, culture);
-
-        _maybeSubscribeToNameState(container, culture);
     }
 
     function _renderNameListCard(culture, typeKey, list) {
@@ -313,7 +363,7 @@
     // 6. RULES CARD
     // =========================================================================
 
-    function _renderRulesCard(culture, rules) {
+    function _renderRulesCard(rules) {
         var NR = _getNameRules();
         if (!NR) {
             return (
@@ -575,7 +625,15 @@
 
         var persistResult = NC.persist();
         if (failures.length > 0) {
-            _showToast('Some changes failed: ' + failures.join('; '), 'error');
+            // Cap the failure message. A large bulk edit with many
+            // failures used to produce an unbounded "a; b; c; d; e; ..."
+            // toast that was unreadable and pushed the useful counts
+            // off-screen. Show the first three and count the rest.
+            var shown = failures.slice(0, 3).join('; ');
+            var more = failures.length > 3
+                ? ' (+' + (failures.length - 3) + ' more)'
+                : '';
+            _showToast('Some changes failed: ' + shown + more, 'error');
         } else if (persistResult && persistResult.success === false) {
             _showToast(
                 'Applied in memory; storage write failed: ' +
@@ -799,29 +857,41 @@
             return;
         }
 
-        // Clearing rules means setting them to null. setCultureSurnameRules
-        // validates the rules object; a null rules object will fail
-        // validation. So we write the list directly through NamesState
-        // and publish — the same path the tab uses for _ensureNameList.
-        if (!window.masterData || !window.masterData.data) {
-            _showToast('Storage is not available.', 'error');
+        // Clearing rules means setting them to null. The previous
+        // revision wrote masterData.data.nameLists[culture.id].rules
+        // directly. That bypassed the command layer's markDataDirty /
+        // publish contract and was the only destructive masterData
+        // write in the tab. It now goes through
+        // NameCommands.clearCultureSurnameRules, which is the dedicated
+        // command for the "no rules configured" state.
+        //
+        // The clear does NOT go through setCultureSurnameRules because a
+        // null rules object intentionally fails that command's
+        // validation; setCultureSurnameRules is for setting a
+        // configured rules object, clearCultureSurnameRules is for
+        // removing one.
+        if (typeof NC.clearCultureSurnameRules !== 'function') {
+            _showToast(
+                'Clear rules is not available. name-commands.js needs ' +
+                'clearCultureSurnameRules.',
+                'error'
+            );
             return;
         }
-        var lists = window.masterData.data.nameLists;
-        if (!lists || !lists[culture.id]) {
-            _showToast('No name list for this culture.', 'error');
+
+        var result = NC.clearCultureSurnameRules(culture.id);
+        if (!result || result.success !== true) {
+            _showToast(
+                'Clear failed: ' + (result && result.reason ? result.reason : 'unknown'),
+                'error'
+            );
             return;
         }
-        lists[culture.id].rules = null;
-        if (typeof window.markDataDirty === 'function') {
-            try { window.markDataDirty(); }
-            catch (e) { /* non-fatal */ }
-        }
-        var NS = _getNameState();
-        if (NS && typeof NS.publish === 'function') {
-            try { NS.publish('surnameRulesChanged', { cultureId: culture.id, rules: null }); }
-            catch (e) { /* non-fatal */ }
-        }
+
+        // Only persist on command success. The prior version persisted
+        // unconditionally after the direct write; with a command that
+        // can fail, unconditional persist would write a stale in-memory
+        // state.
         var persistResult = NC.persist();
         if (persistResult && persistResult.success === false) {
             _showToast(
@@ -832,43 +902,12 @@
         } else {
             _showToast('Surname rules cleared', 'info');
         }
+
         renderNamesTab(container, culture);
     }
 
     // =========================================================================
-    // 9. OPTIONAL NAMESTATE SUBSCRIPTION
-    // =========================================================================
-
-    function _maybeSubscribeToNameState(container, culture) {
-        var NS = _getNameState();
-        if (!NS || typeof NS.subscribe !== 'function') return;
-
-        if (container.__ctNamesUnsub && typeof container.__ctNamesUnsub === 'function') {
-            try { container.__ctNamesUnsub(); }
-            catch (e) { /* non-fatal */ }
-            container.__ctNamesUnsub = null;
-        }
-
-        try {
-            var unsub = NS.subscribe(function (event) {
-                if (!event || !event.type) return;
-                var t = event.type;
-                if (t === 'nameListChanged' || t === 'surnameRulesChanged') {
-                    if (event.cultureId && event.cultureId !== culture.id) return;
-                    if (!document.body.contains(container)) return;
-                    // The tab already re-renders after its own writes.
-                    // Re-rendering from a subscription would double-render.
-                    // So this is a no-op for the tab's own writes. It
-                    // exists for external writers (e.g. the name generator
-                    // modal triggering addNameToList through a shim).
-                }
-            });
-            container.__ctNamesUnsub = unsub;
-        } catch (e) { /* non-fatal */ }
-    }
-
-    // =========================================================================
-    // 10. TAB DEFINITION + REGISTRATION
+    // 9. TAB DEFINITION + REGISTRATION
     // =========================================================================
 
     var NamesTab = {
