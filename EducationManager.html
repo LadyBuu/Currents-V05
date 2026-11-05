@@ -762,34 +762,42 @@
 <!-- ================================================================
      SCRIPTS
 
-     Load order:
-       - Shared modules use ReligionManager.html's paths and order.
-       - Education-specific modules are inserted at the point where
-         ReligionManager inserts religion.
-       - settlement-state.js and SettlementState.getEducationBudget
-         load BEFORE education-annual.js (its LOAD-TIME METHOD CHECK).
-       - education-annual.js loads after education-commands.js and
-         after settlement-state.js.
-       - responsive.js loads BEFORE collapsible.js.
-       - initializeStorage() runs inline after storage.js.
-       - loadMasterData() runs inside education-manager-bootstrap.js.
-       - skill-utils.js loads BEFORE role-constants.js.
-       - household-state.js and household-rules.js load BEFORE
-         household-queries.js.
-       - The apprenticeship subsystem loads AFTER education-history but
-         BEFORE the six education tab files (the tab file needs the
-         apprenticeship constants + queries + commands + modals at
-         load time).
-       - The seven tab files load AFTER education-manager-bootstrap.js
-         has configure()d the scope? No — TabManager.configure is
-         inside the bootstrap, and the bootstrap loads LAST. The tab
-         files register() before the bootstrap's configure(). This is
-         fine: register() populates _renderers[scope], configure()
-         populates _configs[scope], and TabManager.render() reads both.
-         Order of those two operations doesn't matter.
+     Load order is layered:
+       - Core constants → utilities → time → storage → accessors →
+         world → names → ui → ui-state → modals-core → responsive →
+         collapsible → exportUtils → tab-manager.
+       - Character (state → commands → queries → family → mortality →
+         lifecycle).
+       - Households (state + rules must precede queries, which must
+         precede selectors — modals-household-selector.js requires
+         HouseholdQueries at load).
+       - Selectors (base → locationDropdown → getFilteredLocationOptions
+         shim → char-selector → household-selector).
+       - Roles → Ranks → (RankBootstrap tolerates missing education at
+         load; the missing-Education warnings it prints are not errors).
+       - Relationship domain (types → utils → state → queries →
+         commands → professional-rules → professional-queries →
+         professional-commands). Apprenticeship requires all of these
+         at load.
+       - Religion → Location → Culture → Names.
+       - Settlement (definitions → rules → state → commit → queries →
+         commands → factory → annual-processor → view-models →
+         ui-state).
+       - Education (constants → rules → state → learning → history →
+         queries → commands → annual → ui-list → modals). Settlement is
+         already loaded, so education-annual.js's
+         SettlementState.getEducationBudget load-time method check
+         succeeds.
+       - Apprenticeship (constants → rules → queries → commands →
+         professional-knowledge-commands → modals).
+       - EducationUIState.
+       - The seven education tab files.
+       - education-manager-bootstrap.js (last).
      ================================================================ -->
 
-<!-- Core constants -->
+<!-- ============================================================ -->
+<!-- CORE CONSTANTS                                                -->
+<!-- ============================================================ -->
 <script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
 <script src="js/core/constants/character-constants.js"></script>
@@ -797,17 +805,23 @@
 <script src="js/core/constants/location-constants.js"></script>
 <script src="js/core/constants/relationship-constants.js"></script>
 
-<!-- Core utilities -->
+<!-- ============================================================ -->
+<!-- CORE UTILITIES                                                -->
+<!-- ============================================================ -->
 <script src="js/core/formatting.js"></script>
 <script src="js/core/icons.js"></script>
 <script src="js/core/collections.js"></script>
 <script src="js/core/ids.js"></script>
 <script src="js/core/randomness.js"></script>
 
-<!-- Core time -->
+<!-- ============================================================ -->
+<!-- CORE TIME                                                     -->
+<!-- ============================================================ -->
 <script src="js/core/time.js"></script>
 
-<!-- Core storage + inline initializeStorage() -->
+<!-- ============================================================ -->
+<!-- CORE STORAGE + initializeStorage()                            -->
+<!-- ============================================================ -->
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
 <script>
@@ -818,74 +832,78 @@
     })();
 </script>
 
-<!-- Core accessors + PlaceQueries façade -->
+<!-- ============================================================ -->
+<!-- CORE ACCESSORS + WORLD + NAMES                                -->
+<!-- ============================================================ -->
 <script src="js/core/accessors.js"></script>
-<script>
-    (function () {
-        'use strict';
-        window.PlaceQueries = {
-            getPlaceById: function (id) {
-                if (!window.LocationState
-                    || typeof window.LocationState.getPlaceById !== 'function') {
-                    return null;
-                }
-                return window.LocationState.getPlaceById(id);
-            },
-            getPlaceSummaries: function () {
-                return (window.LocationQueries
-                    && typeof window.LocationQueries.getPlaceSummaries === 'function')
-                    ? window.LocationQueries.getPlaceSummaries()
-                    : [];
-            },
-            getAllPlaces: function () {
-                return (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
-            }
-        };
-    })();
-</script>
-
-<!-- Core validation, world, names -->
-<script src="js/core/validation.js"></script>
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
 
-<!-- Core UI primitives. responsive BEFORE collapsible. -->
+<!-- ============================================================ -->
+<!-- CORE UI PRIMITIVES. responsive BEFORE collapsible.            -->
+<!-- ============================================================ -->
 <script src="js/core/ui.js"></script>
 <script src="js/core/ui-state.js"></script>
 <script src="js/core/modals-core.js"></script>
 <script src="js/core/responsive.js"></script>
 <script src="js/core/collapsible.js"></script>
-<script src="js/core/tab-manager.js"></script>
 <script src="js/core/exportUtils.js"></script>
+<script src="js/core/tab-manager.js"></script>
 
-<!-- Skill taxonomy + event logger -->
+<!-- ============================================================ -->
+<!-- SKILL TAXONOMY + EVENT LOGGER                                 -->
+<!-- ============================================================ -->
 <script src="js/roles/skill-utils.js"></script>
 <script src="js/events/eventLogger.js"></script>
 
-<!-- Character pure policy -->
+<!-- ============================================================ -->
+<!-- CHARACTER                                                     -->
+<!-- ============================================================ -->
 <script src="js/character/family-rules.js"></script>
 <script src="js/character/children-rules.js"></script>
 <script src="js/character/mortality-rules.js"></script>
 
-<!-- Character state -->
 <script src="js/character/character-state.js"></script>
 <script src="js/character/family-state.js"></script>
 <script src="js/character/children-state.js"></script>
 
-<!-- Character commands & queries -->
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
 <script src="js/character/family-queries.js"></script>
 <script src="js/character/family-commands.js"></script>
 
-<!-- Character aggregation + lifecycle -->
 <script src="js/character/mortality-queries.js"></script>
 <script src="js/character/mortality-statistics.js"></script>
 <script src="js/character/family-statistics.js"></script>
 <script src="js/character/character-statistics.js"></script>
 <script src="js/character/character-lifecycle.js"></script>
 
-<!-- Selectors -->
+<script src="js/character/character-factory.js"></script>
+<script src="js/character/character-generator.js"></script>
+<script src="js/character/character-creation-commands.js"></script>
+<script src="js/character/character-deletion-commands.js"></script>
+
+<script src="js/character/children-queries.js"></script>
+<script src="js/character/children-generator.js"></script>
+<script src="js/character/children-commands.js"></script>
+<script src="js/character/children-statistics.js"></script>
+
+<!-- ============================================================ -->
+<!-- HOUSEHOLDS (state + rules BEFORE queries; queries BEFORE     -->
+<!-- selectors, because modals-household-selector.js load-requires -->
+<!-- HouseholdQueries).                                            -->
+<!-- ============================================================ -->
+<script src="js/households/household-constants.js"></script>
+<script src="js/households/household-state.js"></script>
+<script src="js/households/household-rules.js"></script>
+<script src="js/households/household-queries.js"></script>
+<script src="js/households/household-commands.js"></script>
+<script src="js/households/household-economy.js"></script>
+
+<!-- ============================================================ -->
+<!-- SELECTORS. locationDropdown BEFORE the shim; shim BEFORE the  -->
+<!-- selectors that call getFilteredLocationOptions internally.    -->
+<!-- ============================================================ -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
 <script>
@@ -901,19 +919,23 @@
 <script src="js/selectors/modals-char-selector.js"></script>
 <script src="js/selectors/modals-household-selector.js"></script>
 
-<!-- Character factory & creation -->
-<script src="js/character/character-factory.js"></script>
-<script src="js/character/character-generator.js"></script>
-<script src="js/character/character-creation-commands.js"></script>
-<script src="js/character/character-deletion-commands.js"></script>
+<!-- ============================================================ -->
+<!-- ROLES                                                         -->
+<!-- ============================================================ -->
+<script src="js/roles/role-constants.js"></script>
+<script src="js/roles/role-state.js"></script>
+<script src="js/roles/role-queries.js"></script>
+<script src="js/roles/role-commands.js"></script>
+<script src="js/roles/role-system.js"></script>
+<script src="js/roles/role-ui-list.js"></script>
+<script src="js/roles/modals-roles.js"></script>
+<script src="js/roles/modals-role-select.js"></script>
 
-<!-- Character children -->
-<script src="js/character/children-queries.js"></script>
-<script src="js/character/children-generator.js"></script>
-<script src="js/character/children-commands.js"></script>
-<script src="js/character/children-statistics.js"></script>
-
-<!-- Ranks -->
+<!-- ============================================================ -->
+<!-- RANKS. RankBootstrap prints an "optional dependencies missing" -->
+<!-- warning for EducationCommands/EducationQueries on this page — -->
+<!-- that's expected (education loads later). Not an error.        -->
+<!-- ============================================================ -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
 <script src="js/ranks/rank-state.js"></script>
@@ -925,26 +947,86 @@
 <script src="js/ranks/modals-rank.js"></script>
 <script src="js/ranks/rank-bootstrap.js"></script>
 
-<!-- Roles -->
-<script src="js/roles/role-constants.js"></script>
-<script src="js/roles/role-state.js"></script>
-<script src="js/roles/role-queries.js"></script>
-<script src="js/roles/role-commands.js"></script>
-<script src="js/roles/role-system.js"></script>
-<script src="js/roles/role-ui-list.js"></script>
-<script src="js/roles/modals-roles.js"></script>
-<script src="js/roles/modals-role-select.js"></script>
-
-<!-- Households. state + rules MUST load before queries. -->
-<script src="js/households/household-constants.js"></script>
-<script src="js/households/household-state.js"></script>
-<script src="js/households/household-rules.js"></script>
-<script src="js/households/household-queries.js"></script>
-<script src="js/households/household-commands.js"></script>
-<script src="js/households/household-economy.js"></script>
+<!-- ============================================================ -->
+<!-- RELATIONSHIP DOMAIN. types → utils → state → queries →       -->
+<!-- commands → professional-rules → professional-queries →       -->
+<!-- professional-commands. Apprenticeship requires all of these. -->
+<!-- ============================================================ -->
+<script src="js/relationships/relationship-types.js"></script>
+<script src="js/relationships/relationship-utils.js"></script>
+<script src="js/relationships/relationship-state.js"></script>
+<script src="js/relationships/relationship-queries.js"></script>
+<script src="js/relationships/relationship-commands.js"></script>
+<script src="js/relationships/professional-rules.js"></script>
+<script src="js/relationships/professional-queries.js"></script>
+<script src="js/relationships/professional-commands.js"></script>
 
 <!-- ============================================================ -->
-<!-- SETTLEMENT                                                     -->
+<!-- RELIGION                                                      -->
+<!-- ============================================================ -->
+<script src="js/religion/religion-constants.js"></script>
+<script src="js/religion/religion-format.js"></script>
+<script src="js/religion/religion-validation.js"></script>
+<script src="js/religion/religion-state.js"></script>
+<script src="js/religion/religion-queries.js"></script>
+<script src="js/religion/religion-rules.js"></script>
+<script src="js/religion/religion-commands.js"></script>
+<script src="js/religion/religion-laws.js"></script>
+<script src="js/religion/religion-inheritance.js"></script>
+<script src="js/religion/religion-view-models.js"></script>
+<script src="js/religion/religion-render.js"></script>
+<script src="js/religion/religion-ui-state.js"></script>
+<script src="js/religion/modals-religion.js"></script>
+<script src="js/religion/religion-bootstrap.js"></script>
+
+<!-- ============================================================ -->
+<!-- LOCATION                                                      -->
+<!-- ============================================================ -->
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
+<script src="js/location/location-commands.js"></script>
+<script src="js/location/location-queries.js"></script>
+<script src="js/location/location-movement.js"></script>
+<script src="js/location/location-view-models.js"></script>
+<script src="js/location/location-ui-state.js"></script>
+<script src="js/location/location-ui-list.js"></script>
+<script src="js/location/location-presentation.js"></script>
+<script src="js/location/modals-location-helper.js"></script>
+<script src="js/location/modals-location.js"></script>
+<script src="js/location/modals-moves.js"></script>
+<script src="js/location/location-bootstrap.js"></script>
+
+<!-- ============================================================ -->
+<!-- CULTURE (before names — name-queries requires CultureQueries) -->
+<!-- ============================================================ -->
+<script src="js/culture/culture-constants.js"></script>
+<script src="js/culture/culture-validation.js"></script>
+<script src="js/culture/culture-state.js"></script>
+<script src="js/culture/culture-rules.js"></script>
+<script src="js/culture/culture-commands.js"></script>
+<script src="js/culture/culture-queries.js"></script>
+<script src="js/culture/culture-generation.js"></script>
+<script src="js/culture/culture-view-models.js"></script>
+<script src="js/culture/culture-ui-list.js"></script>
+<script src="js/culture/modals-culture.js"></script>
+<script src="js/culture/culture-bootstrap.js"></script>
+
+<!-- ============================================================ -->
+<!-- NAMES                                                         -->
+<!-- ============================================================ -->
+<script src="js/names/name-queries.js"></script>
+<script src="js/names/name-rules.js"></script>
+<script src="js/names/name-state.js"></script>
+<script src="js/names/name-commands.js"></script>
+<script src="js/names/name-system.js"></script>
+<script src="js/names/modals-name.js"></script>
+
+<!-- ============================================================ -->
+<!-- SETTLEMENT                                                    -->
+<!--                                                                -->
+<!-- education-annual.js's load-time check requires                 -->
+<!-- SettlementState.getEducationBudget, so this block MUST         -->
+<!-- precede the education block.                                   -->
 <!-- ============================================================ -->
 <script src="js/settlement/settlement-fiscal-definitions.js"></script>
 <script src="js/settlement/settlement-government-definitions.js"></script>
@@ -991,109 +1073,37 @@
 <script src="js/settlement/settlement-ui-state.js"></script>
 
 <!-- ============================================================ -->
-<!-- RELATIONSHIP (needed by apprenticeship)                       -->
-<!-- ============================================================ -->
-<script src="js/relationships/relationship-types.js"></script>
-<script src="js/relationships/relationship-state.js"></script>
-<script src="js/relationships/relationship-queries.js"></script>
-<script src="js/relationships/relationship-commands.js"></script>
-<script src="js/relationships/relationship-utils.js"></script>
-<script src="js/relationships/professional-rules.js"></script>
-<script src="js/relationships/professional-queries.js"></script>
-<script src="js/relationships/professional-commands.js"></script>
-
-<!-- ============================================================ -->
-<!-- RELIGION                                                       -->
-<!-- ============================================================ -->
-<script src="js/religion/religion-constants.js"></script>
-<script src="js/religion/religion-format.js"></script>
-<script src="js/religion/religion-validation.js"></script>
-<script src="js/religion/religion-state.js"></script>
-<script src="js/religion/religion-queries.js"></script>
-<script src="js/religion/religion-rules.js"></script>
-<script src="js/religion/religion-commands.js"></script>
-<script src="js/religion/religion-laws.js"></script>
-<script src="js/religion/religion-inheritance.js"></script>
-<script src="js/religion/religion-view-models.js"></script>
-<script src="js/religion/religion-render.js"></script>
-<script src="js/religion/religion-ui-state.js"></script>
-<script src="js/religion/modals-religion.js"></script>
-<script src="js/religion/religion-bootstrap.js"></script>
-
-<!-- ============================================================ -->
-<!-- LOCATION                                                       -->
-<!-- ============================================================ -->
-<script src="js/location/location-state.js"></script>
-<script src="js/location/location-hierarchy.js"></script>
-<script src="js/location/location-commands.js"></script>
-<script src="js/location/location-queries.js"></script>
-<script src="js/location/location-movement.js"></script>
-<script src="js/location/location-view-models.js"></script>
-<script src="js/location/location-ui-state.js"></script>
-<script src="js/location/location-ui-list.js"></script>
-<script src="js/location/location-presentation.js"></script>
-<script src="js/location/modals-location-helper.js"></script>
-<script src="js/location/modals-location.js"></script>
-<script src="js/location/modals-moves.js"></script>
-<script src="js/location/location-bootstrap.js"></script>
-
-<!-- ============================================================ -->
-<!-- CULTURE (before names — name-queries requires CultureQueries) -->
-<!-- ============================================================ -->
-<script src="js/culture/culture-constants.js"></script>
-<script src="js/culture/culture-validation.js"></script>
-<script src="js/culture/culture-state.js"></script>
-<script src="js/culture/culture-rules.js"></script>
-<script src="js/culture/culture-commands.js"></script>
-<script src="js/culture/culture-queries.js"></script>
-<script src="js/culture/culture-generation.js"></script>
-<script src="js/culture/culture-view-models.js"></script>
-<script src="js/culture/culture-ui-list.js"></script>
-<script src="js/culture/modals-culture.js"></script>
-<script src="js/culture/culture-bootstrap.js"></script>
-
-<!-- ============================================================ -->
-<!-- NAMES (after culture)                                          -->
-<!-- ============================================================ -->
-<script src="js/names/name-queries.js"></script>
-<script src="js/names/name-rules.js"></script>
-<script src="js/names/names-state.js"></script>
-<script src="js/names/name-commands.js"></script>
-<script src="js/names/name-system.js"></script>
-<script src="js/names/modals-name.js"></script>
-
-<!-- ============================================================ -->
-<!-- EDUCATION SUBSYSTEM                                            -->
+<!-- EDUCATION SUBSYSTEM (js/education/, not js/systems/education/) -->
 <!--                                                                -->
 <!-- Order matches education-doc.txt Part 4 (Groups E1–E10).       -->
-<!-- settlement-state.js is already loaded above;                    -->
 <!-- SettlementState.getEducationBudget exists by the time          -->
 <!-- education-annual.js runs its LOAD-TIME METHOD CHECK.           -->
 <!-- ============================================================ -->
 
 <!-- E1: constants -->
-<script src="js/systems/education/education-constants.js"></script>
+<script src="js/education/education-constants.js"></script>
 <!-- E2: rules -->
-<script src="js/systems/education/education-rules.js"></script>
+<script src="js/education/education-rules.js"></script>
 <!-- E3: state -->
-<script src="js/systems/education/education-state.js"></script>
+<script src="js/education/education-state.js"></script>
 <!-- E4: learning -->
-<script src="js/systems/education/education-learning.js"></script>
+<script src="js/education/education-learning.js"></script>
 <!-- E5: history -->
-<script src="js/systems/education/education-history.js"></script>
+<script src="js/education/education-history.js"></script>
 <!-- E6: queries -->
-<script src="js/systems/education/education-queries.js"></script>
+<script src="js/education/education-queries.js"></script>
 <!-- E7: commands -->
-<script src="js/systems/education/education-commands.js"></script>
-<!-- E8: annual (SettlementState.getEducationBudget is already available) -->
-<script src="js/systems/education/education-annual.js"></script>
+<script src="js/education/education-commands.js"></script>
+<!-- E8: annual (SettlementState.getEducationBudget is available) -->
+<script src="js/education/education-annual.js"></script>
 <!-- E9: UI list -->
-<script src="js/systems/education/education-ui-list.js"></script>
+<script src="js/education/education-ui-list.js"></script>
 <!-- E10: modals -->
-<script src="js/systems/education/modals-education.js"></script>
+<script src="js/education/modals-education.js"></script>
 
 <!-- ============================================================ -->
-<!-- APPRENTICESHIP SUBSYSTEM (needed by the Apprenticeships tab)  -->
+<!-- APPRENTICESHIP (needs relationship-types, relationship-queries, -->
+<!-- professional-commands — all loaded above)                     -->
 <!-- ============================================================ -->
 <script src="js/apprenticeship/apprenticeship-constants.js"></script>
 <script src="js/apprenticeship/apprenticeship-rules.js"></script>
@@ -1106,10 +1116,8 @@
 <!-- EDUCATION MANAGER — UI STATE + TABS                            -->
 <!-- ============================================================ -->
 
-<!-- EducationUIState loads before the bootstrap (bootstrap reads it in configure) -->
-<script src="js/systems/education/education-ui-state.js"></script>
+<script src="js/education/education-ui-state.js"></script>
 
-<!-- Seven tab files. Each registers itself with TabManager at load time. -->
 <script src="js/tabs/education-overview-tab.js"></script>
 <script src="js/tabs/education-institutions-tab.js"></script>
 <script src="js/tabs/education-students-tab.js"></script>
@@ -1118,9 +1126,7 @@
 <script src="js/tabs/education-apprenticeship-tab.js"></script>
 <script src="js/tabs/education-history-tab.js"></script>
 
-<!-- Bootstrap loads LAST. Its init() calls TabManager.configure('education', …),
-     TabManager.init(), wires the sidebar + topbar, and does the first render.
-     By the time it runs, all seven tab files have registered. -->
+<!-- Bootstrap loads LAST. -->
 <script src="js/tabs/education-manager-bootstrap.js"></script>
 
 <!-- ============================================================ -->
