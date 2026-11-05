@@ -11,9 +11,17 @@
     <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/themes.css">
     <link rel="stylesheet" href="css/common.css">
-    <link rel="stylesheet" href="css/location-tabs.css">
     <style>
-        /* ---- Layout-only styles (no domain styling; those live in css/location-tabs.css) ---- */
+        /* ==================================================================
+           LOCATION MANAGER — INLINE STYLES
+           ==================================================================
+           Only themes.css and common.css are external. Every class this
+           page (and every location tab) emits is defined here. Tabs do NOT
+           inject their own <style> blocks — they emit classes only, and
+           those classes resolve from this block.
+           ================================================================== */
+
+        /* ---- App shell ---- */
         html, body { height: 100%; margin: 0; overflow: hidden; }
         body {
             display: flex; flex-direction: column;
@@ -72,6 +80,11 @@
             transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
         }
         .tb-btn svg { width: 0.9em; height: 0.9em; fill: currentColor; }
+        .tb-btn .tb-btn-glyph {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 0.9em; height: 0.9em;
+        }
+        .tb-btn .tb-btn-glyph svg { width: 100%; height: 100%; fill: currentColor; }
         .tb-btn:hover { border-color: var(--accent); background: var(--accent-dim); color: var(--accent-light); }
         .tb-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
         .tb-btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
@@ -126,7 +139,8 @@
         .theme-toggle__menu button:hover, .theme-toggle__menu button:focus-visible {
             background: var(--accent-dim); color: var(--accent-light); outline: none;
         }
-        /* ---- Sub-tab strip (structural; the buttons are emitted by the bootstrap) ---- */
+
+        /* ---- Sub-tab strip (structural; buttons emitted by the bootstrap) ---- */
         .manager-subtabs {
             position: sticky; top: 0; display: flex; align-items: stretch; gap: 4px;
             padding: 8px 4px 0; margin: -20px -24px 20px;
@@ -155,15 +169,10 @@
             border-color: var(--border); border-bottom-color: transparent; font-weight: 600;
         }
         .manager-subtab.active::after { background: var(--accent); opacity: 1; }
-        .manager-subtab-icon {
-            display: inline-flex; width: 16px; height: 16px;
-            align-items: center; justify-content: center;
-            color: currentColor; flex-shrink: 0; opacity: 0.9;
-        }
-        .manager-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
-        /* ---- Panes: every pane is a direct child of #panelContent; TabManager fills them ---- */
         .manager-pane { display: none; }
         .manager-pane.active { display: block; }
+
+        /* ---- Empty / loading / unavailable states ---- */
         .empty-state {
             padding: 48px 24px; text-align: center; color: var(--dim);
             font-size: 0.88rem; line-height: 1.6;
@@ -173,11 +182,129 @@
             font-size: 0.85rem; animation: pulse 1.5s ease-in-out infinite;
         }
         @keyframes pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
+        .rt-unavailable {
+            padding: 24px; text-align: center; color: var(--danger-lt);
+            font-size: 0.8rem; background: var(--bg2);
+            border: 1px solid var(--danger); border-radius: var(--radius);
+            margin: 16px 0;
+        }
         .sidebar-overlay { display: none; }
         .sidebar-overlay.active {
             display: block; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.8); z-index: 999;
         }
+
+        /* ==================================================================
+           LOCATION TAB SHARED CLASSES
+           ==================================================================
+           Every location tab (details, hierarchy, population, movement,
+           leadership) emits these classes. Defined once here, not injected
+           per-tab, so no cross-tab <style> dependency exists.
+           ================================================================== */
+        .loc-tab-section { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+        .loc-tab-section-title { font-size: 0.65rem; color: var(--accent-light); font-weight: bold; margin-bottom: 10px; letter-spacing: 0.04em; display: flex; align-items: center; gap: 6px; }
+        .loc-tab-section-title svg { width: 0.9em; height: 0.9em; fill: currentColor; color: var(--accent); }
+        .loc-tab-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; font-size: 0.7rem; }
+        .loc-tab-label { color: var(--dim); font-size: 0.7rem; }
+        .loc-tab-value { color: var(--text); font-size: 0.7rem; }
+        .loc-tab-mono { font-family: var(--f-mono); font-size: 0.6rem; color: var(--text); }
+        .loc-tab-notes { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-light); font-size: 0.65rem; color: var(--dim); line-height: 1.55; white-space: pre-wrap; }
+        .loc-tab-empty { color: var(--dim); font-size: 0.7rem; text-align: center; padding: 16px 0; }
+        .loc-tab-header { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+        .loc-tab-header-text { min-width: 0; }
+        .loc-tab-header-title { font-size: 0.9rem; font-weight: bold; color: var(--accent-light); display: flex; align-items: center; gap: 6px; font-family: var(--f-display); letter-spacing: 0.02em; }
+        .loc-tab-header-title svg { width: 1em; height: 1em; fill: currentColor; color: var(--accent); }
+        .loc-tab-header-subtitle { font-size: 0.65rem; color: var(--dim); margin-top: 3px; }
+        .loc-tab-header-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+        .loc-tab-btn { font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--accent-light); display: inline-flex; align-items: center; gap: 4px; font-family: var(--f-body); font-weight: 500; line-height: 1.3; transition: background-color 0.15s, border-color 0.15s, color 0.15s; }
+        .loc-tab-btn svg { width: 0.9em; height: 0.9em; fill: currentColor; }
+        .loc-tab-btn:hover { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+        .loc-tab-btn--primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+        .loc-tab-btn--primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); color: var(--accent-fg); }
+        .loc-tab-btn--danger { border-color: var(--danger); color: var(--danger-lt); }
+        .loc-tab-btn--danger:hover { background: var(--danger-soft); border-color: var(--danger-lt); color: var(--danger-lt); }
+        .loc-tab-stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+        .loc-tab-stats-grid--wrap { grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); text-align: center; }
+        .loc-tab-stat { background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border); }
+        .loc-tab-stat-label { font-size: 0.55rem; color: var(--dim); display: flex; align-items: center; justify-content: center; gap: 4px; text-transform: uppercase; letter-spacing: 0.06em; font-family: var(--f-display); font-weight: 500; }
+        .loc-tab-stat-label svg { width: 0.9em; height: 0.9em; fill: currentColor; color: var(--accent); }
+        .loc-tab-stat-value { font-size: 0.85rem; font-weight: bold; color: var(--text); margin-top: 3px; font-family: var(--f-mono); }
+        .loc-tab-stat-value--accent { color: var(--accent); font-size: 1.2rem; }
+        .loc-tab-stat-value--ok { color: var(--ok); font-size: 1.2rem; }
+        .loc-tab-stat-value--danger { color: var(--danger-lt); font-size: 1.2rem; }
+        .loc-tab-value--bold { font-weight: bold; }
+        .loc-tab-card { background: var(--bg3); padding: 10px; border-radius: 6px; }
+        .loc-tab-card-label { font-size: 0.6rem; color: var(--dim); text-transform: uppercase; margin-bottom: 4px; letter-spacing: 0.06em; font-family: var(--f-display); font-weight: 500; }
+        .loc-tab-card-value { font-size: 0.75rem; color: var(--text); font-weight: 500; }
+        .loc-tab-card-sub { font-size: 0.55rem; color: var(--dim); margin-top: 3px; }
+
+        /* ---- Leadership ---- */
+        .loc-leader-card { display: flex; justify-content: space-between; align-items: center; background: var(--bg3); padding: 10px 14px; border-radius: 6px; border-left: 4px solid var(--accent); gap: 12px; }
+        .loc-leader-card-body { min-width: 0; }
+        .loc-leader-card-name { font-size: 0.85rem; font-weight: 600; color: var(--text); }
+        .loc-leader-card-title { font-size: 0.6rem; color: var(--accent-light); margin-top: 2px; }
+        .loc-leader-card-since { font-size: 0.55rem; color: var(--dim); margin-top: 2px; }
+        .loc-leader-history-list { display: flex; flex-direction: column; gap: 4px; }
+        .loc-leader-history-row { display: flex; justify-content: space-between; align-items: center; background: var(--bg3); padding: 8px 12px; border-radius: 4px; gap: 12px; }
+        .loc-leader-history-info { min-width: 0; }
+        .loc-leader-history-name { font-size: 0.7rem; color: var(--text); font-weight: 500; }
+        .loc-leader-history-title { font-size: 0.55rem; color: var(--dim); margin-top: 2px; }
+        .loc-leader-history-years { font-size: 0.6rem; font-family: var(--f-mono); color: var(--dim); white-space: nowrap; }
+
+        /* ---- Movement ---- */
+        .loc-move-list { display: flex; flex-direction: column; gap: 6px; max-height: 500px; overflow-y: auto; }
+        .loc-move-row { display: flex; justify-content: space-between; align-items: center; background: var(--bg3); padding: 8px 12px; border-radius: 6px; border-left: 3px solid var(--border); gap: 12px; }
+        .loc-move-row--arrival { border-left-color: var(--ok); }
+        .loc-move-row--departure { border-left-color: var(--danger-lt); }
+        .loc-move-row-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .loc-move-row-char { font-size: 0.7rem; font-weight: 500; color: var(--text); }
+        .loc-move-row-detail { font-size: 0.55rem; color: var(--dim); }
+        .loc-move-row--arrival .loc-move-row-action { color: var(--ok); font-weight: bold; }
+        .loc-move-row--departure .loc-move-row-action { color: var(--danger-lt); font-weight: bold; }
+        .loc-move-row-year { font-size: 0.65rem; font-family: var(--f-mono); color: var(--dim); background: var(--bg); padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+
+        /* ---- Population ---- */
+        .loc-pop-age-row { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.6rem; }
+        .loc-resident-list { display: flex; flex-direction: column; gap: 4px; max-height: 400px; overflow-y: auto; }
+        .loc-resident-row { display: flex; justify-content: space-between; align-items: center; background: var(--bg3); padding: 6px 10px; border-radius: 4px; gap: 8px; }
+        .loc-resident-row-name { font-size: 0.7rem; color: var(--text); display: flex; align-items: center; gap: 6px; min-width: 0; }
+        .loc-resident-row-gender { opacity: 0.6; font-size: 0.7rem; flex-shrink: 0; display: inline-flex; align-items: center; }
+        .loc-resident-row-gender svg { width: 1em; height: 1em; fill: currentColor; }
+        .loc-resident-row-deceased { color: var(--danger-lt); font-size: 0.6rem; flex-shrink: 0; }
+        .loc-resident-row-age { font-size: 0.6rem; color: var(--dim); white-space: nowrap; flex-shrink: 0; }
+
+        /* ---- Hierarchy ---- */
+        .loc-hier-section { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+        .loc-hier-list { display: flex; flex-direction: column; gap: 2px; }
+        .loc-hier-row { display: flex; align-items: center; padding: 6px 8px; border-radius: 4px; gap: 8px; border-left: 3px solid transparent; }
+        .loc-hier-row.is-self { background: var(--accent-dim); border-left-color: var(--accent); }
+        .loc-hier-row[data-depth="0"] { padding-left: 8px; }
+        .loc-hier-row[data-depth="1"] { padding-left: 24px; }
+        .loc-hier-row[data-depth="2"] { padding-left: 40px; }
+        .loc-hier-row[data-depth="3"] { padding-left: 56px; }
+        .loc-hier-row[data-depth="4"] { padding-left: 72px; }
+        .loc-hier-row[data-depth="5"] { padding-left: 88px; }
+        .loc-hier-row[data-depth="6"] { padding-left: 104px; }
+        .loc-hier-row[data-depth="7"] { padding-left: 120px; }
+        .loc-hier-row[data-depth="8"] { padding-left: 136px; }
+        .loc-hier-row[data-depth="9"] { padding-left: 152px; }
+        .loc-hier-row[data-depth]:not([data-depth="0"])::before {
+            content: '\2514';
+            color: var(--dim);
+            margin-right: 4px;
+            font-family: var(--f-mono);
+        }
+        .loc-hier-row-name { font-size: 0.75rem; color: var(--text); flex: 1; display: flex; align-items: center; gap: 6px; }
+        .loc-hier-row.is-self .loc-hier-row-name { color: var(--accent-light); font-weight: bold; }
+        .loc-hier-row-type { font-size: 0.55rem; color: var(--dim); font-weight: normal; }
+        .loc-hier-desc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+        .loc-hier-desc-card { background: var(--bg3); padding: 8px 10px; border-radius: 6px; border-left: 2px solid var(--border); }
+        .loc-hier-desc-name { font-size: 0.7rem; font-weight: 500; color: var(--text); }
+        .loc-hier-desc-meta { font-size: 0.55rem; color: var(--dim); margin-top: 2px; }
+        .loc-hier-nav-btn { margin-top: 6px; background: transparent; border: 1px solid var(--border); padding: 2px 8px; font-size: 0.55rem; cursor: pointer; color: var(--accent); border-radius: 4px; font-family: var(--f-body); transition: background-color 0.15s, border-color 0.15s; }
+        .loc-hier-nav-btn:hover { background: var(--accent-dim); border-color: var(--accent); }
+
+        /* ---- Responsive ---- */
         @media (max-width: 768px) {
             .topbar .burger-menu { display: inline-flex; }
             .topbar { padding: 6px 10px; gap: 6px; min-height: 42px; }
@@ -196,6 +323,20 @@
             .tab-content-wrapper { padding: 16px; }
             .manager-subtabs { margin: -16px -16px 16px; padding-left: 16px; padding-right: 16px; }
             .manager-subtab { flex: 1 1 auto; min-width: 0; padding: 10px 14px; font-size: 0.72rem; }
+            .loc-tab-stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .loc-tab-grid-2 { grid-template-columns: 1fr; }
+            .loc-tab-header { padding: 10px 12px; }
+            .loc-tab-header-title { font-size: 0.82rem; }
+            .loc-hier-row[data-depth="0"] { padding-left: 6px; }
+            .loc-hier-row[data-depth="1"] { padding-left: 18px; }
+            .loc-hier-row[data-depth="2"] { padding-left: 30px; }
+            .loc-hier-row[data-depth="3"] { padding-left: 42px; }
+            .loc-hier-row[data-depth="4"] { padding-left: 54px; }
+            .loc-hier-row[data-depth="5"] { padding-left: 66px; }
+            .loc-hier-row[data-depth="6"] { padding-left: 78px; }
+            .loc-hier-row[data-depth="7"] { padding-left: 90px; }
+            .loc-hier-row[data-depth="8"] { padding-left: 102px; }
+            .loc-hier-row[data-depth="9"] { padding-left: 114px; }
         }
     </style>
 </head>
@@ -240,13 +381,8 @@
     <div id="sidebarOverlay" class="sidebar-overlay"></div>
 
     <div class="main-panel">
-        <div class="manager-subtabs" id="locationTabStrip" role="tablist">
-            <!-- Emitted by LocationManagerBootstrap.init() from KNOWN_TAB_IDS -->
-        </div>
-        <div class="tab-content-wrapper" id="panelContent" role="tabpanel">
-            <!-- One .manager-pane per tab, id="location-pane-<tabId>", data-tab-content="<tabId>".
-                 Panes are created by the bootstrap from KNOWN_TAB_IDS. TabManager.render fills them. -->
-        </div>
+        <div class="manager-subtabs" id="locationTabStrip" role="tablist"></div>
+        <div class="tab-content-wrapper" id="panelContent" role="tabpanel"></div>
     </div>
 </div>
 
