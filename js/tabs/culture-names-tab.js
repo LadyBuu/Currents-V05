@@ -48,6 +48,11 @@
  * is documented and non-destructive — it only creates an empty
  * structure, never overwrites user data.)
  *
+ * The nameListChanged event published by _markNameDataDirty now carries
+ * the cultureId, matching the payload shape NameCommands.addNameToList
+ * and removeNameFromList publish. Subscribers can filter by cultureId
+ * uniformly across "list created" and "list mutated" events.
+ *
  * EDITING MODEL
  * -------------
  * Each list is a card containing:
@@ -90,38 +95,33 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (A3):
+ *   Current revision (A4):
+ *     - _markNameDataDirty now takes a cultureId and includes it in
+ *       the nameListChanged publish payload. The prior version
+ *       published { action: 'created' } with no cultureId, which meant
+ *       a subscriber that filtered by cultureId (matching the payload
+ *       shape NameCommands.addNameToList / removeNameFromList use)
+ *       would miss the "list created" event. The call site in
+ *       _ensureNameList was updated to pass cultureId.
+ *     - No other behavior changes. The header THE NAME LIST IS CREATED
+ *       ON FIRST RENDER section documents the new payload shape.
+ *   Previous revisions (A3):
  *     - _handleClearRules now calls NameCommands.clearCultureSurnameRules
  *       instead of writing masterData.data.nameLists[culture.id].rules
  *       directly. The direct write bypassed the command layer's
  *       markDataDirty / publish contract and was the only destructive
- *       masterData write in the tab. This matches the playbook's
- *       "only commands.js writes" rule.
+ *       masterData write in the tab.
  *     - _handleClearRules now only calls NC.persist() on command
- *       success. The prior version called persist() unconditionally;
- *       with the direct write, persist could never be reached on
- *       failure, but with a command that can return { success: false }
- *       the unconditional persist would have written a stale in-memory
- *       state. Fixed.
+ *       success.
  *     - _maybeSubscribeToNameState DELETED. The prior version
- *       subscribed to NamesState but did nothing in the handler ("this
- *       is a no-op for the tab's own writes"). The subscription was a
- *       dead listener that leaked on every render. External writers
- *       that want the tab to refresh should fire masterDataUpdated,
- *       which the bootstrap already handles by re-rendering the
- *       active tab.
+ *       subscribed to NamesState but did nothing in the handler. The
+ *       subscription was a dead listener that leaked on every render.
  *     - _handleApplyBulk failure toast capped at 3 messages plus
- *       "(+N more)". An unbounded join('; ') on a large bulk edit
- *       produced a wall of text.
+ *       "(+N more)".
  *     - _renderRulesCard signature tightened: removed the unused
  *       `culture` parameter.
  *     - _escapeHtml error message tightened to match the other culture
  *       tabs (already strict; no behavior change).
- *     - Header EDITEDING MODEL section documents the
- *       clearCultureSurnameRules dependency and why clearing does not
- *       go through setCultureSurnameRules.
- *     - Header DEPENDENCIES corrected: NamesState subscription is
- *       removed.
  *   Previous revisions:
  *     - Initial implementation.
  * =============================================================================
@@ -205,7 +205,7 @@
             rules: null
         };
 
-        _markNameDataDirty();
+        _markNameDataDirty(cultureId);
         return true;
     }
 
@@ -214,8 +214,12 @@
      * NameCommands (currently only _ensureNameList). Marks masterData
      * dirty and publishes a nameListChanged event through NamesState
      * when available.
+     *
+     * The published payload carries cultureId so subscribers can filter
+     * uniformly with NameCommands.addNameToList / removeNameFromList,
+     * which publish the same event with cultureId in their payloads.
      */
-    function _markNameDataDirty() {
+    function _markNameDataDirty(cultureId) {
         if (typeof window.markDataDirty === 'function') {
             try { window.markDataDirty(); }
             catch (e) { /* non-fatal */ }
@@ -224,7 +228,12 @@
             ? window.NamesState
             : (typeof window.NameState !== 'undefined' ? window.NameState : null);
         if (NS && typeof NS.publish === 'function') {
-            try { NS.publish('nameListChanged', { action: 'created' }); }
+            try {
+                NS.publish('nameListChanged', {
+                    cultureId: cultureId,
+                    action: 'created'
+                });
+            }
             catch (e) { /* non-fatal */ }
         }
     }
