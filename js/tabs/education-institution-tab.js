@@ -6,10 +6,11 @@
  *
  * LOCATION: js/tabs/education-institutions-tab.js
  *
- * The settlement-scoped institution list. The workhorse of the Education
- * Manager — the first tab after Overview, and the tab that proves the
- * onSuccess → TabManager.requestRender loop works end-to-end before the
- * remaining four tabs copy the pattern.
+ * The settlement-scoped institution list. Workhorse of the Education
+ * Manager — the first "detail" tab after Overview, and the tab that
+ * exercises the most modal delegations, so it proves the
+ * onSuccess → TabManager.requestRender loop works end-to-end before
+ * the remaining tabs copy the pattern.
  *
  * CONTRACT (TabManager renderer):
  *
@@ -17,16 +18,16 @@
  *
  *   - container  HTMLElement  already emptied by TabManager
  *   - context    { locationId, locationName, educationState }
- *                guaranteed non-null; TabManager writes the no-context
- *                empty state before calling us
+ *                guaranteed non-null; TabManager writes the
+ *                no-context empty state before calling us
  *
  * READS:
- *   - context.educationState.summary          header counts (may be null
- *                                             on query failure; handled)
+ *   - context.educationState.summary          header counts (may be
+ *                                             null on query failure)
  *   - EducationQueries.getInstitutions({ location, ...filters })
  *   - EducationQueries.getInstitutionsNeedingTeachers(locationId)
  *
- * WRITES (delegated, never direct):
+ * WRITES (delegated to modals, never direct):
  *   - openCreateInstitutionModal(onSuccess, { locationId })
  *   - openInstitutionDetailsModal(id, onSuccess)
  *   - openEditInstitutionModal(id, onSuccess)
@@ -35,12 +36,20 @@
  *   - openDeleteInstitutionModal(id, onSuccess)
  *
  *   Every onSuccess calls TabManager.requestRender('education',
- *   'institutions') so the pane refreshes without a full page reload.
- *   The bootstrap does NOT wrap the modal exports — the tab owns the
- *   refresh decision.
+ *   'institutions'). The bootstrap does NOT wrap the modal exports —
+ *   the tab owns the refresh decision.
+ *
+ * MODAL SIGNATURE EXCEPTION:
+ *
+ *   openCreateInstitutionModal(onSuccess, defaultData) takes onSuccess
+ *   FIRST, unlike every other education modal (which take it last).
+ *   _invokeModal special-cases that one name and prepends the callback.
+ *   All other modal names get the callback appended as the last
+ *   argument.
  *
  * FILTERS:
- *   search          string   substring of name or description
+ *
+ *   search          string    substring of name or description
  *   ownershipType   'all' | 'public' | 'private' | 'religious'
  *
  *   Persisted per-location to:
@@ -49,14 +58,14 @@
  *   Read once at render. Written on every filter change. Guards
  *   localStorage in try/catch (matches EducationUIState's discipline).
  *
- * ACTIONS (per-row buttons use .edu-manager-btn; click handlers attached
- * after innerHTML; each is scoped to a single row's data-institution-id):
+ * ACTIONS (per-row buttons use .edu-manager-btn; click handlers
+ * attached after innerHTML; single delegated listener on the list
+ * container):
  *
  *   View      → openInstitutionDetailsModal
  *   Edit      → openEditInstitutionModal
- *   Tuition   → openTuitionManagementModal   (public schools → the modal
- *                                              renders read-only, which is
- *                                              the modal's own contract)
+ *   Tuition   → openTuitionManagementModal (public schools render
+ *                                          read-only inside the modal)
  *   Ownership → openOwnershipManagementModal
  *   Delete    → openDeleteInstitutionModal
  *
@@ -69,26 +78,36 @@
  *   - Warning strip if institutions-needing-teachers is non-empty
  *   - Filter bar: search input + ownership select + clear
  *   - List: .edu-manager-row per institution
- *   - Empty state: "No institutions in this settlement" with a
- *     "Create one" button that opens the create modal
+ *   - Empty state: "No institutions in this settlement" with
+ *     "Create one" affordance
  *
  *   No setTimeout. No module-level _rendering guard. Event handlers
  *   attach after innerHTML and are scoped to the container.
  *
- * DEPENDENCIES (checked at render, not at load):
- *   - window.EducationQueries       (reads)
- *   - window.TabManager             (requestRender)
- *   - window.TAB_MANAGER_SCOPE? no — hardcoded 'education' string
- *   - modal exports are typeof-guarded; a missing modal shows a toast
- *     ("not available") rather than throwing
- *   - window._showToast / window.showToast (soft, via _toast)
- *   - window.Icons                  (soft, via _icon)
+ * DEPENDENCIES (soft; guarded at render):
+ *   - window.EducationQueries.getInstitutions
+ *   - window.EducationQueries.getInstitutionsNeedingTeachers
+ *   - window.TabManager.requestRender
+ *   - modal exports (typeof-guarded; missing modal → toast)
+ *   - window._showToast / showToast (soft, via _toast)
+ *   - window.Icons (soft, via _icon)
  *   - window.escapeHtml / _escapeHtml (soft, via _esc)
  *
- *   No hard load-time guard. If the tab file is accidentally loaded
- *   without EducationQueries, the first render fails gracefully with an
- *   error state instead of crashing the whole bootstrap.
+ *   No hard load-time guard. If EducationQueries is missing at first
+ *   render, the tab shows an error state instead of crashing the
+ *   bootstrap.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Initial revision.
+ *     - Written for the Education Manager's TabManager host.
+ *     - Modal signature exception for openCreateInstitutionModal
+ *       documented and handled in _invokeModal.
+ *     - Filter persistence per-location, matching the other education
+ *       tabs.
+ *     - Delegated row handler; no per-row closures; survives re-render
+ *       without rebinding.
+ *     - No inline CSS.
  * =============================================================================
  */
 
@@ -155,9 +174,6 @@
     // =========================================================================
     // 3. FILTER PERSISTENCE
     // =========================================================================
-    //
-    // Per-location, per-tab, JSON-encoded. Guards localStorage in
-    // try/catch (matches EducationUIState's STORAGE FAILURES contract).
 
     function _filterKey(locationId) {
         return FILTER_KEY_PREFIX + String(locationId);
@@ -199,17 +215,60 @@
     }
 
     // =========================================================================
-    // 4. SUMMARY READ
+    // 4. REFRESH + MODAL DELEGATION
     // =========================================================================
-    //
-    // The summary in context.educationState is computed once per render
-    // by the bootstrap. On a query failure it is null and the fields
-    // are mirrored into summaryError. This tab reads the summary when
-    // available and falls back to counting the filtered list when not.
 
-    function _safeSummary(context) {
-        if (!context || !context.educationState) return null;
-        return context.educationState.summary || null;
+    var _lastContext = null;
+
+    function _refresh() {
+        var TM = _tabManager();
+        if (TM && typeof TM.requestRender === 'function') {
+            try {
+                TM.requestRender(SCOPE, TAB_ID);
+                return;
+            } catch (e) { /* fall through */ }
+        }
+        if (_lastContext) {
+            var container = document.getElementById('education-pane-' + TAB_ID);
+            if (container) renderInstitutionsTab(container, _lastContext);
+        }
+    }
+
+    /**
+     * Invokes a modal with the tab's refresh wired to the modal's
+     * onSuccess.
+     *
+     * SIGNATURE EXCEPTION: openCreateInstitutionModal takes onSuccess
+     * FIRST, unlike every other education modal. This helper detects
+     * that specific name and prepends the callback; all other modals
+     * get the callback appended as the last argument.
+     *
+     * The refresh callback is IDEMPOTENT: if a modal fires onSuccess
+     * more than once (e.g. a future "create another" flow), the
+     * resulting requestRender calls coalesce onto the same next-tick
+     * render via TabManager's own coalescing.
+     */
+    function _invokeModal(globalName, args, opts) {
+        opts = opts || {};
+        if (typeof window[globalName] !== 'function') {
+            _toast((opts.label || globalName) + ' is not available.', 'error');
+            return;
+        }
+        var refreshCb = function () { _refresh(); };
+        var callArgs = args.slice();
+
+        if (globalName === 'openCreateInstitutionModal') {
+            callArgs.unshift(refreshCb);
+        } else {
+            callArgs.push(refreshCb);
+        }
+
+        try {
+            window[globalName].apply(null, callArgs);
+        } catch (e) {
+            _toast('Failed to open: ' +
+                (e && e.message ? e.message : 'unknown error'), 'error');
+        }
     }
 
     // =========================================================================
@@ -218,7 +277,13 @@
 
     function _getInstitutions(locationId, filters) {
         var Q = _queries();
-        if (!Q) return { ok: false, reason: 'EducationQueries is not available.', institutions: [] };
+        if (!Q || typeof Q.getInstitutions !== 'function') {
+            return {
+                ok: false,
+                reason: 'EducationQueries.getInstitutions is not available.',
+                institutions: []
+            };
+        }
 
         var query = { location: locationId };
         if (filters.ownershipType && filters.ownershipType !== 'all') {
@@ -246,10 +311,10 @@
             return { ok: false, count: 0, institutions: [] };
         }
         try {
-            // getInstitutionsNeedingTeachers does not take a location in the
-            // query API. Filter the returned list by locationId client-side.
-            // This is O(institutions) once per render; acceptable.
             var all = Q.getInstitutionsNeedingTeachers();
+            if (!Array.isArray(all)) {
+                return { ok: true, count: 0, institutions: [] };
+            }
             var scoped = [];
             for (var i = 0; i < all.length; i++) {
                 if (all[i] && all[i].locationId === locationId) {
@@ -263,82 +328,45 @@
     }
 
     // =========================================================================
-    // 6. MODAL DELEGATION
-    // =========================================================================
-    //
-    // Every modal call goes through this helper, which:
-    //   - checks the global is a function
-    //   - wires the tab's onSuccess to TabManager.requestRender
-    //   - toasts "not available" if the modal is missing
-    //
-    // A missing modal does NOT throw. A missing TabManager does NOT throw;
-    // it falls back to a direct render call so the tab still refreshes
-    // (degraded but functional).
-
-    function _refresh() {
-        var TM = _tabManager();
-        if (TM && typeof TM.requestRender === 'function') {
-            try {
-                TM.requestRender(SCOPE, TAB_ID);
-                return;
-            } catch (e) { /* fall through */ }
-        }
-        // Fallback: no TabManager. Re-render the current pane directly
-        // using the last known context.
-        if (_lastContext) {
-            var container = document.getElementById('education-pane-' + TAB_ID);
-            if (container) renderInstitutionsTab(container, _lastContext);
-        }
-    }
-
-    function _invokeModal(globalName, args, opts) {
-        opts = opts || {};
-        if (typeof window[globalName] !== 'function') {
-            _toast((opts.label || globalName) + ' is not available.', 'error');
-            return;
-        }
-        // Append the refresh callback as the last argument. Every
-        // education modal takes a trailing onSuccess function.
-        var callArgs = args.slice();
-        callArgs.push(function () { _refresh(); });
-        try {
-            window[globalName].apply(null, callArgs);
-        } catch (e) {
-            _toast('Failed to open: ' + (e && e.message ? e.message : 'unknown error'), 'error');
-        }
-    }
-
-    // =========================================================================
-    // 7. HTML BUILDERS
+    // 6. HTML BUILDERS
     // =========================================================================
 
-    function _ownershipBadge(ownershipType) {
-        // Reuse the generic ownership presentation from EducationUI if it's
-        // loaded. Otherwise emit a minimal inline-badge so the list is still
-        // readable.
-        if (window.EducationUI && typeof window.EducationUI.getOwnershipBadge === 'function') {
-            try {
-                return window.EducationUI.getOwnershipBadge(ownershipType, null);
-            } catch (e) { /* fall through */ }
-        }
-        var label = 'Unknown';
-        if (ownershipType === 'public')    label = 'Public';
-        else if (ownershipType === 'private')   label = 'Private';
-        else if (ownershipType === 'religious') label = 'Religious';
-        return '<span style="font-size:0.55rem;color:var(--dim);">' +
-            _esc(label) + '</span>';
+    function _reputationColor(rep) {
+        var n = typeof rep === 'number' ? rep : 50;
+        if (n >= 80) return 'var(--ok)';
+        if (n >= 60) return 'var(--ok)';
+        if (n >= 40) return 'var(--warn)';
+        if (n >= 20) return 'var(--warn)';
+        return 'var(--danger-lt)';
     }
 
     function _statusBadge(status) {
-        if (window.EducationUI && typeof window.EducationUI.getStatusBadge === 'function') {
-            try {
-                return window.EducationUI.getStatusBadge(status);
-            } catch (e) { /* fall through */ }
+        if (window.EducationUI
+            && typeof window.EducationUI.getStatusBadge === 'function') {
+            try { return window.EducationUI.getStatusBadge(status); }
+            catch (e) { /* fall through */ }
         }
         if (status === 'demolished') {
             return '<span style="font-size:0.55rem;color:var(--danger-lt);">Demolished</span>';
         }
+        if (status === 'inactive') {
+            return '<span style="font-size:0.55rem;color:var(--warn);">Inactive</span>';
+        }
         return '<span style="font-size:0.55rem;color:var(--ok);">Active</span>';
+    }
+
+    function _ownershipBadge(ownershipType) {
+        if (window.EducationUI
+            && typeof window.EducationUI.getOwnershipBadge === 'function') {
+            try { return window.EducationUI.getOwnershipBadge(ownershipType, null); }
+            catch (e) { /* fall through */ }
+        }
+        var label = 'Unknown';
+        if (ownershipType === 'public')         label = 'Public';
+        else if (ownershipType === 'private')   label = 'Private';
+        else if (ownershipType === 'religious') label = 'Religious';
+        return '<span style="font-size:0.55rem;color:var(--dim);">' +
+            _esc(label) + '</span>';
     }
 
     function _renderHeader(summary, totalCount, needingTeachersCount) {
@@ -349,7 +377,8 @@
             subParts.push(summary.currentStudents + ' student' +
                 (summary.currentStudents === 1 ? '' : 's'));
         } else if (totalCount > 0) {
-            subParts.push(totalCount + ' institution' + (totalCount === 1 ? '' : 's'));
+            subParts.push(totalCount + ' institution' +
+                (totalCount === 1 ? '' : 's'));
         }
         if (needingTeachersCount > 0) {
             subParts.push(needingTeachersCount + ' needing teacher' +
@@ -364,7 +393,8 @@
                 '</p>' +
             '</div>' +
             '<div class="edu-manager-actions">' +
-                '<button type="button" id="eduInstNewBtn" class="edu-manager-btn edu-manager-btn--primary">' +
+                '<button type="button" id="eduInstNewBtn" ' +
+                    'class="edu-manager-btn edu-manager-btn--primary">' +
                     _icon('PLUS') + ' New Institution' +
                 '</button>' +
             '</div>' +
@@ -374,7 +404,6 @@
     function _renderWarning(needingTeachers) {
         if (!needingTeachers || needingTeachers.length === 0) return '';
 
-        // Show up to three names, then a count.
         var names = [];
         var limit = Math.min(needingTeachers.length, 3);
         for (var i = 0; i < limit; i++) {
@@ -408,15 +437,15 @@
                 'placeholder="Search institutions…" ' +
                 'value="' + _esc(filters.search || '') + '" ' +
                 'aria-label="Filter institutions by name or description">' +
-            '<select id="eduInstFilterOwnership" aria-label="Filter by ownership type">' +
+            '<select id="eduInstFilterOwnership" ' +
+                'aria-label="Filter by ownership type">' +
                 opt('all',       'All ownership') +
                 opt('public',    'Public') +
                 opt('private',   'Private') +
                 opt('religious', 'Religious') +
             '</select>' +
-            '<button type="button" id="eduInstFilterClear" class="edu-manager-btn">' +
-                'Clear' +
-            '</button>' +
+            '<button type="button" id="eduInstFilterClear" ' +
+                'class="edu-manager-btn">Clear</button>' +
         '</div>';
     }
 
@@ -433,7 +462,7 @@
             metaParts.push('Head: ' + _esc(inst.headmasterName));
         }
 
-        var capacity = '';
+        var capacity;
         if (inst.maxStudents > 0) {
             capacity = inst.currentStudentCount + '/' + inst.maxStudents +
                 ' (' + inst.utilization + '%)';
@@ -443,18 +472,23 @@
 
         var actionButtons = '' +
             '<button type="button" class="edu-manager-btn edu-inst-action" ' +
-                'data-action="view" data-institution-id="' + _esc(inst.id) + '">View</button>' +
+                'data-action="view" ' +
+                'data-institution-id="' + _esc(inst.id) + '">View</button>' +
             '<button type="button" class="edu-manager-btn edu-inst-action" ' +
-                'data-action="edit" data-institution-id="' + _esc(inst.id) + '"' +
+                'data-action="edit" ' +
+                'data-institution-id="' + _esc(inst.id) + '"' +
                 (isDemolished ? ' disabled' : '') + '>Edit</button>' +
             '<button type="button" class="edu-manager-btn edu-inst-action" ' +
-                'data-action="tuition" data-institution-id="' + _esc(inst.id) + '"' +
+                'data-action="tuition" ' +
+                'data-institution-id="' + _esc(inst.id) + '"' +
                 (isDemolished ? ' disabled' : '') + '>Tuition</button>' +
             '<button type="button" class="edu-manager-btn edu-inst-action" ' +
-                'data-action="ownership" data-institution-id="' + _esc(inst.id) + '"' +
+                'data-action="ownership" ' +
+                'data-institution-id="' + _esc(inst.id) + '"' +
                 (isDemolished ? ' disabled' : '') + '>Ownership</button>' +
             '<button type="button" class="edu-manager-btn edu-manager-btn--danger edu-inst-action" ' +
-                'data-action="delete" data-institution-id="' + _esc(inst.id) + '"' +
+                'data-action="delete" ' +
+                'data-institution-id="' + _esc(inst.id) + '"' +
                 (isDemolished ? ' disabled' : '') + '>Delete</button>';
 
         return '<div class="edu-manager-row' +
@@ -478,17 +512,9 @@
         '</div>';
     }
 
-    function _reputationColor(rep) {
-        var n = typeof rep === 'number' ? rep : 50;
-        if (n >= 80) return 'var(--ok)';
-        if (n >= 60) return 'var(--ok)';
-        if (n >= 40) return 'var(--warn)';
-        if (n >= 20) return 'var(--warn)';
-        return 'var(--danger-lt)';
-    }
-
     function _renderEmpty(filters) {
-        var hasFilters = (filters.search && filters.search.trim().length > 0) ||
+        var hasFilters =
+            (filters.search && filters.search.trim().length > 0) ||
             (filters.ownershipType && filters.ownershipType !== 'all');
 
         if (hasFilters) {
@@ -517,10 +543,10 @@
     }
 
     // =========================================================================
-    // 8. EVENT WIRING
+    // 7. EVENT WIRING
     // =========================================================================
 
-    function _attachHandlers(container, context, filters, renderedList) {
+    function _attachHandlers(container, context, filters) {
         var locationId = context.locationId;
 
         // ---- Header: New Institution ----
@@ -529,7 +555,7 @@
             newBtn.addEventListener('click', function () {
                 _invokeModal(
                     'openCreateInstitutionModal',
-                    [null, { locationId: locationId }],
+                    [{ locationId: locationId }],
                     { label: 'Create institution' }
                 );
             });
@@ -538,9 +564,6 @@
         // ---- Filters ----
         var searchInput = container.querySelector('#eduInstFilterSearch');
         if (searchInput) {
-            // Debounce 200 ms so typing does not re-render per keystroke.
-            // Local debounce (not window.debounce) so this file has no
-            // hard collection.js dependency.
             var timer = null;
             searchInput.addEventListener('input', function () {
                 filters.search = this.value;
@@ -573,9 +596,9 @@
         }
 
         // ---- Row actions (delegated) ----
-        // Single listener on the list container; dispatch by data-action.
-        // Avoids per-row handler allocation and survives a re-render
-        // without rebinding.
+        // Single listener on the list container; dispatch by
+        // data-action. No per-row handler allocation; survives a
+        // re-render without rebinding.
         var list = container.querySelector('#eduInstList');
         if (!list) return;
 
@@ -632,17 +655,13 @@
     }
 
     // =========================================================================
-    // 9. RENDER
+    // 8. RENDER
     // =========================================================================
-
-    var _lastContext = null;
 
     function renderInstitutionsTab(container, context) {
         if (!container) return;
         _lastContext = context || null;
 
-        // Defensive: TabManager guarantees a non-null context, but a
-        // direct render call might not. Fail safe.
         if (!context || !context.locationId) {
             container.innerHTML = '<div class="edu-manager-empty">' +
                 'Select a settlement from the sidebar to manage its institutions.' +
@@ -651,21 +670,17 @@
         }
 
         var locationId = context.locationId;
-
-        // Read persisted filters.
         var filters = _readFilters(locationId);
 
-        // Query the institutions with those filters.
         var result = _getInstitutions(locationId, filters);
-
-        // Query the "needing teachers" list for the warning strip. This is
-        // a separate query; on failure the strip is simply omitted.
         var needingTeachersResult = _getInstitutionsNeedingTeachers(locationId);
         var needingTeachers = needingTeachersResult.institutions || [];
 
-        var summary = _safeSummary(context);
+        var summary = (context.educationState
+            && context.educationState.summary)
+            ? context.educationState.summary
+            : null;
 
-        // Compose.
         var html = '';
         html += _renderHeader(summary, result.institutions.length, needingTeachers.length);
         html += _renderWarning(needingTeachers);
@@ -676,7 +691,7 @@
         } else if (result.institutions.length === 0) {
             html += _renderEmpty(filters);
         } else {
-            html += '<div id="eduInstList">';
+            html += '<div id="eduInstList" class="edu-manager-list">';
             for (var i = 0; i < result.institutions.length; i++) {
                 html += _renderRow(result.institutions[i]);
             }
@@ -684,14 +699,11 @@
         }
 
         container.innerHTML = html;
-
-        // Attach handlers only after the DOM is in place. No global
-        // document.getElementById; every lookup is scoped to the container.
-        _attachHandlers(container, context, filters, result.institutions);
+        _attachHandlers(container, context, filters);
     }
 
     // =========================================================================
-    // 10. REGISTRATION
+    // 9. REGISTRATION
     // =========================================================================
 
     var TM = _tabManager();
@@ -708,21 +720,20 @@
     } else {
         if (typeof console !== 'undefined' && console.error) {
             console.error(
-                'education-institutions-tab.js: TabManager is not available at ' +
-                'load time; the tab was not registered. Load tab-manager.js ' +
+                'education-institutions-tab.js: TabManager is not available ' +
+                'at load time; the tab was not registered. Load tab-manager.js ' +
                 'before this file.'
             );
         }
     }
 
     // =========================================================================
-    // 11. EXPORTS (for tests and future direct callers)
+    // 10. EXPORTS
     // =========================================================================
 
     if (typeof window !== 'undefined') {
         window.EducationInstitutionsTab = {
             render: renderInstitutionsTab,
-            // Exposed for tests: not part of the TabManager contract.
             _readFilters: _readFilters,
             _writeFilters: _writeFilters
         };
