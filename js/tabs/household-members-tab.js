@@ -1,1183 +1,1199 @@
+// js/households/household-members-tab.js
 /**
  * =============================================================================
- * HOUSEHOLD MEMBERS TAB (household-members-tab.js)
+ * HOUSEHOLD MEMBERS TAB
+ * js/households/household-members-tab.js
  * =============================================================================
  *
- * PURPOSE: Modular members tab for the Household Manager tool.
- *          Displays current and former members with full management
- *          capabilities: add, remove, transfer, change roles, edit dates.
+ * LOCATION: js/households/household-members-tab.js
  *
- * DEPENDS ON:
- *   - HouseholdState (household-state.js)
- *   - HouseholdCommands (household-commands.js)
- *   - HouseholdQueries (household-queries.js)
- *   - HouseholdAssignment (household-assignment.js)
- *   - modals-core.js (for modal wrappers)
- *   - ui.js (for toast notifications)
- *   - icons.js (for icons)
- *   - modals-char-selector.js (for character selection)
+ * WHAT THIS TAB SHOWS
+ * -------------------
+ * The household's members, split into a "Current Members" section
+ * (living) and a "Former Members (Deceased)" section, with:
  *
- * ICON POLICY: Uses icons.js - NO emojis. Gender is rendered as text.
+ *   - header stat strip (total / living / deceased / family / staff)
+ *   - search + sort filter bar
+ *   - one row per member: gender text, name, age, living/deceased,
+ *     Head / Family / Staff badges, role, department, joined year
+ *   - per-row actions: Edit, Transfer, Remove (suppressed for deceased)
+ *   - header actions: Add Member, Transfer In
+ *
+ * READS
+ * -----
+ *   HouseholdQueries.getHousehold            — flat projection
+ *   HouseholdQueries.getHouseholdMembers     — member projections
+ *   HouseholdQueries.getHouseholdHead        — for the header
+ *   HouseholdQueries.getHouseholdStatus      — living / deceased counts
+ *   HouseholdQueries.getHouseholdDepartments — dept name lookup
+ *   HouseholdQueries.getAllHouseholds        — for the transfer target list
+ *   HouseholdQueries.getCharacterHousehold   — for the transfer-in guard
+ *
+ * WRITES
+ * ------
+ *   This tab does NOT write directly. Every action delegates:
+ *     Add Member        → inline modal, HouseholdCommands.addMember
+ *     Edit Member       → inline modal, HouseholdCommands.updateMember
+ *     Transfer Member   → inline modal, HouseholdCommands.transferMember
+ *     Transfer In       → inline modal, HouseholdCommands.transferMember
+ *     Remove Member     → confirm + HouseholdCommands.removeMember
+ *
+ *   Each inline modal persists ONCE via HouseholdCommands.persist()
+ *   after its command succeeds.
+ *
+ * RENDERER CONTRACT (from HouseholdManagerBootstrap)
+ *   fn(container, context)
+ *   container  HTMLElement  — already emptied by TabManager
+ *   context    { householdId, householdName, householdState }
+ *
+ * FILTERS
+ * -------
+ *   search       substring over member name (and notes)
+ *   sortBy       'name' (default) | 'age' | 'joined'
+ *
+ *   Filter state is persisted per-household under
+ *   `households_members_filters_<householdId>` via
+ *   HouseholdTabRuntime.readFilters / writeFilters (Rules 3 + 4).
+ *   The state is reset when the householdId changes (checked against
+ *   a module-scoped _lastContextKey).
+ *
+ * DEPENDENCIES (all resolved via HouseholdTabRuntime)
+ *   REQUIRED at render:
+ *     - HouseholdQueries
+ *     - formatting.js (escapeHtml — strict via TabRuntime.esc)
+ *     - time.js (getCurrentYear — via TabRuntime.requireCurrentYear)
+ *     - TabManager (for registration; warn if absent)
+ *   OPTIONAL at render:
+ *     - HouseholdCommands (each mutation reports if it is absent)
+ *     - modals-char-selector.js (Add Member, Transfer In)
+ *
+ * TIME CONTRACT: uses TabRuntime.requireCurrentYear(). No fallback.
+ * ICON POLICY: icons via TabRuntime.icon(). Gender is text, not a glyph.
+ * THEME CONTRACT: no hardcoded hex/rgba. Classes from household-tabs.css.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
- *     - _getCurrentYear now uses getCurrentYear (canonical accessor in
- *       time.js) instead of the deprecated getCurrentYearSafe alias,
- *       and throws on missing time.js instead of falling back to 1250.
- *     - _getCurrentHouseholdId now prefers
- *       HouseholdState.getUIState().selectedHouseholdId (the canonical
- *       selection store) instead of the flat globals that no module
- *       writes.
- *     - Replaced window.renderHouseholdList() with
- *       window.refreshHouseholdList() in every mutation success path.
- *       household-ui-list.js exports refreshHouseholdList, not
- *       renderHouseholdList, so the sidebar never refreshed after a
- *       member add/remove/transfer from this tab.
- *     - Deleted the dead window.showHouseholdDetails() call from
- *       _doRemoveMember. That function does not exist; the correct
- *       details modal is openHouseholdDetailsModal, and reopening it
- *       from the members tab was wrong UX anyway.
- *     - Fixed _openTransferMemberModal's success callback: it read
- *       result.toHousehold.name, but HouseholdCommands.transferMember
- *       returns { fromHouseholdId, toHouseholdId, ... } — no
- *       toHousehold object. The toast line threw a TypeError on every
- *       successful transfer, leaving the modal open and the user
- *       with no feedback.
- *     - Replaced the "⚥/♂/♀" gender glyph in _renderMemberRow with
- *       plain text ("Male" / "Female" / "Unknown"). The glyphs
- *       violated the module's own ICON POLICY header and duplicated
- *       the PERSON icon already on the row.
+ *   v2 (this revision):
+ *     - Rewritten to the Tab/Manager Development Playbook, using
+ *       Education Manager as the reference.
+ *     - All shared helpers come from HouseholdTabRuntime.
+ *     - Reads go through HouseholdQueries (via TabRuntime sugar).
+ *       The prior revision called non-existent HouseholdState methods
+ *       (HS.getHousehold, HS.getHouseholdMembersWithCharacters,
+ *       HS.getHouseholdStatus, HS.getHouseholdHead,
+ *       HS.getCharacterHousehold) and threw at render.
+ *     - transferMember success path reads { toHouseholdId } from the
+ *       command result and resolves the target name via HQ.getHousehold
+ *       (the prior revision read { toHousehold: { name } }, which does
+ *       not exist — every successful transfer threw a TypeError on
+ *       the toast line, leaving the modal open with no feedback).
+ *     - Gender is text ("Male" / "Female" / "Unknown"), not a glyph.
+ *       The prior revision used ♂ / ♀ / ⚥, violating the ICON POLICY.
+ *     - Removed the dead window.showHouseholdDetails() call.
+ *     - Row-action delegation on the container, not per-button
+ *       .onclick= (which reset on every render). The cloneNode
+ *       "re-bind" pattern from household-activity-tab.js is not used
+ *       here.
+ *     - Filter state persisted per-household (was in-memory only).
+ *       Matches the education tabs' pattern.
+ *     - Registration via TabRuntime.register('members', render). The
+ *       prior revision called the non-existent
+ *       window.registerTabRenderer three-arg form.
+ *     - Zero document.* calls. Zero hardcoded colors. Zero
+ *       setTimeout. Zero 1250 fallback.
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
-    // =========================================================================
-    // 1. RECURSION GUARD
-    // =========================================================================
-
-    var _rendering = false;
-    var _processingMemberAction = false;
-
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
-    // =========================================================================
-
-    function _getState() {
-        return typeof window.HouseholdState !== 'undefined' ? window.HouseholdState : null;
-    }
-
-    function _getCommands() {
-        return typeof window.HouseholdCommands !== 'undefined' ? window.HouseholdCommands : null;
-    }
-
-    function _getQueries() {
-        return typeof window.HouseholdQueries !== 'undefined' ? window.HouseholdQueries : null;
-    }
-
-    function _getAssignment() {
-        return typeof window.HouseholdAssignment !== 'undefined' ? window.HouseholdAssignment : null;
-    }
-
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
-        }
-        return null;
-    }
-
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        return [];
-    }
-
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(id);
-        }
-        return null;
-    }
-
-    /**
-     * Returns the current simulation year.
-     *
-     * Delegates to the canonical accessor in time.js. The deprecated
-     * getCurrentYearSafe alias is NOT used, and there is NO 1250
-     * fallback. A missing time.js is a load-order bug; the caller
-     * should surface it, not silently substitute a wrong year.
-     *
-     * @throws {Error} if time.js is not loaded
-     */
-    function _getCurrentYear() {
-        if (typeof window.getCurrentYear !== 'function') {
-            throw new Error(
-                '[HouseholdMembersTab] requires time.js (getCurrentYear). ' +
-                'Load js/core/time.js before this tab.'
-            );
-        }
-        return window.getCurrentYear();
-    }
-
-    function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
-
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        }
-    }
-
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        return '';
-    }
-
-    function _getIconSafe(name) {
-        var icon = _getIcon(name);
-        return icon || '';
-    }
-
-    function _openCharacterSelector(options) {
-        if (typeof window.openCharacterSelector === 'function') {
-            return window.openCharacterSelector(options);
-        }
-        if (typeof window._openCharacterSelector === 'function') {
-            return window._openCharacterSelector(options);
-        }
-        _showToast('Character selector not available', 'error');
-        return null;
-    }
-
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        if (typeof window._openModal === 'function') {
-            return window._openModal(options);
-        }
-        return null;
-    }
-
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
-        if (typeof window._closeTopModal === 'function') {
-            window._closeTopModal();
-        }
-    }
-
-    function _confirmDialog(message, title, onConfirm) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm);
-        }
-        if (typeof window._confirmDialog === 'function') {
-            return window._confirmDialog(message, title, onConfirm);
-        }
-        if (confirm(message)) {
-            onConfirm();
-        }
+    var T = window.HouseholdTabRuntime;
+    if (!T) {
+        throw new Error(
+            'household-members-tab: HouseholdTabRuntime must load first. ' +
+            'Load js/households/household-tab-runtime.js before this tab.'
+        );
     }
 
     // =========================================================================
-    // 3. ICON HELPERS
+    // 1. CONSTANTS
     // =========================================================================
 
-    function _iconSpan(icon, title) {
-        if (!icon) return '';
-        var titleAttr = title ? ' title="' + _escapeHtml(title) + '"' : '';
-        return '<span style="display:inline-flex;align-items:center;vertical-align:middle;' + (title ? 'cursor:help;' : '') + '"' + titleAttr + '>' + icon + '</span>';
-    }
+    var TAB_ID = 'members';
+    var SCOPE  = T.SCOPE;
+
+    var _renderGuard = { busy: false };
 
     // =========================================================================
-    // 4. GET CURRENT HOUSEHOLD ID
+    // 2. FILTER STATE (module-level, per-tab)
     // =========================================================================
     //
-    // Canonical selection lives in HouseholdState.getUIState()
-    // .selectedHouseholdId, set via HouseholdState.setSelectedHousehold
-    // (which household-ui-list.js::selectHousehold calls when the user
-    // picks a household from the sidebar).
-    //
-    // The flat globals are kept as a legacy fallback for harnesses
-    // that set them directly, but they are no longer the source of
-    // truth.
+    // Reset when the householdId changes (Rules 3 + 4). Persisted to
+    // localStorage per-household. The defaults are the same values
+    // _readFilters returns for an empty store.
 
-    function _getCurrentHouseholdId() {
-        var HS = _getState();
-        if (HS && typeof HS.getUIState === 'function') {
-            try {
-                var s = HS.getUIState();
-                if (s && typeof s.selectedHouseholdId === 'string'
-                    && s.selectedHouseholdId.length > 0) {
-                    return s.selectedHouseholdId;
-                }
-            } catch (e) { /* fall through */ }
+    var _filterDefaults = {
+        search: '',
+        sortBy: 'name'   // 'name' | 'age' | 'joined'
+    };
+
+    var _state = {
+        search: _filterDefaults.search,
+        sortBy: _filterDefaults.sortBy
+    };
+
+    var _lastContextKey = null;
+
+    function _resetState() {
+        _state.search = _filterDefaults.search;
+        _state.sortBy = _filterDefaults.sortBy;
+    }
+
+    function _loadFilters(householdId) {
+        if (!householdId) return;
+        var stored = T.readFilters(householdId, TAB_ID) || {};
+        if (typeof stored.search === 'string') _state.search = stored.search;
+        if (stored.sortBy === 'name' || stored.sortBy === 'age' || stored.sortBy === 'joined') {
+            _state.sortBy = stored.sortBy;
         }
-        if (window._currentHouseholdId) return window._currentHouseholdId;
-        if (window.currentHouseholdId) return window.currentHouseholdId;
-        if (window.selectedHouseholdId) return window.selectedHouseholdId;
-        return null;
+    }
+
+    function _saveFilters(householdId) {
+        if (!householdId) return;
+        T.writeFilters(householdId, TAB_ID, {
+            search: _state.search,
+            sortBy: _state.sortBy
+        });
     }
 
     // =========================================================================
-    // 5. DATA FETCHER
+    // 3. DATA
     // =========================================================================
 
-    function _getMembersData(householdId) {
-        var HS = _getState();
-        var HQ = _getQueries();
+    function _collect(householdId) {
+        var summary = T.getHousehold(householdId);
+        if (!summary) return { error: 'Household not found.' };
 
-        if (!HS) {
-            return { error: 'Household system not available' };
+        var year;
+        try { year = T.requireCurrentYear(); }
+        catch (e) {
+            return {
+                error: 'Current year unavailable: ' +
+                    (e && e.message ? e.message : 'time.js missing')
+            };
         }
 
-        var household = HS.getHousehold(householdId);
-        if (!household) {
-            return { error: 'Household not found' };
+        var members;
+        var head;
+        var status;
+        var departments;
+        try {
+            members = T.getHouseholdMembers(householdId) || [];
+            head = T.getHouseholdHead(householdId);
+            status = T.getHouseholdStatus(householdId);
+            departments = T.getHouseholdDepartments(householdId) || [];
+        } catch (e) {
+            return {
+                error: 'Could not read household members: ' +
+                    (e && e.message ? e.message : 'unknown error')
+            };
         }
-
-        var members = HS.getHouseholdMembersWithCharacters(householdId);
-        var status = HS.getHouseholdStatus(householdId);
-        var head = HS.getHouseholdHead(householdId);
-        var departments = household.departments || [];
 
         return {
-            household: household,
+            household: summary,
             members: members,
-            status: status,
             head: head,
+            status: status,
             departments: departments,
-            currentYear: _getCurrentYear()
+            year: year
         };
     }
 
     // =========================================================================
-    // 6. RENDER FUNCTIONS
+    // 4. FILTERING
     // =========================================================================
 
-    function _renderMemberRow(member, index, isCurrent, departments, householdId) {
-        var char = member.character;
-        var isHead = member.isHead || false;
-        var isDeceased = char ? char.isDeceased : false;
-        var age = '?';
+    function _computeAge(member, year) {
+        var ch = member.character;
+        if (!ch || !ch.birthYear) return null;
+        if (ch.isDeceased && ch.deathYear) {
+            return ch.deathYear - ch.birthYear;
+        }
+        return year - ch.birthYear;
+    }
 
-        // Gender is rendered as text, not as a glyph. The prior
-        // revision used "♂ / ♀ / ⚥" (U+2642 / U+2640 / U+26A5),
-        // which violated the module's own ICON POLICY header.
-        var genderLabel = char
-            ? (char.gender === 'male' ? 'Male'
-                : char.gender === 'female' ? 'Female'
+    function _applyFilters(members, year) {
+        var search = _state.search.toLowerCase().trim();
+        var out = members.slice();
+
+        if (search) {
+            out = out.filter(function (m) {
+                var hay = (
+                    (m.characterName || '') + ' ' +
+                    (m.role || '') + ' ' +
+                    (m.notes || '')
+                ).toLowerCase();
+                return hay.indexOf(search) !== -1;
+            });
+        }
+
+        if (_state.sortBy === 'name') {
+            out.sort(function (a, b) {
+                return String(a.characterName || '')
+                    .localeCompare(String(b.characterName || ''));
+            });
+        } else if (_state.sortBy === 'age') {
+            out.sort(function (a, b) {
+                var aa = _computeAge(a, year);
+                var ba = _computeAge(b, year);
+                if (aa === null && ba === null) return 0;
+                if (aa === null) return 1;
+                if (ba === null) return -1;
+                return aa - ba;
+            });
+        } else if (_state.sortBy === 'joined') {
+            out.sort(function (a, b) {
+                var aj = a.joinedYear || 0;
+                var bj = b.joinedYear || 0;
+                return aj - bj;
+            });
+        }
+
+        return out;
+    }
+
+    // =========================================================================
+    // 5. RENDER
+    // =========================================================================
+
+    function _renderBody(d) {
+        var members = d.members;
+        var filtered = _applyFilters(members, d.year);
+
+        var living = filtered.filter(function (m) {
+            return m.character && !m.character.isDeceased;
+        });
+        var deceased = filtered.filter(function (m) {
+            return m.character && m.character.isDeceased;
+        });
+
+        return '' +
+            '<div class="hh-tab">' +
+                _renderHeader(d) +
+                _renderStats(d) +
+                _renderFilterBar() +
+                '<div class="hh-members-section">' +
+                    T.sectionHeader('Current Members (' + living.length + ')') +
+                    (living.length === 0
+                        ? T.emptyState(members.length === 0
+                            ? 'No members yet.'
+                            : 'No living members match your filters.')
+                        : '<div class="hh-member-list" data-role="current-list">' +
+                            living.map(function (m) {
+                                return _renderMemberRow(m, d.year, d.departments);
+                            }).join('') +
+                          '</div>') +
+                '</div>' +
+                '<div class="hh-members-section hh-members-section-former">' +
+                    T.sectionHeader('Former Members (' + deceased.length + ')') +
+                    (deceased.length === 0
+                        ? T.emptyState('No former members.')
+                        : '<div class="hh-member-list hh-member-list-former" data-role="former-list">' +
+                            deceased.map(function (m) {
+                                return _renderMemberRow(m, d.year, d.departments);
+                            }).join('') +
+                          '</div>') +
+                '</div>' +
+            '</div>';
+    }
+
+    function _renderHeader(d) {
+        var headName = d.head ? d.head.characterName : 'None';
+        return '' +
+            '<div class="hh-tab-header">' +
+                '<div>' +
+                    '<h3 class="hh-tab-title">' +
+                        T.iconSpan('PERSON', 'Members') + ' Members' +
+                    '</h3>' +
+                    '<div class="hh-overview-subtitle">' +
+                        'Head: ' + T.esc(headName) +
+                    '</div>' +
+                '</div>' +
+                '<div class="hh-tab-actions">' +
+                    '<button type="button" class="hh-btn hh-btn-primary" ' +
+                        'data-action="add-member">' +
+                        T.iconSpan('PLUS', 'Add') + ' Add Member' +
+                    '</button>' +
+                    '<button type="button" class="hh-btn" ' +
+                        'data-action="transfer-in">' +
+                        'Transfer In' +
+                    '</button>' +
+                '</div>' +
+            '</div>';
+    }
+
+    function _renderStats(d) {
+        var living = 0;
+        var deceased = 0;
+        var family = 0;
+        var staff = 0;
+        for (var i = 0; i < d.members.length; i++) {
+            var m = d.members[i];
+            if (m.character && m.character.isDeceased) deceased++;
+            else if (m.character) living++;
+            if (m.type === 'family') family++;
+            else if (m.type === 'staff') staff++;
+        }
+        return '' +
+            '<div class="hh-econ-grid hh-econ-grid-5">' +
+                T.statCell('Total', d.members.length) +
+                T.statCell('Living', living, 'var(--success)') +
+                T.statCell('Deceased', deceased, 'var(--dim)') +
+                T.statCell('Family', family) +
+                T.statCell('Staff', staff) +
+            '</div>';
+    }
+
+    function _renderFilterBar() {
+        var sortOptions = [
+            { id: 'name',   label: 'Sort: Name' },
+            { id: 'age',    label: 'Sort: Age' },
+            { id: 'joined', label: 'Sort: Joined Year' }
+        ];
+        var optionsHtml = sortOptions.map(function (o) {
+            return '<option value="' + o.id + '"' +
+                (_state.sortBy === o.id ? ' selected' : '') + '>' +
+                T.esc(o.label) +
+            '</option>';
+        }).join('');
+
+        return '' +
+            '<div class="hh-filter-bar">' +
+                '<input type="search" class="hh-filter-search" ' +
+                    'data-role="search" ' +
+                    'placeholder="Search members…" ' +
+                    'value="' + T.esc(_state.search) + '">' +
+                '<select class="hh-filter-sort" data-role="sort">' +
+                    optionsHtml +
+                '</select>' +
+                '<button type="button" class="hh-btn hh-btn-subtle" ' +
+                    'data-action="clear-filters">Clear</button>' +
+            '</div>';
+    }
+
+    function _renderMemberRow(member, year, departments) {
+        var ch = member.character;
+        var isHead = member.isHead === true;
+        var isDeceased = ch ? ch.isDeceased === true : false;
+        var age = _computeAge(member, year);
+        var ageLabel = age === null ? '—' : age + 'y';
+
+        // Gender is text. The prior revision used ♂ / ♀ / ⚥ glyphs.
+        var genderLabel = ch
+            ? (ch.gender === 'male' ? 'Male'
+                : ch.gender === 'female' ? 'Female'
                 : 'Unknown')
             : 'Unknown';
 
-        if (char) {
-            if (char.birthYear) {
-                if (isDeceased && char.deathYear) {
-                    age = char.deathYear - char.birthYear;
-                } else {
-                    age = _getCurrentYear() - char.birthYear;
-                }
-            }
-        }
-
-        var personIcon = _getIconSafe('PERSON');
-        var crownIcon = _getIconSafe('CROWN');
-        var editIcon = _getIconSafe('EDIT');
-        var trashIcon = _getIconSafe('X_HEAVY');
-        var transferIcon = _getIconSafe('ARROW_DOUBLE_H');
-
-        var nameDisplay = char ? (char.name + (char.surname ? ' ' + char.surname : '')) : 'Unknown';
-        var roleDisplay = member.role || 'Member';
-        var typeDisplay = member.type || 'family';
-        var joinedYear = member.joinedYear || '?';
-        var notes = member.notes || '';
-
-        var departmentName = 'None';
-        if (member.departmentId && departments) {
+        // Department name resolution.
+        var deptName = null;
+        if (member.departmentId && Array.isArray(departments)) {
             for (var i = 0; i < departments.length; i++) {
                 if (departments[i].id === member.departmentId) {
-                    departmentName = departments[i].name;
+                    deptName = departments[i].name;
                     break;
                 }
             }
         }
 
-        var statusText = isDeceased ? 'Deceased' : 'Living';
-        var statusColor = isDeceased ? 'var(--dim)' : 'var(--success)';
-        var rowClass = isDeceased ? 'opacity:0.6;' : '';
+        var rowClass = 'hh-member-row' +
+            (isHead ? ' head' : '') +
+            (isDeceased ? ' deceased' : '');
 
-        var headBadge = isHead ?
-            '<span style="background:var(--accent-dim);padding:1px 8px;border-radius:10px;font-size:0.45rem;color:var(--accent);">' + crownIcon + ' Head</span>' :
-            '';
+        // Actions: suppressed for deceased members. A deceased member's
+        // only sensible action is to view; nothing to edit, transfer,
+        // or remove.
+        var actions = isDeceased ? '' :
+            '<div class="hh-member-actions">' +
+                '<button type="button" class="hh-icon-btn" ' +
+                    'data-action="edit" ' +
+                    'data-char-id="' + T.esc(ch ? ch.id : '') + '" ' +
+                    'title="Edit member">' + T.icon('EDIT') + '</button>' +
+                '<button type="button" class="hh-icon-btn" ' +
+                    'data-action="transfer" ' +
+                    'data-char-id="' + T.esc(ch ? ch.id : '') + '" ' +
+                    'title="Transfer to another household">' +
+                    T.icon('ARROW_DOUBLE_H') +
+                '</button>' +
+                '<button type="button" class="hh-icon-btn hh-icon-btn-danger" ' +
+                    'data-action="remove" ' +
+                    'data-char-id="' + T.esc(ch ? ch.id : '') + '" ' +
+                    'title="Remove from household">' +
+                    T.icon('X_HEAVY') +
+                '</button>' +
+            '</div>';
 
-        var typeBadge = typeDisplay === 'family' ?
-            '<span style="background:var(--bg2);padding:1px 6px;border-radius:10px;font-size:0.45rem;color:var(--dim);">Family</span>' :
-            '<span style="background:var(--bg2);padding:1px 6px;border-radius:10px;font-size:0.45rem;color:var(--accent);">Staff</span>';
-
-        var actionButtons = '';
-        if (!isDeceased) {
-            actionButtons = '' +
-                '<button class="member-edit-btn" data-char-id="' + (char ? char.id : '') + '" data-member-index="' + index + '" style="padding:1px 6px;font-size:0.4rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;" title="Edit member">' + editIcon + '</button>' +
-                '<button class="member-transfer-btn" data-char-id="' + (char ? char.id : '') + '" style="padding:1px 6px;font-size:0.4rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;" title="Transfer to another household">' + transferIcon + '</button>' +
-                '<button class="member-remove-btn" data-char-id="' + (char ? char.id : '') + '" style="padding:1px 6px;font-size:0.4rem;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;" title="Remove from household">' + trashIcon + '</button>';
-        }
+        var headBadge = isHead
+            ? '<span class="hh-member-badge head">' +
+                T.iconSpan('CROWN', 'Head') + ' Head' +
+              '</span>'
+            : '';
+        var typeBadge = member.type === 'staff'
+            ? '<span class="hh-member-badge staff">Staff</span>'
+            : '<span class="hh-member-badge family">Family</span>';
 
         return '' +
-            '<div class="member-row" data-char-id="' + (char ? char.id : '') + '" style="' +
-                'display:flex;justify-content:space-between;align-items:center;padding:6px 10px;' +
-                'background:var(--bg3);border-radius:4px;margin-bottom:2px;' +
-                'border-left:3px solid ' + (isHead ? 'var(--accent)' : (isDeceased ? 'var(--dim)' : 'var(--border)')) + ';' +
-                rowClass +
-            '">' +
-                '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1;min-width:0;">' +
-                    '<span style="font-size:0.7rem;" title="Gender">' + _escapeHtml(genderLabel) + '</span>' +
-                    '<span style="font-size:0.7rem;font-weight:' + (isHead ? 'bold' : 'normal') + ';">' + _escapeHtml(nameDisplay) + '</span>' +
-                    '<span style="font-size:0.5rem;color:var(--dim);">(' + age + 'y)</span>' +
-                    '<span style="font-size:0.55rem;color:' + statusColor + ';">' + statusText + '</span>' +
+            '<div class="' + rowClass + '" ' +
+                'data-char-id="' + T.esc(ch ? ch.id : '') + '">' +
+                '<div class="hh-member-info">' +
+                    '<span class="hh-member-gender" title="Gender">' +
+                        T.esc(genderLabel) +
+                    '</span>' +
+                    '<span class="hh-member-name' + (isHead ? ' head' : '') + '">' +
+                        T.esc(member.characterName || 'Unknown') +
+                    '</span>' +
+                    '<span class="hh-member-age">(' + T.esc(ageLabel) + ')</span>' +
+                    '<span class="hh-member-status-' +
+                        (isDeceased ? 'deceased' : 'living') + '">' +
+                        (isDeceased ? 'Deceased' : 'Living') +
+                    '</span>' +
                     headBadge +
                     typeBadge +
-                    '<span style="font-size:0.5rem;color:var(--accent);">' + _escapeHtml(roleDisplay) + '</span>' +
-                    (departmentName !== 'None' ? '<span style="font-size:0.45rem;color:var(--dim);">(' + _escapeHtml(departmentName) + ')</span>' : '') +
-                    '<span style="font-size:0.45rem;color:var(--dim);">Joined: ' + joinedYear + '</span>' +
-                    (notes ? '<span style="font-size:0.4rem;color:var(--dim);">' + _escapeHtml(notes) + '</span>' : '') +
+                    (member.role
+                        ? '<span class="hh-member-role">' +
+                            T.esc(member.role) +
+                          '</span>'
+                        : '') +
+                    (deptName
+                        ? '<span class="hh-member-dept">(' +
+                            T.esc(deptName) + ')</span>'
+                        : '') +
+                    (member.joinedYear
+                        ? '<span class="hh-member-joined">' +
+                            'Joined: ' + T.esc(String(member.joinedYear)) +
+                          '</span>'
+                        : '') +
                 '</div>' +
-                '<div style="display:flex;gap:4px;flex-shrink:0;">' +
-                    actionButtons +
-                '</div>' +
-            '</div>';
-    }
-
-    function _renderCurrentMembers(data) {
-        var members = data.members || [];
-        var currentMembers = members.filter(function(m) {
-            var char = m.character;
-            return char && !char.isDeceased;
-        });
-
-        if (currentMembers.length === 0) {
-            return '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.65rem;">No living members</div>';
-        }
-
-        currentMembers.sort(function(a, b) {
-            if (a.isHead && !b.isHead) return -1;
-            if (!a.isHead && b.isHead) return 1;
-            return (a.characterName || '').localeCompare(b.characterName || '');
-        });
-
-        var html = '<div style="display:flex;flex-direction:column;gap:2px;">';
-        for (var i = 0; i < currentMembers.length; i++) {
-            html += _renderMemberRow(currentMembers[i], i, true, data.departments, data.household.id);
-        }
-        html += '</div>';
-
-        return html;
-    }
-
-    function _renderFormerMembers(data) {
-        var members = data.members || [];
-        var formerMembers = members.filter(function(m) {
-            var char = m.character;
-            return char && char.isDeceased;
-        });
-
-        if (formerMembers.length === 0) {
-            return '<div style="text-align:center;padding:10px;color:var(--dim);font-size:0.6rem;">No former members</div>';
-        }
-
-        formerMembers.sort(function(a, b) {
-            var aDeath = a.character && a.character.deathYear ? a.character.deathYear : 0;
-            var bDeath = b.character && b.character.deathYear ? b.character.deathYear : 0;
-            return bDeath - aDeath;
-        });
-
-        var html = '<div style="display:flex;flex-direction:column;gap:2px;opacity:0.7;">';
-        for (var i = 0; i < formerMembers.length; i++) {
-            html += _renderMemberRow(formerMembers[i], i, false, data.departments, data.household.id);
-        }
-        html += '</div>';
-
-        return html;
-    }
-
-    function _renderStats(data) {
-        var members = data.members || [];
-        var living = members.filter(function(m) {
-            var char = m.character;
-            return char && !char.isDeceased;
-        });
-        var deceased = members.filter(function(m) {
-            var char = m.character;
-            return char && char.isDeceased;
-        });
-        var family = members.filter(function(m) { return m.type === 'family'; });
-        var staff = members.filter(function(m) { return m.type === 'staff'; });
-
-        var personIcon = _getIconSafe('PERSON');
-
-        return '' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:6px;margin-bottom:12px;">' +
-                '<div style="background:var(--bg3);padding:6px;border-radius:4px;text-align:center;">' +
-                    '<div style="font-size:0.5rem;color:var(--dim);">' + personIcon + ' Total</div>' +
-                    '<div style="font-size:0.85rem;font-weight:bold;">' + members.length + '</div>' +
-                '</div>' +
-                '<div style="background:var(--bg3);padding:6px;border-radius:4px;text-align:center;">' +
-                    '<div style="font-size:0.5rem;color:var(--dim);">Living</div>' +
-                    '<div style="font-size:0.85rem;font-weight:bold;color:var(--success);">' + living.length + '</div>' +
-                '</div>' +
-                '<div style="background:var(--bg3);padding:6px;border-radius:4px;text-align:center;">' +
-                    '<div style="font-size:0.5rem;color:var(--dim);">Deceased</div>' +
-                    '<div style="font-size:0.85rem;font-weight:bold;color:var(--dim);">' + deceased.length + '</div>' +
-                '</div>' +
-                '<div style="background:var(--bg3);padding:6px;border-radius:4px;text-align:center;">' +
-                    '<div style="font-size:0.5rem;color:var(--dim);">Family</div>' +
-                    '<div style="font-size:0.85rem;font-weight:bold;">' + family.length + '</div>' +
-                '</div>' +
-                '<div style="background:var(--bg3);padding:6px;border-radius:4px;text-align:center;">' +
-                    '<div style="font-size:0.5rem;color:var(--dim);">Staff</div>' +
-                    '<div style="font-size:0.85rem;font-weight:bold;">' + staff.length + '</div>' +
-                '</div>' +
+                actions +
             '</div>';
     }
 
     // =========================================================================
-    // 7. MAIN RENDER FUNCTION
+    // 6. ENTRY POINT
     // =========================================================================
 
-    function renderHouseholdMembersTab(containerId, householdId) {
-        if (_rendering) {
-            return;
-        }
-        _rendering = true;
+    function renderHouseholdMembersTab(container, context) {
+        if (!container) return;
 
-        try {
-            var container = document.getElementById(containerId);
-            if (!container) {
-                console.warn('[MembersTab] Container not found: ' + containerId);
+        T.runExclusive(_renderGuard, function () {
+            if (!context || !context.householdId) {
+                container.innerHTML = T.emptyState('Select a household from the sidebar.');
                 return;
             }
 
-            if (!householdId) {
-                householdId = _getCurrentHouseholdId();
-            }
-
-            if (!householdId) {
-                container.innerHTML = '<div class="placeholder">No household selected</div>';
+            if (!T.queries()) {
+                container.innerHTML = T.failureState(
+                    'HouseholdQueries is not loaded. ' +
+                    'Load js/households/household-queries.js.'
+                );
                 return;
             }
 
-            console.log('[MembersTab] Rendering for household:', householdId);
+            // Rule 4: reset filter state when the context changes.
+            var ctxKey = context.householdId;
+            if (_lastContextKey !== ctxKey) {
+                _resetState();
+                _lastContextKey = ctxKey;
+            }
 
-            var data = _getMembersData(householdId);
+            // Rule 3: hydrate persisted filters.
+            _loadFilters(context.householdId);
+
+            var data;
+            try {
+                data = _collect(context.householdId);
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('[HouseholdMembersTab] collect failed', e);
+                }
+                container.innerHTML = T.failureState(
+                    'Could not load members: ' +
+                    (e && e.message ? e.message : 'unknown error')
+                );
+                return;
+            }
 
             if (data.error) {
-                container.innerHTML = '<div class="placeholder" style="color:var(--danger);">' + _escapeHtml(data.error) + '</div>';
+                container.innerHTML = T.failureState(data.error);
                 return;
             }
 
-            var personIcon = _getIconSafe('PERSON');
-            var plusIcon = _getIconSafe('PLUS');
-            var head = data.head;
-            var headName = head ? (head.name + (head.surname ? ' ' + head.surname : '')) : 'None';
-
-            var html = '' +
-                '<div style="max-width:750px;margin:0 auto;">' +
-                    '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px;">' +
-                        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">' +
-                            '<div>' +
-                                '<h3 style="font-size:0.7rem;color:var(--accent);margin:0;">' + personIcon + ' Members</h3>' +
-                                '<div style="font-size:0.55rem;color:var(--dim);margin-top:2px;">Head: ' + _escapeHtml(headName) + '</div>' +
-                            '</div>' +
-                            '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
-                                '<button id="membersAddBtn" class="btn" style="padding:3px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">' + plusIcon + ' Add Member</button>' +
-                                '<button id="membersTransferInBtn" class="btn" style="padding:3px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Transfer In</button>' +
-                            '</div>' +
-                        '</div>' +
-
-                        _renderStats(data) +
-
-                        '<div style="margin-bottom:12px;">' +
-                            '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Current Members</div>' +
-                            _renderCurrentMembers(data) +
-                        '</div>' +
-
-                        '<div>' +
-                            '<div style="font-size:0.6rem;color:var(--dim);margin-bottom:4px;">Former Members (Deceased)</div>' +
-                            _renderFormerMembers(data) +
-                        '</div>' +
-                    '</div>' +
-                    '<div style="font-size:0.5rem;color:var(--dim);text-align:center;">' +
-                        data.members.length + ' total members · ' +
-                        data.members.filter(function(m) { var c = m.character; return c && !c.isDeceased; }).length + ' living' +
-                    '</div>' +
-                '</div>';
-
-            container.innerHTML = html;
-
-            _attachEventHandlers(container, householdId);
-
-        } catch (e) {
-            console.error('[MembersTab] Error:', e);
-            var container = document.getElementById(containerId);
-            if (container) {
-                container.innerHTML = '<div class="placeholder" style="color:var(--danger);">Error loading members</div>';
-            }
-        } finally {
-            _rendering = false;
-        }
+            container.innerHTML = _renderBody(data);
+            _wire(container, context.householdId);
+        }, { onBusy: function () { /* skip re-entrant render */ } });
     }
 
     // =========================================================================
-    // 8. EVENT HANDLERS
+    // 7. WIRING
     // =========================================================================
+    //
+    // Rule 2: row-action delegation on the container. The current-list
+    // and former-list <div>s are replaced on every re-render, but the
+    // delegation is on the container, so it survives.
+    //
+    // The filter listeners (search input debounced, sort change) are
+    // attached to the input / select directly on every render. Those
+    // elements ARE replaced, but they are inputs — attaching to the
+    // fresh input node is the point.
 
-    function _attachEventHandlers(container, householdId) {
-        var HS = _getState();
-        var HC = _getCommands();
-        var HA = _getAssignment();
+    var SEARCH_DEBOUNCE_MS = 200;
 
-        if (!HS || !HC) return;
+    function _wire(container, householdId) {
+        // Delegated row and header actions — once per container.
+        T.attachDelegated(container, {
+            '[data-action="add-member"]':   function () { _openAddMember(householdId); },
+            '[data-action="transfer-in"]':  function () { _openTransferIn(householdId); },
+            '[data-action="edit"]':         function (e, btn) { _openEditMember(householdId, btn.getAttribute('data-char-id')); },
+            '[data-action="transfer"]':     function (e, btn) { _openTransferMember(householdId, btn.getAttribute('data-char-id')); },
+            '[data-action="remove"]':       function (e, btn) { _confirmRemoveMember(householdId, btn.getAttribute('data-char-id')); },
+            '[data-action="clear-filters"]':function () { _clearFilters(householdId, container); }
+        });
 
-        var addBtn = container.querySelector('#membersAddBtn');
-        if (addBtn) {
-            addBtn.onclick = function() {
-                _openAddMemberModal(householdId);
-            };
+        // Filter wiring. The input/select are fresh nodes on each
+        // render, so we bind each time.
+        _wireFilters(container, householdId);
+    }
+
+    function _wireFilters(container, householdId) {
+        var search = container.querySelector('[data-role="search"]');
+        if (search) {
+            var timer = null;
+            search.addEventListener('input', function () {
+                if (timer) clearTimeout(timer);
+                timer = setTimeout(function () {
+                    timer = null;
+                    _state.search = search.value || '';
+                    _saveFilters(householdId);
+                    _reapplyInPlace(container, householdId);
+                }, SEARCH_DEBOUNCE_MS);
+            });
         }
 
-        var transferInBtn = container.querySelector('#membersTransferInBtn');
-        if (transferInBtn) {
-            transferInBtn.onclick = function() {
-                _openTransferInModal(householdId);
-            };
+        var sort = container.querySelector('[data-role="sort"]');
+        if (sort) {
+            sort.addEventListener('change', function () {
+                _state.sortBy = sort.value || 'name';
+                _saveFilters(householdId);
+                _reapplyInPlace(container, householdId);
+            });
         }
+    }
 
-        var editBtns = container.querySelectorAll('.member-edit-btn');
-        editBtns.forEach(function(btn) {
-            btn.onclick = function(e) {
-                e.stopPropagation();
-                var charId = this.dataset.charId;
-                if (charId) {
-                    _openEditMemberModal(householdId, charId);
-                }
-            };
-        });
-
-        var transferBtns = container.querySelectorAll('.member-transfer-btn');
-        transferBtns.forEach(function(btn) {
-            btn.onclick = function(e) {
-                e.stopPropagation();
-                var charId = this.dataset.charId;
-                if (charId) {
-                    _openTransferMemberModal(householdId, charId);
-                }
-            };
-        });
-
-        var removeBtns = container.querySelectorAll('.member-remove-btn');
-        removeBtns.forEach(function(btn) {
-            btn.onclick = function(e) {
-                e.stopPropagation();
-                var charId = this.dataset.charId;
-                if (charId) {
-                    _confirmRemoveMember(householdId, charId);
-                }
-            };
-        });
+    function _clearFilters(householdId, container) {
+        _resetState();
+        _saveFilters(householdId);
+        // Repaint the input's value too — the filter bar itself is part
+        // of the container's innerHTML and was not replaced.
+        var search = container.querySelector('[data-role="search"]');
+        if (search) search.value = '';
+        var sort = container.querySelector('[data-role="sort"]');
+        if (sort) sort.value = _state.sortBy;
+        _reapplyInPlace(container, householdId);
     }
 
     // =========================================================================
-    // 9. ADD MEMBER MODAL
+    // 8. IN-PLACE REAPPLY
     // =========================================================================
+    //
+    // Rule 2: replace the two list <div>s in place, do NOT re-render the
+    // whole tab. This preserves the input's cursor position and scroll
+    // position on the sidebar and on the lists. The delegation listener
+    // on the container catches actions on the freshly-built rows without
+    // re-binding.
 
-    function _openAddMemberModal(householdId) {
-        var HS = _getState();
-        var household = HS ? HS.getHousehold(householdId) : null;
-        if (!household) {
-            _showToast('Household not found', 'error');
+    function _reapplyInPlace(container, householdId) {
+        var Q = T.queries();
+        if (!Q) return;
+
+        var data;
+        try { data = _collect(householdId); }
+        catch (e) { return; }
+        if (data.error) return;
+
+        var filtered = _applyFilters(data.members, data.year);
+        var living = filtered.filter(function (m) {
+            return m.character && !m.character.isDeceased;
+        });
+        var deceased = filtered.filter(function (m) {
+            return m.character && m.character.isDeceased;
+        });
+
+        var currentListEl = container.querySelector('[data-role="current-list"]');
+        var formerListEl = container.querySelector('[data-role="former-list"]');
+
+        // Replace the current-list section.
+        var currentHtml = living.length === 0
+            ? T.emptyState(data.members.length === 0
+                ? 'No members yet.'
+                : 'No living members match your filters.')
+            : '<div class="hh-member-list" data-role="current-list">' +
+                living.map(function (m) {
+                    return _renderMemberRow(m, data.year, data.departments);
+                }).join('') +
+              '</div>';
+        _replaceNode(container, currentListEl, currentHtml);
+
+        // Replace the former-list section.
+        var formerHtml = deceased.length === 0
+            ? T.emptyState('No former members.')
+            : '<div class="hh-member-list hh-member-list-former" data-role="former-list">' +
+                deceased.map(function (m) {
+                    return _renderMemberRow(m, data.year, data.departments);
+                }).join('') +
+              '</div>';
+        _replaceNode(container, formerListEl, formerHtml);
+
+        // Update the section headers' counts. They are siblings of the
+        // lists; re-locate them via a role attribute that _renderBody
+        // emits. Simpler: rebuild both section headers.
+        // For the members tab the headers carry counts that change with
+        // the filter, so we refresh them too.
+        var sections = container.querySelectorAll('.hh-members-section');
+        for (var i = 0; i < sections.length; i++) {
+            var header = sections[i].querySelector('.hh-section-header .hh-section-title');
+            if (!header) continue;
+            var isFormer = sections[i].classList.contains('hh-members-section-former');
+            var count = isFormer ? deceased.length : living.length;
+            var label = isFormer ? 'Former Members' : 'Current Members';
+            header.textContent = label + ' (' + count + ')';
+        }
+    }
+
+    function _replaceNode(container, node, html) {
+        if (!node) return;
+        var parent = node.parentNode;
+        if (!parent) return;
+        var tmp = document.createElement('div');
+        tmp.innerHTML = html;
+        var fresh = tmp.firstChild;
+        if (fresh) parent.replaceChild(fresh, node);
+    }
+
+    // =========================================================================
+    // 9. MODALS
+    // =========================================================================
+    //
+    // Rule 7: missing delegate → toast, do not swallow.
+    // Rule 8: the modal owns persist(); the tab's onSuccess callback
+    // triggers TabRuntime.requestRender to refresh.
+
+    function _rerender(householdId) {
+        T.requestRender(TAB_ID);
+    }
+
+    function _openAddMember(householdId) {
+        var summary = T.getHousehold(householdId);
+        if (!summary) { T.toastError('Household not found.'); return; }
+
+        if (typeof window.openCharacterSelector !== 'function') {
+            T.toastError(
+                'Add Member unavailable: openCharacterSelector is not loaded. ' +
+                'Load js/selectors/modals-char-selector.js.'
+            );
             return;
         }
 
-        _openCharacterSelector({
-            title: 'Add Member to ' + household.name,
+        window.openCharacterSelector({
+            title: 'Add Member to ' + summary.name,
             filters: { showDeceased: false },
-            onSelect: function(character) {
-                if (character) {
-                    _doAddMember(householdId, character.id);
-                }
+            onSelect: function (ch) {
+                if (!ch) return;
+                _presentAddMemberForm(householdId, ch);
             }
         });
     }
 
-    function _doAddMember(householdId, characterId) {
-        if (_processingMemberAction) return;
-        _processingMemberAction = true;
+    function _presentAddMemberForm(householdId, ch) {
+        var year;
+        try { year = T.requireCurrentYear(); }
+        catch (e) { T.toastError('Current year unavailable: ' + (e && e.message)); return; }
 
-        try {
-            var HC = _getCommands();
-            if (!HC) {
-                _showToast('Household commands not available', 'error');
-                return;
-            }
+        var content =
+            '<div class="hh-modal-form">' +
+                '<div class="hh-modal-current">' +
+                    'Adding: <strong>' + T.esc(T.characterName(ch)) + '</strong>' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Member Type</label>' +
+                    '<select data-field="type">' +
+                        '<option value="family">Family</option>' +
+                        '<option value="staff">Staff</option>' +
+                    '</select>' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Role</label>' +
+                    '<input type="text" data-field="role" value="Family Member">' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Joined Year</label>' +
+                    '<input type="number" data-field="year" value="' + year + '" min="1">' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Make Head</label>' +
+                    '<select data-field="head">' +
+                        '<option value="false">No</option>' +
+                        '<option value="true">Yes</option>' +
+                    '</select>' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Notes</label>' +
+                    '<textarea data-field="notes" rows="2"></textarea>' +
+                '</div>' +
+            '</div>';
 
-            var currentYear = _getCurrentYear();
-
-            var content = '' +
-                '<div style="margin-bottom:12px;">' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Member Type</label>' +
-                        '<select id="addMemberType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                            '<option value="family">Family</option>' +
-                            '<option value="staff">Staff</option>' +
-                        '</select>' +
-                    '</div>' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Role</label>' +
-                        '<input type="text" id="addMemberRole" placeholder="e.g., Family Member, Butler..." value="Family Member" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                    '</div>' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Joined Year</label>' +
-                        '<input type="number" id="addMemberYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                    '</div>' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Make Head</label>' +
-                        '<select id="addMemberHead" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                            '<option value="false">No</option>' +
-                            '<option value="true">Yes</option>' +
-                        '</select>' +
-                    '</div>' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes</label>' +
-                        '<textarea id="addMemberNotes" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;" placeholder="Additional notes..."></textarea>' +
-                    '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Add Member to Household',
-                content: content,
-                confirmText: 'Add Member',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var type = document.getElementById('addMemberType').value;
-                    var role = document.getElementById('addMemberRole').value.trim() || (type === 'family' ? 'Family Member' : 'Staff');
-                    var year = parseInt(document.getElementById('addMemberYear').value) || currentYear;
-                    var isHead = document.getElementById('addMemberHead').value === 'true';
-                    var notes = document.getElementById('addMemberNotes').value.trim();
-
-                    if (isNaN(year) || year < 1) {
-                        _showToast('Please enter a valid year', 'error');
-                        return false;
-                    }
-
-                    var result = HC.addMember(householdId, characterId, type, {
-                        role: role,
-                        joinedYear: year,
-                        isHead: isHead,
-                        notes: notes || null
+        var modal = T.openModal({
+            title: 'Add Member',
+            content: content,
+            confirmText: 'Add Member',
+            cancelText: 'Cancel',
+            onOpen: function () {
+                var root = modal && modal.element;
+                if (!root) return;
+                var typeSelect = root.querySelector('[data-field="type"]');
+                var roleInput = root.querySelector('[data-field="role"]');
+                if (typeSelect && roleInput) {
+                    typeSelect.addEventListener('change', function () {
+                        if (!roleInput.value.trim() ||
+                            roleInput.value === 'Family Member' ||
+                            roleInput.value === 'Staff') {
+                            roleInput.value = typeSelect.value === 'family'
+                                ? 'Family Member' : 'Staff';
+                        }
                     });
-
-                    if (result && result.success) {
-                        var char = _getCharacterById(characterId);
-                        _showToast((char ? char.name : 'Member') + ' added to household', 'success');
-                        _closeTopModal();
-                        renderHouseholdMembersTab('tab-members', householdId);
-                        if (typeof window.refreshHouseholdList === 'function') {
-                            window.refreshHouseholdList();
-                        }
-                        return true;
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to add member', 'error');
-                        return false;
-                    }
                 }
-            });
+            },
+            onConfirm: function () {
+                var root = modal && modal.element;
+                if (!root) { T.toastError('Modal root unavailable.'); return false; }
 
-        } finally {
-            _processingMemberAction = false;
-        }
-    }
+                var type = root.querySelector('[data-field="type"]').value || 'family';
+                var role = (root.querySelector('[data-field="role"]').value || '').trim() ||
+                    (type === 'family' ? 'Family Member' : 'Staff');
+                var y = parseInt(root.querySelector('[data-field="year"]').value, 10);
+                if (!isFinite(y) || y < 1) { T.toastError('Invalid year.'); return false; }
+                var isHead = root.querySelector('[data-field="head"]').value === 'true';
+                var notes = (root.querySelector('[data-field="notes"]').value || '').trim();
 
-    // =========================================================================
-    // 10. EDIT MEMBER MODAL
-    // =========================================================================
+                var HC = T.commands();
+                if (!HC) { T.toastError('HouseholdCommands is not loaded.'); return false; }
 
-    function _openEditMemberModal(householdId, characterId) {
-        if (_processingMemberAction) return;
-        _processingMemberAction = true;
-
-        try {
-            var HS = _getState();
-            var HC = _getCommands();
-            if (!HS || !HC) {
-                _showToast('Household system not available', 'error');
-                return;
-            }
-
-            var household = HS.getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                return;
-            }
-
-            var member = null;
-            var memberIndex = -1;
-            for (var i = 0; i < household.members.length; i++) {
-                if (household.members[i].characterId === characterId) {
-                    member = household.members[i];
-                    memberIndex = i;
-                    break;
+                var result = HC.addMember(householdId, ch.id, type, {
+                    role: role,
+                    joinedYear: y,
+                    isHead: isHead,
+                    notes: notes || null
+                });
+                if (!result || result.success !== true) {
+                    T.toastError('Failed to add member: ' + (result ? result.reason : 'unknown'));
+                    return false;
                 }
-            }
 
-            if (!member) {
-                _showToast('Member not found', 'error');
-                return;
-            }
-
-            var char = _getCharacterById(characterId);
-            var charName = char ? (char.name + (char.surname ? ' ' + char.surname : '')) : 'Unknown';
-            var departments = household.departments || [];
-
-            var deptOptions = '<option value="">None</option>';
-            for (var i = 0; i < departments.length; i++) {
-                var selected = (member.departmentId === departments[i].id) ? 'selected' : '';
-                deptOptions += '<option value="' + departments[i].id + '" ' + selected + '>' + _escapeHtml(departments[i].name) + '</option>';
-            }
-
-            var content = '' +
-                '<div style="margin-bottom:12px;">' +
-                    '<div style="background:var(--bg3);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.6rem;">' +
-                        'Editing: <strong>' + _escapeHtml(charName) + '</strong>' +
-                        (member.isHead ? ' · <span style="color:var(--accent);">Head</span>' : '') +
-                    '</div>' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Member Type</label>' +
-                        '<select id="editMemberType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                            '<option value="family" ' + (member.type === 'family' ? 'selected' : '') + '>Family</option>' +
-                            '<option value="staff" ' + (member.type === 'staff' ? 'selected' : '') + '>Staff</option>' +
-                        '</select>' +
-                    '</div>' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Role</label>' +
-                        '<input type="text" id="editMemberRole" value="' + _escapeHtml(member.role || '') + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                    '</div>' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Department</label>' +
-                        '<select id="editMemberDepartment" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                            deptOptions +
-                        '</select>' +
-                    '</div>' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Joined Year</label>' +
-                        '<input type="number" id="editMemberYear" value="' + (member.joinedYear || _getCurrentYear()) + '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                    '</div>' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Make Head</label>' +
-                        '<select id="editMemberHead" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                            '<option value="false" ' + (member.isHead ? '' : 'selected') + '>No</option>' +
-                            '<option value="true" ' + (member.isHead ? 'selected' : '') + '>Yes</option>' +
-                        '</select>' +
-                    '</div>' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes</label>' +
-                        '<textarea id="editMemberNotes" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' + _escapeHtml(member.notes || '') + '</textarea>' +
-                    '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Edit Member: ' + charName,
-                content: content,
-                confirmText: 'Save Changes',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var type = document.getElementById('editMemberType').value;
-                    var role = document.getElementById('editMemberRole').value.trim() || (type === 'family' ? 'Family Member' : 'Staff');
-                    var departmentId = document.getElementById('editMemberDepartment').value || null;
-                    var year = parseInt(document.getElementById('editMemberYear').value);
-                    var isHead = document.getElementById('editMemberHead').value === 'true';
-                    var notes = document.getElementById('editMemberNotes').value.trim();
-
-                    if (isNaN(year) || year < 1) {
-                        _showToast('Please enter a valid year', 'error');
-                        return false;
-                    }
-
-                    var updates = {
-                        type: type,
-                        role: role,
-                        departmentId: departmentId,
-                        joinedYear: year,
-                        isHead: isHead,
-                        notes: notes || null
-                    };
-
-                    var result = HC.updateMember(householdId, characterId, updates);
-
-                    if (result && result.success) {
-                        _showToast('Member updated', 'success');
-                        _closeTopModal();
-                        renderHouseholdMembersTab('tab-members', householdId);
-                        if (typeof window.refreshHouseholdList === 'function') {
-                            window.refreshHouseholdList();
-                        }
-                        return true;
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to update member', 'error');
-                        return false;
-                    }
+                var persisted = HC.persist();
+                if (persisted && persisted.success === false) {
+                    T.toastWarning('Added in memory; storage write failed.');
+                } else {
+                    T.toastSuccess(T.characterName(ch) + ' added.');
                 }
-            });
-
-        } finally {
-            _processingMemberAction = false;
-        }
-    }
-
-    // =========================================================================
-    // 11. TRANSFER MEMBER MODAL
-    // =========================================================================
-
-    function _openTransferMemberModal(householdId, characterId) {
-        if (_processingMemberAction) return;
-        _processingMemberAction = true;
-
-        try {
-            var HS = _getState();
-            var HC = _getCommands();
-            var HA = _getAssignment();
-            if (!HS || !HC) {
-                _showToast('Household system not available', 'error');
-                return;
-            }
-
-            var char = _getCharacterById(characterId);
-            if (!char) {
-                _showToast('Character not found', 'error');
-                return;
-            }
-
-            var currentYear = _getCurrentYear();
-            var charName = char.name + (char.surname ? ' ' + char.surname : '');
-
-            var allHouseholds = HS.getAllHouseholds();
-            var targetOptions = allHouseholds
-                .filter(function(h) { return h.id !== householdId && h.status !== 'deprecated'; })
-                .map(function(h) {
-                    return '<option value="' + h.id + '">' + _escapeHtml(h.name) + '</option>';
-                }).join('');
-
-            if (!targetOptions) {
-                _showToast('No other households available for transfer', 'warning');
-                return;
-            }
-
-            var content = '' +
-                '<div style="margin-bottom:12px;">' +
-                    '<div style="background:var(--bg3);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.6rem;">' +
-                        'Transferring: <strong>' + _escapeHtml(charName) + '</strong>' +
-                    '</div>' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Target Household</label>' +
-                        '<select id="transferTargetHousehold" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                            '<option value="">Select a household</option>' +
-                            targetOptions +
-                        '</select>' +
-                    '</div>' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Transfer Year</label>' +
-                        '<input type="number" id="transferYear" value="' + currentYear + '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                    '</div>' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
-                        '<input type="text" id="transferReason" placeholder="e.g., Marriage, Employment..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                    '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Transfer Member: ' + charName,
-                content: content,
-                confirmText: 'Transfer',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var targetId = document.getElementById('transferTargetHousehold').value;
-                    var year = parseInt(document.getElementById('transferYear').value) || currentYear;
-                    var reason = document.getElementById('transferReason').value.trim() || 'Transferred';
-
-                    if (!targetId) {
-                        _showToast('Please select a target household', 'error');
-                        return false;
-                    }
-
-                    var targetHousehold = HS.getHousehold(targetId);
-                    var targetName = targetHousehold ? targetHousehold.name : 'target household';
-
-                    var result = HC.transferMember(characterId, targetId, {
-                        year: year,
-                        reason: reason
-                    });
-
-                    if (result && result.success) {
-                        // HouseholdCommands.transferMember returns
-                        // { characterId, fromHouseholdId, toHouseholdId,
-                        //   role, isHead, year }. There is no
-                        // `toHousehold` object. The prior revision read
-                        // result.toHousehold.name, which threw a
-                        // TypeError on every successful transfer,
-                        // leaving the modal open with no toast.
-                        _showToast(charName + ' transferred to ' + targetName, 'success');
-                        _closeTopModal();
-                        renderHouseholdMembersTab('tab-members', householdId);
-                        if (typeof window.refreshHouseholdList === 'function') {
-                            window.refreshHouseholdList();
-                        }
-                        return true;
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to transfer member', 'error');
-                        return false;
-                    }
-                }
-            });
-
-        } finally {
-            _processingMemberAction = false;
-        }
-    }
-
-    // =========================================================================
-    // 12. TRANSFER IN MODAL
-    // =========================================================================
-
-    function _openTransferInModal(householdId) {
-        if (_processingMemberAction) return;
-        _processingMemberAction = true;
-
-        try {
-            var HS = _getState();
-            var HC = _getCommands();
-            if (!HS || !HC) {
-                _showToast('Household system not available', 'error');
-                return;
-            }
-
-            var household = HS.getHousehold(householdId);
-            if (!household) {
-                _showToast('Household not found', 'error');
-                return;
-            }
-
-            _openCharacterSelector({
-                title: 'Transfer Character to ' + household.name,
-                filters: { showDeceased: false },
-                onSelect: function(character) {
-                    if (character) {
-                        var currentHH = HS.getCharacterHousehold(character.id);
-                        if (currentHH && currentHH.id === householdId) {
-                            _showToast('Character is already in this household', 'warning');
-                            return;
-                        }
-
-                        var currentYear = _getCurrentYear();
-                        var content = '' +
-                            '<div style="margin-bottom:12px;">' +
-                                '<div style="background:var(--bg3);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.6rem;">' +
-                                    'Transferring: <strong>' + _escapeHtml(character.name + (character.surname ? ' ' + character.surname : '')) + '</strong>' +
-                                    (currentHH ? ' from <strong>' + _escapeHtml(currentHH.name) + '</strong>' : '') +
-                                '</div>' +
-                                '<div class="form-group" style="margin-bottom:12px;">' +
-                                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Member Type</label>' +
-                                    '<select id="transferInType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                                        '<option value="family">Family</option>' +
-                                        '<option value="staff">Staff</option>' +
-                                    '</select>' +
-                                '</div>' +
-                                '<div class="form-group" style="margin-bottom:12px;">' +
-                                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Role</label>' +
-                                    '<input type="text" id="transferInRole" placeholder="e.g., Family Member, Butler..." value="Family Member" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                                '</div>' +
-                                '<div class="form-group" style="margin-bottom:12px;">' +
-                                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Transfer Year</label>' +
-                                    '<input type="number" id="transferInYear" value="' + currentYear + '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                                '</div>' +
-                                '<div class="form-group" style="margin-bottom:12px;">' +
-                                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
-                                    '<input type="text" id="transferInReason" placeholder="e.g., Marriage, Employment..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                                '</div>' +
-                            '</div>';
-
-                        _openModal({
-                            title: 'Transfer Character to ' + household.name,
-                            content: content,
-                            confirmText: 'Transfer',
-                            cancelText: 'Cancel',
-                            onConfirm: function() {
-                                var type = document.getElementById('transferInType').value;
-                                var role = document.getElementById('transferInRole').value.trim() || (type === 'family' ? 'Family Member' : 'Staff');
-                                var year = parseInt(document.getElementById('transferInYear').value) || currentYear;
-                                var reason = document.getElementById('transferInReason').value.trim() || 'Transferred';
-
-                                var result = HC.transferMember(character.id, householdId, {
-                                    year: year,
-                                    reason: reason,
-                                    role: role,
-                                    type: type
-                                });
-
-                                if (result && result.success) {
-                                    _showToast(character.name + ' transferred to ' + household.name, 'success');
-                                    _closeTopModal();
-                                    renderHouseholdMembersTab('tab-members', householdId);
-                                    if (typeof window.refreshHouseholdList === 'function') {
-                                        window.refreshHouseholdList();
-                                    }
-                                    return true;
-                                } else {
-                                    _showToast(result ? result.reason : 'Failed to transfer member', 'error');
-                                    return false;
-                                }
-                            }
-                        });
-                    }
-                }
-            });
-
-        } finally {
-            _processingMemberAction = false;
-        }
-    }
-
-    // =========================================================================
-    // 13. REMOVE MEMBER
-    // =========================================================================
-
-    function _confirmRemoveMember(householdId, characterId) {
-        var char = _getCharacterById(characterId);
-        var charName = char ? (char.name + (char.surname ? ' ' + char.surname : '')) : 'Unknown';
-
-        _confirmDialog('Remove ' + charName + ' from the household?', 'Remove Member', function() {
-            _doRemoveMember(householdId, characterId);
-        });
-    }
-
-    function _doRemoveMember(householdId, characterId) {
-        if (_processingMemberAction) return;
-        _processingMemberAction = true;
-
-        try {
-            var HC = _getCommands();
-            if (!HC) {
-                _showToast('Household commands not available', 'error');
-                return;
-            }
-
-            var currentYear = _getCurrentYear();
-            var char = _getCharacterById(characterId);
-            var charName = char ? (char.name + (char.surname ? ' ' + char.surname : '')) : 'Unknown';
-
-            var result = HC.removeMember(householdId, characterId, {
-                reason: 'Removed',
-                leftYear: currentYear
-            });
-
-            if (result && result.success) {
-                _showToast(charName + ' removed from household', 'info');
-                renderHouseholdMembersTab('tab-members', householdId);
-                // Sidebar refresh: the current module exports
-                // refreshHouseholdList (not renderHouseholdList).
-                // The prior revision called renderHouseholdList,
-                // which does not exist, so the sidebar showed the
-                // pre-mutation member count after a remove.
+                T.closeTopModal();
+                _rerender(householdId);
                 if (typeof window.refreshHouseholdList === 'function') {
                     window.refreshHouseholdList();
                 }
-                // The prior revision also had a dead call to
-                // window.showHouseholdDetails, which never exists.
-                // Deleted; the members tab re-renders itself above.
-            } else {
-                _showToast(result ? result.reason : 'Failed to remove member', 'error');
+                return true;
             }
-
-        } finally {
-            _processingMemberAction = false;
-        }
+        });
     }
 
-    // =========================================================================
-    // 14. REFRESH FUNCTION
-    // =========================================================================
+    function _openEditMember(householdId, characterId) {
+        if (!characterId) return;
 
-    function refreshHouseholdMembersTab(householdId) {
-        var containerId = 'tab-members';
-        var container = document.getElementById(containerId);
-        if (!container) {
-            var containers = document.querySelectorAll('.tab-pane[id*="members"]');
-            for (var i = 0; i < containers.length; i++) {
-                if (containers[i].id) {
-                    containerId = containers[i].id;
-                    container = containers[i];
-                    break;
-                }
-            }
+        var members = T.getHouseholdMembers(householdId) || [];
+        var m = null;
+        for (var i = 0; i < members.length; i++) {
+            if (members[i].characterId === characterId) { m = members[i]; break; }
         }
+        if (!m) { T.toastError('Member not found.'); return; }
 
-        if (!container) {
-            console.warn('[MembersTab] Container not found');
+        var departments = T.getHouseholdDepartments(householdId) || [];
+        var deptOptions = '<option value="">None</option>' + departments.map(function (d) {
+            return '<option value="' + T.esc(d.id) + '"' +
+                (d.id === m.departmentId ? ' selected' : '') + '>' +
+                T.esc(d.name) +
+            '</option>';
+        }).join('');
+
+        var year;
+        try { year = T.requireCurrentYear(); }
+        catch (e) { T.toastError('Current year unavailable: ' + (e && e.message)); return; }
+
+        var content =
+            '<div class="hh-modal-form">' +
+                '<div class="hh-modal-current">' +
+                    'Editing: <strong>' + T.esc(m.characterName) + '</strong>' +
+                    (m.isHead ? ' · Head' : '') +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Member Type</label>' +
+                    '<select data-field="type">' +
+                        '<option value="family"' + (m.type === 'family' ? ' selected' : '') + '>Family</option>' +
+                        '<option value="staff"' + (m.type === 'staff' ? ' selected' : '') + '>Staff</option>' +
+                    '</select>' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Role</label>' +
+                    '<input type="text" data-field="role" value="' + T.esc(m.role || '') + '">' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Department</label>' +
+                    '<select data-field="dept">' + deptOptions + '</select>' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Joined Year</label>' +
+                    '<input type="number" data-field="year" value="' +
+                        (m.joinedYear || year) + '" min="1">' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Make Head</label>' +
+                    '<select data-field="head">' +
+                        '<option value="false"' + (m.isHead ? '' : ' selected') + '>No</option>' +
+                        '<option value="true"' + (m.isHead ? ' selected' : '') + '>Yes</option>' +
+                    '</select>' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Notes</label>' +
+                    '<textarea data-field="notes" rows="2">' +
+                        T.esc(m.notes || '') +
+                    '</textarea>' +
+                '</div>' +
+            '</div>';
+
+        var modal = T.openModal({
+            title: 'Edit Member: ' + m.characterName,
+            content: content,
+            confirmText: 'Save Changes',
+            cancelText: 'Cancel',
+            onConfirm: function () {
+                var root = modal && modal.element;
+                if (!root) { T.toastError('Modal root unavailable.'); return false; }
+
+                var type = root.querySelector('[data-field="type"]').value;
+                var role = (root.querySelector('[data-field="role"]').value || '').trim() ||
+                    (type === 'family' ? 'Family Member' : 'Staff');
+                var deptId = root.querySelector('[data-field="dept"]').value || null;
+                var y = parseInt(root.querySelector('[data-field="year"]').value, 10);
+                if (!isFinite(y) || y < 1) { T.toastError('Invalid year.'); return false; }
+                var isHead = root.querySelector('[data-field="head"]').value === 'true';
+                var notes = (root.querySelector('[data-field="notes"]').value || '').trim();
+
+                var HC = T.commands();
+                if (!HC) { T.toastError('HouseholdCommands is not loaded.'); return false; }
+
+                var result = HC.updateMember(householdId, characterId, {
+                    type: type,
+                    role: role,
+                    departmentId: deptId,
+                    joinedYear: y,
+                    isHead: isHead,
+                    notes: notes || null
+                });
+                if (!result || result.success !== true) {
+                    T.toastError('Failed to update: ' + (result ? result.reason : 'unknown'));
+                    return false;
+                }
+
+                var persisted = HC.persist();
+                if (persisted && persisted.success === false) {
+                    T.toastWarning('Updated in memory; storage write failed.');
+                } else {
+                    T.toastSuccess('Member updated.');
+                }
+                T.closeTopModal();
+                _rerender(householdId);
+                if (typeof window.refreshHouseholdList === 'function') {
+                    window.refreshHouseholdList();
+                }
+                return true;
+            }
+        });
+    }
+
+    function _openTransferMember(householdId, characterId) {
+        if (!characterId) return;
+        var ch = T.character(characterId);
+        if (!ch) { T.toastError('Character not found.'); return; }
+
+        var allHouseholds;
+        try { allHouseholds = T.queries().getAllHouseholds() || []; }
+        catch (e) { allHouseholds = []; }
+
+        var candidates = allHouseholds.filter(function (h) {
+            return h.id !== householdId && h.status !== 'deprecated';
+        });
+        if (candidates.length === 0) {
+            T.toastInfo('No other households are available as transfer targets.');
             return;
         }
 
-        renderHouseholdMembersTab(containerId, householdId);
+        var opts = candidates.map(function (h) {
+            return '<option value="' + T.esc(h.id) + '">' + T.esc(h.name) + '</option>';
+        }).join('');
+
+        var year;
+        try { year = T.requireCurrentYear(); }
+        catch (e) { T.toastError('Current year unavailable: ' + (e && e.message)); return; }
+
+        var content =
+            '<div class="hh-modal-form">' +
+                '<div class="hh-modal-current">' +
+                    'Transferring: <strong>' + T.esc(T.characterName(ch)) + '</strong>' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Target Household</label>' +
+                    '<select data-field="target">' +
+                        '<option value="">Select a household…</option>' +
+                        opts +
+                    '</select>' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Transfer Year</label>' +
+                    '<input type="number" data-field="year" value="' + year + '" min="1">' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Reason</label>' +
+                    '<input type="text" data-field="reason" ' +
+                        'placeholder="e.g., Marriage, Employment…">' +
+                '</div>' +
+            '</div>';
+
+        var modal = T.openModal({
+            title: 'Transfer Member',
+            content: content,
+            confirmText: 'Transfer',
+            cancelText: 'Cancel',
+            onConfirm: function () {
+                var root = modal && modal.element;
+                if (!root) { T.toastError('Modal root unavailable.'); return false; }
+
+                var targetId = root.querySelector('[data-field="target"]').value;
+                if (!targetId) { T.toastError('Please select a target household.'); return false; }
+
+                var y = parseInt(root.querySelector('[data-field="year"]').value, 10);
+                if (!isFinite(y) || y < 1) { T.toastError('Invalid year.'); return false; }
+
+                var reason = (root.querySelector('[data-field="reason"]').value || '').trim() ||
+                    'Transferred';
+
+                var HC = T.commands();
+                if (!HC) { T.toastError('HouseholdCommands is not loaded.'); return false; }
+
+                var result = HC.transferMember(characterId, targetId, {
+                    year: y,
+                    reason: reason
+                });
+                if (!result || result.success !== true) {
+                    T.toastError('Transfer failed: ' + (result ? result.reason : 'unknown'));
+                    return false;
+                }
+
+                // transferMember returns { toHouseholdId }, NOT
+                // { toHousehold: { name } }. The prior revision read the
+                // latter and threw a TypeError on the toast line for
+                // every successful transfer.
+                var targetHousehold = T.getHousehold(targetId);
+                var targetName = targetHousehold ? targetHousehold.name : 'the target household';
+
+                var persisted = HC.persist();
+                if (persisted && persisted.success === false) {
+                    T.toastWarning('Transferred in memory; storage write failed.');
+                } else {
+                    T.toastSuccess(T.characterName(ch) + ' transferred to ' + targetName + '.');
+                }
+                T.closeTopModal();
+                _rerender(householdId);
+                if (typeof window.refreshHouseholdList === 'function') {
+                    window.refreshHouseholdList();
+                }
+                return true;
+            }
+        });
     }
 
-    // =========================================================================
-    // 15. TAB SYSTEM REGISTRATION
-    // =========================================================================
+    function _openTransferIn(householdId) {
+        var summary = T.getHousehold(householdId);
+        if (!summary) { T.toastError('Household not found.'); return; }
 
-    function registerMembersTabRenderer() {
-        if (typeof window.registerTabRenderer === 'function') {
-            window.registerTabRenderer('members', function(containerId, locationId, summary) {
-                var householdId = _getCurrentHouseholdId();
-                if (!householdId) {
-                    var container = document.getElementById(containerId);
-                    if (container) {
-                        container.innerHTML = '<div class="placeholder">No household selected</div>';
-                    }
+        if (typeof window.openCharacterSelector !== 'function') {
+            T.toastError(
+                'Transfer In unavailable: openCharacterSelector is not loaded. ' +
+                'Load js/selectors/modals-char-selector.js.'
+            );
+            return;
+        }
+
+        window.openCharacterSelector({
+            title: 'Transfer Character to ' + summary.name,
+            filters: { showDeceased: false },
+            onSelect: function (ch) {
+                if (!ch) return;
+
+                var current = T.getCharacterHousehold(ch.id);
+                if (current && current.id === householdId) {
+                    T.toastWarning('Character is already a member of this household.');
                     return;
                 }
-                renderHouseholdMembersTab(containerId, householdId);
-            }, true);
-            console.log('[HouseholdMembersTab] Registered with tab system');
-        }
-    }
 
-    // =========================================================================
-    // 16. EXPORTS
-    // =========================================================================
-
-    window.renderHouseholdMembersTab = renderHouseholdMembersTab;
-    window.refreshHouseholdMembersTab = refreshHouseholdMembersTab;
-    window.registerMembersTabRenderer = registerMembersTabRenderer;
-
-    // Auto-register if tab system is available
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(registerMembersTabRenderer, 100);
+                _presentTransferInForm(householdId, ch, current);
+            }
         });
-    } else {
-        setTimeout(registerMembersTabRenderer, 100);
     }
 
+    function _presentTransferInForm(householdId, ch, current) {
+        var year;
+        try { year = T.requireCurrentYear(); }
+        catch (e) { T.toastError('Current year unavailable: ' + (e && e.message)); return; }
+
+        var fromLabel = current ? current.name : 'no household';
+
+        var content =
+            '<div class="hh-modal-form">' +
+                '<div class="hh-modal-current">' +
+                    'Transferring: <strong>' + T.esc(T.characterName(ch)) + '</strong>' +
+                    ' from <strong>' + T.esc(fromLabel) + '</strong>' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Member Type</label>' +
+                    '<select data-field="type">' +
+                        '<option value="family">Family</option>' +
+                        '<option value="staff">Staff</option>' +
+                    '</select>' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Role</label>' +
+                    '<input type="text" data-field="role" value="Family Member">' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Transfer Year</label>' +
+                    '<input type="number" data-field="year" value="' + year + '" min="1">' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Reason</label>' +
+                    '<input type="text" data-field="reason" ' +
+                        'placeholder="e.g., Marriage, Employment…">' +
+                '</div>' +
+            '</div>';
+
+        var modal = T.openModal({
+            title: 'Transfer Character to ' + (T.getHousehold(householdId) || {}).name,
+            content: content,
+            confirmText: 'Transfer',
+            cancelText: 'Cancel',
+            onConfirm: function () {
+                var root = modal && modal.element;
+                if (!root) { T.toastError('Modal root unavailable.'); return false; }
+
+                var type = root.querySelector('[data-field="type"]').value || 'family';
+                var role = (root.querySelector('[data-field="role"]').value || '').trim() ||
+                    (type === 'family' ? 'Family Member' : 'Staff');
+                var y = parseInt(root.querySelector('[data-field="year"]').value, 10);
+                if (!isFinite(y) || y < 1) { T.toastError('Invalid year.'); return false; }
+                var reason = (root.querySelector('[data-field="reason"]').value || '').trim() ||
+                    'Transferred';
+
+                var HC = T.commands();
+                if (!HC) { T.toastError('HouseholdCommands is not loaded.'); return false; }
+
+                var result = HC.transferMember(ch.id, householdId, {
+                    year: y,
+                    reason: reason,
+                    role: role,
+                    type: type
+                });
+                if (!result || result.success !== true) {
+                    T.toastError('Transfer failed: ' + (result ? result.reason : 'unknown'));
+                    return false;
+                }
+
+                var persisted = HC.persist();
+                if (persisted && persisted.success === false) {
+                    T.toastWarning('Transferred in memory; storage write failed.');
+                } else {
+                    T.toastSuccess(T.characterName(ch) + ' transferred in.');
+                }
+                T.closeTopModal();
+                _rerender(householdId);
+                if (typeof window.refreshHouseholdList === 'function') {
+                    window.refreshHouseholdList();
+                }
+                return true;
+            }
+        });
+    }
+
+    function _confirmRemoveMember(householdId, characterId) {
+        if (!characterId) return;
+        var ch = T.character(characterId);
+        var name = ch ? T.characterName(ch) : 'this member';
+
+        T.confirmDialog(
+            'Remove ' + name + ' from the household?',
+            'Remove Member',
+            function () {
+                var HC = T.commands();
+                if (!HC) { T.toastError('HouseholdCommands is not loaded.'); return; }
+
+                var y;
+                try { y = T.requireCurrentYear(); }
+                catch (e) { T.toastError('Current year unavailable: ' + (e && e.message)); return; }
+
+                var result = HC.removeMember(householdId, characterId, {
+                    reason: 'Removed',
+                    leftYear: y
+                });
+                if (!result || result.success !== true) {
+                    T.toastError('Failed to remove: ' + (result ? result.reason : 'unknown'));
+                    return;
+                }
+
+                var persisted = HC.persist();
+                if (persisted && persisted.success === false) {
+                    T.toastWarning('Removed in memory; storage write failed.');
+                } else {
+                    T.toastInfo(name + ' removed from household.');
+                }
+                _rerender(householdId);
+                if (typeof window.refreshHouseholdList === 'function') {
+                    window.refreshHouseholdList();
+                }
+            }
+        );
+    }
+
+    // =========================================================================
+    // 10. REGISTRATION
+    // =========================================================================
+
+    T.register(TAB_ID, renderHouseholdMembersTab);
+
+    // =========================================================================
+    // 11. EXPORTS
+    // =========================================================================
+
+    window.HouseholdMembersTab = {
+        id: TAB_ID,
+        render: renderHouseholdMembersTab
+    };
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.HouseholdMembersTab;
+    }
 })();
