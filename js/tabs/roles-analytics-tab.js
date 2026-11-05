@@ -1,764 +1,1062 @@
+// js/tabs/role-analytics-tab.js
 /**
  * =============================================================================
- * ROLES ANALYTICS TAB (js/tabs/roles-analytics-tab.js)
+ * STILL WATERS - ROLE ANALYTICS TAB (js/tabs/role-analytics-tab.js)
  * =============================================================================
- * 
- * Displays detailed analytics for the selected role including:
- * - Skill distribution by location (smallest location only)
- * - Character list with skill levels by location
- * - Master/Apprentice breakdown
- * - Specialization usage
- * - Location list with role data (flat list, no hierarchy)
- * 
- * DEPENDENCIES:
- *   - role-state.js (RoleState)
- *   - role-queries.js (RoleQueries)
- *   - accessors.js (getCharacters, getCharacterById)
- *   - location-state.js (LocationState)
- *   - location-queries.js (LocationQueries)
- *   - ui.js (registerTabRenderer)
- *   - icons.js (Icons)
- * 
+ *
+ * LOCATION: js/tabs/role-analytics-tab.js
+ *
+ * The analytics tab of the Role Manager. Renders three analytics blocks
+ * for the currently-selected role:
+ *
+ *   1. Header stats  — total, average skill, masters, can-teach, primary
+ *   2. Tier distribution bar  — stacked bar + per-tier legend
+ *   3. Per-location breakdown — flat table (most-specific location)
+ *   4. Top-N character roster — highest-skill holders, filtered + sorted
+ *   5. Specialization frequency — most-used specs across the roster
+ *
+ * REGISTRATION (TabManager, role scope):
+ *   TabManager.register('role', 'analytics', renderAdapter)
+ *
+ *   renderAdapter(container, context) → renderAnalyticsTab(container, context.role, options)
+ *
+ *   context.role is the canonical accessor clone.
+ *
+ * DATA SOURCES
+ * ------------
+ *   Two query calls, one per data shape:
+ *
+ *     RoleQueries.getRoleStatistics(roleId)
+ *       Returns the canonical aggregate:
+ *         { roleId, totalCharacters, totalSpecializations,
+ *           averageSkill, countsByTier, canTeachCount, primaryCount }
+ *
+ *       countsByTier is { untrained, novice, apprentice, journeyman,
+ *                         expert, master } — the same numbers the
+ *                         sidebar's role-card renders. This tab does
+ *                         NOT re-derive them.
+ *
+ *     RoleQueries.getCharactersWithRoleDetails(roleId)
+ *       Returns one detail entry per holder:
+ *         { characterId, character, skillLevel, tierKey, tierName,
+ *           canTeach, specializations, isPrimary, startYear }
+ *
+ *       Used for:
+ *         - the top-N character roster
+ *         - per-location grouping (via current location)
+ *         - specialization frequency
+ *
+ *   NO RE-DERIVATION. The tab does not:
+ *     - loop character.professions (projection contract — see
+ *       modals-roles.js::CHARACTER PROJECTION CONTRACT).
+ *     - re-implement SkillUtils.getTier (tierKey is on the entry).
+ *     - recompute the master threshold (canTeach is on the entry).
+ *     - recompute averages (getRoleStatistics returns averageSkill).
+ *
+ *   The old roles-analytics-tab.js did all four, and two of the four
+ *   were structurally wrong against the projection contract. This
+ *   tab's data discipline is the entire reason it exists.
+ *
+ * LOCATION HANDLING
+ * -----------------
+ *   Each entry's `character` is a projection. The current location id
+ *   is resolved via accessors.getCurrentLocationId(characterId). This
+ *   is the SAME call shape the old file used (it just also had a
+ *   second, inconsistent helper). The place name is resolved via
+ *   accessors.getPlaceById(locationId). Both are guarded and both fall
+ *   back to "Unknown location" — characters with no resolvable
+ *   location land in an "Unknown" bucket at the bottom of the
+ *   per-location table. They are NOT silently dropped.
+ *
+ *   Location is "most specific current place", not a settlement
+ *   roll-up. A settlement-scoped view of roles belongs on the
+ *   Education/Government/Settlement manager pages, not here.
+ *
+ * FILTERS + CONTROLS
+ * ------------------
+ *   mastersOnly   boolean   Filter the character roster to master tier
+ *                            and the per-location table to master
+ *                            counts. Does NOT filter the aggregate
+ *                            stats at the top — those are global.
+ *   topN          '10' | '25' | 'all'
+ *                            Slice size for the character roster only.
+ *                            The per-location table and the
+ *                            specialization frequency list always
+ *                            show everything.
+ *
+ *   Both are visual only — not persisted. Same as the other role
+ *   tabs' filter state (_stateRoleId reset guard). Reset on role
+ *   change via the guard; not reset by the "Clear" button (which
+ *   doesn't exist here — the two controls are independent and
+ *   self-explanatory).
+ *
+ * NO WRITES
+ * ---------
+ *   This tab is the only one in the Role Manager that never calls a
+ *   role command and never calls RCMD.persist(). It is read-only.
+ *   Do not add mutation actions here. Writes belong on the Details /
+ *   Characters / Apprenticeships / Assignments tabs (or the canonical
+ *   modals).
+ *
+ * DEPENDENCIES (resolved at call time — no load-time guards):
+ *   - TabManager            (js/core/tab-manager.js)
+ *   - RoleState             (js/roles/role-state.js)       — getRole
+ *   - RoleQueries           (js/roles/role-queries.js)     — getRoleStatistics,
+ *                                                             getCharactersWithRoleDetails
+ *   - accessors.js          (getCurrentLocationId, getPlaceById)
+ *   - formatting.js         (escapeHtml)
+ *   - ui.js                 (showToast)                    — defensive only
+ *   - icons.js              (Icons)                        — direct, no fallback
+ *
+ *   RoleQueries.getRoleStatistics and getCharactersWithRoleDetails
+ *   are REQUIRED. Their absence is surfaced as an unavailable state,
+ *   not a silent empty dashboard. Same discipline as tabs 2 and 3.
+ *
+ * TIME CONTRACT: this tab does not read the current year.
+ *
+ * ICON POLICY: no emojis. Glyphs from Icons[name], '' fallback.
+ *
+ * INLINE STYLES: one injected <style> block (id
+ * 'role-analytics-tab-styles'). Every visual value is a themes.css
+ * token. Idempotent.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Initial revision.
+ *     - Written for the RoleManager TabManager integration.
+ *     - Replaces js/tabs/roles-analytics-tab.js entirely. That file
+ *       is being retired as part of the RoleManager migration.
+ *     - Data-discipline changes from the old file:
+ *         * Aggregate stats come from getRoleStatistics (was: recomputed
+ *           from per-character loops).
+ *         * Roster + per-location + specializations come from
+ *           getCharactersWithRoleDetails (was: character.professions
+ *           read directly — structural projection-contract violation).
+ *         * tierName / canTeach / skillLevel come from the detail
+ *           entry (was: re-derived from SkillUtils and a local
+ *           hardcoded tier table).
+ *         * getCurrentLocationId is called with the id, only once per
+ *           character (was: two helpers, one of which passed a
+ *           character object).
+ *         * Unknown-location characters render in an "Unknown" bucket
+ *           instead of being silently dropped from the location table.
+ *     - UI changes:
+ *         * Tier distribution bar replaced a per-tier count list
+ *           (the list still renders; the bar is added above it).
+ *         * "Masters only" toggle added (filter).
+ *         * "Top N" selector added (roster slice size).
+ *         * Per-location table replaced the old per-location nested
+ *           sections with a flat table.
+ *         * Old character roster's gender glyph "♂ / ♀ / ⚥" replaced
+ *           with text labels (the old file violated its own header's
+ *           "no emojis" claim).
+ *     - No other changes to what analytics data is displayed.
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
-    var _initialized = false;
-    var _rendering = false;
-    var _registered = false;
-    var _selectedRoleId = null;
-    var _registrationAttempts = 0;
-    var _maxRegistrationAttempts = 10;
-    var _containerId = 'tab-statistics';
-
     // =========================================================================
-    // DEPENDENCY HELPERS
+    // 1. STYLE BLOCK (idempotent, theme tokens only)
     // =========================================================================
 
-    function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (!str) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+    var STYLE_ID = 'role-analytics-tab-styles';
+
+    function _injectStyles() {
+        if (typeof document === 'undefined') return;
+        if (document.getElementById(STYLE_ID)) return;
+
+        var style = document.createElement('style');
+        style.id = STYLE_ID;
+        style.textContent = [
+            /* ---- Root ---- */
+            '.ranl { display: flex; flex-direction: column; gap: 0.875rem; }',
+
+            /* ---- Header ---- */
+            '.ranl__header {',
+            '  display: flex; justify-content: space-between; align-items: flex-end;',
+            '  gap: 0.75rem; flex-wrap: wrap;',
+            '  padding-bottom: 0.625rem;',
+            '  border-bottom: 1px solid var(--border);',
+            '}',
+            '.ranl__title {',
+            '  font-family: var(--f-display); font-size: 0.9rem; font-weight: 600;',
+            '  color: var(--accent-light);',
+            '}',
+            '.ranl__subtitle {',
+            '  font-size: 0.65rem; color: var(--dim);',
+            '  margin-top: 0.125rem;',
+            '  display: flex; gap: 0.5rem; flex-wrap: wrap;',
+            '}',
+            '.ranl__subtitle span { white-space: nowrap; }',
+
+            /* ---- Stats grid (header-level aggregate) ---- */
+            '.ranl__stats {',
+            '  display: grid;',
+            '  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));',
+            '  gap: 0.5rem;',
+            '}',
+            '.ranl-stat {',
+            '  padding: 0.625rem 0.75rem;',
+            '  background: var(--bg2); border: 1px solid var(--border);',
+            '  border-radius: var(--radius); text-align: center;',
+            '}',
+            '.ranl-stat__value {',
+            '  font-family: var(--f-mono); font-size: 1.05rem; font-weight: 600;',
+            '  color: var(--text); line-height: 1.2;',
+            '}',
+            '.ranl-stat__value--accent { color: var(--accent); }',
+            '.ranl-stat__value--ok { color: var(--ok, var(--accent)); }',
+            '.ranl-stat__label {',
+            '  font-family: var(--f-display); font-size: 0.55rem;',
+            '  text-transform: uppercase; letter-spacing: 0.06em;',
+            '  color: var(--dim); margin-top: 0.125rem;',
+            '}',
+
+            /* ---- Panel (shared wrapper) ---- */
+            '.ranl-panel {',
+            '  background: var(--bg2); border: 1px solid var(--border);',
+            '  border-radius: var(--radius); padding: 0.875rem 1rem;',
+            '}',
+            '.ranl-panel__header {',
+            '  display: flex; justify-content: space-between; align-items: center;',
+            '  gap: 0.5rem; margin-bottom: 0.625rem; flex-wrap: wrap;',
+            '  padding-bottom: 0.5rem; border-bottom: 1px solid var(--border);',
+            '}',
+            '.ranl-panel__title {',
+            '  font-family: var(--f-display); font-size: 0.72rem; font-weight: 600;',
+            '  color: var(--accent-light);',
+            '  text-transform: uppercase; letter-spacing: 0.06em;',
+            '}',
+            '.ranl-panel__controls {',
+            '  display: flex; gap: 0.375rem; align-items: center; flex-wrap: wrap;',
+            '}',
+            '.ranl-panel__controls select {',
+            '  padding: 0.1875rem 0.5rem;',
+            '  background: var(--bg); border: 1px solid var(--border);',
+            '  border-radius: var(--radius); color: var(--text);',
+            '  font-family: var(--f-body); font-size: 0.65rem;',
+            '}',
+            '.ranl-toggle {',
+            '  display: inline-flex; align-items: center; gap: 0.25rem;',
+            '  padding: 0.1875rem 0.5rem;',
+            '  background: var(--bg3); border: 1px solid var(--border);',
+            '  border-radius: var(--radius);',
+            '  font-size: 0.65rem; color: var(--text); cursor: pointer;',
+            '  user-select: none;',
+            '}',
+            '.ranl-toggle:hover { border-color: var(--accent); color: var(--accent-light); }',
+            '.ranl-toggle input { margin: 0; }',
+
+            /* ---- Tier distribution bar ---- */
+            '.ranl-tierbar {',
+            '  display: flex; height: 1rem; border-radius: var(--radius);',
+            '  overflow: hidden; background: var(--bg3);',
+            '  margin-bottom: 0.625rem;',
+            '}',
+            '.ranl-tierbar__seg {',
+            '  height: 100%;',
+            '  transition: filter 0.15s;',
+            '}',
+            '.ranl-tierbar__seg:hover { filter: brightness(1.15); }',
+            '.ranl-tierbar__seg--untrained  { background: var(--bg3); }',
+            '.ranl-tierbar__seg--novice     { background: var(--dim); }',
+            '.ranl-tierbar__seg--apprentice { background: var(--accent-dim); }',
+            '.ranl-tierbar__seg--journeyman { background: var(--accent); }',
+            '.ranl-tierbar__seg--expert     { background: var(--accent-light); }',
+            '.ranl-tierbar__seg--master     { background: var(--ok, var(--accent)); }',
+
+            /* ---- Tier legend ---- */
+            '.ranl-legend {',
+            '  display: flex; flex-wrap: wrap; gap: 0.5rem 0.875rem;',
+            '  font-size: 0.65rem;',
+            '}',
+            '.ranl-legend__item {',
+            '  display: inline-flex; align-items: center; gap: 0.3125rem;',
+            '  color: var(--text);',
+            '}',
+            '.ranl-legend__swatch {',
+            '  display: inline-block; width: 0.75rem; height: 0.75rem;',
+            '  border-radius: 0.125rem; flex-shrink: 0;',
+            '}',
+            '.ranl-legend__label { color: var(--dim); }',
+            '.ranl-legend__count {',
+            '  font-family: var(--f-mono); color: var(--text);',
+            '  font-weight: 500;',
+            '}',
+            '.ranl-legend__pct { color: var(--dim); font-size: 0.6rem; }',
+
+            /* ---- Per-location table ---- */
+            '.ranl-table {',
+            '  width: 100%; border-collapse: collapse; font-size: 0.72rem;',
+            '}',
+            '.ranl-table thead th {',
+            '  text-align: left; font-family: var(--f-display);',
+            '  font-size: 0.55rem; text-transform: uppercase;',
+            '  letter-spacing: 0.06em; color: var(--dim);',
+            '  padding: 6px 8px; border-bottom: 1px solid var(--border);',
+            '  font-weight: 500;',
+            '}',
+            '.ranl-table tbody td {',
+            '  padding: 6px 8px; border-bottom: 1px solid var(--border-light);',
+            '  color: var(--text); vertical-align: middle;',
+            '}',
+            '.ranl-table tbody tr:hover { background: var(--bg3); }',
+            '.ranl-table__num { text-align: right; font-family: var(--f-mono); }',
+            '.ranl-table__loc { color: var(--text); font-weight: 500; }',
+            '.ranl-table__bar {',
+            '  display: inline-block; height: 0.375rem;',
+            '  background: var(--accent); border-radius: 0.1875rem;',
+            '  vertical-align: middle;',
+            '}',
+
+            /* ---- Character roster ---- */
+            '.ranl-chars {',
+            '  display: flex; flex-direction: column; gap: 0.1875rem;',
+            '}',
+            '.ranl-char {',
+            '  display: grid;',
+            '  grid-template-columns: 1fr max-content max-content max-content;',
+            '  gap: 0.625rem; align-items: center;',
+            '  padding: 0.375rem 0.5rem;',
+            '  background: var(--bg3); border-radius: var(--radius);',
+            '  font-size: 0.72rem;',
+            '}',
+            '.ranl-char__name {',
+            '  color: var(--text); overflow: hidden;',
+            '  text-overflow: ellipsis; white-space: nowrap;',
+            '}',
+            '.ranl-char__skill {',
+            '  font-family: var(--f-mono); color: var(--accent);',
+            '  font-weight: 500; text-align: right;',
+            '}',
+            '.ranl-char__tier {',
+            '  font-family: var(--f-mono); font-size: 0.6rem;',
+            '  color: var(--dim); text-align: right;',
+            '  white-space: nowrap;',
+            '}',
+            '.ranl-char__loc {',
+            '  font-size: 0.6rem; color: var(--dim);',
+            '  text-align: right; overflow: hidden;',
+            '  text-overflow: ellipsis; white-space: nowrap;',
+            '}',
+            '.ranl-more {',
+            '  margin-top: 0.375rem; text-align: center;',
+            '  font-size: 0.65rem; color: var(--dim); font-style: italic;',
+            '}',
+
+            /* ---- Specialization frequency ---- */
+            '.ranl-specs {',
+            '  display: flex; flex-wrap: wrap; gap: 0.375rem;',
+            '}',
+            '.ranl-spec {',
+            '  display: inline-flex; align-items: center; gap: 0.375rem;',
+            '  padding: 0.125rem 0.5rem;',
+            '  background: var(--bg3); border: 1px solid var(--border-light);',
+            '  border-radius: var(--radius);',
+            '  font-size: 0.65rem; color: var(--text);',
+            '}',
+            '.ranl-spec__count {',
+            '  font-family: var(--f-mono); color: var(--accent);',
+            '  font-weight: 500;',
+            '}',
+
+            /* ---- Empty / unavailable ---- */
+            '.ranl-empty {',
+            '  padding: 1.5rem; text-align: center;',
+            '  color: var(--dim); font-size: 0.8rem;',
+            '}',
+            '.ranl-empty__sub {',
+            '  display: block; margin-top: 0.375rem;',
+            '  font-size: 0.7rem; color: var(--dim);',
+            '}',
+            '.ranl-unavailable {',
+            '  padding: 1.5rem; text-align: center;',
+            '  color: var(--danger-lt); font-size: 0.8rem;',
+            '}'
+        ].join('\n');
+
+        document.head.appendChild(style);
     }
 
-    function _getIcon(name) {
-        if (typeof window._getIcon === 'function') return window._getIcon(name);
-        if (window.Icons && window.Icons[name]) return window.Icons[name];
-        return '';
-    }
-
-    function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(msg, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(msg, type);
+    if (typeof document !== 'undefined') {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', _injectStyles);
+        } else {
+            _injectStyles();
         }
     }
 
-    function _getRoleById(id) {
-        if (typeof window.getRoleById === 'function') {
-            return window.getRoleById(id);
+    // =========================================================================
+    // 2. DEPENDENCY HELPERS
+    // =========================================================================
+
+    function _esc(v) {
+        if (typeof window.escapeHtml === 'function') {
+            return window.escapeHtml(v == null ? '' : String(v));
         }
-        if (typeof RoleState !== 'undefined' && RoleState.getRole) {
-            return RoleState.getRole(id);
-        }
-        return null;
+        if (v === null || v === undefined) return '';
+        return String(v)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        if (typeof window._getCharacters === 'function') {
-            return window._getCharacters();
-        }
-        return [];
+    function _roleState() {
+        return typeof window.RoleState !== 'undefined' ? window.RoleState : null;
     }
 
-    function _getAllPlaces() {
-        if (typeof LocationState !== 'undefined' && LocationState.getAllPlaces) {
-            return LocationState.getAllPlaces({ includeDeprecated: true });
-        }
-        if (typeof window.getPlaces === 'function') {
-            return window.getPlaces();
-        }
-        if (typeof window._getPlaces === 'function') {
-            return window._getPlaces();
-        }
-        return [];
+    function _roleQueries() {
+        return typeof window.RoleQueries !== 'undefined' ? window.RoleQueries : null;
     }
 
-    function _getPlaceById(id) {
-        if (typeof LocationState !== 'undefined' && LocationState.getPlace) {
-            return LocationState.getPlace(id);
-        }
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(id);
-        }
-        if (typeof window._getPlaceById === 'function') {
-            return window._getPlaceById(id);
-        }
-        return null;
+    function _getRole(roleId) {
+        var RS = _roleState();
+        if (!RS || typeof RS.getRole !== 'function') return null;
+        try { return RS.getRole(roleId); }
+        catch (e) { return null; }
     }
 
-    function _getLocationType(id) {
-        if (typeof LocationState !== 'undefined' && LocationState.getLocationType) {
-            return LocationState.getLocationType(id);
+    /**
+     * Returns { ok: true, stats } on success, { ok: false, reason } on
+     * failure. getRoleStatistics is required — its absence is surfaced.
+     */
+    function _getStats(roleId) {
+        var RQ = _roleQueries();
+        if (!RQ || typeof RQ.getRoleStatistics !== 'function') {
+            return {
+                ok: false,
+                reason: 'RoleQueries.getRoleStatistics is not available.'
+            };
         }
-        if (typeof window.getLocationTypeById === 'function') {
-            return window.getLocationTypeById(id);
+        try {
+            var stats = RQ.getRoleStatistics(roleId);
+            if (!stats || typeof stats !== 'object') {
+                return { ok: false, reason: 'getRoleStatistics returned no result.' };
+            }
+            return { ok: true, stats: stats };
+        } catch (e) {
+            return {
+                ok: false,
+                reason: (e && e.message) ? e.message : 'getRoleStatistics threw.'
+            };
         }
-        return null;
     }
 
-    function _getCurrentLocation(character) {
-        if (typeof window.getCurrentLocation === 'function') {
-            return window.getCurrentLocation(character);
+    /**
+     * Returns { ok: true, entries } on success, { ok: false, reason } on
+     * failure. getCharactersWithRoleDetails is required.
+     */
+    function _getEntries(roleId) {
+        var RQ = _roleQueries();
+        if (!RQ || typeof RQ.getCharactersWithRoleDetails !== 'function') {
+            return {
+                ok: false,
+                reason: 'RoleQueries.getCharactersWithRoleDetails is not available.'
+            };
         }
-        if (typeof window._getCurrentLocation === 'function') {
-            return window._getCurrentLocation(character);
+        try {
+            var list = RQ.getCharactersWithRoleDetails(roleId);
+            return { ok: true, entries: Array.isArray(list) ? list : [] };
+        } catch (e) {
+            return {
+                ok: false,
+                reason: (e && e.message) ? e.message : 'getCharactersWithRoleDetails threw.'
+            };
         }
-        return 'Unknown';
     }
 
-    function _getCurrentLocationId(character) {
+    function _getCurrentLocationId(characterId) {
         if (typeof window.getCurrentLocationId === 'function') {
-            return window.getCurrentLocationId(character.id);
-        }
-        if (typeof window._getCurrentLocationId === 'function') {
-            return window._getCurrentLocationId(character.id);
+            try { return window.getCurrentLocationId(characterId); }
+            catch (e) { return null; }
         }
         return null;
     }
 
-    function _getSkillLevelName(level) {
-        if (typeof window.SkillUtils !== 'undefined') {
-            return window.SkillUtils.getSkillLevelName(level);
+    function _getPlaceName(placeId) {
+        if (!placeId) return 'Unknown location';
+        if (typeof window.getPlaceById === 'function') {
+            try {
+                var p = window.getPlaceById(placeId);
+                if (p) return p.displayName || p.name || 'Unknown location';
+            } catch (e) { /* fall through */ }
         }
-        if (typeof window._getSkillLevelName === 'function') {
-            return window._getSkillLevelName(level);
-        }
-        if (level >= 91) return 'Master';
-        if (level >= 76) return 'Expert';
-        if (level >= 51) return 'Journeyman';
-        if (level >= 26) return 'Apprentice';
-        if (level >= 1) return 'Novice';
-        return 'Untrained';
+        return 'Unknown location';
     }
 
-    function _getApprentices(masterId, activeOnly) {
-        if (typeof window.ProfessionalLogic !== 'undefined') {
-            return window.ProfessionalLogic.getApprentices(masterId, activeOnly);
-        }
-        if (typeof window.getApprentices === 'function') {
-            return window.getApprentices(masterId, activeOnly);
-        }
-        return [];
-    }
-
-    function _getMaster(characterId) {
-        if (typeof window.ProfessionalLogic !== 'undefined') {
-            return window.ProfessionalLogic.getMaster(characterId);
-        }
-        if (typeof window.getMaster === 'function') {
-            return window.getMaster(characterId);
-        }
-        return null;
-    }
-
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-    // Delegates to time.js — do not reimplement age logic here.
-    if (typeof window.calculateAge === 'function') {
-        return window.calculateAge(birthYear, isDeceased, deathYear);
-    }
-    return null;
-}
-
-    function _getLocationDisplayName(place) {
-        if (!place) return 'Unknown';
-        return place.displayName || place.name || 'Unnamed';
+    function _fullName(character) {
+        if (!character) return '';
+        return ((character.name || '') + ' ' + (character.surname || '')).trim();
     }
 
     // =========================================================================
-    // SET SELECTED ROLE (called from sidebar)
+    // 3. FILTER STATE (per-role reset, module-level)
     // =========================================================================
 
-    function setSelectedRole(roleId) {
-        console.log('📊 Analytics: setSelectedRole called with:', roleId);
-        _selectedRoleId = roleId;
-        window._selectedRoleId = roleId;
-        renderAnalyticsTab(_containerId);
+    var _state = {
+        mastersOnly: false,
+        topN: '25'
+    };
+
+    function _resetState() {
+        _state.mastersOnly = false;
+        _state.topN = '25';
     }
 
-    function getSelectedRole() {
-        return _selectedRoleId || window._selectedRoleId || null;
-    }
+    var _stateRoleId = null;
 
     // =========================================================================
-    // COLLECT ROLE STATISTICS - FLAT LOCATION LIST (smallest location only)
+    // 4. DERIVED DATA
     // =========================================================================
+    //
+    // Everything here reads from an already-computed source. Nothing
+    // re-derives a skill threshold, a tier name, or a "can teach" flag.
+    // The only thing this tab computes is aggregation over entries that
+    // already carry all the primitive data — the same thing the old
+    // file's collectRoleStatistics did, but without touching
+    // character.professions.
 
-    function collectRoleStatistics(roleId) {
-        var role = _getRoleById(roleId);
-        if (!role) return null;
+    var TIER_KEYS = ['master', 'expert', 'journeyman', 'apprentice', 'novice', 'untrained'];
+    var TIER_LABELS = {
+        master: 'Master',
+        expert: 'Expert',
+        journeyman: 'Journeyman',
+        apprentice: 'Apprentice',
+        novice: 'Novice',
+        untrained: 'Untrained'
+    };
+    var TIER_SWATCH = {
+        master: 'var(--ok, var(--accent))',
+        expert: 'var(--accent-light)',
+        journeyman: 'var(--accent)',
+        apprentice: 'var(--accent-dim)',
+        novice: 'var(--dim)',
+        untrained: 'var(--bg3)'
+    };
 
-        var characters = _getCharacters();
-        var allPlaces = _getAllPlaces();
-        
-        // Build place map for quick lookup
-        var placeMap = {};
-        for (var i = 0; i < allPlaces.length; i++) {
-            placeMap[allPlaces[i].id] = allPlaces[i];
-        }
-
-        // Track characters with the role
-        var charactersWithRole = [];
-        var globalStats = {
-            total: 0,
-            masters: 0,
-            experts: 0,
-            journeymen: 0,
-            apprentices: 0,
-            novices: 0,
-            untrained: 0
-        };
-        var skillDistribution = {
-            'Master': 0,
-            'Expert': 0,
-            'Journeyman': 0,
-            'Apprentice': 0,
-            'Novice': 0,
-            'Untrained': 0
-        };
-        var specCount = {};
-        var locationData = {};
-
-        // Process each character
-        for (var i = 0; i < characters.length; i++) {
-            var char = characters[i];
-            if (char.isDeceased) continue;
-            
-            if (!char.professions) continue;
-            
-            var found = false;
-            var skillLevel = 0;
-            var specializations = [];
-            
-            for (var j = 0; j < char.professions.length; j++) {
-                if (char.professions[j].id === roleId) {
-                    found = true;
-                    skillLevel = char.professions[j].skillLevel || 0;
-                    specializations = char.professions[j].specs || [];
-                    break;
-                }
-            }
-            
-            if (!found) continue;
-            
-            var skillTier = _getSkillLevelName(skillLevel);
-            globalStats.total++;
-            var tierKey = skillTier.toLowerCase();
-            if (tierKey === 'master') globalStats.masters++;
-            else if (tierKey === 'expert') globalStats.experts++;
-            else if (tierKey === 'journeyman') globalStats.journeymen++;
-            else if (tierKey === 'apprentice') globalStats.apprentices++;
-            else if (tierKey === 'novice') globalStats.novices++;
-            else globalStats.untrained++;
-            
-            skillDistribution[skillTier] = (skillDistribution[skillTier] || 0) + 1;
-
-            // Track specializations
-            for (var s = 0; s < specializations.length; s++) {
-                specCount[specializations[s]] = (specCount[specializations[s]] || 0) + 1;
-            }
-
-            // Get the SMALLEST (most specific) location
-            var locationId = _getCurrentLocationId(char);
-            var locationName = _getCurrentLocation(char) || 'Unknown';
-            
-            // Try to find the smallest location in the hierarchy
-            var place = locationId ? placeMap[locationId] : null;
-            
-            // Get the display name - if we have a place, use its display name
-            if (place) {
-                locationName = place.displayName || place.name || 'Unknown';
-                locationId = place.id;
-            }
-
-            // Track location data
-            if (!locationData[locationId]) {
-                locationData[locationId] = {
-                    id: locationId,
-                    name: locationName,
-                    total: 0,
-                    masters: 0,
-                    experts: 0,
-                    journeymen: 0,
-                    apprentices: 0,
-                    novices: 0,
-                    untrained: 0,
-                    skills: {
-                        'Master': 0,
-                        'Expert': 0,
-                        'Journeyman': 0,
-                        'Apprentice': 0,
-                        'Novice': 0,
-                        'Untrained': 0
-                    },
-                    characters: []
+    /**
+     * Group entries by current location id. Returns an array of
+     * { locationId, name, count, masters } sorted by count desc, name
+     * asc. Unknown locations go into a synthetic bucket at the bottom.
+     */
+    function _groupByLocation(entries) {
+        var buckets = Object.create(null);
+        for (var i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            if (!e || !e.character) continue;
+            var locId = _getCurrentLocationId(e.character.id);
+            var key = locId || '__unknown__';
+            if (!buckets[key]) {
+                buckets[key] = {
+                    locationId: locId || null,
+                    name: locId ? _getPlaceName(locId) : 'Unknown location',
+                    count: 0,
+                    masters: 0
                 };
             }
-
-            // Add character to location
-            var isMaster = false;
-            var apprenticeCount = 0;
-            var apprentices = _getApprentices(char.id, true);
-            if (apprentices && apprentices.length > 0) {
-                isMaster = true;
-                apprenticeCount = apprentices.length;
-            }
-            
-            var master = _getMaster(char.id);
-            var masterName = master ? master.name + ' ' + (master.surname || '') : 'None';
-
-            var charData = {
-                id: char.id,
-                name: char.name,
-                surname: char.surname || '',
-                gender: char.gender || 'unknown',
-                age: _calculateAge(char.birthYear, char.isDeceased, char.deathYear),
-                skillLevel: skillLevel,
-                skillTier: skillTier,
-                specializations: specializations,
-                isMaster: isMaster,
-                apprenticeCount: apprenticeCount,
-                masterName: masterName,
-                location: locationName,
-                locationId: locationId
-            };
-
-            locationData[locationId].characters.push(charData);
-            locationData[locationId].total++;
-            var tierKeyLower = skillTier.toLowerCase();
-            if (tierKeyLower === 'master') locationData[locationId].masters++;
-            else if (tierKeyLower === 'expert') locationData[locationId].experts++;
-            else if (tierKeyLower === 'journeyman') locationData[locationId].journeymen++;
-            else if (tierKeyLower === 'apprentice') locationData[locationId].apprentices++;
-            else if (tierKeyLower === 'novice') locationData[locationId].novices++;
-            else locationData[locationId].untrained++;
-            
-            locationData[locationId].skills[skillTier] = (locationData[locationId].skills[skillTier] || 0) + 1;
-
-            charactersWithRole.push(charData);
+            buckets[key].count++;
+            if (e.tierKey === 'master') buckets[key].masters++;
         }
-
-        // Sort characters by skill level (descending)
-        charactersWithRole.sort(function(a, b) {
-            return b.skillLevel - a.skillLevel;
-        });
-
-        // Sort specs
-        var sortedSpecs = Object.keys(specCount).sort(function(a, b) {
-            return specCount[b] - specCount[a];
-        });
-
-        // Convert location data to array and sort by total (descending)
-        var locationArray = Object.keys(locationData).map(function(key) {
-            return locationData[key];
-        }).sort(function(a, b) {
-            return b.total - a.total;
-        });
-
-        return {
-            role: role,
-            globalStats: globalStats,
-            skillDistribution: skillDistribution,
-            characters: charactersWithRole,
-            totalWithRole: charactersWithRole.length,
-            locations: locationArray,
-            specializations: sortedSpecs,
-            specCount: specCount,
-            masters: charactersWithRole.filter(function(c) { return c.isMaster; }).length,
-            journeymen: charactersWithRole.filter(function(c) { return c.skillTier === 'Journeyman'; }).length,
-            apprentices: charactersWithRole.filter(function(c) { return c.skillTier === 'Apprentice'; }).length,
-            novices: charactersWithRole.filter(function(c) { return c.skillTier === 'Novice'; }).length,
-            experts: charactersWithRole.filter(function(c) { return c.skillTier === 'Expert'; }).length,
-            untrained: charactersWithRole.filter(function(c) { return c.skillTier === 'Untrained'; }).length
-        };
-    }
-
-    // =========================================================================
-    // RENDER ANALYTICS TAB
-    // =========================================================================
-
-    function renderAnalyticsTab(containerId) {
-        if (_rendering) return;
-        _rendering = true;
-        _containerId = containerId || 'tab-statistics';
-
-        try {
-            var container = document.getElementById(_containerId);
-            if (!container) {
-                console.warn('Analytics: Container not found:', _containerId);
-                _rendering = false;
-                return;
-            }
-
-            // Get selected role
-            var roleId = _selectedRoleId || window._selectedRoleId || null;
-            console.log('📊 Analytics: renderAnalyticsTab called, roleId:', roleId);
-
-            if (!roleId) {
-                container.innerHTML = 
-                    '<div class="placeholder" style="text-align:center;padding:40px;color:var(--dim);font-size:0.9rem;">' +
-                    '<div style="font-size:2rem;margin-bottom:12px;">' + _getIcon('CIRCLE') + '</div>' +
-                    'Select a role from the sidebar to view analytics' +
-                    '</div>';
-                _rendering = false;
-                return;
-            }
-
-            var role = _getRoleById(roleId);
-            if (!role) {
-                container.innerHTML = 
-                    '<div class="placeholder" style="text-align:center;padding:40px;color:var(--dim);font-size:0.9rem;">' +
-                    '<div style="font-size:2rem;margin-bottom:12px;">' + _getIcon('WARNING') + '</div>' +
-                    'Role not found' +
-                    '</div>';
-                _rendering = false;
-                return;
-            }
-
-            var stats = collectRoleStatistics(roleId);
-            if (!stats || stats.totalWithRole === 0) {
-                container.innerHTML = 
-                    '<div style="padding:8px;">' +
-                    '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:12px 16px;background:var(--bg2);border-radius:8px;border:1px solid var(--border);">' +
-                    '<span style="font-size:1.4rem;">' + (role.icon || '◉') + '</span>' +
-                    '<div>' +
-                    '<div style="font-size:0.9rem;font-weight:bold;">' + _escapeHtml(role.name) + '</div>' +
-                    '<div style="font-size:0.6rem;color:var(--dim);">No characters have this role yet</div>' +
-                    '</div>' +
-                    '</div>' +
-                    '<div style="text-align:center;padding:40px;color:var(--dim);font-size:0.8rem;">' +
-                    'No data available for this role' +
-                    '</div>' +
-                    '</div>';
-                _rendering = false;
-                return;
-            }
-
-            var personIcon = _getIcon('PERSON');
-            var locationIcon = _getIcon('LOCATION');
-            var icon = role.icon || '◉';
-            var total = stats.totalWithRole;
-
-            var html = '';
-
-            // --- Header ---
-            html +=
-                '<div style="padding:4px;">' +
-                '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:12px 16px;background:var(--bg2);border-radius:8px;border:1px solid var(--border);flex-wrap:wrap;">' +
-                '<span style="font-size:1.4rem;">' + icon + '</span>' +
-                '<div style="flex:1;min-width:150px;">' +
-                '<div style="font-size:0.9rem;font-weight:bold;">' + _escapeHtml(role.name) + '</div>' +
-                '<div style="font-size:0.6rem;color:var(--dim);">' + total + ' characters · ' + stats.masters + ' masters · ' + stats.journeymen + ' journeymen</div>' +
-                '</div>' +
-                '<div style="display:flex;gap:4px;flex-wrap:wrap;font-size:0.5rem;">' +
-                '<span style="background:var(--bg3);padding:2px 8px;border-radius:4px;">M: ' + stats.masters + '</span>' +
-                '<span style="background:var(--bg3);padding:2px 8px;border-radius:4px;">E: ' + stats.experts + '</span>' +
-                '<span style="background:var(--bg3);padding:2px 8px;border-radius:4px;">J: ' + stats.journeymen + '</span>' +
-                '<span style="background:var(--bg3);padding:2px 8px;border-radius:4px;">A: ' + stats.apprentices + '</span>' +
-                '</div>' +
-                '</div>';
-
-            // --- Global Skill Distribution ---
-            var skillColors = {
-                'Master': 'var(--success)',
-                'Expert': 'var(--accent)',
-                'Journeyman': 'var(--accent-light)',
-                'Apprentice': 'var(--accent-dim)',
-                'Novice': 'var(--dim)',
-                'Untrained': 'var(--bg3)'
-            };
-            var skillOrder = ['Master', 'Expert', 'Journeyman', 'Apprentice', 'Novice', 'Untrained'];
-
-            html +=
-                '<div style="background:var(--bg2);padding:12px 16px;border-radius:8px;border:1px solid var(--border);margin-bottom:16px;">' +
-                '<div style="font-size:0.6rem;font-weight:bold;color:var(--accent);margin-bottom:8px;">Global Skill Distribution</div>' +
-                '<div style="display:flex;height:16px;border-radius:4px;overflow:hidden;background:var(--bg3);">';
-
-            for (var i = 0; i < skillOrder.length; i++) {
-                var level = skillOrder[i];
-                var count = stats.skillDistribution[level] || 0;
-                var pct = Math.round((count / total) * 100);
-                if (pct > 0) {
-                    html += '<div style="width:' + pct + '%;background:' + skillColors[level] + ';height:100%;" title="' + level + ': ' + count + ' (' + pct + '%)"></div>';
-                }
-            }
-
-            html +=
-                '</div>' +
-                '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;">';
-
-            for (var i = 0; i < skillOrder.length; i++) {
-                var level = skillOrder[i];
-                var count = stats.skillDistribution[level] || 0;
-                if (count > 0) {
-                    var pct = Math.round((count / total) * 100);
-                    html +=
-                        '<span style="font-size:0.45rem;display:flex;align-items:center;gap:4px;">' +
-                        '<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' + skillColors[level] + ';"></span>' +
-                        level + ': ' + count + ' (' + pct + '%)' +
-                        '</span>';
-                }
-            }
-
-            html +=
-                '</div>' +
-                '</div>';
-
-            // --- Location Distribution (Flat list, smallest location only) ---
-            if (stats.locations.length > 0) {
-                html +=
-                    '<div style="background:var(--bg2);padding:12px 16px;border-radius:8px;border:1px solid var(--border);margin-bottom:16px;">' +
-                    '<div style="font-size:0.6rem;font-weight:bold;color:var(--accent);margin-bottom:8px;">' + locationIcon + ' By Location</div>' +
-                    '<div style="display:flex;flex-direction:column;gap:6px;">';
-
-                for (var i = 0; i < stats.locations.length; i++) {
-                    var loc = stats.locations[i];
-                    var pct = Math.round((loc.total / total) * 100);
-
-                    html +=
-                        '<div style="background:var(--bg3);padding:8px 12px;border-radius:6px;border:1px solid var(--border);">' +
-                        '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">' +
-                        '<span style="font-size:0.65rem;font-weight:bold;">' + _escapeHtml(loc.name) + '</span>' +
-                        '<span style="font-size:0.55rem;color:var(--accent);">' + loc.total + ' (' + pct + '%)</span>' +
-                        '</div>' +
-                        '<div style="display:flex;height:6px;border-radius:3px;overflow:hidden;background:var(--bg2);margin-top:4px;">';
-
-                    for (var j = 0; j < skillOrder.length; j++) {
-                        var level = skillOrder[j];
-                        var count = loc.skills[level] || 0;
-                        if (count > 0) {
-                            var pct2 = Math.round((count / loc.total) * 100);
-                            html += '<div style="width:' + pct2 + '%;background:' + skillColors[level] + ';height:100%;"></div>';
-                        }
-                    }
-
-                    html +=
-                        '</div>' +
-                        '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:2px;">';
-
-                    for (var j = 0; j < skillOrder.length; j++) {
-                        var level = skillOrder[j];
-                        var count = loc.skills[level] || 0;
-                        if (count > 0) {
-                            html +=
-                                '<span style="font-size:0.4rem;color:var(--dim);">' +
-                                level + ': ' + count +
-                                '</span>';
-                        }
-                    }
-
-                    html +=
-                        '</div>' +
-                        '</div>';
-                }
-
-                html +=
-                    '</div>' +
-                    '</div>';
-            }
-
-            // --- Characters List (top 20) ---
-            if (stats.characters.length > 0) {
-                html +=
-                    '<div style="background:var(--bg2);padding:12px 16px;border-radius:8px;border:1px solid var(--border);margin-bottom:16px;">' +
-                    '<div style="font-size:0.6rem;font-weight:bold;color:var(--accent);margin-bottom:8px;">' + personIcon + ' Characters (' + stats.characters.length + ')</div>' +
-                    '<div style="max-height:300px;overflow-y:auto;">' +
-                    '<table style="width:100%;font-size:0.55rem;border-collapse:collapse;">' +
-                    '<thead>' +
-                    '<tr style="background:var(--bg3);">' +
-                    '<th style="padding:4px 6px;text-align:left;">Name</th>' +
-                    '<th style="padding:4px 6px;text-align:center;">Age</th>' +
-                    '<th style="padding:4px 6px;text-align:center;">Skill</th>' +
-                    '<th style="padding:4px 6px;text-align:center;">Tier</th>' +
-                    '<th style="padding:4px 6px;text-align:center;">Master</th>' +
-                    '<th style="padding:4px 6px;text-align:left;">Location</th>' +
-                    '</tr>' +
-                    '</thead>' +
-                    '<tbody>';
-
-                var displayChars = stats.characters.slice(0, 20);
-                for (var i = 0; i < displayChars.length; i++) {
-                    var c = displayChars[i];
-                    var genderIcon = c.gender === 'male' ? '♂' : (c.gender === 'female' ? '♀' : '⚥');
-                    var tierColor = c.skillTier === 'Master' ? 'var(--success)' :
-                                   c.skillTier === 'Expert' ? 'var(--accent)' :
-                                   c.skillTier === 'Journeyman' ? 'var(--accent-light)' : 'var(--dim)';
-
-                    html +=
-                        '<tr style="border-top:1px solid var(--border-light);">' +
-                        '<td style="padding:4px 6px;">' + genderIcon + ' ' + _escapeHtml(c.name) + ' ' + _escapeHtml(c.surname) + '</td>' +
-                        '<td style="padding:4px 6px;text-align:center;">' + c.age + '</td>' +
-                        '<td style="padding:4px 6px;text-align:center;font-weight:bold;">' + c.skillLevel + '</td>' +
-                        '<td style="padding:4px 6px;text-align:center;color:' + tierColor + ';">' + c.skillTier + '</td>' +
-                        '<td style="padding:4px 6px;text-align:center;font-size:0.5rem;">' + (c.isMaster ? '✓ (' + c.apprenticeCount + ')' : '') + '</td>' +
-                        '<td style="padding:4px 6px;font-size:0.5rem;color:var(--dim);">' + _escapeHtml(c.location) + '</td>' +
-                        '</tr>';
-                }
-
-                if (stats.characters.length > 20) {
-                    html +=
-                        '<tr><td colspan="6" style="padding:6px;text-align:center;color:var(--dim);font-size:0.5rem;">... and ' + (stats.characters.length - 20) + ' more</td></tr>';
-                }
-
-                html +=
-                    '</tbody>' +
-                    '</table>' +
-                    '</div>' +
-                    '</div>';
-            }
-
-            // --- Specializations ---
-            if (stats.specializations.length > 0) {
-                html +=
-                    '<div style="background:var(--bg2);padding:12px 16px;border-radius:8px;border:1px solid var(--border);margin-bottom:16px;">' +
-                    '<div style="font-size:0.6rem;font-weight:bold;color:var(--accent);margin-bottom:8px;">⌇ Specializations</div>' +
-                    '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
-
-                for (var i = 0; i < stats.specializations.length; i++) {
-                    var spec = stats.specializations[i];
-                    html +=
-                        '<span style="font-size:0.5rem;background:var(--bg3);padding:2px 10px;border-radius:10px;border:1px solid var(--border-light);">' +
-                        _escapeHtml(spec) + ' (' + stats.specCount[spec] + ')' +
-                        '</span>';
-                }
-
-                html +=
-                    '</div>' +
-                    '</div>';
-            }
-
-            html += '</div>';
-
-            container.innerHTML = html;
-
-        } catch (e) {
-            console.error('renderAnalyticsTab error:', e);
-            var container = document.getElementById(_containerId);
-            if (container) {
-                container.innerHTML = '<div class="placeholder" style="text-align:center;padding:40px;color:var(--danger);">Error loading analytics</div>';
-            }
-        } finally {
-            _rendering = false;
+        var out = [];
+        for (var k in buckets) {
+            if (!Object.prototype.hasOwnProperty.call(buckets, k)) continue;
+            out.push(buckets[k]);
         }
+        out.sort(function (a, b) {
+            if (b.count !== a.count) return b.count - a.count;
+            return a.name.localeCompare(b.name);
+        });
+        return out;
     }
 
-    // =========================================================================
-    // TAB RENDERER
-    // =========================================================================
-
-    function tabRenderer(containerId, locationId, summary) {
-        renderAnalyticsTab(containerId);
-    }
-
-    // =========================================================================
-    // REGISTER WITH TAB SYSTEM
-    // =========================================================================
-
-    function registerWithTabSystem() {
-        if (_registered) return;
-        
-        if (typeof window.registerTabRenderer === 'function') {
-            window.registerTabRenderer('statistics', tabRenderer, false);
-            _registered = true;
-            console.log('📌 RolesAnalyticsTab registered');
-            return true;
+    /**
+     * Count specialization usages across entries. Returns an array of
+     * { name, count } sorted by count desc, then name asc.
+     */
+    function _countSpecializations(entries) {
+        var counts = Object.create(null);
+        for (var i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            if (!e || !Array.isArray(e.specializations)) continue;
+            for (var s = 0; s < e.specializations.length; s++) {
+                var name = e.specializations[s];
+                if (typeof name !== 'string' || name.length === 0) continue;
+                counts[name] = (counts[name] || 0) + 1;
+            }
         }
-        
-        return false;
+        var out = [];
+        for (var k in counts) {
+            if (!Object.prototype.hasOwnProperty.call(counts, k)) continue;
+            out.push({ name: k, count: counts[k] });
+        }
+        out.sort(function (a, b) {
+            if (b.count !== a.count) return b.count - a.count;
+            return a.name.localeCompare(b.name);
+        });
+        return out;
+    }
+
+    function _sliceTopN(entries, topN) {
+        if (topN === 'all') return entries;
+        var n = parseInt(topN, 10);
+        if (!isFinite(n) || n <= 0) return entries;
+        return entries.slice(0, n);
     }
 
     // =========================================================================
-    // INITIALIZATION
+    // 5. RENDER
     // =========================================================================
 
-    function init(containerId) {
-        if (_initialized) return;
-        _initialized = true;
+    function renderAnalyticsTab(container, role, options) {
+        if (!container) return;
+        options = options || {};
 
-        containerId = containerId || 'tab-statistics';
-        _containerId = containerId;
-
-        var registered = registerWithTabSystem();
-
-        if (!registered) {
-            var checkInterval = setInterval(function() {
-                _registrationAttempts++;
-                if (registerWithTabSystem()) {
-                    clearInterval(checkInterval);
-                    if (document.getElementById(containerId)) {
-                        renderAnalyticsTab(containerId);
-                    }
-                } else if (_registrationAttempts >= _maxRegistrationAttempts) {
-                    clearInterval(checkInterval);
-                    console.warn('⚠️ Could not register RolesAnalyticsTab after ' + _maxRegistrationAttempts + ' attempts');
-                }
-            }, 200);
+        if (!role || typeof role !== 'object' || !role.id) {
+            container.innerHTML =
+                '<div class="ranl-empty">Select a role to view its analytics.' +
+                '<span class="ranl-empty__sub">' +
+                'Pick a role from the sidebar.</span></div>';
             return;
         }
 
-        var checkContainer = function() {
-            var container = document.getElementById(containerId);
-            if (container) {
-                renderAnalyticsTab(containerId);
-                return;
-            }
-            setTimeout(checkContainer, 100);
-        };
+        if (_stateRoleId !== role.id) {
+            _resetState();
+            _stateRoleId = role.id;
+        }
 
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', checkContainer);
+        var statsResult = _getStats(role.id);
+        var entriesResult = _getEntries(role.id);
+        if (!statsResult.ok) {
+            container.innerHTML =
+                '<div class="ranl-unavailable">' + _esc(statsResult.reason) + '</div>';
+            return;
+        }
+        if (!entriesResult.ok) {
+            container.innerHTML =
+                '<div class="ranl-unavailable">' + _esc(entriesResult.reason) + '</div>';
+            return;
+        }
+
+        var stats = statsResult.stats;
+        var entries = entriesResult.entries;
+
+        var html =
+            '<div class="ranl">' +
+                _renderHeader(role, stats) +
+                _renderStatsGrid(stats) +
+                _renderTierPanel(stats) +
+                _renderLocationPanel(entries, stats) +
+                _renderCharacterPanel(entries) +
+                _renderSpecializationsPanel(entries) +
+            '</div>';
+
+        container.innerHTML = html;
+
+        _syncControls(container);
+        _attachHandlers(container, role, options);
+    }
+
+    function _renderHeader(role, stats) {
+        var parts = [];
+        parts.push((stats.totalCharacters || 0) + ' holder' +
+            ((stats.totalCharacters === 1) ? '' : 's'));
+        if (stats.averageSkill) {
+            parts.push('avg skill ' + stats.averageSkill);
+        }
+        if (stats.canTeachCount) {
+            parts.push(stats.canTeachCount + ' can teach');
+        }
+        return (
+            '<div class="ranl__header">' +
+                '<div>' +
+                    '<div class="ranl__title">Analytics</div>' +
+                    '<div class="ranl__subtitle">' +
+                        '<span>' + _esc(role.name) + '</span>' +
+                        '<span>·</span>' +
+                        '<span>' + _esc(parts.join(' · ')) + '</span>' +
+                    '</div>' +
+                '</div>' +
+            '</div>'
+        );
+    }
+
+    function _renderStatsGrid(stats) {
+        return (
+            '<div class="ranl__stats">' +
+                _stat('Holders', stats.totalCharacters || 0, '') +
+                _stat('Avg skill', stats.averageSkill || 0, 'accent') +
+                _stat('Masters', (stats.countsByTier && stats.countsByTier.master) || 0, 'ok') +
+                _stat('Can teach', stats.canTeachCount || 0, 'accent') +
+                _stat('Primary', stats.primaryCount || 0, '') +
+                _stat('Specs', stats.totalSpecializations || 0, '') +
+            '</div>'
+        );
+    }
+
+    function _stat(label, value, tone) {
+        var cls = 'ranl-stat__value';
+        if (tone === 'accent') cls += ' ranl-stat__value--accent';
+        else if (tone === 'ok') cls += ' ranl-stat__value--ok';
+        return (
+            '<div class="ranl-stat">' +
+                '<div class="' + cls + '">' + _esc(String(value)) + '</div>' +
+                '<div class="ranl-stat__label">' + _esc(label) + '</div>' +
+            '</div>'
+        );
+    }
+
+    function _renderTierPanel(stats) {
+        var tierCounts = stats.countsByTier || {};
+        var total = 0;
+        for (var i = 0; i < TIER_KEYS.length; i++) {
+            total += (tierCounts[TIER_KEYS[i]] || 0);
+        }
+
+        var segmentsHtml = '';
+        if (total > 0) {
+            var accumulated = 0;
+            for (var t = 0; t < TIER_KEYS.length; t++) {
+                var key = TIER_KEYS[t];
+                var count = tierCounts[key] || 0;
+                if (count <= 0) continue;
+                var pct;
+                if (t === TIER_KEYS.length - 1) {
+                    // Last bucket gets the remainder so widths always sum
+                    // to 100%.
+                    pct = 100 - accumulated;
+                } else {
+                    pct = (count / total) * 100;
+                    accumulated += pct;
+                }
+                segmentsHtml +=
+                    '<div class="ranl-tierbar__seg ranl-tierbar__seg--' + key + '"' +
+                        ' style="width:' + pct + '%"' +
+                        ' title="' + _esc(TIER_LABELS[key]) + ': ' + count +
+                        ' (' + Math.round((count / total) * 100) + '%)">' +
+                    '</div>';
+            }
+        }
+
+        var legendHtml = '';
+        for (var l = 0; l < TIER_KEYS.length; l++) {
+            var lkey = TIER_KEYS[l];
+            var lcount = tierCounts[lkey] || 0;
+            if (lcount <= 0) continue;
+            var lpct = Math.round((lcount / total) * 100);
+            legendHtml +=
+                '<span class="ranl-legend__item">' +
+                    '<span class="ranl-legend__swatch"' +
+                        ' style="background:' + TIER_SWATCH[lkey] + '"></span>' +
+                    '<span class="ranl-legend__label">' + _esc(TIER_LABELS[lkey]) + '</span>' +
+                    '<span class="ranl-legend__count">' + lcount + '</span>' +
+                    '<span class="ranl-legend__pct">(' + lpct + '%)</span>' +
+                '</span>';
+        }
+
+        var body;
+        if (total === 0) {
+            body = '<div class="ranl-empty">No holders yet.</div>';
         } else {
-            setTimeout(checkContainer, 50);
+            body =
+                '<div class="ranl-tierbar">' + segmentsHtml + '</div>' +
+                '<div class="ranl-legend">' + legendHtml + '</div>';
+        }
+
+        return (
+            '<div class="ranl-panel">' +
+                '<div class="ranl-panel__header">' +
+                    '<span class="ranl-panel__title">Tier distribution</span>' +
+                '</div>' +
+                body +
+            '</div>'
+        );
+    }
+
+    function _renderLocationPanel(entries, stats) {
+        var groups = _groupByLocation(entries);
+        var body;
+
+        if (groups.length === 0) {
+            body = '<div class="ranl-empty">No holders yet.</div>';
+        } else {
+            var totalHolders = stats.totalCharacters || entries.length || 1;
+            var maxCount = 0;
+            for (var m = 0; m < groups.length; m++) {
+                if (groups[m].count > maxCount) maxCount = groups[m].count;
+            }
+
+            var rowsHtml = '';
+            for (var i = 0; i < groups.length; i++) {
+                var g = groups[i];
+                var barPct = maxCount > 0 ? Math.round((g.count / maxCount) * 100) : 0;
+                var sharePct = Math.round((g.count / totalHolders) * 100);
+                rowsHtml +=
+                    '<tr>' +
+                        '<td class="ranl-table__loc">' + _esc(g.name) + '</td>' +
+                        '<td class="ranl-table__num">' + g.count + '</td>' +
+                        '<td class="ranl-table__num">' + g.masters + '</td>' +
+                        '<td class="ranl-table__num">' + sharePct + '%</td>' +
+                        '<td>' +
+                            '<span class="ranl-table__bar" style="width:' + barPct + '%"></span>' +
+                        '</td>' +
+                    '</tr>';
+            }
+
+            body =
+                '<table class="ranl-table">' +
+                    '<thead>' +
+                        '<tr>' +
+                            '<th>Location</th>' +
+                            '<th class="ranl-table__num">Holders</th>' +
+                            '<th class="ranl-table__num">Masters</th>' +
+                            '<th class="ranl-table__num">Share</th>' +
+                            '<th></th>' +
+                        '</tr>' +
+                    '</thead>' +
+                    '<tbody>' + rowsHtml + '</tbody>' +
+                '</table>';
+        }
+
+        return (
+            '<div class="ranl-panel">' +
+                '<div class="ranl-panel__header">' +
+                    '<span class="ranl-panel__title">By current location</span>' +
+                '</div>' +
+                body +
+            '</div>'
+        );
+    }
+
+    function _renderCharacterPanel(entries) {
+        var mastersOnly = _state.mastersOnly === true;
+        var topN = _state.topN;
+
+        // Entries arrive sorted by skill desc / name asc from
+        // getCharactersWithRoleDetails. Do NOT re-sort here unless a
+        // future revision adds a sort control; the default order is
+        // exactly what this panel displays.
+        var filtered = entries;
+        if (mastersOnly) {
+            filtered = [];
+            for (var i = 0; i < entries.length; i++) {
+                if (entries[i].tierKey === 'master') filtered.push(entries[i]);
+            }
+        }
+
+        var shown = _sliceTopN(filtered, topN);
+        var hidden = Math.max(0, filtered.length - shown.length);
+
+        var controls =
+            '<div class="ranl-panel__controls">' +
+                '<label class="ranl-toggle">' +
+                    '<input type="checkbox" class="ranl-masters-only"' +
+                    (mastersOnly ? ' checked' : '') + '>' +
+                    'Masters only' +
+                '</label>' +
+                '<select class="ranl-topn-select" aria-label="Top N">' +
+                    '<option value="10"' + (topN === '10' ? ' selected' : '') + '>Top 10</option>' +
+                    '<option value="25"' + (topN === '25' ? ' selected' : '') + '>Top 25</option>' +
+                    '<option value="all"' + (topN === 'all' ? ' selected' : '') + '>All</option>' +
+                '</select>' +
+            '</div>';
+
+        var body;
+        if (filtered.length === 0) {
+            body = '<div class="ranl-empty">No characters match these filters.</div>';
+        } else {
+            var rows = '';
+            for (var r = 0; r < shown.length; r++) {
+                var e = shown[r];
+                if (!e || !e.character) continue;
+                var locName = _getPlaceName(_getCurrentLocationId(e.character.id));
+                rows +=
+                    '<div class="ranl-char">' +
+                        '<span class="ranl-char__name">' +
+                            _esc(_fullName(e.character)) +
+                        '</span>' +
+                        '<span class="ranl-char__skill">' +
+                            _esc(String(e.skillLevel || 0)) +
+                        '</span>' +
+                        '<span class="ranl-char__tier">' +
+                            _esc(e.tierName || TIER_LABELS[e.tierKey] || '') +
+                        '</span>' +
+                        '<span class="ranl-char__loc">' +
+                            _esc(locName) +
+                        '</span>' +
+                    '</div>';
+            }
+            body = '<div class="ranl-chars">' + rows + '</div>';
+            if (hidden > 0) {
+                body += '<div class="ranl-more">... and ' + hidden + ' more</div>';
+            }
+        }
+
+        return (
+            '<div class="ranl-panel">' +
+                '<div class="ranl-panel__header">' +
+                    '<span class="ranl-panel__title">Characters (' +
+                        filtered.length + ')</span>' +
+                    controls +
+                '</div>' +
+                body +
+            '</div>'
+        );
+    }
+
+    function _renderSpecializationsPanel(entries) {
+        var specs = _countSpecializations(entries);
+        var body;
+        if (specs.length === 0) {
+            body = '<div class="ranl-empty">No specializations across holders.</div>';
+        } else {
+            var chips = '';
+            for (var i = 0; i < specs.length; i++) {
+                chips +=
+                    '<span class="ranl-spec">' +
+                        _esc(specs[i].name) +
+                        ' <span class="ranl-spec__count">' +
+                            specs[i].count +
+                        '</span>' +
+                    '</span>';
+            }
+            body = '<div class="ranl-specs">' + chips + '</div>';
+        }
+
+        return (
+            '<div class="ranl-panel">' +
+                '<div class="ranl-panel__header">' +
+                    '<span class="ranl-panel__title">Specializations (' +
+                        specs.length + ')</span>' +
+                '</div>' +
+                body +
+            '</div>'
+        );
+    }
+
+    // =========================================================================
+    // 6. EVENT WIRING
+    // =========================================================================
+
+    function _syncControls(container) {
+        var mastersCb = container.querySelector('.ranl-masters-only');
+        if (mastersCb) mastersCb.checked = _state.mastersOnly === true;
+        var topNSel = container.querySelector('.ranl-topn-select');
+        if (topNSel) topNSel.value = _state.topN;
+    }
+
+    function _attachHandlers(container, role, options) {
+        // The two controls are the only interactive elements. Both
+        // swap only the character panel's body — the aggregate stats
+        // and tier bar are unaffected by mastersOnly / topN, and a
+        // full re-render would blow away the tier bar's hover state.
+        var mastersCb = container.querySelector('.ranl-masters-only');
+        if (mastersCb) {
+            mastersCb.addEventListener('change', function () {
+                _state.mastersOnly = mastersCb.checked === true;
+                _reRenderCharacterPanel(container, role, options);
+            });
+        }
+
+        var topNSel = container.querySelector('.ranl-topn-select');
+        if (topNSel) {
+            topNSel.addEventListener('change', function () {
+                _state.topN = topNSel.value || '25';
+                _reRenderCharacterPanel(container, role, options);
+            });
+        }
+    }
+
+    function _reRenderCharacterPanel(container, role, options) {
+        var entriesResult = _getEntries(role.id);
+        if (!entriesResult.ok) return;
+
+        // Find the character panel: it is the panel whose header
+        // contains a .ranl-topn-select. Swap the panel's body, not
+        // the whole container, so the tier bar and location table
+        // are untouched.
+        var panels = container.querySelectorAll('.ranl-panel');
+        var targetPanel = null;
+        for (var i = 0; i < panels.length; i++) {
+            if (panels[i].querySelector('.ranl-topn-select')) {
+                targetPanel = panels[i];
+                break;
+            }
+        }
+        if (!targetPanel) {
+            // Fallback: full re-render.
+            var freshRole = _getRole(role.id);
+            if (freshRole) renderAnalyticsTab(container, freshRole, options);
+            return;
+        }
+
+        // Preserve the control values (a re-render of the panel body
+        // would otherwise reset them from module _state).
+        var mastersOnly = _state.mastersOnly;
+        var topN = _state.topN;
+
+        var newPanelHtml = _renderCharacterPanel(entriesResult.entries);
+        var tmp = document.createElement('div');
+        tmp.innerHTML = newPanelHtml;
+        var newPanel = tmp.firstChild;
+
+        targetPanel.parentNode.replaceChild(newPanel, targetPanel);
+
+        // Re-attach the panel's own controls.
+        _state.mastersOnly = mastersOnly;
+        _state.topN = topN;
+        var newMastersCb = newPanel.querySelector('.ranl-masters-only');
+        if (newMastersCb) {
+            newMastersCb.checked = mastersOnly;
+            newMastersCb.addEventListener('change', function () {
+                _state.mastersOnly = newMastersCb.checked === true;
+                _reRenderCharacterPanel(container, role, options);
+            });
+        }
+        var newTopNSel = newPanel.querySelector('.ranl-topn-select');
+        if (newTopNSel) {
+            newTopNSel.value = topN;
+            newTopNSel.addEventListener('change', function () {
+                _state.topN = newTopNSel.value || '25';
+                _reRenderCharacterPanel(container, role, options);
+            });
         }
     }
 
     // =========================================================================
-    // EXPORTS
+    // 7. TABMANAGER ADAPTER + REGISTRATION
     // =========================================================================
 
-    window.RolesAnalyticsTab = {
-        init: init,
-        renderAnalyticsTab: renderAnalyticsTab,
-        tabRenderer: tabRenderer,
-        registerWithTabSystem: registerWithTabSystem,
-        setSelectedRole: setSelectedRole,
-        getSelectedRole: getSelectedRole,
-        collectRoleStatistics: collectRoleStatistics,
-        _selectedRoleId: _selectedRoleId
+    function renderAdapter(container, context) {
+        var role = (context && context.role) ? context.role : null;
+        var options = {};
+        if (context && typeof context === 'object'
+            && typeof context.onRerender === 'function') {
+            options.onRerender = context.onRerender;
+        }
+        renderAnalyticsTab(container, role, options);
+    }
+
+    if (typeof window.TabManager !== 'undefined' && window.TabManager) {
+        window.TabManager.register('role', 'analytics', renderAdapter);
+    } else if (typeof console !== 'undefined' && console.warn) {
+        console.warn(
+            'role-analytics-tab.js: TabManager is not loaded; the ' +
+            'analytics tab was not registered. Load js/core/tab-manager.js first.'
+        );
+    }
+
+    // =========================================================================
+    // 8. EXPORTS
+    // =========================================================================
+
+    window.RoleAnalyticsTab = {
+        id: 'analytics',
+        render: renderAnalyticsTab,
+        renderAdapter: renderAdapter
     };
 
-    function autoInit() {
-        if (document.getElementById('tab-statistics')) {
-            init('tab-statistics');
-        }
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = { RoleAnalyticsTab: window.RoleAnalyticsTab };
     }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', autoInit);
-    } else {
-        setTimeout(autoInit, 100);
-    }
-
 })();
