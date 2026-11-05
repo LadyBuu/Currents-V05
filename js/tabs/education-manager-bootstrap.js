@@ -11,7 +11,7 @@
  *
  *   - TabManager.configure('education', ...) — the scope config
  *   - TabManager.init() — the document-level click handler
- *   - The tab strip DOM helpers (activate-class sync)
+ *   - The tab strip DOM helpers (button + pane active-class sync)
  *   - The sidebar wiring (LocationUI.renderLocationList → activate)
  *   - The topbar (import / export / refresh / year control)
  *   - The initial load sequence: storage hydrate → masterData →
@@ -29,15 +29,32 @@
  *   TabManager's click router finds [data-tab] buttons by walking up
  *   from the click target to see which configured scope's
  *   containerRoot contains it. The containerRoot must therefore
- *   contain BOTH the tab strip AND the pane container — otherwise the
- *   strip's own buttons cannot be routed to this scope.
+ *   contain BOTH the tab strip AND the pane container.
  *
  *   In EducationManager.html, #educationTabStrip and #panelContent are
  *   siblings inside .main-panel. containerRoot is set to the strip's
- *   parentNode (.main-panel), not to #panelContent. Setting it to
- *   #panelContent would leave the strip orphaned and clicking any tab
- *   button would silently do nothing (the Overview tab would appear
- *   stuck because it is the default active tab).
+ *   parentNode (.main-panel).
+ *
+ * PANE VISIBILITY (IMPORTANT)
+ *
+ *   TabManager's renderer contract does NOT toggle .active on the
+ *   panes. It calls the renderer with the pane element, and the
+ *   renderer fills the pane. That means TabManager writes content
+ *   into a pane that may still be display:none.
+ *
+ *   This bootstrap is therefore responsible for toggling .active on
+ *   the panes whenever the active tab changes. _syncTabStrip does
+ *   both — it updates the strip buttons AND the panes, so the CSS
+ *   .tab-pane { display:none } / .tab-pane.active { display:block }
+ *   rules switch the correct pane into view.
+ *
+ *   Prior revisions only updated the strip buttons. The strip showed
+ *   the correct tab as active, but the corresponding pane stayed
+ *   display:none, so visually nothing changed. Overview kept showing
+ *   because Overview's pane was the only one with .active (from the
+ *   HTML markup). Verified by inspecting the pane after a tab click:
+ *   innerHTML was populated (1815 chars of Institutions content) but
+ *   .active was missing.
  *
  * RENDERER CONTRACT
  * -----------------
@@ -48,86 +65,19 @@
  *         // context    { locationId, locationName, educationState }
  *     }
  *
- *   context.educationState carries the settlement-scoped summary and
- *   health score, computed once per render by this file's
- *   buildContext(). Tabs read context.educationState.summary rather
- *   than re-calling EducationQueries themselves. This matches how
- *   settlement-tabs.js hands each settlement tab a pre-built
- *   summary / view model.
- *
- * CROSS-TAB REFRESH
- * -----------------
- *   Every education tab that opens a modal MUST pass an onSuccess
- *   callback to that modal which calls:
- *
- *     TabManager.requestRender('education', '<this tab id>')
- *
- *   The tab knows its own tab id. TabManager coalesces the render
- *   onto the next tick, so a chain of modals firing onSuccess in
- *   rapid succession produces one render, not N.
- *
- * STATE OWNERSHIP
- * ---------------
- *   EducationUIState owns:
- *     - activeTabId        persisted to localStorage, restored at load
- *     - selectedLocationId in-memory only
- *
- *   This file's buildContext() reads
- *   EducationUIState.getSelectedLocationId() and returns null when
- *   it is null. TabManager writes the 'no-context' empty state in
- *   that case. When a tab renders, context.locationId is guaranteed
- *   non-null.
- *
- * HYDRATION
- * ---------
- *   EducationState does not auto-hydrate (per education-doc.txt §4).
- *   This bootstrap calls hydrateFromMasterData once, after
- *   initializeStorage() and loadMasterData(), before any tab is
- *   rendered. If hydrate throws (duplicate ids, corrupted save),
- *   the error is logged and the manager renders an error state via
- *   buildEmptyState. The tab strip is not touched.
- *
- * DEPENDENCIES (resolved at init time; a missing dependency produces
- * a visible error state, not a silent no-op):
- *
- *   REQUIRED (HARD — init fails if missing):
- *     - window.TabManager
- *     - window.EducationUIState
- *     - window.EducationQueries
- *     - window.EducationState
- *     - window.initializeStorage
- *     - window.loadMasterData
- *     - window.escapeHtml (or window._escapeHtml)
- *
- *   REQUIRED FOR SPECIFIC ACTIONS (warn-on-missing, do not block init):
- *     - window.LocationUI.renderLocationList      (sidebar)
- *     - window.importData                         (import button)
- *     - window.exportData                         (export button)
- *     - window.getCurrentYear, window.isValidYear (year control)
- *     - window.getPlaces                          (initial selection)
- *     - window.getPlaceById                       (context build)
- *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - _syncTabStrip now toggles .active on the panes (via
+ *       [data-tab-content] attribute inside #panelContent) as well as
+ *       on the strip buttons. Prior revision only updated the strip
+ *       buttons; the pane stayed display:none, so switching tabs had
+ *       no visual effect. See PANE VISIBILITY in the header.
+ *     - No other behavioural change.
+ *   Previous revision:
  *     - containerRoot changed from #panelContent to the tab strip's
  *       parentNode (.main-panel). The click router requires
- *       containerRoot to CONTAIN the [data-tab] buttons it routes;
- *       #panelContent does not. Prior revision left the strip
- *       orphaned, so clicking any non-Overview tab did nothing and
- *       Overview appeared stuck. See CONTAINER ROOT in the header.
- *     - No other behavioural change.
- *   Initial revision:
- *     - Written for the Education Manager's TabManager-based host.
- *     - buildContext computes the education summary / health once
- *       per render and passes it to the tab via context.educationState.
- *     - setKnownTabIds called at init; the seven tab ids are declared
- *       here as KNOWN_TAB_IDS and pushed to EducationUIState so the
- *       module can validate the persisted activeTabId.
- *     - Explicit EducationState.hydrateFromMasterData call; the
- *       bootstrap does not auto-hydrate.
- *     - All error paths route through buildEmptyState with a reason
- *       string; no silent no-ops.
+ *       containerRoot to CONTAIN the [data-tab] buttons it routes.
  * =============================================================================
  */
 
@@ -152,7 +102,6 @@
 
     var SCOPE = 'education';
 
-    // DOM ids declared in EducationManager.html.
     var ID_TAB_STRIP   = 'educationTabStrip';
     var ID_PANEL       = 'panelContent';
     var ID_SIDEBAR     = 'placeList';
@@ -268,17 +217,6 @@
     // =========================================================================
     // 3. CONTAINER ROOT RESOLUTION
     // =========================================================================
-    //
-    // The click router requires containerRoot to CONTAIN the [data-tab]
-    // buttons it routes. #educationTabStrip and #panelContent are
-    // siblings inside .main-panel. Setting containerRoot to the strip's
-    // parentNode makes .main-panel the scope root, which contains both.
-    //
-    // Fallback chain:
-    //   1. strip.parentNode   (the normal case)
-    //   2. #panelContent      (defensive — a page that puts the strip
-    //                          inside the panel would still work)
-    //   3. null               (TabManager skips routing for this scope)
 
     function _resolveContainerRoot() {
         var strip = document.getElementById(ID_TAB_STRIP);
@@ -355,26 +293,46 @@
     }
 
     // =========================================================================
-    // 6. TAB STRIP VISUAL SYNC
+    // 6. TAB STRIP + PANE VISUAL SYNC
     // =========================================================================
     //
-    // TabManager owns click routing; it does NOT own the visual strip.
-    // This module owns the strip — specifically the .active class on the
-    // buttons, which must track the active tab id.
+    // Called whenever the active tab changes. Updates:
+    //   - the tab strip buttons (.active class, aria-selected, tabindex)
+    //   - the tab panes (.active class — REQUIRED so the CSS
+    //     .tab-pane { display: none } / .tab-pane.active { display: block }
+    //     rules switch the correct pane into view)
     //
-    // Called from two places:
-    //   - setActiveTabId (via TabManager's config callback)
-    //   - init (initial strip sync)
+    // TabManager does NOT toggle .active on the panes. Its renderer
+    // contract says "you get a container, fill it". If the container
+    // stays display:none, the content is written but invisible.
+    //
+    // Prior revisions only updated the strip; the pane stayed hidden
+    // and switching had no visual effect.
 
     function _syncTabStrip(tabId) {
+        // --- Strip buttons ---
         var strip = document.getElementById(ID_TAB_STRIP);
-        if (!strip) return;
-        var buttons = strip.querySelectorAll('[data-tab]');
-        for (var i = 0; i < buttons.length; i++) {
-            var isActive = buttons[i].getAttribute('data-tab') === tabId;
-            buttons[i].classList.toggle('active', isActive);
-            buttons[i].setAttribute('aria-selected', isActive ? 'true' : 'false');
-            buttons[i].setAttribute('tabindex', isActive ? '0' : '-1');
+        if (strip) {
+            var buttons = strip.querySelectorAll('[data-tab]');
+            for (var i = 0; i < buttons.length; i++) {
+                var isActive = buttons[i].getAttribute('data-tab') === tabId;
+                buttons[i].classList.toggle('active', isActive);
+                buttons[i].setAttribute('aria-selected', isActive ? 'true' : 'false');
+                buttons[i].setAttribute('tabindex', isActive ? '0' : '-1');
+            }
+        }
+
+        // --- Panes ---
+        // Panes carry data-tab-content="<id>" and live inside #panelContent.
+        // Only the pane whose data-tab-content matches tabId gets .active;
+        // every other pane loses it. That drives the CSS display rule.
+        var panel = document.getElementById(ID_PANEL);
+        if (panel) {
+            var panes = panel.querySelectorAll('[data-tab-content]');
+            for (var j = 0; j < panes.length; j++) {
+                var paneIsActive = panes[j].getAttribute('data-tab-content') === tabId;
+                panes[j].classList.toggle('active', paneIsActive);
+            }
         }
     }
 
@@ -732,10 +690,9 @@
         uiState.setKnownTabIds(KNOWN_TAB_IDS);
 
         TabManager.configure(SCOPE, {
-            // IMPORTANT: containerRoot must contain BOTH the tab strip
-            // and the panes. #educationTabStrip and #panelContent are
-            // siblings inside .main-panel; the strip's parentNode is
-            // therefore .main-panel. See CONTAINER ROOT in the header.
+            // containerRoot must contain BOTH the tab strip and the
+            // panes. #educationTabStrip and #panelContent are siblings
+            // inside .main-panel; the strip's parentNode is .main-panel.
             containerRoot: _resolveContainerRoot(),
 
             resolveContainer: function (tabId) {
@@ -750,6 +707,9 @@
 
             setActiveTabId: function (tabId) {
                 uiState.setActiveTabId(tabId);
+                // Visual sync: strip buttons AND panes. TabManager does
+                // not toggle .active on the panes, so this is the only
+                // place that drives the CSS .tab-pane display rule.
                 _syncTabStrip(tabId);
             },
 
