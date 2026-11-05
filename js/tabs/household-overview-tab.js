@@ -1,1132 +1,955 @@
+// js/households/household-overview-tab.js
 /**
  * =============================================================================
- * HOUSEHOLD OVERVIEW TAB (household-overview-tab.js)
+ * HOUSEHOLD OVERVIEW TAB
+ * js/households/household-overview-tab.js
  * =============================================================================
  *
- * PURPOSE: Modular overview tab for the Household Manager tool.
- *          Displays household information with edit capabilities,
- *          name change tracking (with history), and residence assignment.
+ * LOCATION: js/households/household-overview-tab.js
  *
- * DEPENDS ON:
- *   - HouseholdState (household-state.js)
- *   - HouseholdCommands (household-commands.js)
- *   - HouseholdQueries (household-queries.js)
- *   - ResidenceSystem (residence-system.js)
- *   - modals-core.js (for modal wrappers)
- *   - ui.js (for toast notifications)
- *   - icons.js (for icons)
- *   - modals-char-selector.js (for character selection)
+ * WHAT THIS TAB SHOWS
+ * -------------------
+ * The household identity card: name, location, founded year, current
+ * status, head, residence assignment, member counts, wealth, reputation,
+ * notes. Plus the action row: Edit Info, Rename (with history), View
+ * History, Change Head, Assign / Unassign Residence.
  *
- * ICON POLICY: Uses icons.js - NO emojis
+ * READS
+ * -----
+ *   HouseholdQueries.getHousehold           — flat projection
+ *   HouseholdQueries.getHouseholdHead       — member projection
+ *   HouseholdQueries.getHouseholdStatus     — status facts
+ *   HouseholdQueries.getHouseholdMembers    — for member count
+ *   HouseholdQueries.getHouseholdDepartments
+ *   HouseholdQueries.getHouseholdEnterprises
+ *   HouseholdState._internal.getHouseholdRecord — for nameHistory ONLY.
+ *       Name history lives on the raw record, not on the flat projection.
+ *       Reading it via the internal seam is the documented path.
+ *   ResidenceSystem.getResidence             — for residence display
+ *
+ * WRITES
+ * ------
+ *   This tab does NOT write directly. Every action delegates to a modal
+ *   that owns persistence:
+ *     Edit Info           → modals-household.js::openEditHouseholdModal
+ *     Rename              → inline modal, routes through
+ *                           HouseholdCommands.updateHousehold
+ *     View History        → modals-household-snapshot.js
+ *     Change Head         → inline modal, routes through
+ *                           HouseholdCommands.setHead
+ *     Assign Residence    → ResidenceSystem.assignHouseholdToVacantResidence
+ *                           (ResidenceSystem owns its own persist)
+ *     Unassign Residence  → ResidenceSystem.markResidenceVacant
+ *
+ * RENDERER CONTRACT (from HouseholdManagerBootstrap)
+ *   fn(container, context)
+ *   container  HTMLElement  — already emptied by TabManager
+ *   context    { householdId, householdName, householdState }
+ *
+ * FILTERS
+ * -------
+ *   None. The overview has no list. Filter persistence does not apply.
+ *
+ * DEPENDENCIES (all resolved via HouseholdTabRuntime)
+ *   REQUIRED at render:
+ *     - HouseholdQueries
+ *     - formatting.js (escapeHtml — strict via TabRuntime.esc)
+ *     - time.js (getCurrentYear — via TabRuntime.requireCurrentYear)
+ *     - TabManager (for registration; warn if absent)
+ *   OPTIONAL at render:
+ *     - HouseholdState._internal (for name history; gracefully absent)
+ *     - ResidenceSystem (residence row degrades to "None assigned")
+ *     - modals-household.js, modals-household-snapshot.js,
+ *       modals-char-selector.js (each resolved at click; missing = toast)
+ *
+ * TIME CONTRACT: uses TabRuntime.requireCurrentYear(). No fallback.
+ * ICON POLICY: icons via TabRuntime.icon(). No emoji, no glyphs.
+ * THEME CONTRACT: no hardcoded hex/rgba. Classes from household-tabs.css.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
- *     - _getCurrentYear now uses getCurrentYear (canonical accessor in
- *       time.js) instead of the deprecated getCurrentYearSafe alias,
- *       and throws on missing time.js instead of falling back to 1250.
- *       The 1250 fallback violated the "no magic year" invariant in
- *       stillwaters-docs.txt §3.6 and corrupted household history
- *       entries on any page where time.js hadn't loaded.
- *     - _getCurrentHouseholdId now prefers
- *       HouseholdState.getUIState().selectedHouseholdId (the canonical
- *       selection store populated by HouseholdState.setSelectedHousehold,
- *       which household-ui-list.js::selectHousehold calls). The flat
- *       window._currentHouseholdId / window.currentHouseholdId /
- *       window.selectedHouseholdId globals it used before are not
- *       written by any canonical module, so a fresh page saw null even
- *       after the user picked a household.
- *     - Replaced window.renderHouseholdList() with
- *       window.refreshHouseholdList() in every mutation success path.
- *       household-ui-list.js exports refreshHouseholdList, not
- *       renderHouseholdList; the old calls silently no-oped, leaving
- *       the sidebar showing the pre-mutation state after a rename,
- *       head change, or residence assignment.
- *     - _doRenameWithHistory now routes the rename through
- *       HouseholdCommands.updateHousehold + persist instead of
- *       mutating masterData.data.households directly. The direct
- *       write bypassed the accessor cache invalidation, so
- *       getHouseholdById returned the pre-rename record until the
- *       next full reload.
+ *   v2 (this revision):
+ *     - Rewritten to the Tab/Manager Development Playbook, using
+ *       Education Manager as the reference.
+ *     - All shared helpers come from HouseholdTabRuntime. No local
+ *       _escapeHtml, _getIcon, _openModal, _getCurrentHouseholdId,
+ *       _getCurrentYear, _confirmDialog, or _openCharacterSelector.
+ *     - Reads go through HouseholdQueries (via TabRuntime sugar).
+ *       The prior revision called non-existent HouseholdState methods
+ *       (HS.getHousehold, HS.getHouseholdHead, HS.getHouseholdStatus,
+ *       HS.getHouseholdMembersWithCharacters) and threw at render.
+ *     - Residence read uses ResidenceSystem.getResidence (not the
+ *       non-existent getResidenceById).
+ *     - Residence mutations route through
+ *       ResidenceSystem.assignHouseholdToVacantResidence and
+ *       markResidenceVacant (both of which own the household reverse-
+ *       index update internally). The prior revision called
+ *       HS.associateHouseholdWithResidence and
+ *       HS.disassociateHouseholdFromResidence (neither exists) and
+ *       RS.updateResidence({householdId: null, isVacant: true}) (both
+ *       fields are rejected by the residence allowlist).
+ *     - Rename routes through HouseholdCommands.updateHousehold
+ *       (which owns the allowlist, accessor invalidation, and
+ *       name-history append). The prior revision mutated
+ *       masterData.data.households directly, bypassing cache
+ *       invalidation.
+ *     - Registration uses TabRuntime.register('details', render)
+ *       against the canonical TabManager. The prior revision called
+ *       the non-existent window.registerTabRenderer three-arg form.
+ *     - Zero document.* calls. Every DOM read is through `container`.
+ *     - One delegated click listener via TabRuntime.attachDelegated.
+ *     - No hardcoded colors. Classes from household-tabs.css.
+ *     - No setTimeout. Registration is synchronous.
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
-    // =========================================================================
-    // 1. RECURSION GUARD
-    // =========================================================================
-
-    var _rendering = false;
-
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
-    // =========================================================================
-
-    function _getState() {
-        return typeof window.HouseholdState !== 'undefined' ? window.HouseholdState : null;
-    }
-
-    function _getCommands() {
-        return typeof window.HouseholdCommands !== 'undefined' ? window.HouseholdCommands : null;
-    }
-
-    function _getQueries() {
-        return typeof window.HouseholdQueries !== 'undefined' ? window.HouseholdQueries : null;
-    }
-
-    function _getResidenceSystem() {
-        return typeof window.ResidenceSystem !== 'undefined' ? window.ResidenceSystem : null;
-    }
-
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
-        }
-        return null;
-    }
-
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(id);
-        }
-        return null;
-    }
-
-    /**
-     * Returns the current simulation year.
-     *
-     * Delegates to the canonical accessor in time.js. The deprecated
-     * getCurrentYearSafe alias is NOT used, and there is NO 1250
-     * fallback. A missing time.js is a load-order bug; the caller
-     * should surface it, not silently substitute a wrong year.
-     *
-     * @throws {Error} if time.js is not loaded
-     */
-    function _getCurrentYear() {
-        if (typeof window.getCurrentYear !== 'function') {
-            throw new Error(
-                '[HouseholdOverviewTab] requires time.js (getCurrentYear). ' +
-                'Load js/core/time.js before this tab.'
-            );
-        }
-        return window.getCurrentYear();
-    }
-
-    function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
-
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        }
-    }
-
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        return '';
-    }
-
-    function _getIconSafe(name) {
-        var icon = _getIcon(name);
-        return icon || '';
-    }
-
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        if (typeof window._openModal === 'function') {
-            return window._openModal(options);
-        }
-        return null;
-    }
-
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
-        if (typeof window._closeTopModal === 'function') {
-            window._closeTopModal();
-        }
-    }
-
-    function _confirmDialog(message, title, onConfirm) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm);
-        }
-        if (typeof window._confirmDialog === 'function') {
-            return window._confirmDialog(message, title, onConfirm);
-        }
-        if (confirm(message)) {
-            onConfirm();
-        }
-    }
-
-    function _openCharacterSelector(options) {
-        if (typeof window.openCharacterSelector === 'function') {
-            return window.openCharacterSelector(options);
-        }
-        if (typeof window._openCharacterSelector === 'function') {
-            return window._openCharacterSelector(options);
-        }
-        _showToast('Character selector not available', 'error');
-        return null;
+    var T = window.HouseholdTabRuntime;
+    if (!T) {
+        throw new Error(
+            'household-overview-tab: HouseholdTabRuntime must load first. ' +
+            'Load js/households/household-tab-runtime.js before this tab.'
+        );
     }
 
     // =========================================================================
-    // 3. ICON HELPERS
+    // 1. CONSTANTS
     // =========================================================================
 
-    function _iconSpan(icon, title) {
-        if (!icon) return '';
-        var titleAttr = title ? ' title="' + _escapeHtml(title) + '"' : '';
-        return '<span style="display:inline-flex;align-items:center;vertical-align:middle;' + (title ? 'cursor:help;' : '') + '"' + titleAttr + '>' + icon + '</span>';
-    }
+    var TAB_ID = 'details';
+    var SCOPE  = T.SCOPE; // 'households'
+
+    // Render guard — the canonical per-tab guard.
+    var _renderGuard = { busy: false };
 
     // =========================================================================
-    // 4. GET CURRENT HOUSEHOLD ID
+    // 2. DATA
     // =========================================================================
     //
-    // The canonical selection lives in HouseholdState.getUIState()
-    // .selectedHouseholdId. It is written by
-    // HouseholdState.setSelectedHousehold(id), which
-    // household-ui-list.js::selectHousehold is expected to call when
-    // the user picks a household from the sidebar.
-    //
-    // The flat globals (window._currentHouseholdId,
-    // window.currentHouseholdId, window.selectedHouseholdId) are NOT
-    // written by any canonical module. They are kept as a fallback
-    // for harnesses that set them directly, but they are no longer
-    // the source of truth.
+    // This is the only function in the file that reads more than one
+    // domain. It returns a flat data shape that the renderer consumes.
+    // Reading is wrapped in try/catch per-field so a missing optional
+    // domain (ResidenceSystem, nameHistory) degrades that section to
+    // an empty state rather than failing the whole render.
 
-    function _getCurrentHouseholdId() {
-        var HS = _getState();
-        if (HS && typeof HS.getUIState === 'function') {
-            try {
-                var s = HS.getUIState();
-                if (s && typeof s.selectedHouseholdId === 'string'
-                    && s.selectedHouseholdId.length > 0) {
-                    return s.selectedHouseholdId;
-                }
-            } catch (e) { /* fall through to legacy globals */ }
-        }
-        if (window._currentHouseholdId) return window._currentHouseholdId;
-        if (window.currentHouseholdId) return window.currentHouseholdId;
-        if (window.selectedHouseholdId) return window.selectedHouseholdId;
-        return null;
-    }
-
-    // =========================================================================
-    // 5. DATA FETCHER
-    // =========================================================================
-
-    function _getOverviewData(householdId) {
-        var HS = _getState();
-        var HQ = _getQueries();
-        var RS = _getResidenceSystem();
-
-        if (!HS) {
-            return { error: 'Household system not available' };
+    function _collect(householdId) {
+        var summary = T.getHousehold(householdId);
+        if (!summary) {
+            return { error: 'Household not found.' };
         }
 
-        var household = HS.getHousehold(householdId);
-        if (!household) {
-            return { error: 'Household not found' };
+        var year;
+        try {
+            year = T.requireCurrentYear();
+        } catch (e) {
+            return { error: 'Current year unavailable: ' + (e && e.message ? e.message : 'time.js missing') };
         }
 
-        var head = HS.getHouseholdHead(householdId);
-        var status = HS.getHouseholdStatus(householdId);
-        var members = HS.getHouseholdMembersWithCharacters(householdId);
+        var head = T.getHouseholdHead(householdId);
+        var status = T.getHouseholdStatus(householdId);
+        var members = T.getHouseholdMembers(householdId) || [];
+        var departments = T.getHouseholdDepartments(householdId) || [];
 
-        var locationName = 'Unknown';
-        if (household.locationId) {
-            var place = _getPlaceById(household.locationId);
-            if (place) locationName = place.displayName || place.name || 'Unknown';
-        }
+        var locationName = summary.locationId
+            ? T.placeName(summary.locationId)
+            : 'Unknown';
 
+        // Residence — degrade gracefully when ResidenceSystem is absent.
         var residenceInfo = null;
-        if (household.residenceId && RS) {
-            var residence = RS.getResidenceById(household.residenceId);
-            if (residence) {
-                residenceInfo = {
-                    id: residence.id,
-                    name: residence.name || residence.displayName || 'Unknown',
-                    unitNumber: household.residenceUnitNumber || null,
-                    associatedYear: household.associatedYear || null,
-                    notes: household.residenceNotes || null
-                };
+        if (summary.residenceId) {
+            var RS = T.residence();
+            if (RS && typeof RS.getResidence === 'function') {
+                try {
+                    var res = RS.getResidence(summary.residenceId);
+                    if (res) {
+                        residenceInfo = {
+                            id: res.id,
+                            name: res.name,
+                            unitNumber: summary.residenceUnitNumber || null,
+                            associatedYear: summary.associatedYear || null
+                        };
+                    }
+                } catch (e) { /* leave null */ }
             }
         }
 
-        var nameHistory = household.nameHistory || [];
+        // Name history — the raw record shape. HouseholdQueries does not
+        // project nameHistory (see household-queries.js §8, which reads
+        // it live only for getHouseholdNamePeriods). The overview needs
+        // the last three entries for the "Name History" summary block.
+        var nameHistory = [];
+        var HS = T.state();
+        if (HS && HS._internal && typeof HS._internal.getHouseholdRecord === 'function') {
+            try {
+                var raw = HS._internal.getHouseholdRecord(householdId);
+                if (raw && Array.isArray(raw.nameHistory)) {
+                    nameHistory = raw.nameHistory.slice();
+                }
+            } catch (e) { /* leave empty */ }
+        }
+
         var currentNameInfo = null;
         if (nameHistory.length > 0) {
-            var lastChange = nameHistory[nameHistory.length - 1];
+            var last = nameHistory[nameHistory.length - 1];
             currentNameInfo = {
-                since: lastChange.year || household.foundedYear || 'Unknown',
-                original: nameHistory[0] ? nameHistory[0].oldName : household.name,
-                lastChange: lastChange
+                since: last.year || summary.foundedYear || 'Unknown',
+                original: nameHistory[0] ? nameHistory[0].oldName : summary.name,
+                lastChangeYear: last.year || null
             };
         }
 
-        var departments = household.departments || [];
-
         var enterpriseCount = 0;
-        if (HQ && typeof HQ.getHouseholdEnterprises === 'function') {
-            var enterprises = HQ.getHouseholdEnterprises(householdId);
-            enterpriseCount = enterprises ? enterprises.length : 0;
-        }
+        try {
+            var ents = T.queries().getHouseholdEnterprises(householdId);
+            enterpriseCount = ents ? ents.length : 0;
+        } catch (e) { enterpriseCount = 0; }
 
         return {
-            household: household,
+            household: summary,
             head: head,
             status: status,
             members: members,
+            departments: departments,
             locationName: locationName,
             residenceInfo: residenceInfo,
             nameHistory: nameHistory,
             currentNameInfo: currentNameInfo,
-            departments: departments,
             enterpriseCount: enterpriseCount,
-            currentYear: _getCurrentYear(),
-            livingCount: status.livingCount || 0,
-            deceasedCount: status.deceasedCount || 0,
-            totalMembers: members ? members.length : 0
+            livingCount: status ? (status.livingCount || 0) : 0,
+            deceasedCount: status ? (status.deceasedCount || 0) : 0,
+            totalMembers: members.length,
+            year: year
         };
     }
 
     // =========================================================================
-    // 6. RENDER FUNCTIONS
+    // 3. STATUS BADGE
     // =========================================================================
+    //
+    // Maps the canonical status string to a CSS class (defined in
+    // household-tabs.css) and a human label. No color strings here — the
+    // CSS owns the palette.
 
-    function _renderOverview(data) {
-        var household = data.household;
-        var head = data.head;
-        var editIcon = _getIconSafe('EDIT');
-        var homeIcon = _getIconSafe('HOME');
-        var personIcon = _getIconSafe('PERSON');
-        var locationIcon = _getIconSafe('LOCATION');
-        var crownIcon = _getIconSafe('CROWN');
-        var calendarIcon = _getIconSafe('CIRCLE_DOT');
-        var historyIcon = _getIconSafe('REFRESH');
-
-        var headName = head ? (head.name + (head.surname ? ' ' + head.surname : '')) : 'None';
-        var headId = head ? head.id : null;
-
-        var statusColor = '#4a9e6a';
-        var statusText = 'Active';
-        if (data.status.status === 'vacant') { statusColor = '#c87040'; statusText = 'Vacant'; }
-        else if (data.status.status === 'empty') { statusColor = '#9e9e9e'; statusText = 'Empty'; }
-        else if (data.status.status === 'declining') { statusColor = '#c8a844'; statusText = 'Declining'; }
-        else if (data.status.status === 'abandoned') { statusColor = '#8a3020'; statusText = 'Abandoned'; }
-        else if (data.status.status === 'deprecated') { statusColor = '#6a6a6a'; statusText = 'Deprecated'; }
-        else if (data.status.status === 'bankrupt') { statusColor = '#8a2020'; statusText = 'Bankrupt'; }
-
-        var residenceDisplay = 'None assigned';
-        var residenceActions = '';
-        if (data.residenceInfo) {
-            var unitDisplay = data.residenceInfo.unitNumber ? ' (Unit ' + data.residenceInfo.unitNumber + ')' : '';
-            var yearDisplay = data.residenceInfo.associatedYear ? ' · since ' + data.residenceInfo.associatedYear : '';
-            residenceDisplay = homeIcon + ' ' + _escapeHtml(data.residenceInfo.name) + unitDisplay + yearDisplay;
-            residenceActions = '' +
-                '<button id="overviewViewResidenceBtn" class="btn" style="padding:2px 8px;font-size:0.5rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;">View</button>' +
-                '<button id="overviewUnassignResidenceBtn" class="btn" style="padding:2px 8px;font-size:0.5rem;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;">Unassign</button>';
+    function _statusBadge(status) {
+        var s = status || 'active';
+        switch (s) {
+            case 'active':     return { cssClass: 'hh-status-active',     label: 'Active' };
+            case 'vacant':     return { cssClass: 'hh-status-vacant',     label: 'Vacant' };
+            case 'empty':      return { cssClass: 'hh-status-empty',      label: 'Empty' };
+            case 'declining':  return { cssClass: 'hh-status-declining',  label: 'Declining' };
+            case 'abandoned':  return { cssClass: 'hh-status-abandoned',  label: 'Abandoned' };
+            case 'deprecated': return { cssClass: 'hh-status-deprecated', label: 'Deprecated' };
+            case 'destroyed':  return { cssClass: 'hh-status-destroyed',  label: 'Destroyed' };
+            case 'bankrupt':   return { cssClass: 'hh-status-bankrupt',   label: 'Bankrupt' };
+            default:           return { cssClass: 'hh-status-unknown',    label: 'Unknown' };
         }
-
-        var nameHistoryDisplay = '';
-        if (data.nameHistory && data.nameHistory.length > 0) {
-            var historyEntries = data.nameHistory.slice(-3).map(function(h) {
-                return '<span style="font-size:0.45rem;color:var(--dim);">' +
-                    h.year + ': ' + _escapeHtml(h.oldName || '—') + ' → ' + _escapeHtml(h.newName) +
-                    (h.reason ? ' (' + _escapeHtml(h.reason) + ')' : '') +
-                    '</span>';
-            }).join('<br>');
-            nameHistoryDisplay = '' +
-                '<div style="margin-top:4px;padding:6px;background:var(--bg3);border-radius:4px;font-size:0.55rem;">' +
-                    '<div style="color:var(--dim);font-size:0.5rem;">Name History</div>' +
-                    historyEntries +
-                    (data.nameHistory.length > 3 ? '<div style="font-size:0.45rem;color:var(--dim);margin-top:2px;">+' + (data.nameHistory.length - 3) + ' more</div>' : '') +
-                '</div>';
-        }
-
-        var nameSince = data.currentNameInfo ?
-            'Current name since ' + data.currentNameInfo.since +
-            (data.currentNameInfo.original && data.currentNameInfo.original !== household.name ?
-                ' · Original: ' + _escapeHtml(data.currentNameInfo.original) : '') :
-            '';
-
-        return '' +
-            '<div style="max-width:700px;margin:0 auto;">' +
-                '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px;">' +
-                    '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:12px;">' +
-                        '<div>' +
-                            '<h2 style="font-size:1rem;color:var(--accent);margin:0;">' + _escapeHtml(household.name) + '</h2>' +
-                            '<div style="font-size:0.6rem;color:var(--dim);margin-top:2px;">' +
-                                locationIcon + ' ' + _escapeHtml(data.locationName) +
-                                ' · ' + calendarIcon + ' Founded ' + (household.foundedYear || 'Unknown') +
-                                (household.id ? ' · ID: ' + _escapeHtml(household.id) : '') +
-                            '</div>' +
-                            '<div style="font-size:0.55rem;color:var(--dim);margin-top:2px;">' + nameSince + '</div>' +
-                        '</div>' +
-                        '<div style="text-align:right;">' +
-                            '<div style="font-size:0.65rem;color:' + statusColor + ';font-weight:bold;">' + statusText + '</div>' +
-                            '<div style="font-size:0.5rem;color:var(--dim);">' +
-                                data.livingCount + ' living · ' + data.deceasedCount + ' deceased' +
-                            '</div>' +
-                            '<div style="font-size:0.5rem;color:var(--dim);">' +
-                                data.totalMembers + ' members · ' + data.departments.length + ' departments' +
-                                (data.enterpriseCount > 0 ? ' · ' + data.enterpriseCount + ' enterprises' : '') +
-                            '</div>' +
-                        '</div>' +
-                    '</div>' +
-
-                    nameHistoryDisplay +
-
-                    '<div style="display:grid;grid-template-columns:120px 1fr;gap:6px 16px;font-size:0.7rem;margin:12px 0;padding:12px;background:var(--bg3);border-radius:6px;">' +
-                        '<span style="color:var(--dim);">' + crownIcon + ' Head</span>' +
-                        '<span>' + _escapeHtml(headName) +
-                            (headId ? ' <button id="overviewChangeHeadBtn" class="btn" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--accent);cursor:pointer;" title="Change head">' + editIcon + '</button>' : '') +
-                        '</span>' +
-
-                        '<span style="color:var(--dim);">' + homeIcon + ' Residence</span>' +
-                        '<span style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">' +
-                            '<span>' + residenceDisplay + '</span>' +
-                            '<span style="display:flex;gap:4px;">' +
-                                '<button id="overviewAssignResidenceBtn" class="btn" style="padding:2px 8px;font-size:0.5rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">Assign</button>' +
-                                residenceActions +
-                            '</span>' +
-                        '</span>' +
-
-                        '<span style="color:var(--dim);">' + personIcon + ' Members</span>' +
-                        '<span>' + data.totalMembers + ' (' + data.livingCount + ' living, ' + data.deceasedCount + ' deceased)</span>' +
-
-                        '<span style="color:var(--dim);">Wealth</span>' +
-                        '<span>' + (household.wealth || 0) + ' gold</span>' +
-
-                        '<span style="color:var(--dim);">Reputation</span>' +
-                        '<span>' + (household.reputation || 0) + '</span>' +
-
-                        (household.notes ? '<span style="color:var(--dim);">Notes</span><span style="font-size:0.65rem;">' + _escapeHtml(household.notes) + '</span>' : '') +
-                    '</div>' +
-
-                    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;padding-top:12px;border-top:1px solid var(--border);">' +
-                        '<button id="overviewEditBtn" class="btn" style="padding:4px 12px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">' + editIcon + ' Edit Info</button>' +
-                        '<button id="overviewRenameBtn" class="btn" style="padding:4px 12px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Rename (with history)</button>' +
-                        '<button id="overviewHistoryBtn" class="btn" style="padding:4px 12px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">' + historyIcon + ' View History</button>' +
-                    '</div>' +
-                '</div>' +
-                '<div style="font-size:0.5rem;color:var(--dim);text-align:center;">' +
-                    'Household ID: ' + _escapeHtml(household.id) + ' · Last updated: ' + (household.updatedAt ? new Date(household.updatedAt).toLocaleDateString() : 'Never') +
-                '</div>' +
-            '</div>';
     }
 
     // =========================================================================
-    // 7. MAIN RENDER FUNCTION
+    // 4. RENDER
+    // =========================================================================
+    //
+    // The renderer emits classes only. Every string that comes from data
+    // goes through T.esc (strict — throws if formatting.js is missing).
+    // The one exception is error text from an exception, which uses
+    // T.escSafe because by definition formatting.js may be the thing
+    // that's broken.
+
+    function _renderBody(d) {
+        var h = d.household;
+        var badge = _statusBadge(d.status ? d.status.status : 'active');
+        var headName = d.head ? d.head.characterName : 'None';
+        var canChangeHead = !!d.head;
+
+        // Header block ----------------------------------------------------
+        var header =
+            '<div class="hh-overview-header">' +
+                '<div class="hh-tab-header">' +
+                    '<div>' +
+                        '<h2 class="hh-overview-title">' + T.esc(h.name) + '</h2>' +
+                        '<div class="hh-overview-subtitle">' +
+                            T.iconSpan('LOCATION', 'Location') + ' ' +
+                            T.esc(d.locationName) +
+                            ' · ' + T.iconSpan('CIRCLE_DOT', 'Founded') + ' Founded ' +
+                            T.esc(String(h.foundedYear || 'Unknown')) +
+                        '</div>' +
+                        _renderNameSince(d) +
+                    '</div>' +
+                    '<div class="hh-overview-status">' +
+                        '<div class="' + badge.cssClass + '">' + T.esc(badge.label) + '</div>' +
+                        '<div class="hh-overview-status-meta">' +
+                            d.livingCount + ' living · ' + d.deceasedCount + ' deceased' +
+                        '</div>' +
+                        '<div class="hh-overview-status-meta">' +
+                            d.totalMembers + ' members · ' +
+                            d.departments.length + ' departments' +
+                            (d.enterpriseCount > 0 ? ' · ' + d.enterpriseCount + ' enterprises' : '') +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+                _renderNameHistorySummary(d) +
+                _renderDetailGrid(d, headName) +
+                _renderActions(canChangeHead, d) +
+            '</div>';
+
+        // Footer ----------------------------------------------------------
+        var footer =
+            '<div class="hh-tab-footer">' +
+                'Household ID: ' + T.esc(h.id) +
+            '</div>';
+
+        return '<div class="hh-tab">' + header + footer + '</div>';
+    }
+
+    function _renderNameSince(d) {
+        if (!d.currentNameInfo) return '';
+        var parts = ['Current name since ' + d.currentNameInfo.since];
+        if (d.currentNameInfo.original &&
+            d.currentNameInfo.original !== d.household.name) {
+            parts.push('Original: ' + T.esc(d.currentNameInfo.original));
+        }
+        return '<div class="hh-overview-subtitle">' +
+            T.esc(parts.join(' · ')) +
+        '</div>';
+    }
+
+    function _renderNameHistorySummary(d) {
+        if (d.nameHistory.length === 0) return '';
+
+        var recent = d.nameHistory.slice(-3);
+        var entries = recent.map(function (e) {
+            return '<div class="hh-name-history-entry">' +
+                T.esc(String(e.year)) + ': ' +
+                T.esc(e.oldName || '—') + ' → ' +
+                '<strong>' + T.esc(e.newName) + '</strong>' +
+                (e.reason ? ' (' + T.esc(e.reason) + ')' : '') +
+            '</div>';
+        }).join('');
+
+        var more = d.nameHistory.length > 3
+            ? '<div class="hh-name-history-more">+' +
+                (d.nameHistory.length - 3) + ' more name change(s)</div>'
+            : '';
+
+        return '<div class="hh-name-history">' +
+            '<div class="hh-name-history-title">Name History</div>' +
+            entries +
+            more +
+        '</div>';
+    }
+
+    function _renderDetailGrid(d, headName) {
+        var h = d.household;
+        var residenceDisplay = d.residenceInfo
+            ? T.iconSpan('HOME', 'Residence') + ' ' + T.esc(d.residenceInfo.name) +
+                (d.residenceInfo.unitNumber
+                    ? ' (Unit ' + T.esc(String(d.residenceInfo.unitNumber)) + ')'
+                    : '') +
+                (d.residenceInfo.associatedYear
+                    ? ' · since ' + T.esc(String(d.residenceInfo.associatedYear))
+                    : '')
+            : 'None assigned';
+
+        var rows = [
+            ['CROWN', 'Head', T.esc(headName) +
+                (d.head
+                    ? ' <button type="button" class="hh-icon-btn" ' +
+                        'data-action="change-head" title="Change head">' +
+                        T.icon('EDIT') +
+                      '</button>'
+                    : '')],
+            ['HOME', 'Residence', residenceDisplay],
+            ['PERSON', 'Members', d.totalMembers + ' (' +
+                d.livingCount + ' living, ' +
+                d.deceasedCount + ' deceased)'],
+            ['COIN', 'Wealth', T.esc(String(h.wealth || 0)) + ' gold'],
+            ['CIRCLE_DOT', 'Reputation', T.esc(String(h.reputation || 0))]
+        ];
+
+        if (h.notes) {
+            rows.push(['EDIT', 'Notes', T.esc(h.notes)]);
+        }
+
+        var cells = rows.map(function (r) {
+            return '<div class="hh-overview-grid-label">' +
+                    T.iconSpan(r[0], r[1]) + ' ' + T.esc(r[1]) +
+                '</div>' +
+                '<div class="hh-overview-grid-value">' + r[2] + '</div>';
+        }).join('');
+
+        // The "Assign / Unassign" buttons live in the residence row.
+        // Building them here keeps the row self-contained.
+        var residenceActions =
+            '<div class="hh-inline-actions">' +
+                '<button type="button" class="hh-btn hh-btn-primary" ' +
+                    'data-action="assign-residence">Assign</button>' +
+                (d.residenceInfo
+                    ? '<button type="button" class="hh-btn hh-btn-danger" ' +
+                        'data-action="unassign-residence">Unassign</button>'
+                    : '') +
+            '</div>';
+
+        // Splice the residence actions into the residence cell.
+        cells = cells.replace(
+            '<div class="hh-overview-grid-value">' + residenceDisplay + '</div>',
+            '<div class="hh-overview-grid-value">' + residenceDisplay + residenceActions + '</div>'
+        );
+
+        return '<div class="hh-overview-grid">' + cells + '</div>';
+    }
+
+    function _renderActions(canChangeHead, d) {
+        return '<div class="hh-overview-actions">' +
+            '<button type="button" class="hh-btn hh-btn-primary" data-action="edit-info">' +
+                T.iconSpan('EDIT', 'Edit') + ' Edit Info' +
+            '</button>' +
+            '<button type="button" class="hh-btn" data-action="rename">' +
+                'Rename (with history)' +
+            '</button>' +
+            '<button type="button" class="hh-btn" data-action="view-history">' +
+                T.iconSpan('REFRESH', 'History') + ' View History' +
+            '</button>' +
+        '</div>';
+    }
+
+    // =========================================================================
+    // 5. RENDER ENTRY POINT
     // =========================================================================
 
-    function renderHouseholdOverviewTab(containerId, householdId) {
-        if (_rendering) {
-            return;
-        }
-        _rendering = true;
+    function renderHouseholdOverviewTab(container, context) {
+        if (!container) return;
 
-        try {
-            var container = document.getElementById(containerId);
-            if (!container) {
-                console.warn('[OverviewTab] Container not found: ' + containerId);
+        T.runExclusive(_renderGuard, function () {
+            // No context → bootstrap already handles this via
+            // _buildEmptyState, but the renderer must also be defensively
+            // correct in case TabManager calls it directly.
+            if (!context || !context.householdId) {
+                container.innerHTML = T.emptyState('Select a household from the sidebar.');
                 return;
             }
 
-            // If no householdId provided, resolve from canonical state.
-            if (!householdId) {
-                householdId = _getCurrentHouseholdId();
-            }
-
-            if (!householdId) {
-                container.innerHTML = '<div class="placeholder">No household selected</div>';
+            // Required dependency check: HouseholdQueries.
+            if (!T.queries()) {
+                container.innerHTML = T.failureState(
+                    'HouseholdQueries is not loaded. Load js/households/household-queries.js.'
+                );
                 return;
             }
 
-            console.log('[OverviewTab] Rendering for household:', householdId);
-
-            var data = _getOverviewData(householdId);
+            var data;
+            try {
+                data = _collect(context.householdId);
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('[HouseholdOverviewTab] collect failed', e);
+                }
+                container.innerHTML = T.failureState(
+                    'Could not load household overview: ' +
+                    (e && e.message ? e.message : 'unknown error')
+                );
+                return;
+            }
 
             if (data.error) {
-                container.innerHTML = '<div class="placeholder" style="color:var(--danger);">' + _escapeHtml(data.error) + '</div>';
+                container.innerHTML = T.failureState(data.error);
                 return;
             }
 
-            container.innerHTML = _renderOverview(data);
-
-            // Attach event handlers
-            _attachEventHandlers(container, householdId);
-
-        } catch (e) {
-            console.error('[OverviewTab] Error:', e);
-            var container = document.getElementById(containerId);
-            if (container) {
-                container.innerHTML = '<div class="placeholder" style="color:var(--danger);">Error loading overview</div>';
+            container.innerHTML = _renderBody(data);
+            _wire(container, context.householdId);
+        }, {
+            onBusy: function () {
+                // Re-entrant render (e.g. modal success fires while a
+                // previous render is still assembling). Silently skip;
+                // the outer call will produce the authoritative HTML.
             }
-        } finally {
-            _rendering = false;
-        }
+        });
     }
 
     // =========================================================================
-    // 8. EVENT HANDLERS
+    // 6. WIRING
     // =========================================================================
+    //
+    // One delegated click listener on the container. Row-action
+    // delegation, not per-button .onclick =. Attached once via the
+    // runtime's ATTACHED_FLAG.
 
-    function _attachEventHandlers(container, householdId) {
-        var HS = _getState();
-        var HC = _getCommands();
-
-        if (!HS || !HC) return;
-
-        var editBtn = container.querySelector('#overviewEditBtn');
-        if (editBtn) {
-            editBtn.onclick = function() {
-                if (typeof window.openEditHouseholdModal === 'function') {
-                    window.openEditHouseholdModal(householdId, function() {
-                        renderHouseholdOverviewTab('tab-details', householdId);
-                        // Sync the sidebar's selected household back
-                        // to the canonical store so a subsequent
-                        // re-render sees the updated name.
-                        if (typeof window.refreshHouseholdList === 'function') {
-                            window.refreshHouseholdList();
-                        }
-                    });
-                } else {
-                    _showToast('Edit modal not available', 'error');
-                }
-            };
-        }
-
-        var renameBtn = container.querySelector('#overviewRenameBtn');
-        if (renameBtn) {
-            renameBtn.onclick = function() {
-                _openRenameModal(householdId);
-            };
-        }
-
-        var historyBtn = container.querySelector('#overviewHistoryBtn');
-        if (historyBtn) {
-            historyBtn.onclick = function() {
-                if (typeof window.openViewHouseholdHistoryModal === 'function') {
-                    window.openViewHouseholdHistoryModal(householdId);
-                } else {
-                    _showToast('History view not available', 'error');
-                }
-            };
-        }
-
-        var changeHeadBtn = container.querySelector('#overviewChangeHeadBtn');
-        if (changeHeadBtn) {
-            changeHeadBtn.onclick = function() {
-                _openChangeHeadModal(householdId);
-            };
-        }
-
-        var assignResBtn = container.querySelector('#overviewAssignResidenceBtn');
-        if (assignResBtn) {
-            assignResBtn.onclick = function() {
-                _openAssignResidenceModal(householdId);
-            };
-        }
-
-        var viewResBtn = container.querySelector('#overviewViewResidenceBtn');
-        if (viewResBtn) {
-            viewResBtn.onclick = function() {
-                var data = _getOverviewData(householdId);
-                if (data.residenceInfo && typeof window.openResidenceDetailsModal === 'function') {
-                    window.openResidenceDetailsModal(data.residenceInfo.id);
-                } else {
-                    _showToast('Residence details not available', 'error');
-                }
-            };
-        }
-
-        var unassignResBtn = container.querySelector('#overviewUnassignResidenceBtn');
-        if (unassignResBtn) {
-            unassignResBtn.onclick = function() {
-                _confirmUnassignResidence(householdId);
-            };
-        }
+    function _wire(container, householdId) {
+        T.attachDelegated(container, {
+            '[data-action="edit-info"]':         function () { _openEditInfo(householdId); },
+            '[data-action="rename"]':            function () { _openRename(householdId); },
+            '[data-action="view-history"]':      function () { _openViewHistory(householdId); },
+            '[data-action="change-head"]':       function () { _openChangeHead(householdId); },
+            '[data-action="assign-residence"]':  function () { _openAssignResidence(householdId); },
+            '[data-action="unassign-residence"]':function () { _openUnassignResidence(householdId); }
+        });
     }
 
     // =========================================================================
-    // 9. RENAME MODAL
+    // 7. MODAL DELEGATION
+    // =========================================================================
+    //
+    // Rule 7: missing delegates toast a clear error; they do not swallow.
+    // Rule 8: the modal owns persistence. The tab's onSuccess callback
+    // triggers a fresh render via TabRuntime.requestRender.
+
+    function _rerender(householdId) {
+        T.requestRender(TAB_ID);
+    }
+
+    function _openEditInfo(householdId) {
+        if (typeof window.openEditHouseholdModal !== 'function') {
+            T.toastError(
+                'Edit modal unavailable: openEditHouseholdModal is not loaded. ' +
+                'Load js/households/modals-household.js.'
+            );
+            return;
+        }
+        window.openEditHouseholdModal(householdId, function () {
+            _rerender(householdId);
+            if (typeof window.refreshHouseholdList === 'function') {
+                window.refreshHouseholdList();
+            }
+        });
+    }
+
+    function _openViewHistory(householdId) {
+        if (typeof window.openViewHouseholdHistoryModal !== 'function') {
+            T.toastError(
+                'History view unavailable: openViewHouseholdHistoryModal is not loaded. ' +
+                'Load js/households/modals-household-snapshot.js.'
+            );
+            return;
+        }
+        window.openViewHouseholdHistoryModal(householdId);
+    }
+
+    // =========================================================================
+    // 8. RENAME MODAL (inline; routes through HouseholdCommands)
     // =========================================================================
 
-    function _openRenameModal(householdId) {
-        var HS = _getState();
-        if (!HS) {
-            _showToast('Household system not available', 'error');
-            return;
-        }
+    function _openRename(householdId) {
+        var h = T.getHousehold(householdId);
+        if (!h) { T.toastError('Household not found.'); return; }
 
-        var household = HS.getHousehold(householdId);
-        if (!household) {
-            _showToast('Household not found', 'error');
-            return;
-        }
+        var year;
+        try { year = T.requireCurrentYear(); }
+        catch (e) { T.toastError('Current year unavailable: ' + (e && e.message)); return; }
 
-        var currentYear = _getCurrentYear();
-
-        var content = '' +
-            '<div style="margin-bottom:12px;">' +
-                '<div style="background:var(--bg3);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.6rem;">' +
-                    'Current name: <strong>' + _escapeHtml(household.name) + '</strong>' +
+        var content =
+            '<div class="hh-modal-form">' +
+                '<div class="hh-modal-current">' +
+                    'Current name: <strong>' + T.esc(h.name) + '</strong>' +
                 '</div>' +
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">New Name *</label>' +
-                    '<input type="text" id="renameName" value="' + _escapeHtml(household.name) + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '<div class="hh-form-group">' +
+                    '<label>New Name *</label>' +
+                    '<input type="text" data-field="name" value="' + T.esc(h.name) + '">' +
                 '</div>' +
-                '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;">' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Year of Change</label>' +
-                        '<input type="number" id="renameYear" value="' + currentYear + '" min="1" max="' + (currentYear + 5) + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                    '</div>' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
-                        '<input type="text" id="renameReason" placeholder="e.g., Inheritance, Renovation, New Era..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                    '</div>' +
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Changed By (optional)</label>' +
-                        '<input type="text" id="renameChangedBy" placeholder="Who initiated the change..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                    '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Year of Change</label>' +
+                    '<input type="number" data-field="year" value="' + year + '" min="1">' +
                 '</div>' +
-                '<div style="font-size:0.55rem;color:var(--dim);">This will record the name change in history with a year and reason.</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Reason</label>' +
+                    '<input type="text" data-field="reason" ' +
+                        'placeholder="e.g., Inheritance, Renovation, New Era…">' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Changed By (optional)</label>' +
+                    '<input type="text" data-field="by" ' +
+                        'placeholder="Who initiated the change…">' +
+                '</div>' +
+                '<div class="hh-form-hint">' +
+                    'The change is recorded in household name history via ' +
+                    'HouseholdCommands.updateHousehold.' +
+                '</div>' +
             '</div>';
 
-        _openModal({
-            title: 'Rename Household (with history)',
+        var modal = T.openModal({
+            title: 'Rename Household',
             content: content,
             confirmText: 'Rename',
             cancelText: 'Cancel',
-            onOpen: function() {
-                var nameInput = document.getElementById('renameName');
-                if (nameInput) {
-                    setTimeout(function() { nameInput.focus(); nameInput.select(); }, 100);
-                }
-            },
-            onConfirm: function() {
-                var newName = document.getElementById('renameName').value.trim();
-                if (!newName) {
-                    _showToast('Please enter a name', 'error');
-                    return false;
-                }
-                if (newName === household.name) {
-                    _showToast('Name is the same', 'info');
-                    _closeTopModal();
+            onConfirm: function () {
+                var root = modal && modal.element;
+                if (!root) { T.toastError('Modal root unavailable.'); return false; }
+
+                var newName = (root.querySelector('[data-field="name"]').value || '').trim();
+                if (!newName) { T.toastError('Please enter a name.'); return false; }
+                if (newName === h.name) {
+                    T.toastInfo('Name is unchanged.');
+                    T.closeTopModal();
                     return true;
                 }
-                var year = parseInt(document.getElementById('renameYear').value);
-                var reason = document.getElementById('renameReason').value.trim() || 'Renamed';
-                var changedBy = document.getElementById('renameChangedBy').value.trim() || null;
-                if (isNaN(year) || year < 1) {
-                    _showToast('Please enter a valid year', 'error');
+
+                var y = parseInt(root.querySelector('[data-field="year"]').value, 10);
+                if (!isFinite(y) || y < 1) { T.toastError('Please enter a valid year.'); return false; }
+
+                var reason = (root.querySelector('[data-field="reason"]').value || '').trim() || 'Renamed';
+                var by = (root.querySelector('[data-field="by"]').value || '').trim() || null;
+
+                var HC = T.commands();
+                if (!HC) { T.toastError('HouseholdCommands is not loaded.'); return false; }
+
+                var result = HC.updateHousehold(householdId, {
+                    name: newName,
+                    renameYear: y,
+                    renameReason: reason,
+                    changedBy: by
+                });
+                if (!result || result.success !== true) {
+                    T.toastError('Rename failed: ' + (result ? result.reason : 'unknown'));
                     return false;
                 }
-                var result = _doRenameWithHistory(householdId, newName, year, reason, changedBy);
-                if (result && result.success) {
-                    _showToast('Household renamed from "' + household.name + '" to "' + newName + '" (' + year + ')', 'success');
-                    _closeTopModal();
-                    renderHouseholdOverviewTab('tab-details', householdId);
-                    if (typeof window.refreshHouseholdList === 'function') {
-                        window.refreshHouseholdList();
-                    }
-                    return true;
+
+                var persisted = HC.persist();
+                if (persisted && persisted.success === false) {
+                    T.toastWarning('Renamed in memory; storage write failed: ' +
+                        (persisted.reason || 'unknown'));
                 } else {
-                    var reason2 = (result && result.reason) ? result.reason : 'Unknown error';
-                    _showToast('Failed to rename household: ' + reason2, 'error');
-                    return false;
+                    T.toastSuccess('Household renamed to "' + newName + '" (' + y + ').');
                 }
-            }
-        });
-    }
 
-    /**
-     * Renames a household through HouseholdCommands.updateHousehold,
-     * which owns the field allowlist, the accessor cache invalidation,
-     * and the name-history append.
-     *
-     * The previous implementation mutated masterData.data.households
-     * directly, which bypassed invalidateAccessorCaches — so
-     * getHouseholdById returned the pre-rename record until the next
-     * full reload.
-     *
-     * @returns {object|null} the command result, or null on precondition failure
-     */
-    function _doRenameWithHistory(householdId, newName, year, reason, changedBy) {
-        var HC = _getCommands();
-        if (!HC) {
-            return { success: false, reason: 'HouseholdCommands not available' };
-        }
-        var result = HC.updateHousehold(householdId, {
-            name: newName,
-            renameYear: year,
-            renameReason: reason || 'Renamed',
-            changedBy: changedBy || null
-        });
-        if (!result || result.success !== true) {
-            return result || { success: false, reason: 'updateHousehold returned no result' };
-        }
-        var persistResult = HC.persist();
-        if (persistResult && persistResult.success === false) {
-            // In-memory update succeeded; the flush failed. Surface
-            // the failure so the caller does not believe the rename
-            // survived a reload.
-            return {
-                success: false,
-                reason: 'Saved in memory; storage write failed: ' +
-                    (persistResult.reason || 'unknown')
-            };
-        }
-        return result;
-    }
-
-    // =========================================================================
-    // 10. CHANGE HEAD MODAL
-    // =========================================================================
-
-    function _openChangeHeadModal(householdId) {
-        var HS = _getState();
-        var HC = _getCommands();
-        if (!HS || !HC) {
-            _showToast('Household system not available', 'error');
-            return;
-        }
-        var household = HS.getHousehold(householdId);
-        if (!household) {
-            _showToast('Household not found', 'error');
-            return;
-        }
-        var currentHead = HS.getHouseholdHead(householdId);
-        var currentHeadName = currentHead ? (currentHead.name + (currentHead.surname ? ' ' + currentHead.surname : '')) : 'None';
-        var currentYear = _getCurrentYear();
-
-        var content = '' +
-            '<div style="margin-bottom:12px;">' +
-                '<div style="background:var(--bg3);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.6rem;">' +
-                    'Current Head: <strong>' + _escapeHtml(currentHeadName) + '</strong>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Select New Head</label>' +
-                    '<div style="display:flex;gap:6px;">' +
-                        '<input type="text" id="changeHeadDisplay" placeholder="Select character..." readonly style="flex:1;padding:6px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;font-size:0.7rem;cursor:pointer;">' +
-                        '<input type="hidden" id="changeHeadId">' +
-                        '<button id="changeHeadSelectBtn" class="btn" style="font-size:0.55rem;padding:4px 10px;">Select</button>' +
-                        (currentHead ? '<button id="changeHeadRemoveBtn" class="btn" style="font-size:0.55rem;padding:4px 8px;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;">Remove Head</button>' : '') +
-                    '</div>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Year of Change</label>' +
-                    '<input type="number" id="changeHeadYear" value="' + currentYear + '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
-                    '<input type="text" id="changeHeadReason" placeholder="e.g., Succession, Death, Abdication..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                '</div>' +
-            '</div>';
-
-        _openModal({
-            title: 'Change Household Head',
-            content: content,
-            confirmText: 'Set Head',
-            cancelText: 'Cancel',
-            onOpen: function() {
-                var selectBtn = document.getElementById('changeHeadSelectBtn');
-                var displayInput = document.getElementById('changeHeadDisplay');
-                var hiddenInput = document.getElementById('changeHeadId');
-                if (selectBtn) {
-                    selectBtn.onclick = function() {
-                        _openCharacterSelector({
-                            title: 'Select New Head',
-                            filters: { showDeceased: false },
-                            onSelect: function(character) {
-                                if (character) {
-                                    displayInput.value = character.name + (character.surname ? ' ' + character.surname : '');
-                                    hiddenInput.value = character.id;
-                                    _showToast('Selected: ' + character.name, 'success');
-                                }
-                            }
-                        });
-                    };
+                T.closeTopModal();
+                _rerender(householdId);
+                if (typeof window.refreshHouseholdList === 'function') {
+                    window.refreshHouseholdList();
                 }
-                var removeBtn = document.getElementById('changeHeadRemoveBtn');
-                if (removeBtn) {
-                    removeBtn.onclick = function() {
-                        displayInput.value = '';
-                        hiddenInput.value = '';
-                        _showToast('Head will be removed', 'info');
-                    };
-                }
-            },
-            onConfirm: function() {
-                var headId = document.getElementById('changeHeadId').value || null;
-                var year = parseInt(document.getElementById('changeHeadYear').value) || currentYear;
-                var reason = document.getElementById('changeHeadReason').value.trim() || 'Changed';
-                if (isNaN(year) || year < 1) {
-                    _showToast('Please enter a valid year', 'error');
-                    return false;
-                }
-                if (!headId) {
-                    var result = HC.setHead(householdId, null, { year: year, reason: reason });
-                    if (result && result.success) {
-                        _showToast('Head of household removed', 'info');
-                        _closeTopModal();
-                        renderHouseholdOverviewTab('tab-details', householdId);
-                        if (typeof window.refreshHouseholdList === 'function') {
-                            window.refreshHouseholdList();
-                        }
-                        return true;
-                    } else {
-                        _showToast(result ? result.reason : 'Failed to remove head', 'error');
-                        return false;
-                    }
-                }
-                var result = HC.setHead(householdId, headId, { year: year, reason: reason });
-                if (result && result.success) {
-                    var char = _getCharacterById(headId);
-                    _showToast((char ? char.name : 'Character') + ' set as head of household', 'success');
-                    _closeTopModal();
-                    renderHouseholdOverviewTab('tab-details', householdId);
-                    if (typeof window.refreshHouseholdList === 'function') {
-                        window.refreshHouseholdList();
-                    }
-                    return true;
-                } else {
-                    _showToast(result ? result.reason : 'Failed to set head', 'error');
-                    return false;
-                }
-            }
-        });
-    }
-
-    // =========================================================================
-    // 11. RESIDENCE MODALS
-    // =========================================================================
-
-    function _openAssignResidenceModal(householdId) {
-        var HS = _getState();
-        var RS = _getResidenceSystem();
-        if (!HS || !RS) {
-            _showToast('Residence system not available', 'error');
-            return;
-        }
-        var household = HS.getHousehold(householdId);
-        if (!household) {
-            _showToast('Household not found', 'error');
-            return;
-        }
-        var allResidences = RS.getResidences ? RS.getResidences() : [];
-        var locationId = household.locationId;
-        var availableResidences = allResidences;
-        if (locationId) {
-            availableResidences = allResidences.filter(function(r) { return r.locationId === locationId; });
-        }
-        var vacantUnits = [];
-        for (var i = 0; i < availableResidences.length; i++) {
-            var r = availableResidences[i];
-            if (r.isDemolished) continue;
-            if (r.isMultiUnit) {
-                var units = RS.getResidenceUnits ? RS.getResidenceUnits(r.id) : [];
-                for (var j = 0; j < units.length; j++) {
-                    if (units[j].isVacant && !units[j].isDemolished) {
-                        vacantUnits.push({ residence: r, unit: units[j] });
-                    }
-                }
-            }
-        }
-        var residenceOptions = '';
-        var currentResidenceId = household.residenceId;
-        if (availableResidences.length === 0) {
-            residenceOptions = '<option value="">No residences available</option>';
-        } else {
-            for (var i = 0; i < availableResidences.length; i++) {
-                var r = availableResidences[i];
-                if (r.isDemolished) continue;
-                var selected = (currentResidenceId === r.id) ? 'selected' : '';
-                var unitCount = r.units ? r.units.length : 1;
-                var status = r.isVacant ? 'Vacant' : 'Occupied';
-                var typeName = r.typeName || r.typeId || 'Unknown';
-                residenceOptions += '<option value="' + r.id + '" ' + selected + '>' +
-                    _escapeHtml(r.name) + ' (' + _escapeHtml(typeName) + ') - ' + status +
-                    (r.isMultiUnit ? ' - ' + unitCount + ' units' : '') +
-                    '</option>';
-            }
-        }
-        var currentYear = _getCurrentYear();
-
-        var content = '' +
-            '<div style="margin-bottom:12px;">' +
-                '<div style="background:var(--bg3);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.6rem;">' +
-                    'Assigning residence to: <strong>' + _escapeHtml(household.name) + '</strong>' +
-                    (locationId ? ' · Location: ' + _escapeHtml((_getPlaceById(locationId) || {}).displayName || 'Unknown') : '') +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Select Residence</label>' +
-                    '<select id="assignResSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                        residenceOptions +
-                    '</select>' +
-                '</div>' +
-                (vacantUnits.length > 0 ?
-                    '<div class="form-group" style="margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Select Unit (optional)</label>' +
-                        '<select id="assignUnitSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                            '<option value="">Whole Residence</option>' +
-                            vacantUnits.map(function(vu) {
-                                return '<option value="' + vu.residence.id + '_' + vu.unit.unitNumber + '">' +
-                                    _escapeHtml(vu.residence.name) + ' - Unit ' + vu.unit.unitNumber +
-                                    (vu.unit.vacantYear ? ' (Vacant since ' + vu.unit.vacantYear + ')' : '') +
-                                    '</option>';
-                            }).join('') +
-                        '</select>' +
-                    '</div>' : ''
-                ) +
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Assignment Year</label>' +
-                    '<input type="number" id="assignResYear" value="' + currentYear + '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
-                    '<textarea id="assignResNotes" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;" placeholder="e.g., Granted by the crown, Purchased..."></textarea>' +
-                '</div>' +
-            '</div>';
-
-        _openModal({
-            title: 'Assign Residence to ' + household.name,
-            content: content,
-            confirmText: 'Assign Residence',
-            cancelText: 'Cancel',
-            onConfirm: function() {
-                var residenceId = document.getElementById('assignResSelect').value;
-                var unitSelect = document.getElementById('assignUnitSelect');
-                var unitValue = unitSelect ? unitSelect.value : '';
-                var year = parseInt(document.getElementById('assignResYear').value) || currentYear;
-                var notes = document.getElementById('assignResNotes').value.trim();
-                if (!residenceId) {
-                    _showToast('Please select a residence', 'error');
-                    return false;
-                }
-                if (isNaN(year) || year < 1) {
-                    _showToast('Please enter a valid year', 'error');
-                    return false;
-                }
-                var residence = RS.getResidenceById(residenceId);
-                if (!residence) {
-                    _showToast('Residence not found', 'error');
-                    return false;
-                }
-                var unitNumber = null;
-                if (unitValue) {
-                    var parts = unitValue.split('_');
-                    if (parts.length === 2) {
-                        unitNumber = parseInt(parts[1]);
-                    }
-                }
-                if (residence.householdId && residence.householdId !== householdId && !unitNumber) {
-                    _confirmDialog('This residence is already assigned to another household. Assign it anyway?', 'Residence Occupied', function() {
-                        _doAssignResidence(householdId, residenceId, unitNumber, year, notes);
-                    });
-                    return false;
-                }
-                _doAssignResidence(householdId, residenceId, unitNumber, year, notes);
                 return true;
             }
         });
     }
 
-    function _doAssignResidence(householdId, residenceId, unitNumber, year, notes) {
-        var HS = _getState();
-        var RS = _getResidenceSystem();
-        if (!HS || !RS) {
-            _showToast('Residence system not available', 'error');
-            return;
-        }
-        var household = HS.getHousehold(householdId);
-        if (!household) {
-            _showToast('Household not found', 'error');
-            return;
-        }
-        var residence = RS.getResidenceById(residenceId);
-        if (!residence) {
-            _showToast('Residence not found', 'error');
-            return;
-        }
-        if (unitNumber) {
-            var result = RS.assignHouseholdToUnit(residenceId, unitNumber, householdId, household.name, year, { notes: notes || null, reason: 'assigned' });
-            if (result && result.success) {
-                _showToast(household.name + ' assigned to Unit ' + unitNumber + ' of ' + residence.name, 'success');
-                _closeTopModal();
-                renderHouseholdOverviewTab('tab-details', householdId);
-                if (typeof window.refreshHouseholdList === 'function') {
-                    window.refreshHouseholdList();
-                }
-                return;
-            } else {
-                _showToast(result ? result.reason : 'Failed to assign to unit', 'error');
-                return;
-            }
-        }
-        if (residence.isVacant || !residence.householdId) {
-            var result = RS.assignHouseholdToVacantResidence(residenceId, householdId, household.name, year, { notes: notes || null, reason: 'assigned' });
-            if (result && result.success) {
-                _showToast(household.name + ' assigned to ' + residence.name, 'success');
-                _closeTopModal();
-                renderHouseholdOverviewTab('tab-details', householdId);
-                if (typeof window.refreshHouseholdList === 'function') {
-                    window.refreshHouseholdList();
-                }
-            } else {
-                _showToast(result ? result.reason : 'Failed to assign residence', 'error');
-            }
-        } else {
-            var assocResult = HS.associateHouseholdWithResidence(householdId, residenceId, {
-                residenceName: residence.name,
-                residenceType: residence.typeId,
-                year: year,
-                notes: notes || null
-            });
-            if (assocResult) {
-                _showToast(household.name + ' associated with ' + residence.name, 'success');
-                _closeTopModal();
-                renderHouseholdOverviewTab('tab-details', householdId);
-                if (typeof window.refreshHouseholdList === 'function') {
-                    window.refreshHouseholdList();
-                }
-            } else {
-                _showToast('Failed to associate residence', 'error');
-            }
-        }
-    }
+    // =========================================================================
+    // 9. CHANGE HEAD MODAL
+    // =========================================================================
+    //
+    // Routes through HouseholdCommands.setHead (single-commit contract;
+    // see household-commands.js §12). Persist once.
+    //
+    // Character selection delegates to the shared selector; if it is
+    // not loaded, the user can still type a character ID — a deliberate
+    // fallback that keeps the modal usable in a degraded environment.
+    // This is the one deviation from "toast when delegate missing": the
+    // delegate is a convenience, not a requirement.
 
-    function _confirmUnassignResidence(householdId) {
-        var HS = _getState();
-        var household = HS ? HS.getHousehold(householdId) : null;
-        if (!household) {
-            _showToast('Household not found', 'error');
-            return;
-        }
-        var resName = household.residenceName || 'this residence';
-        _confirmDialog('Unassign ' + household.name + ' from ' + resName + '?', 'Unassign Residence', function() {
-            _doUnassignResidence(householdId);
+    function _openChangeHead(householdId) {
+        var h = T.getHousehold(householdId);
+        if (!h) { T.toastError('Household not found.'); return; }
+        var currentHead = T.getHouseholdHead(householdId);
+        var currentHeadName = currentHead ? currentHead.characterName : 'None';
+
+        var year;
+        try { year = T.requireCurrentYear(); }
+        catch (e) { T.toastError('Current year unavailable: ' + (e && e.message)); return; }
+
+        var content =
+            '<div class="hh-modal-form">' +
+                '<div class="hh-modal-current">' +
+                    'Current head: <strong>' + T.esc(currentHeadName) + '</strong>' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>New Head</label>' +
+                    '<div class="hh-inline-actions">' +
+                        '<input type="text" data-field="display" readonly ' +
+                            'placeholder="Select character…">' +
+                        '<input type="hidden" data-field="id">' +
+                        '<button type="button" data-action="select-head" class="hh-btn">Select</button>' +
+                        '<button type="button" data-action="clear-head" class="hh-btn">Clear</button>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Year of Change</label>' +
+                    '<input type="number" data-field="year" value="' + year + '" min="1">' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Reason</label>' +
+                    '<input type="text" data-field="reason" ' +
+                        'placeholder="e.g., Succession, Death, Abdication…">' +
+                '</div>' +
+            '</div>';
+
+        var modal = T.openModal({
+            title: 'Change Household Head',
+            content: content,
+            confirmText: 'Set Head',
+            cancelText: 'Cancel',
+            onOpen: function () {
+                var root = modal && modal.element;
+                if (!root) return;
+                var display = root.querySelector('[data-field="display"]');
+                var hidden = root.querySelector('[data-field="id"]');
+                var selBtn = root.querySelector('[data-action="select-head"]');
+                var clrBtn = root.querySelector('[data-action="clear-head"]');
+
+                if (selBtn) {
+                    selBtn.addEventListener('click', function (e) {
+                        e.preventDefault();
+                        if (typeof window.openCharacterSelector !== 'function') {
+                            T.toastWarning(
+                                'Character selector not loaded — type the character ID instead.'
+                            );
+                            // Promote the readonly display to an editable
+                            // input. This is the documented degraded path.
+                            display.removeAttribute('readonly');
+                            display.setAttribute('data-field', 'id-editable');
+                            return;
+                        }
+                        window.openCharacterSelector({
+                            title: 'Select New Head',
+                            filters: { showDeceased: false },
+                            onSelect: function (ch) {
+                                if (!ch) return;
+                                display.value = T.characterName(ch);
+                                hidden.value = ch.id;
+                            }
+                        });
+                    });
+                }
+                if (clrBtn) {
+                    clrBtn.addEventListener('click', function (e) {
+                        e.preventDefault();
+                        display.value = '';
+                        hidden.value = '';
+                    });
+                }
+            },
+            onConfirm: function () {
+                var root = modal && modal.element;
+                if (!root) { T.toastError('Modal root unavailable.'); return false; }
+
+                // Resolve head ID: hidden field first, editable fallback
+                // second.
+                var headId = (root.querySelector('[data-field="id"]').value || '').trim() || null;
+                if (!headId) {
+                    var editable = root.querySelector('[data-field="id-editable"]');
+                    if (editable) {
+                        headId = (editable.value || '').trim() || null;
+                    }
+                }
+
+                var y = parseInt(root.querySelector('[data-field="year"]').value, 10);
+                if (!isFinite(y) || y < 1) { T.toastError('Please enter a valid year.'); return false; }
+
+                var reason = (root.querySelector('[data-field="reason"]').value || '').trim() || 'Changed';
+
+                var HC = T.commands();
+                if (!HC) { T.toastError('HouseholdCommands is not loaded.'); return false; }
+
+                // setHead(null) clears; setHead(id) sets.
+                var result = HC.setHead(householdId, headId, { year: y, reason: reason });
+                if (!result || result.success !== true) {
+                    T.toastError('Failed to set head: ' + (result ? result.reason : 'unknown'));
+                    return false;
+                }
+
+                var persisted = HC.persist();
+                if (persisted && persisted.success === false) {
+                    T.toastWarning('Saved in memory; storage write failed.');
+                } else {
+                    T.toastSuccess(headId ? 'Head updated.' : 'Head cleared.');
+                }
+
+                T.closeTopModal();
+                _rerender(householdId);
+                if (typeof window.refreshHouseholdList === 'function') {
+                    window.refreshHouseholdList();
+                }
+                return true;
+            }
         });
     }
 
-    function _doUnassignResidence(householdId) {
-        var HS = _getState();
-        var RS = _getResidenceSystem();
-        if (!HS) {
-            _showToast('Household system not available', 'error');
+    // =========================================================================
+    // 10. ASSIGN RESIDENCE MODAL
+    // =========================================================================
+    //
+    // Delegates to ResidenceSystem.assignHouseholdToVacantResidence, which
+    // owns the household reverse-index update (via
+    // HouseholdCommands.associateWithResidence internally) and its own
+    // persist boundary. The tab does NOT call HouseholdCommands.persist
+    // here — that would produce a redundant second save.
+
+    function _openAssignResidence(householdId) {
+        var h = T.getHousehold(householdId);
+        if (!h) { T.toastError('Household not found.'); return; }
+
+        var RS = T.residence();
+        if (!RS) {
+            T.toastError(
+                'ResidenceSystem is not loaded. Load js/households/residence-system.js.'
+            );
             return;
         }
-        var household = HS.getHousehold(householdId);
-        if (!household) {
-            _showToast('Household not found', 'error');
+
+        var all;
+        try { all = RS.getAllResidences() || []; }
+        catch (e) { all = []; }
+
+        // Filter to the household's location; allow same-location vacant
+        // residences only. This matches the previous behaviour and keeps
+        // the dropdown short.
+        var candidates = all.filter(function (r) {
+            if (r.isDemolished) return false;
+            if (r.householdId) return false; // occupied
+            if (h.locationId && r.locationId && r.locationId !== h.locationId) return false;
+            return true;
+        });
+
+        if (candidates.length === 0) {
+            T.toastInfo('No vacant residences are available for this household.');
             return;
         }
-        var residenceId = household.residenceId;
-        var currentYear = _getCurrentYear();
-        var result = HS.disassociateHouseholdFromResidence(householdId, residenceId, 'Unassigned', currentYear);
-        if (RS && residenceId) {
-            var residence = RS.getResidenceById(residenceId);
-            if (residence) {
-                RS.updateResidence(residenceId, {
-                    householdId: null,
-                    householdName: null,
-                    isVacant: true,
-                    vacantYear: currentYear,
-                    vacantReason: 'Household unassigned'
-                });
-            }
-        }
-        if (result) {
-            _showToast('Residence unassigned', 'info');
-            renderHouseholdOverviewTab('tab-details', householdId);
-            if (typeof window.refreshHouseholdList === 'function') {
-                window.refreshHouseholdList();
-            }
-        } else {
-            _showToast('Failed to unassign residence', 'error');
-        }
-    }
 
-    // =========================================================================
-    // 12. REFRESH FUNCTION
-    // =========================================================================
+        var opts = candidates.map(function (r) {
+            return '<option value="' + T.esc(r.id) + '">' +
+                T.esc(r.name) +
+                (r.typeName ? ' (' + T.esc(r.typeName) + ')' : '') +
+                (r.isMultiUnit ? ' — ' + (r.unitCount || 0) + ' units' : '') +
+            '</option>';
+        }).join('');
 
-    function refreshHouseholdOverviewTab(householdId) {
-        var containerId = 'tab-details';
-        var container = document.getElementById(containerId);
-        if (!container) {
-            var containers = document.querySelectorAll('.tab-pane[id*="detail"]');
-            for (var i = 0; i < containers.length; i++) {
-                if (containers[i].id) {
-                    containerId = containers[i].id;
-                    container = containers[i];
-                    break;
+        var year;
+        try { year = T.requireCurrentYear(); }
+        catch (e) { T.toastError('Current year unavailable: ' + (e && e.message)); return; }
+
+        var content =
+            '<div class="hh-modal-form">' +
+                '<div class="hh-form-group">' +
+                    '<label>Residence</label>' +
+                    '<select data-field="residence">' +
+                        '<option value="">Select a residence…</option>' +
+                        opts +
+                    '</select>' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Assignment Year</label>' +
+                    '<input type="number" data-field="year" value="' + year + '" min="1">' +
+                '</div>' +
+                '<div class="hh-form-group">' +
+                    '<label>Notes (optional)</label>' +
+                    '<textarea data-field="notes" rows="2"></textarea>' +
+                '</div>' +
+            '</div>';
+
+        var modal = T.openModal({
+            title: 'Assign Residence to ' + h.name,
+            content: content,
+            confirmText: 'Assign',
+            cancelText: 'Cancel',
+            onConfirm: function () {
+                var root = modal && modal.element;
+                if (!root) { T.toastError('Modal root unavailable.'); return false; }
+
+                var residenceId = root.querySelector('[data-field="residence"]').value;
+                if (!residenceId) { T.toastError('Please select a residence.'); return false; }
+
+                var y = parseInt(root.querySelector('[data-field="year"]').value, 10);
+                if (!isFinite(y) || y < 1) { T.toastError('Please enter a valid year.'); return false; }
+
+                var notes = (root.querySelector('[data-field="notes"]').value || '').trim() || null;
+
+                var result = RS.assignHouseholdToVacantResidence(
+                    residenceId, householdId, h.name, y, { notes: notes, reason: 'Assigned' }
+                );
+                if (!result || result.success !== true) {
+                    T.toastError('Assignment failed: ' + (result ? result.reason : 'unknown'));
+                    return false;
                 }
+
+                // ResidenceSystem owns its persist. Do not call
+                // HouseholdCommands.persist() here.
+                var persisted = (typeof RS.persist === 'function') ? RS.persist() : null;
+                if (persisted && persisted.success === false) {
+                    T.toastWarning('Assigned in memory; storage write failed.');
+                } else {
+                    T.toastSuccess(h.name + ' assigned to residence.');
+                }
+
+                T.closeTopModal();
+                _rerender(householdId);
+                if (typeof window.refreshHouseholdList === 'function') {
+                    window.refreshHouseholdList();
+                }
+                return true;
             }
-        }
-        if (!container) {
-            console.warn('[OverviewTab] Container not found');
-            return;
-        }
-        renderHouseholdOverviewTab(containerId, householdId);
+        });
     }
 
     // =========================================================================
-    // 13. TAB SYSTEM REGISTRATION
+    // 11. UNASSIGN RESIDENCE
     // =========================================================================
 
-    function registerOverviewTabRenderer() {
-        if (typeof window.registerTabRenderer === 'function') {
-            window.registerTabRenderer('details', function(containerId, locationId, summary) {
-                var householdId = _getCurrentHouseholdId();
-                if (!householdId) {
-                    var container = document.getElementById(containerId);
-                    if (container) {
-                        container.innerHTML = '<div class="placeholder">No household selected</div>';
-                    }
+    function _openUnassignResidence(householdId) {
+        var h = T.getHousehold(householdId);
+        if (!h) { T.toastError('Household not found.'); return; }
+        if (!h.residenceId) { T.toastInfo('No residence assigned.'); return; }
+
+        T.confirmDialog(
+            'Unassign ' + h.name + ' from ' +
+            (h.residenceName || 'their current residence') + '?',
+            'Unassign Residence',
+            function () {
+                var RS = T.residence();
+                if (!RS) { T.toastError('ResidenceSystem is not loaded.'); return; }
+
+                var y;
+                try { y = T.requireCurrentYear(); }
+                catch (e) { T.toastError('Current year unavailable: ' + (e && e.message)); return; }
+
+                // markResidenceVacant clears every occupied unit, updates
+                // the household reverse index on both sides, and returns
+                // a structured result. It owns the reverse-index failure
+                // accounting.
+                var result = RS.markResidenceVacant(
+                    h.residenceId, 'Household unassigned', y
+                );
+                if (!result || result.success !== true) {
+                    T.toastError('Unassign failed: ' + (result ? result.reason : 'unknown'));
                     return;
                 }
-                renderHouseholdOverviewTab(containerId, householdId);
-            }, true);
-            console.log('[HouseholdOverviewTab] Registered with tab system');
-        }
+
+                var persisted = (typeof RS.persist === 'function') ? RS.persist() : null;
+                if (persisted && persisted.success === false) {
+                    T.toastWarning('Unassigned in memory; storage write failed.');
+                } else if (result.data && result.data.reverseIndexFailed) {
+                    T.toastWarning(
+                        'Residence vacated, but the household reverse-index ' +
+                        'update failed. Check the integrity report.'
+                    );
+                } else {
+                    T.toastSuccess('Residence unassigned.');
+                }
+
+                _rerender(householdId);
+                if (typeof window.refreshHouseholdList === 'function') {
+                    window.refreshHouseholdList();
+                }
+            }
+        );
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 12. REGISTRATION
+    // =========================================================================
+    //
+    // Synchronous against TabManager. Warns (does NOT setTimeout-poll)
+    // when TabManager is missing.
+
+    T.register(TAB_ID, renderHouseholdOverviewTab);
+
+    // =========================================================================
+    // 13. EXPORTS
     // =========================================================================
 
-    window.renderHouseholdOverviewTab = renderHouseholdOverviewTab;
-    window.refreshHouseholdOverviewTab = refreshHouseholdOverviewTab;
-    window.registerOverviewTabRenderer = registerOverviewTabRenderer;
+    window.HouseholdOverviewTab = {
+        id: TAB_ID,
+        render: renderHouseholdOverviewTab
+    };
 
-    // Auto-register if tab system is available
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(registerOverviewTabRenderer, 100);
-        });
-    } else {
-        setTimeout(registerOverviewTabRenderer, 100);
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.HouseholdOverviewTab;
     }
-
 })();
