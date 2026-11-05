@@ -116,7 +116,8 @@
  *     household, householdId, householdHistory
  *
  *   Religion and culture:
- *     religionId, religionHistory, cultureId
+ *     religionId, religionHistory (structured conversion events),
+ *     cultureId
  *
  *   Embedded domain containers:
  *     traits, rankAssignments, apprentices
@@ -173,6 +174,9 @@
  *     religionId, religionHistory — present. Religion is
  *                       character-owned (written via
  *                       CharacterCommands.setReligion) and projected.
+ *                       religionHistory is projected as structured
+ *                       conversion events (see the helper
+ *                       _cloneReligionHistory below).
  *
  *   REMOVED FIELDS (compatibility):
  *     The parent-child compatibility mirrors (motherId, fatherId,
@@ -193,6 +197,8 @@
  *     - `projection.rankAssignments[i]` is a fresh object whose `number`
  *       is a fresh object (safe to mutate).
  *     - `projection.moves[i]` is a fresh object (safe to mutate).
+ *     - `projection.religionHistory[i]` is a fresh object (safe to
+ *       mutate) with primitive fields.
  *
  *   `projection.professions` is NOT on the projection any more (see
  *   PROJECTION CONTENTS above). Callers that need the profession array
@@ -301,6 +307,22 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - _project now emits `religionHistory` as structured conversion
+ *       events via the new _cloneReligionHistory helper, matching the
+ *       shape CharacterCommands.setReligion writes. Prior revisions
+ *       cloned it with _cloneStringArray, which dropped every field;
+ *       consumers that read event.toReligionId / fromReligionId / year
+ *       (religion-queries.getReligionGrowth, the Identity tab) saw
+ *       undefined for every entry.
+ *     - Header PROJECTION CONTENTS (AUTHORITATIVE) updated: the
+ *       "Religion and culture" line now documents religionHistory as
+ *       structured conversion events.
+ *     - No behavioural change to any read or write primitive. Every
+ *       other field's projection behaviour is unchanged. The public
+ *       projection field is still `religionHistory` and is still an
+ *       array; only its per-entry shape changed, from string to the
+ *       structured event written by setReligion.
+ *   Previous revision:
  *     - _project now includes `surnameSource`. names.js reads it via
  *       getCharacterSurnameSource; without the projection field, the
  *       factory's default ('custom') was silently masked as 'country'
@@ -903,8 +925,9 @@
 
     /**
      * Clones an array whose entries are all strings (or expected to be).
-     * Used for `apprentices` (ids). Filtering to strings keeps the
-     * projection honest about what a consumer can rely on.
+     * Used for `apprentices` (ids) and `householdHistory` (string keys).
+     * Filtering to strings keeps the projection honest about what a
+     * consumer can rely on.
      */
     function _cloneStringArray(arr) {
         if (!Array.isArray(arr)) return [];
@@ -969,6 +992,54 @@
         };
     }
 
+    /**
+     * Clones a religion-history array.
+     *
+     * The canonical religionHistory is an array of STRUCTURED conversion
+     * events written by CharacterCommands.setReligion:
+     *
+     *   {
+     *     id, characterId,
+     *     fromReligionId, fromReligionName,
+     *     toReligionId,   toReligionName,
+     *     year, reason, notes,
+     *     inherited, inheritedFrom,
+     *     timestamp
+     *   }
+     *
+     * Prior revisions cloned it with _cloneStringArray, which silently
+     * dropped every field. Consumers (religion-queries.getReligionGrowth,
+     * the Identity tab) that read structured fields saw undefined for
+     * every entry. Fixed here so the projection emits the same shape the
+     * writer produced.
+     *
+     * Every field is a primitive or null, so a record-level shallow clone
+     * is deep enough.
+     */
+    function _cloneReligionHistory(history) {
+        if (!Array.isArray(history)) return [];
+        var out = [];
+        for (var i = 0; i < history.length; i++) {
+            var e = history[i];
+            if (!e || typeof e !== 'object') continue;
+            out.push({
+                id: _isMissing(e.id) ? null : e.id,
+                characterId: _isMissing(e.characterId) ? null : e.characterId,
+                fromReligionId: _isMissing(e.fromReligionId) ? null : e.fromReligionId,
+                fromReligionName: _isMissing(e.fromReligionName) ? null : e.fromReligionName,
+                toReligionId: _isMissing(e.toReligionId) ? null : e.toReligionId,
+                toReligionName: _isMissing(e.toReligionName) ? null : e.toReligionName,
+                year: _isMissing(e.year) ? null : e.year,
+                reason: _isMissing(e.reason) ? null : e.reason,
+                notes: _isMissing(e.notes) ? '' : e.notes,
+                inherited: e.inherited === true,
+                inheritedFrom: _isMissing(e.inheritedFrom) ? null : e.inheritedFrom,
+                timestamp: _isMissing(e.timestamp) ? null : e.timestamp
+            });
+        }
+        return out;
+    }
+
     function _project(c) {
         if (!c || !_hasId(c.id)) return null;
         return {
@@ -1006,11 +1077,16 @@
             // recordMove silently overwrites prior moves with the new one.
             moves: _cloneMoves(c.moves),
 
-            // Household and religion history. Character-owned; projected
-            // as fresh arrays so consumers can inspect without touching
-            // canonical state.
+            // Household history. Character-owned; projected as fresh
+            // arrays so consumers can inspect without touching canonical
+            // state.
             householdHistory: _cloneStringArray(c.householdHistory),
-            religionHistory: _cloneStringArray(c.religionHistory),
+
+            // Religion history. Structured conversion events written by
+            // CharacterCommands.setReligion. Cloned record-by-record via
+            // _cloneReligionHistory so every consumer sees the same
+            // shape the writer produced.
+            religionHistory: _cloneReligionHistory(c.religionHistory),
 
             // Surname history. Cloned one level deep at the entry level so
             // the name domain and modals-name can inspect entries without
