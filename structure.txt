@@ -1,452 +1,474 @@
-|   .gitattributes
-|   accessor-audit.txt
-|   CultureManager.html
-|   DataManager.html
-|   EducationManager.html
-|   fix-year-helpers.js
-|   GENERIC.html
-|   GENERIC_sidebar.html
-|   GovernmentManager.html
-|   HouseholdManager.html
-|   index.html
-|   load order.txt
-|   LocationManager.html
-|   ReligionManager.html
-|   RoleManager.html
-|   SettlementManager.html
-|   structure.txt
-|   
-+---css
-|       common.css
-|       culture.css
-|       data-manager.css
-|       household-manager.css
-|       location-list.css
-|       location-manager.css
-|       location-sidebar.css
-|       location.css
-|       nexus.css
-|       religion.css
-|       role-manager.css
-|       selectors.css
-|       settlement.css
-|       themes.css
-|       uiList.css
-|       
-+---docs
-|       semantics.md
-|       
-+---js
-|   +---apprenticeship
-|   |       apprenticeship-commands.js
-|   |       apprenticeship-constants.js
-|   |       apprenticeship-doc.txt
-|   |       apprenticeship-queries.js
-|   |       apprenticeship-rules.js
-|   |       modals-apprenticeship.js
-|   |       professional-knowledge-commands.js
-|   |       
-|   +---character
-|   |       character-commands.js
-|   |       character-creation-commands.js
-|   |       character-deletion-commands.js
-|   |       character-doc.txt
-|   |       character-factory.js
-|   |       character-generator.js
-|   |       character-lifecycle.js
-|   |       character-queries.js
-|   |       character-state.js
-|   |       character-statistics.js
-|   |       character-system.js
-|   |       character-ui-list.js
-|   |       children-commands.js
-|   |       children-generator.js
-|   |       children-queries.js
-|   |       children-rules.js
-|   |       children-state.js
-|   |       children-statistics.js
-|   |       family-commands.js
-|   |       family-queries.js
-|   |       family-rules.js
-|   |       family-state.js
-|   |       family-statistics.js
-|   |       modals-character.js
-|   |       modals-children-adoption.js
-|   |       modals-children-birth.js
-|   |       modals-children-surrogacy.js
-|   |       modals-death.js
-|   |       mortality-queries.js
-|   |       mortality-rules.js
-|   |       mortality-statistics.js
-|   |       
-|   +---core
-|   |   |   accessors.js
-|   |   |   census-state.js
-|   |   |   collapsible.js
-|   |   |   collections.js
-|   |   |   core-docs.txt
-|   |   |   exportUtils.js
-|   |   |   formatting.js
-|   |   |   icons.js
-|   |   |   ids.js
-|   |   |   integrity.js
-|   |   |   maintenance.js
-|   |   |   matchmaker-state.js
-|   |   |   misc-state.js
-|   |   |   modals-core.js
-|   |   |   names.js
-|   |   |   randomness.js
-|   |   |   responsive.js
-|   |   |   simulation-generators.js
-|   |   |   state.js
-|   |   |   storage-schema.js
-|   |   |   storage.js
-|   |   |   tab-manager.js
-|   |   |   theme-boot.js
-|   |   |   time.js
-|   |   |   ui-state.js
-|   |   |   ui.js
-|   |   |   validation.js
-|   |   |   world.js
-|   |   |   
-|   |   \---constants
-|   |           age-constants.js
-|   |           character-constants.js
-|   |           character-traits.js
-|   |           constants.js
-|   |           location-constants.js
-|   |           relationship-constants.js
-|   |           
-|   +---crime
-|   |       crime-bootstrap.js
-|   |       crime-commands.js
-|   |       crime-constants.js
-|   |       crime-docs.txt
-|   |       crime-law-integration.js
-|   |       crime-queries.js
-|   |       crime-state.js
-|   |       crime-ui-stats.js
-|   |       crime-view-models.js
-|   |       modals-crime.js
-|   |       vendetta-system.js
-|   |       
-|   +---culture
-|   |       culture-bootstrap.js
-|   |       culture-commands.js
-|   |       culture-constants.js
-|   |       culture-docs.txt
-|   |       culture-generation.js
-|   |       culture-queries.js
-|   |       culture-rules.js
-|   |       culture-state.js
-|   |       culture-ui-list.js
-|   |       culture-validation.js
-|   |       culture-view-models.js
-|   |       modals-culture.js
-|   |       
-|   +---disaster
-|   |       disaster-bootstrap.js
-|   |       disaster-commands.js
-|   |       disaster-constants.js
-|   |       disaster-damage.js
-|   |       disaster-doc.txt
-|   |       disaster-queries.js
-|   |       disaster-state.js
-|   |       disaster-ui-stats.js
-|   |       disaster-view-models.js
-|   |       modals-disaster.js
-|   |       
-|   +---education
-|   |       education-annual.js
-|   |       education-commands.js
-|   |       education-constants.js
-|   |       education-doc.txt
-|   |       education-history.js
-|   |       education-learning.js
-|   |       education-queries.js
-|   |       education-rules.js
-|   |       education-state.js
-|   |       education-ui-list.js
-|   |       education-ui-state.js
-|   |       modals-education.js
-|   |       
-|   +---events
-|   |       annualProcessing.js
-|   |       census-core.js
-|   |       eventLogger.js
-|   |       social-events-system.js
-|   |       timeline-core.js
-|   |       
-|   +---government
-|   |       government-assignment.js
-|   |       government-bootstrap.js
-|   |       government-commands.js
-|   |       government-constants.js
-|   |       government-docs.txt
-|   |       government-economy.js
-|   |       government-laws.js
-|   |       government-queries.js
-|   |       government-rules.js
-|   |       government-state.js
-|   |       government-system.js
-|   |       government-ui-list.js
-|   |       government-view-models.js
-|   |       modals-government-assign.js
-|   |       modals-government-departments.js
-|   |       modals-government-economy.js
-|   |       modals-government-positions.js
-|   |       modals-government.js
-|   |       settlement-law-formatters.js
-|   |       
-|   +---households
-|   |       household-assignment.js
-|   |       household-bootstrap.js
-|   |       household-commands.js
-|   |       household-constants.js
-|   |       household-doc.txt
-|   |       household-economy.js
-|   |       household-orchestration.js
-|   |       household-queries.js
-|   |       household-rules.js
-|   |       household-servant.js
-|   |       household-state.js
-|   |       household-ui-list.js
-|   |       household-view-models.js
-|   |       modals-assign-staff.js
-|   |       modals-helper.js
-|   |       modals-household-economy.js
-|   |       modals-household-snapshot.js
-|   |       modals-household-staff.js
-|   |       modals-household.js
-|   |       modals-residence-history.js
-|   |       modals-residence-owner.js
-|   |       modals-residence-rental.js
-|   |       modals-residence-snapshot.js
-|   |       modals-residence-staff.js
-|   |       modals-residence-vacancy.js
-|   |       modals-residence.js
-|   |       residence-system.js
-|   |       
-|   +---industry
-|   |       industry-bootstrap.js
-|   |       industry-commands.js
-|   |       industry-constants.js
-|   |       industry-doc.txt
-|   |       industry-economics.js
-|   |       industry-migration.js
-|   |       industry-processor.js
-|   |       industry-queries.js
-|   |       industry-rules.js
-|   |       industry-state.js
-|   |       industry-type-commands.js
-|   |       industry-type-defaults.js
-|   |       industry-type-init.js
-|   |       industry-types.js
-|   |       industry-ui-list.js
-|   |       industry-view-models.js
-|   |       modals-industry.js
-|   |       
-|   +---location
-|   |       location-bootstrap.js
-|   |       location-commands.js
-|   |       location-docs.txt
-|   |       location-hierarchy.js
-|   |       location-movement.js
-|   |       location-presentation.js
-|   |       location-queries.js
-|   |       location-state.js
-|   |       location-ui-list.js
-|   |       location-ui-state.js
-|   |       location-view-models.js
-|   |       modals-location-helper.js
-|   |       modals-location.js
-|   |       modals-moves.js
-|   |       
-|   +---names
-|   |       modals-name.js
-|   |       name-commands.js
-|   |       name-docs.txt
-|   |       name-queries.js
-|   |       name-rules.js
-|   |       name-system.js
-|   |       names-state.js
-|   |       
-|   +---ranks
-|   |       modals-rank.js
-|   |       rank-assignment.js
-|   |       rank-bootstrap.js
-|   |       rank-commands.js
-|   |       rank-constants.js
-|   |       rank-docs.txt
-|   |       rank-issues.js
-|   |       rank-queries.js
-|   |       rank-rules.js
-|   |       rank-state.js
-|   |       rank-ui-list.js
-|   |       
-|   +---relationships
-|   |       affair-commands.js
-|   |       affair-queries.js
-|   |       affair-rules.js
-|   |       friendship-commands.js
-|   |       friendship-queries.js
-|   |       friendship-rules.js
-|   |       jealousy-commands.js
-|   |       jealousy-queries.js
-|   |       jealousy-rules.js
-|   |       matchmaking-queries.js
-|   |       matchmaking-rules.js
-|   |       modals-friendship.js
-|   |       modals-relationship.js
-|   |       professional-commands.js
-|   |       professional-queries.js
-|   |       professional-rules.js
-|   |       relationship-bootstrap.js
-|   |       relationship-commands.js
-|   |       relationship-docs.txt
-|   |       relationship-finder-queries.js
-|   |       relationship-integrations.js
-|   |       relationship-queries.js
-|   |       relationship-state.js
-|   |       relationship-types.js
-|   |       relationship-ui-metadata.js
-|   |       relationship-utils.js
-|   |       rivalry-commands.js
-|   |       rivalry-queries.js
-|   |       rivalry-rules.js
-|   |       romance-commands.js
-|   |       romance-queries.js
-|   |       romance-rules.js
-|   |       
-|   +---religion
-|   |       modals-religion.js
-|   |       religion-bootstrap.js
-|   |       religion-commands.js
-|   |       religion-constants.js
-|   |       religion-docs.txt
-|   |       religion-format.js
-|   |       religion-inheritance.js
-|   |       religion-laws.js
-|   |       religion-queries.js
-|   |       religion-render.js
-|   |       religion-rules.js
-|   |       religion-state.js
-|   |       religion-ui-state.js
-|   |       religion-validation.js
-|   |       religion-view-models.js
-|   |       
-|   +---roles
-|   |       modals-role-select.js
-|   |       modals-roles.js
-|   |       role-commands.js
-|   |       role-constants.js
-|   |       role-queries.js
-|   |       role-state.js
-|   |       role-system.js
-|   |       role-ui-list.js
-|   |       roles-docs.txt
-|   |       skill-utils.js
-|   |       
-|   +---selectors
-|   |       locationDropdown.js
-|   |       modals-char-selector.js
-|   |       modals-household-selector.js
-|   |       selector-base.js
-|   |       selectors-docs.txt
-|   |       
-|   +---settlement
-|   |       modals-settlement-core.js
-|   |       modals-settlement-economy.js
-|   |       modals-settlement-roles.js
-|   |       settlement-annual-processor.js
-|   |       settlement-command-commit.js
-|   |       settlement-crime-queries.js
-|   |       settlement-debt-commands.js
-|   |       settlement-docs.txt
-|   |       settlement-economy-queries.js
-|   |       settlement-education-definitions.js
-|   |       settlement-education-queries.js
-|   |       settlement-employment-queries.js
-|   |       settlement-factory.js
-|   |       settlement-feature-commands.js
-|   |       settlement-feature-definitions.js
-|   |       settlement-feature-queries.js
-|   |       settlement-feature-rules.js
-|   |       settlement-finance-definitions.js
-|   |       settlement-fiscal-commands.js
-|   |       settlement-fiscal-definitions.js
-|   |       settlement-fiscal-rules.js
-|   |       settlement-government-commands.js
-|   |       settlement-government-definitions.js
-|   |       settlement-government-rules.js
-|   |       settlement-law-commands.js
-|   |       settlement-law-definitions.js
-|   |       settlement-law-queries.js
-|   |       settlement-law-rules.js
-|   |       settlement-prosperity-definitions.js
-|   |       settlement-prosperity-queries.js
-|   |       settlement-queries.js
-|   |       settlement-rank-commands.js
-|   |       settlement-rank-definitions.js
-|   |       settlement-rank-queries.js
-|   |       settlement-rank-rules.js
-|   |       settlement-religion-queries.js
-|   |       settlement-specialization-commands.js
-|   |       settlement-state.js
-|   |       settlement-tabs.js
-|   |       settlement-ui-list.js
-|   |       settlement-ui-state.js
-|   |       settlement-view-models.js
-|   |       settlement-wealth-commands.js
-|   |       
-|   \---tabs
-|           apprenticeship-tab.js
-|           culture-appearance-tab.js
-|           culture-characters-tab.js
-|           culture-editor-tab.js
-|           culture-mythology-tab.js
-|           culture-names-tab.js
-|           education-analytics-tab.js
-|           education-apprenticeship-tab.js
-|           education-finances-tab.js
-|           education-institution-tab.js
-|           education-manager-bootstrap.js
-|           education-overview-tab.js
-|           education-students-tab.js
-|           government-civil-laws-tab.js
-|           government-departments-tab.js
-|           government-details-tab.js
-|           government-economy-tab.js
-|           government-history-tab.js
-|           government-type-manager-tab.js
-|           household-activity-tab.js
-|           household-departments-tab.js
-|           household-economy-tab.js
-|           household-holdings-tab.js
-|           household-members-tab.js
-|           household-overview-tab.js
-|           location-detail-tab.js
-|           location-hierarchy-tab.js
-|           location-leadership-tab.js
-|           location-movement-tab.js
-|           location-population-tab.js
-|           location-type-manager-tab.js
-|           rank-manager-tab.js
-|           religion-details-tab.js
-|           religion-followers-tab.js
-|           religion-gods-tab.js
-|           religion-laws-tab.js
-|           religion-places-tab.js
-|           roles-analytics-tab.js
-|           roles-tab.js
-|           settlement-crime-tab.js
-|           settlement-economy-tab.js
-|           settlement-education-tab.js
-|           settlement-features-tab.js
-|           settlement-history-tab.js
-|           settlement-industry-tab.js
-|           settlement-overview-tab.js
-|           settlement-religion-tab.js
-|           settlement-residence-tab.js
-|           settlement-roles-tab.js
-|           
+
+    |   .gitattributes
+    |   accessor-audit.txt
+    |   CharacterManager.html
+    |   CultureManager.html
+    |   DataManager.html
+    |   EducationManager.html
+    |   fix-year-helpers.js
+    |   GENERIC.html
+    |   GENERIC_sidebar.html
+    |   GovernmentManager.html
+    |   HouseholdManager.html
+    |   index.html
+    |   load order.txt
+    |   LocationManager.html
+    |   ReligionManager.html
+    |   RoleManager.html
+    |   SettlementManager.html
+    |   structure.txt
+    |   
+    +---css
+    |       common.css
+    |       culture.css
+    |       data-manager.css
+    |       household-manager.css
+    |       location-list.css
+    |       location-manager.css
+    |       location-sidebar.css
+    |       location.css
+    |       nexus.css
+    |       religion.css
+    |       role-manager.css
+    |       selectors.css
+    |       settlement.css
+    |       themes.css
+    |       uiList.css
+    |       
+    +---docs
+    |       semantics.md
+    |       
+    +---js
+    |   +---apprenticeship
+    |   |       apprenticeship-commands.js
+    |   |       apprenticeship-constants.js
+    |   |       apprenticeship-doc.txt
+    |   |       apprenticeship-queries.js
+    |   |       apprenticeship-rules.js
+    |   |       modals-apprenticeship.js
+    |   |       professional-knowledge-commands.js
+    |   |       
+    |   +---character
+    |   |       character-commands.js
+    |   |       character-creation-commands.js
+    |   |       character-deletion-commands.js
+    |   |       character-doc.txt
+    |   |       character-factory.js
+    |   |       character-generator.js
+    |   |       character-lifecycle.js
+    |   |       character-manager-bootstrap.js
+    |   |       character-queries.js
+    |   |       character-state.js
+    |   |       character-statistics.js
+    |   |       character-system.js
+    |   |       character-ui-list.js
+    |   |       character-ui-state.js
+    |   |       character-view-models.js
+    |   |       children-commands.js
+    |   |       children-generator.js
+    |   |       children-queries.js
+    |   |       children-rules.js
+    |   |       children-state.js
+    |   |       children-statistics.js
+    |   |       family-commands.js
+    |   |       family-queries.js
+    |   |       family-rules.js
+    |   |       family-state.js
+    |   |       family-statistics.js
+    |   |       modals-character.js
+    |   |       modals-children-adoption.js
+    |   |       modals-children-birth.js
+    |   |       modals-children-surrogacy.js
+    |   |       modals-death.js
+    |   |       mortality-queries.js
+    |   |       mortality-rules.js
+    |   |       mortality-statistics.js
+    |   |       
+    |   +---core
+    |   |   |   accessors.js
+    |   |   |   census-state.js
+    |   |   |   collapsible.js
+    |   |   |   collections.js
+    |   |   |   core-docs.txt
+    |   |   |   exportUtils.js
+    |   |   |   formatting.js
+    |   |   |   icons.js
+    |   |   |   ids.js
+    |   |   |   integrity.js
+    |   |   |   maintenance.js
+    |   |   |   matchmaker-state.js
+    |   |   |   misc-state.js
+    |   |   |   modals-core.js
+    |   |   |   names.js
+    |   |   |   randomness.js
+    |   |   |   responsive.js
+    |   |   |   simulation-generators.js
+    |   |   |   state.js
+    |   |   |   storage-schema.js
+    |   |   |   storage.js
+    |   |   |   tab-manager.js
+    |   |   |   theme-boot.js
+    |   |   |   time.js
+    |   |   |   ui-state.js
+    |   |   |   ui.js
+    |   |   |   validation.js
+    |   |   |   world.js
+    |   |   |   
+    |   |   \---constants
+    |   |           age-constants.js
+    |   |           character-constants.js
+    |   |           character-traits.js
+    |   |           constants.js
+    |   |           location-constants.js
+    |   |           relationship-constants.js
+    |   |           
+    |   +---crime
+    |   |       crime-bootstrap.js
+    |   |       crime-commands.js
+    |   |       crime-constants.js
+    |   |       crime-docs.txt
+    |   |       crime-law-integration.js
+    |   |       crime-queries.js
+    |   |       crime-state.js
+    |   |       crime-ui-stats.js
+    |   |       crime-view-models.js
+    |   |       modals-crime.js
+    |   |       vendetta-system.js
+    |   |       
+    |   +---culture
+    |   |       culture-bootstrap.js
+    |   |       culture-commands.js
+    |   |       culture-constants.js
+    |   |       culture-docs.txt
+    |   |       culture-generation.js
+    |   |       culture-manager-bootstrap.js
+    |   |       culture-queries.js
+    |   |       culture-rules.js
+    |   |       culture-state.js
+    |   |       culture-ui-list.js
+    |   |       culture-validation.js
+    |   |       culture-view-models.js
+    |   |       modals-culture.js
+    |   |       
+    |   +---disaster
+    |   |       disaster-bootstrap.js
+    |   |       disaster-commands.js
+    |   |       disaster-constants.js
+    |   |       disaster-damage.js
+    |   |       disaster-doc.txt
+    |   |       disaster-queries.js
+    |   |       disaster-state.js
+    |   |       disaster-ui-stats.js
+    |   |       disaster-view-models.js
+    |   |       modals-disaster.js
+    |   |       
+    |   +---education
+    |   |       education-annual.js
+    |   |       education-commands.js
+    |   |       education-constants.js
+    |   |       education-doc.txt
+    |   |       education-history.js
+    |   |       education-learning.js
+    |   |       education-queries.js
+    |   |       education-rules.js
+    |   |       education-state.js
+    |   |       education-ui-list.js
+    |   |       education-ui-state.js
+    |   |       modals-education.js
+    |   |       
+    |   +---events
+    |   |       annualProcessing.js
+    |   |       census-core.js
+    |   |       eventLogger.js
+    |   |       social-events-system.js
+    |   |       timeline-core.js
+    |   |       
+    |   +---government
+    |   |       government-assignment.js
+    |   |       government-bootstrap.js
+    |   |       government-commands.js
+    |   |       government-constants.js
+    |   |       government-docs.txt
+    |   |       government-economy.js
+    |   |       government-laws.js
+    |   |       government-queries.js
+    |   |       government-rules.js
+    |   |       government-state.js
+    |   |       government-system.js
+    |   |       government-ui-list.js
+    |   |       government-ui-state.js
+    |   |       government-view-models.js
+    |   |       modals-government-assign.js
+    |   |       modals-government-departments.js
+    |   |       modals-government-economy.js
+    |   |       modals-government-positions.js
+    |   |       modals-government.js
+    |   |       settlement-law-formatters.js
+    |   |       
+    |   +---households
+    |   |       household-assignment.js
+    |   |       household-bootstrap.js
+    |   |       household-commands.js
+    |   |       household-constants.js
+    |   |       household-doc.txt
+    |   |       household-economy.js
+    |   |       household-manager-runtime.js
+    |   |       household-orchestration.js
+    |   |       household-queries.js
+    |   |       household-rules.js
+    |   |       household-servant.js
+    |   |       household-state.js
+    |   |       household-ui-list.js
+    |   |       household-view-models.js
+    |   |       modals-assign-staff.js
+    |   |       modals-helper.js
+    |   |       modals-household-economy.js
+    |   |       modals-household-snapshot.js
+    |   |       modals-household-staff.js
+    |   |       modals-household.js
+    |   |       modals-residence-history.js
+    |   |       modals-residence-owner.js
+    |   |       modals-residence-rental.js
+    |   |       modals-residence-snapshot.js
+    |   |       modals-residence-staff.js
+    |   |       modals-residence-vacancy.js
+    |   |       modals-residence.js
+    |   |       residence-system.js
+    |   |       tab-runtime.js
+    |   |       
+    |   +---industry
+    |   |       industry-bootstrap.js
+    |   |       industry-commands.js
+    |   |       industry-constants.js
+    |   |       industry-doc.txt
+    |   |       industry-economics.js
+    |   |       industry-migration.js
+    |   |       industry-processor.js
+    |   |       industry-queries.js
+    |   |       industry-rules.js
+    |   |       industry-state.js
+    |   |       industry-type-commands.js
+    |   |       industry-type-defaults.js
+    |   |       industry-type-init.js
+    |   |       industry-types.js
+    |   |       industry-ui-list.js
+    |   |       industry-view-models.js
+    |   |       modals-industry.js
+    |   |       
+    |   +---location
+    |   |       location-bootstrap.js
+    |   |       location-commands.js
+    |   |       location-docs.txt
+    |   |       location-hierarchy.js
+    |   |       location-movement.js
+    |   |       location-presentation.js
+    |   |       location-queries.js
+    |   |       location-state.js
+    |   |       location-ui-list.js
+    |   |       location-ui-state.js
+    |   |       location-view-models.js
+    |   |       modals-location-helper.js
+    |   |       modals-location.js
+    |   |       modals-moves.js
+    |   |       
+    |   +---names
+    |   |       modals-name.js
+    |   |       name-commands.js
+    |   |       name-docs.txt
+    |   |       name-queries.js
+    |   |       name-rules.js
+    |   |       name-system.js
+    |   |       names-state.js
+    |   |       
+    |   +---ranks
+    |   |       modals-rank.js
+    |   |       rank-assignment.js
+    |   |       rank-bootstrap.js
+    |   |       rank-commands.js
+    |   |       rank-constants.js
+    |   |       rank-docs.txt
+    |   |       rank-issues.js
+    |   |       rank-queries.js
+    |   |       rank-rules.js
+    |   |       rank-state.js
+    |   |       rank-ui-list.js
+    |   |       
+    |   +---relationships
+    |   |       affair-commands.js
+    |   |       affair-queries.js
+    |   |       affair-rules.js
+    |   |       friendship-commands.js
+    |   |       friendship-queries.js
+    |   |       friendship-rules.js
+    |   |       jealousy-commands.js
+    |   |       jealousy-queries.js
+    |   |       jealousy-rules.js
+    |   |       matchmaking-queries.js
+    |   |       matchmaking-rules.js
+    |   |       modals-friendship.js
+    |   |       modals-relationship.js
+    |   |       professional-commands.js
+    |   |       professional-queries.js
+    |   |       professional-rules.js
+    |   |       relationship-bootstrap.js
+    |   |       relationship-commands.js
+    |   |       relationship-docs.txt
+    |   |       relationship-finder-queries.js
+    |   |       relationship-integrations.js
+    |   |       relationship-queries.js
+    |   |       relationship-state.js
+    |   |       relationship-types.js
+    |   |       relationship-ui-metadata.js
+    |   |       relationship-utils.js
+    |   |       rivalry-commands.js
+    |   |       rivalry-queries.js
+    |   |       rivalry-rules.js
+    |   |       romance-commands.js
+    |   |       romance-queries.js
+    |   |       romance-rules.js
+    |   |       
+    |   +---religion
+    |   |       modals-religion.js
+    |   |       religion-bootstrap.js
+    |   |       religion-commands.js
+    |   |       religion-constants.js
+    |   |       religion-docs.txt
+    |   |       religion-format.js
+    |   |       religion-inheritance.js
+    |   |       religion-laws.js
+    |   |       religion-queries.js
+    |   |       religion-render.js
+    |   |       religion-rules.js
+    |   |       religion-state.js
+    |   |       religion-ui-state.js
+    |   |       religion-validation.js
+    |   |       religion-view-models.js
+    |   |       
+    |   +---roles
+    |   |       modals-role-select.js
+    |   |       modals-roles.js
+    |   |       role-commands.js
+    |   |       role-constants.js
+    |   |       role-queries.js
+    |   |       role-state.js
+    |   |       role-system.js
+    |   |       role-ui-list.js
+    |   |       roles-docs.txt
+    |   |       skill-utils.js
+    |   |       
+    |   +---selectors
+    |   |       locationDropdown.js
+    |   |       modals-char-selector.js
+    |   |       modals-household-selector.js
+    |   |       selector-base.js
+    |   |       selectors-docs.txt
+    |   |       
+    |   +---settlement
+    |   |       modals-settlement-core.js
+    |   |       modals-settlement-economy.js
+    |   |       modals-settlement-roles.js
+    |   |       settlement-annual-processor.js
+    |   |       settlement-command-commit.js
+    |   |       settlement-crime-queries.js
+    |   |       settlement-debt-commands.js
+    |   |       settlement-docs.txt
+    |   |       settlement-economy-queries.js
+    |   |       settlement-education-definitions.js
+    |   |       settlement-education-queries.js
+    |   |       settlement-employment-queries.js
+    |   |       settlement-factory.js
+    |   |       settlement-feature-commands.js
+    |   |       settlement-feature-definitions.js
+    |   |       settlement-feature-queries.js
+    |   |       settlement-feature-rules.js
+    |   |       settlement-finance-definitions.js
+    |   |       settlement-fiscal-commands.js
+    |   |       settlement-fiscal-definitions.js
+    |   |       settlement-fiscal-rules.js
+    |   |       settlement-government-commands.js
+    |   |       settlement-government-definitions.js
+    |   |       settlement-government-rules.js
+    |   |       settlement-law-commands.js
+    |   |       settlement-law-definitions.js
+    |   |       settlement-law-queries.js
+    |   |       settlement-law-rules.js
+    |   |       settlement-prosperity-definitions.js
+    |   |       settlement-prosperity-queries.js
+    |   |       settlement-queries.js
+    |   |       settlement-rank-commands.js
+    |   |       settlement-rank-definitions.js
+    |   |       settlement-rank-queries.js
+    |   |       settlement-rank-rules.js
+    |   |       settlement-religion-queries.js
+    |   |       settlement-specialization-commands.js
+    |   |       settlement-state.js
+    |   |       settlement-tabs.js
+    |   |       settlement-ui-list.js
+    |   |       settlement-ui-state.js
+    |   |       settlement-view-models.js
+    |   |       settlement-wealth-commands.js
+    |   |       
+    |   +---tabs
+    |   |       category-manager-tab.js
+    |   |       character-family-tab.js
+    |   |       character-friendship-tab.js
+    |   |       character-identity-tab.js
+    |   |       character-romance-tab.js
+    |   |       culture-appearance-tab.js
+    |   |       culture-characters-tab.js
+    |   |       culture-editor-tab.js
+    |   |       culture-mythology-tab.js
+    |   |       culture-names-tab.js
+    |   |       education-analytics-tab.js
+    |   |       education-apprenticeship-tab.js
+    |   |       education-finances-tab.js
+    |   |       education-history-tab.js
+    |   |       education-institutions-tab.js
+    |   |       education-manager-bootstrap.js
+    |   |       education-overview-tab.js
+    |   |       education-students-tab.js
+    |   |       government-civil-laws-tab.js
+    |   |       government-departments-tab.js
+    |   |       government-details-tab.js
+    |   |       government-economy-tab.js
+    |   |       government-history-tab.js
+    |   |       government-manager-bootstrap.js
+    |   |       government-type-manager-tab.js
+    |   |       household-activity-tab.js
+    |   |       household-departments-tab.js
+    |   |       household-economy-tab.js
+    |   |       household-holdings-tab.js
+    |   |       household-manager-bootstrap.js
+    |   |       household-members-tab.js
+    |   |       household-overview-tab.js
+    |   |       household-tab-runtime.js
+    |   |       location-detail-tab.js
+    |   |       location-hierarchy-tab.js
+    |   |       location-leadership-tab.js
+    |   |       location-manager-bootstrap.js
+    |   |       location-movement-tab.js
+    |   |       location-population-tab.js
+    |   |       location-type-manager-tab.js
+    |   |       rank-manager-tab.js
+    |   |       religion-details-tab.js
+    |   |       religion-followers-tab.js
+    |   |       religion-gods-tab.js
+    |   |       religion-laws-tab.js
+    |   |       religion-places-tab.js
+    |   |       role-analytics-tab.js
+    |   |       role-apprenticeships-tab.js
+    |   |       role-assignments-tab.js
+    |   |       role-characters-tab.js
+    |   |       role-details-tab.js
+    |   |       settlement-crime-tab.js
+    |   |       settlement-economy-tab.js
+    |   |       settlement-education-tab.js
+    |   |       settlement-features-tab.js
+    |   |       settlement-history-tab.js
+    |   |       settlement-industry-tab.js
+    |   |       settlement-manager-bootstrap.js
+    |   |       settlement-overview-tab.js
+    |   |       settlement-religion-tab.js
+    |   |       settlement-residence-tab.js
+    |   |       settlement-roles-tab.js
+    |   |       settlement-tab-helpers.js
