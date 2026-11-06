@@ -16,9 +16,9 @@
            Character Manager — inline CSS
 
            Only css/themes.css and css/common.css are external.
-           Everything below is inline, including the character-tab-*
-           and character-row* classes that the tab files and the view
-           model emit.
+           Everything below is inline, including the character-tab-*,
+           character-row*, character-friendship-*, and
+           character-romance-* classes that the tabs emit.
 
            STRUCTURAL ONLY. Every visual value comes from a theme
            token in themes.css. No hex values, no rgba() values, no
@@ -342,8 +342,7 @@
         }
 
         /* ============================================================
-           CHARACTER ROW (emitted by character-view-models.js::compactRow
-           and character-ui-list.js::renderCharacterList)
+           CHARACTER ROW
            ============================================================ */
         .character-row {
             display: flex;
@@ -428,7 +427,6 @@
             margin: 0 auto;
         }
 
-        /* ---- Section (collapsible container) ---- */
         .character-tab-section {
             margin-bottom: 1rem;
             border: 1px solid var(--border);
@@ -488,7 +486,6 @@
             display: block;
         }
 
-        /* ---- Subhead (within a section) ---- */
         .character-tab-subhead {
             margin: 0.75rem 0 0.375rem;
             padding-bottom: 0.25rem;
@@ -500,7 +497,6 @@
             color: var(--accent);
         }
 
-        /* ---- Field row ---- */
         .character-tab-field {
             display: flex;
             flex-wrap: wrap;
@@ -526,7 +522,6 @@
             color: var(--text);
         }
 
-        /* ---- Inputs ---- */
         .character-tab-input {
             width: 100%;
             padding: 0.375rem 0.5rem;
@@ -556,7 +551,6 @@
             flex: 1;
         }
 
-        /* ---- Buttons ---- */
         .character-tab-btn {
             display: inline-flex;
             align-items: center;
@@ -633,7 +627,6 @@
             border-top: 1px solid var(--border);
         }
 
-        /* ---- Notes and hints ---- */
         .character-tab-note {
             color: var(--dim);
             font-size: 0.65rem;
@@ -646,7 +639,6 @@
             color: var(--accent);
         }
 
-        /* ---- Empty and unavailable states ---- */
         .character-tab-empty {
             padding: 1rem;
             text-align: center;
@@ -670,7 +662,6 @@
             border-radius: 0 var(--radius) var(--radius) 0;
         }
 
-        /* ---- Checkbox rows ---- */
         .character-tab-checkbox {
             display: inline-flex;
             align-items: center;
@@ -683,7 +674,6 @@
             margin: 0;
         }
 
-        /* ---- Random source row ---- */
         .character-tab-random-source {
             margin-bottom: 0.75rem;
             padding: 0.5rem 0.75rem;
@@ -692,7 +682,6 @@
             border: 1px solid var(--border);
         }
 
-        /* ---- Traits grid ---- */
         .character-tab-traits {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
@@ -721,7 +710,6 @@
             margin-top: 0.5rem;
         }
 
-        /* ---- History list (surname + religion) ---- */
         .character-tab-history {
             display: flex;
             flex-direction: column;
@@ -780,7 +768,6 @@
             flex-shrink: 0;
         }
 
-        /* ---- Rank rows ---- */
         .character-tab-rank-row {
             display: flex;
             flex-wrap: wrap;
@@ -833,7 +820,6 @@
             flex-shrink: 0;
         }
 
-        /* ---- Save bar ---- */
         .character-tab-savebar {
             display: flex;
             gap: 0.5rem;
@@ -1000,6 +986,166 @@
         }
 
         /* ============================================================
+           ROMANCE TAB (.character-romance-*)
+           ============================================================ */
+        .character-romance-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        .character-romance-header__title {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-family: var(--f-display);
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--accent-light);
+            letter-spacing: 0.02em;
+        }
+        .character-romance-header__actions {
+            display: flex;
+            gap: 0.375rem;
+            flex-wrap: wrap;
+        }
+        .character-romance-poly {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.0625rem 0.5rem;
+            border-radius: 0.625rem;
+            background: var(--accent-dim);
+            color: var(--accent-light);
+            font-family: var(--f-body);
+            font-size: 0.6rem;
+            font-weight: 500;
+        }
+        .character-romance-poly svg {
+            width: 0.85em; height: 0.85em; fill: currentColor;
+        }
+
+        .character-romance-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 0.375rem;
+        }
+        .character-romance-row:hover {
+            background: var(--bg3);
+        }
+        .character-romance-row.is-partner-deceased {
+            opacity: 0.78;
+        }
+        .character-romance-row__main {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .character-romance-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.25rem;
+            margin-top: 0.125rem;
+        }
+        .character-romance-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.0625rem 0.5rem;
+            border-radius: 0.625rem;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--dim);
+            font-family: var(--f-body);
+            font-size: 0.55rem;
+            font-weight: 500;
+            line-height: 1.4;
+        }
+        .character-romance-badge svg {
+            width: 0.85em; height: 0.85em; fill: currentColor;
+        }
+
+        .character-romance-meta {
+            font-size: 0.62rem;
+            color: var(--dim);
+            font-family: var(--f-mono);
+            margin-top: 0.25rem;
+        }
+
+        .character-romance-status {
+            font-family: var(--f-mono);
+            font-size: 0.62rem;
+            margin-top: 0.125rem;
+            color: var(--dim);
+        }
+        .character-romance-status svg {
+            width: 0.85em; height: 0.85em; fill: currentColor;
+            vertical-align: -0.1em;
+            margin-right: 0.125rem;
+        }
+        .character-romance-status.is-active { color: var(--ok); }
+        .character-romance-status.is-widowed { color: var(--dim); font-style: italic; }
+        .character-romance-status.is-ended { color: var(--dim); font-style: italic; }
+        .character-romance-status.is-partner-deceased { color: var(--dim); font-style: italic; }
+        .character-romance-status.is-deceased-subject { color: var(--danger-lt); }
+        .character-romance-status.is-both-deceased { color: var(--danger-lt); font-style: italic; }
+
+        .character-romance-actions {
+            display: flex;
+            gap: 0.25rem;
+            flex-shrink: 0;
+            flex-wrap: wrap;
+        }
+
+        .character-romance-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+            gap: 0.5rem;
+        }
+        .character-romance-stat-field {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 0.5rem 0.75rem;
+        }
+        .character-romance-stat-field--wide {
+            grid-column: 1 / -1;
+        }
+        .character-romance-stat-field__label {
+            font-family: var(--f-display);
+            font-size: 0.55rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--dim);
+        }
+        .character-romance-stat-field__value {
+            font-family: var(--f-mono);
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text);
+            margin-top: 0.125rem;
+        }
+
+        .character-romance-detail__row {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.375rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .character-romance-detail__row:last-child {
+            border-bottom: none;
+        }
+
+        /* ============================================================
            RESPONSIVE
            ============================================================ */
         @media (max-width: 768px) {
@@ -1058,6 +1204,13 @@
                 width: 100%;
             }
             .character-friendship-actions {
+                justify-content: flex-end;
+            }
+            .character-romance-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .character-romance-actions {
                 justify-content: flex-end;
             }
         }
@@ -1361,9 +1514,6 @@
 <script src="js/social/relationship-ui-metadata.js"></script>
 <script src="js/social/relationship-integrations.js"></script>
 
-<!-- Relationship modals. The friendship modals are used by the
-     Friendship tab; the relationship modal is used by future tabs
-     (Romance and Overview) and by the character editor. -->
 <script src="js/social/modals-relationship.js"></script>
 <script src="js/social/modals-friendship.js"></script>
 
@@ -1376,22 +1526,20 @@
 <!-- ---- Tab files (each self-registers with TabManager at load) ---- -->
 <script src="js/tabs/character-identity-tab.js"></script>
 <script src="js/tabs/character-friendship-tab.js"></script>
+<script src="js/tabs/character-romance-tab.js"></script>
 
 <!-- Tabs not yet built. Loaded conditionally so a missing file does
      not break the page. The bootstrap renders the "no-renderer" empty
      state for any tab whose file has not been loaded. When each of
      these files lands, replace the corresponding empty <script> with
      the real one. To "add a tab", only that <script> tag needs to be
-     added; nothing in the shell changes. -->
+     added; nothing else in the shell changes. -->
 
 <!-- <script src="js/tabs/character-location-tab.js"></script> -->
 <!-- <script src="js/tabs/character-family-tab.js"></script> -->
-<!-- <script src="js/tabs/character-romance-tab.js"></script> -->
 <!-- <script src="js/tabs/character-skills-tab.js"></script> -->
 <!-- <script src="js/tabs/character-overview-tab.js"></script> -->
 
-<!-- Bootstrap last. Configures TabManager, wires the sidebar, and
-     renders the initial tab. -->
 <script src="js/character/character-manager-bootstrap.js"></script>
 
 <!-- ================================================================
@@ -1420,7 +1568,6 @@
         }
     }
 
-    // ---- Year input -----------------------------------------------------
     var yearInput = document.getElementById('yearInput');
     var setYearBtn = document.getElementById('setYearBtn');
 
@@ -1464,7 +1611,6 @@
     }
     _syncYearInput();
 
-    // ---- Add character --------------------------------------------------
     var addBtn = document.getElementById('addCharacterBtn');
     if (addBtn) {
         addBtn.addEventListener('click', function () {
@@ -1479,7 +1625,6 @@
         });
     }
 
-    // ---- Random character ----------------------------------------------
     var generateBtn = document.getElementById('generateCharacterBtn');
     if (generateBtn) {
         generateBtn.addEventListener('click', function () {
@@ -1505,7 +1650,6 @@
         });
     }
 
-    // ---- Import ---------------------------------------------------------
     var importBtn = document.getElementById('importBtn');
     var fileInput = document.getElementById('fileInput');
     if (importBtn && fileInput) {
@@ -1553,7 +1697,6 @@
         });
     }
 
-    // ---- Export ---------------------------------------------------------
     var exportBtn = document.getElementById('exportBtn');
     if (exportBtn) {
         exportBtn.addEventListener('click', function () {
@@ -1581,7 +1724,6 @@
         });
     }
 
-    // ---- Refresh --------------------------------------------------------
     var refreshBtn = document.getElementById('refreshBtn');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', function () {
@@ -1601,7 +1743,6 @@
         });
     }
 
-    // ---- Mobile sidebar -------------------------------------------------
     var burgerBtn = document.getElementById('menuToggle');
     var sidebar = document.getElementById('characterSidebar');
     var overlay = document.getElementById('sidebarOverlay');
@@ -1625,7 +1766,6 @@
         });
     }
 
-    // ---- Tab strip icon injection --------------------------------------
     (function injectTabIcons() {
         var icons = window.Icons || {};
         var slots = document.querySelectorAll('[data-icon]');
@@ -1637,7 +1777,6 @@
         }
     })();
 
-    // ---- Theme switcher -------------------------------------------------
     (function () {
         var themeBtn = document.getElementById('themeBtn');
         var themeMenu = document.getElementById('themeMenu');
