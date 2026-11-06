@@ -19,11 +19,10 @@
            font stacks. Spacing uses rem.
 
            Shell (topbar / sidebar / tabs / inputs) mirrors the
-           Education Manager and Religion Manager so the three
-           managers read as one product. The .events-* rules below
-           cover ONLY the shell. Tab content styling (character rows,
-           stats bars, filter bars) is injected by the tab files
-           themselves (see events-deaths-tab.js).
+           Education Manager and Religion Manager so the managers
+           read as one product. Tab content styling (character rows,
+           couple rows, stats bars, filter bars) is injected by the
+           individual tab files.
            ============================================================ */
 
         html, body { height: 100%; margin: 0; overflow: hidden; }
@@ -285,8 +284,7 @@
         .tab-pane { display: none; }
         .tab-pane.active { display: block; }
 
-        /* ---- Shared empty state (used by shell-level errors,
-                before the tab files inject their own) ---- */
+        /* ---- Shared empty state / loading ---- */
         .empty-state {
             padding: 1.5rem;
             text-align: center;
@@ -410,6 +408,14 @@
                 <span class="manager-subtab-icon" data-icon="STORK" aria-hidden="true"></span>
                 <span>Births</span>
             </button>
+            <button class="manager-subtab" role="tab" type="button" data-tab="adoption" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="ADOPTION_LEGAL" aria-hidden="true"></span>
+                <span>Adoption</span>
+            </button>
+            <button class="manager-subtab" role="tab" type="button" data-tab="surrogacy" aria-selected="false" tabindex="-1">
+                <span class="manager-subtab-icon" data-icon="GUARDIANSHIP" aria-hidden="true"></span>
+                <span>Surrogacy</span>
+            </button>
             <button class="manager-subtab" role="tab" type="button" data-tab="disasters" aria-selected="false" tabindex="-1">
                 <span class="manager-subtab-icon" data-icon="EVENTS" aria-hidden="true"></span>
                 <span>Disasters</span>
@@ -427,6 +433,8 @@
         <div class="tab-content-wrapper" id="panelContent" role="tabpanel">
             <div class="tab-pane active" id="events-pane-deaths"      data-tab-content="deaths"></div>
             <div class="tab-pane"        id="events-pane-stork"       data-tab-content="stork"></div>
+            <div class="tab-pane"        id="events-pane-adoption"    data-tab-content="adoption"></div>
+            <div class="tab-pane"        id="events-pane-surrogacy"   data-tab-content="surrogacy"></div>
             <div class="tab-pane"        id="events-pane-disasters"   data-tab-content="disasters"></div>
             <div class="tab-pane"        id="events-pane-social"      data-tab-content="social"></div>
             <div class="tab-pane"        id="events-pane-educational" data-tab-content="educational"></div>
@@ -439,11 +447,12 @@
 
      Load order mirrors EducationManager.html with the education
      subsystem removed and the events subsystem added. The Deaths tab
-     reads through CharacterQueries / MortalityQueries, so the full
-     character + mortality chain is loaded. The other four facet tabs
-     land later; their owning domains (ChildrenQueries, DisasterQueries,
-     RelationshipQueries, EducationQueries) are loaded here so that
-     when the tab files land, no further load-order work is needed.
+     reads through CharacterQueries / MortalityQueries; the Stork tab
+     reads through RomanceQueries / FamilyQueries / ChildrenQueries /
+     ChildrenRules. The remaining facets (adoption, surrogacy, social,
+     educational) read through their owning domains, which are loaded
+     here so that when the tab files land, no further load-order work
+     is needed.
 
      The PlaceQueries shim is required by culture-queries.js and
      religion-queries.js at load time; it lazily reaches LocationState,
@@ -625,7 +634,7 @@
 <script src="js/ranks/rank-bootstrap.js"></script>
 
 <!-- ============================================================ -->
-<!-- RELATIONSHIP (social facet reads through these)               -->
+<!-- RELATIONSHIP (stork + social facets read through these)       -->
 <!-- ============================================================ -->
 <script src="js/relationships/relationship-types.js"></script>
 <script src="js/relationships/relationship-utils.js"></script>
@@ -782,12 +791,23 @@
 <script src="js/apprenticeship/modals-apprenticeship.js"></script>
 
 <!-- ============================================================ -->
-<!-- DEATH MODAL (the Deaths tab's only write path)                -->
+<!-- MODALS — WRITE PATH FOR THE TAB SET                           -->
+<!--                                                                -->
+<!-- deaths      -> modals-death.js                                -->
+<!-- stork       -> modals-children-birth.js                        -->
+<!-- adoption    -> modals-children-adoption.js    (Phase 3B)      -->
+<!-- surrogacy   -> modals-children-surrogacy.js  (Phase 3C)      -->
+<!-- disasters   -> modals-disaster.js  (already loaded above)      -->
+<!--                                                                -->
+<!-- Only the first two are loaded here. The other two land with   -->
+<!-- their tabs in Phase 3B / 3C.                                  -->
 <!-- ============================================================ -->
+
 <script src="js/core/modals/modals-death.js"></script>
+<script src="js/core/modals/modals-children-birth.js"></script>
 
 <!-- ============================================================ -->
-<!-- EVENTS MODULE (aggregate read facade over the five facets)    -->
+<!-- EVENTS MODULE (aggregate read facade over the seven facets)   -->
 <!-- ============================================================ -->
 <script src="js/events/events-constants.js"></script>
 <script src="js/events/events-queries.js"></script>
@@ -797,16 +817,29 @@
 
 <!-- ============================================================ -->
 <!-- EVENTS MANAGER TABS + BOOTSTRAP                               -->
+<!--                                                                -->
+<!-- Each tab file self-registers with TabManager at load time.    -->
+<!-- The bootstrap configures TabManager and renders the initial   -->
+<!-- tab after every tab file has had a chance to register.        -->
+<!--                                                                -->
+<!-- The adoption, surrogacy, social, and educational buttons      -->
+<!-- exist in the strip but have no registered renderer yet. They  -->
+<!-- render the "not loaded in this build" empty state from        -->
+<!-- _buildEmptyState('no-renderer') in the bootstrap.             -->
 <!-- ============================================================ -->
+
 <script src="js/tabs/events-deaths-tab.js"></script>
+<script src="js/tabs/events-stork-tab.js"></script>
+<script src="js/tabs/events-disasters-tab.js"></script>
 
 <!-- Future facet tabs land here as they are built:
-     <script src="js/tabs/events-stork-tab.js"></script>
-     <script src="js/tabs/events-disasters-tab.js"></script>
+     <script src="js/tabs/events-adoption-tab.js"></script>
+     <script src="js/tabs/events-surrogacy-tab.js"></script>
      <script src="js/tabs/events-social-tab.js"></script>
      <script src="js/tabs/events-educational-tab.js"></script>
-     Until then, the corresponding tabs render via the "no-renderer"
-     empty state from _buildEmptyState in the bootstrap. -->
+     Until then, the corresponding tabs render via the
+     "no-renderer" empty state from _buildEmptyState in the
+     bootstrap. -->
 
 <script src="js/tabs/events-manager-bootstrap.js"></script>
 
