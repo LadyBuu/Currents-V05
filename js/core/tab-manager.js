@@ -26,48 +26,37 @@
  *   {
  *     containerRoot:  HTMLElement | fn() → HTMLElement,
  *                                     // contains the strip AND the panes.
- *                                     // May be passed as an element (eager
- *                                     // value, resolved when configure()
- *                                     // runs) or as a zero-arg function
- *                                     // that returns the element (lazy
- *                                     // resolve at use time). Use the
- *                                     // function form when the configure()
- *                                     // call may run before the DOM is
- *                                     // parsed (e.g. from an inline
- *                                     // <script> at the end of <body>, or
- *                                     // from a DOMContentLoaded listener
- *                                     // that fires before the strip is
- *                                     // mounted).
+ *                                     // May be an element or a zero-arg
+ *                                     // resolver function (lazy resolve).
  *     resolveContainer: fn(tabId),   // returns the pane element for a tab
  *     buildContext:   fn(),          // returns { locationId, ... } or null
+ *     buildEmptyState: fn(tabId, reason) → html string
+ *
+ *     // OPTIONAL (state persistence only — TabManager owns the visual sync):
  *     getActiveTabId: fn(),          // returns the current tab id
  *     setActiveTabId: fn(tabId),     // persists the active tab id
- *     buildEmptyState: fn(tabId, reason) → html string
  *   }
  *
- * CONTAINER-ROOT NORMALIZATION
- * ----------------------------
- *   The click router needs an Element to call .contains(btn) on. Prior
- *   revisions assumed config.containerRoot was always an element; a
- *   manager that passed a resolver function (a natural choice, since a
- *   manager page may configure its scope in a <script> that runs before
- *   the strip is mounted) crashed on the first click with
- *   "TypeError: _configs[scope].containerRoot.contains is not a function".
+ * VISUAL SYNC (the fix in this revision):
+ *   TabManager owns the .active class toggling on BOTH the strip buttons
+ *   and the pane elements. The click router calls _applyActiveClasses()
+ *   before renderActive(); renderActive() and requestRender() also call
+ *   it. The scope's setActiveTabId hook, if present, is called for state
+ *   persistence only — a missing or throwing hook cannot prevent the
+ *   visual change.
  *
- *   configure() still accepts both shapes, but the click router now
- *   normalizes via _resolveContainerRoot(): if containerRoot is a
- *   function it is called once per click to obtain the element (cheap —
- *   querySelector on an already-parsed document; also correct if the DOM
- *   was replaced between clicks, e.g. after an import reload). If it is
- *   an element, it is used directly. Either way the router operates on
- *   an element.
+ *   Prior revisions delegated visual sync to cfg.setActiveTabId inside a
+ *   try/catch that swallowed errors. When the hook was missing or threw,
+ *   _activeTabIdByScope still updated (so getActiveTabId returned the new
+ *   id and the correct pane got rendered), but .active never moved off
+ *   the previous pane — so the user saw the wrong pane, or an empty one.
  *
- *   Rationale for keeping both shapes: eager element passing is the
- *   natural fit for a config block that runs after the strip exists
- *   (Education-style bootstrap); lazy function is the natural fit for a
- *   config block that runs at parse time in the page shell
- *   (ReligionManager.html's inline <script>). Neither is "wrong"; the
- *   fix is to stop forcing one to behave like the other.
+ * CONTAINER-ROOT NORMALIZATION:
+ *   The click router needs an Element to call .contains(btn) on.
+ *   config.containerRoot may be an Element or a zero-arg function
+ *   returning an Element. _resolveContainerRoot() normalizes either
+ *   shape to an Element (or null if the resolver throws / returns
+ *   non-element, in which case the scope is skipped for that click).
  *
  * RENDERER CONTRACT:
  *   fn(container, context) — writes into `container` (which TabManager has
@@ -84,46 +73,34 @@
  *      containerRoot MUST (after normalization) be an element that contains
  *      both the strip and the panes — a sibling strip (common mistake) makes
  *      clicks fail to route.
- *   2. TabManager does NOT toggle .active on panes. The scope's
- *      setActiveTabId hook is responsible for that visual sync. See
- *      ReligionManager.html's scope config for the reference implementation
- *      (_syncTabStrip) or location-manager-bootstrap.js::_syncTabStrip for
- *      the Education-side equivalent.
- *   3. register() is idempotent per (scope, tabId). A later register() with
+ *   2. register() is idempotent per (scope, tabId). A later register() with
  *      the same key overwrites the earlier one — this lets a page re-register
  *      after a hot-reload without accumulating stale renderers.
- *   4. renderActive() and requestRender() both empty the pane before calling
+ *   3. renderActive() and requestRender() both empty the pane before calling
  *      the renderer, so renderers never see stale DOM from a prior render.
- *   5. The click router sets _activeTabIdByScope BEFORE calling
+ *   4. The click router sets _activeTabIdByScope BEFORE calling
  *      renderActive(). This ordering is deliberate: renderActive() reads
  *      _activeTabIdByScope via getActiveTabId(), so setting it afterward
  *      would render the wrong (previous) tab. Do not reorder.
+ *   5. _applyActiveClasses runs BEFORE setActiveTabId. If setActiveTabId
+ *      persists state to localStorage and also triggers a re-render, the
+ *      visual state is already correct when the re-render happens.
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - containerRoot now accepts EITHER an element OR a zero-arg
- *       resolver function. The click router normalizes via
- *       _resolveContainerRoot(config) before calling .contains().
- *       Fixes the "TypeError: _configs[scope].containerRoot.contains
- *       is not a function" crash when a manager passes a lazy resolver
- *       (ReligionManager.html does). Backwards-compatible: element
- *       configs unchanged, function configs now work.
- *     - configure() validation relaxed to accept both shapes (was:
- *       "config.containerRoot is required" — still true, but the
- *       shape is no longer implicitly assumed to be an element).
- *       A mis-shaped containerRoot (e.g. a string, or a plain object
- *       without .contains) now throws a clear configure-time error
- *       instead of a cryptic .contains failure at the first click.
- *     - _renderTab's 'no-container' fallback also uses
- *       _resolveContainerRoot so it can't throw on a function-shaped
- *       config.
- *     - Header CONFIG SHAPE updated to document both shapes and when
- *       to use each. Added CONTAINER-ROOT NORMALIZATION section
- *       explaining the bug and the fix.
- *     - No other behavior changes: registration, activation ordering,
- *       render, empty states, and the requestRender/activate public
- *       surface are all identical to the previous revision.
+ *     - TabManager owns the .active class toggling. Added
+ *       _applyActiveClasses(scope, tabId), called from init's click
+ *       handler, renderActive, and requestRender. Fixed the "clicked tab
+ *       highlights but the wrong pane shows" bug caused by delegating
+ *       visual sync to a swallowed-throw config hook.
+ *     - configure() no longer requires getActiveTabId / setActiveTabId.
+ *       They are optional state-persistence hooks. Missing hooks are now
+ *       a no-op rather than a configure-time throw.
+ *     - containerRoot accepts element OR zero-arg resolver function.
+ *       _resolveContainerRoot() normalizes before .contains().
+ *     - renderActive() and requestRender() also apply active classes, so
+ *       programmatic renders (e.g. after a save) update the strip too.
  *   Previous revisions:
  *     - Initial Education-aligned revision. Replaces the settlement-era
  *       TabManager whose pane convention used .settlement-tab-message.
@@ -133,8 +110,8 @@
 (function () {
     'use strict';
 
-    var _configs = Object.create(null);          // scope -> config
-    var _renderers = Object.create(null);        // scope -> { tabId -> fn }
+    var _configs = Object.create(null);            // scope -> config
+    var _renderers = Object.create(null);          // scope -> { tabId -> fn }
     var _activeTabIdByScope = Object.create(null); // scope -> tabId
     var _initialized = false;
 
@@ -164,14 +141,11 @@
     //
     // config.containerRoot may be either:
     //   - an Element (configure() ran after the DOM was mounted), or
-    //   - a zero-arg function returning an Element (configure() ran before
-    //     the DOM was mounted, or the caller wants to re-resolve on each
-    //     use — e.g. after an import replaced the DOM).
+    //   - a zero-arg function returning an Element (lazy resolve).
     //
-    // The click router needs an Element. _resolveContainerRoot() returns
-    // one or null. A function that throws or returns non-element is
-    // treated as null (the router skips that scope for this click, which
-    // is the correct behavior — a broken config should not route clicks
+    // _resolveContainerRoot() returns an Element or null. A function that
+    // throws or returns non-element is treated as null (the router skips
+    // that scope for this click — a broken config should not route clicks
     // to the wrong scope).
 
     function _resolveContainerRoot(config) {
@@ -186,6 +160,41 @@
     }
 
     // -------------------------------------------------------------------------
+    // Visual sync (owned by TabManager)
+    // -------------------------------------------------------------------------
+    //
+    // Toggle .active on both the [data-tab] buttons and the [data-tab-content]
+    // panes inside the scope's containerRoot. Also maintain ARIA state on
+    // the buttons. This is the single source of truth for the "which tab is
+    // visible" question — the scope's setActiveTabId hook is optional and
+    // only used for persistence.
+
+    function _applyActiveClasses(scope, tabId) {
+        var cfg = _configs[scope];
+        if (!cfg) return;
+        var root = _resolveContainerRoot(cfg);
+        if (!root) return;
+
+        var buttons = root.querySelectorAll('[data-tab]');
+        for (var i = 0; i < buttons.length; i++) {
+            var b = buttons[i];
+            var isActiveBtn = b.getAttribute('data-tab') === tabId;
+            if (isActiveBtn) b.classList.add('active');
+            else b.classList.remove('active');
+            b.setAttribute('aria-selected', isActiveBtn ? 'true' : 'false');
+            b.setAttribute('tabindex', isActiveBtn ? '0' : '-1');
+        }
+
+        var panes = root.querySelectorAll('[data-tab-content]');
+        for (var k = 0; k < panes.length; k++) {
+            var p = panes[k];
+            var isActivePane = p.getAttribute('data-tab-content') === tabId;
+            if (isActivePane) p.classList.add('active');
+            else p.classList.remove('active');
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Public API
     // -------------------------------------------------------------------------
 
@@ -193,23 +202,23 @@
      * Register a manager's tab scope + hooks. Must be called before
      * renderActive(scope). Tabs may be registered before or after this
      * call; the registry is per-scope and independent of config.
+     *
+     * Required config keys: containerRoot, resolveContainer, buildContext,
+     * buildEmptyState. Optional: getActiveTabId, setActiveTabId (state
+     * persistence only — TabManager owns the visual sync).
      */
     function configure(scope, config) {
         _assertScope(scope);
         if (!config || typeof config !== 'object') {
             throw new Error('TabManager.configure: config must be an object');
         }
-        var required = [
-            'containerRoot', 'resolveContainer', 'buildContext',
-            'getActiveTabId', 'setActiveTabId', 'buildEmptyState'
-        ];
+        var required = ['containerRoot', 'resolveContainer', 'buildContext', 'buildEmptyState'];
         for (var i = 0; i < required.length; i++) {
             var key = required[i];
             if (key === 'containerRoot') {
                 if (!config[key]) {
                     throw new Error('TabManager.configure: config.containerRoot is required');
                 }
-                // Both shapes are valid: element or function.
                 if (typeof config[key] !== 'function'
                     && typeof config[key].contains !== 'function') {
                     throw new Error(
@@ -269,9 +278,8 @@
             var tabId = btn.getAttribute('data-tab');
             if (!tabId) return;
 
-            // Find the scope whose (normalized) containerRoot contains
-            // this button. _resolveContainerRoot() accepts both the
-            // element and the function shape of config.containerRoot.
+            // Find the scope whose normalized containerRoot contains
+            // this button.
             var matchedScope = null;
             for (var scope in _configs) {
                 var root = _resolveContainerRoot(_configs[scope]);
@@ -284,14 +292,29 @@
 
             var cfg = _configs[matchedScope];
 
-            // setActiveTabId is the scope's UI-sync hook (strip + pane
-            // visual sync). It is best-effort: a broken hook must not
-            // prevent the render. Order matters: _activeTabIdByScope
-            // must be set BEFORE renderActive() because renderActive()
-            // reads it via getActiveTabId().
-            try { cfg.setActiveTabId(tabId); }
-            catch (err) { /* ignore */ }
+            // Order matters: set the active tab id BEFORE any render path,
+            // because renderActive() reads it via getActiveTabId().
             _activeTabIdByScope[matchedScope] = tabId;
+
+            // Visual sync is owned by TabManager. This runs unconditionally,
+            // so a broken/missing setActiveTabId hook cannot leave the UI
+            // showing the wrong pane.
+            _applyActiveClasses(matchedScope, tabId);
+
+            // Optional state-persistence hook. Best-effort.
+            if (typeof cfg.setActiveTabId === 'function') {
+                try { cfg.setActiveTabId(tabId); }
+                catch (err) {
+                    if (typeof console !== 'undefined' && console.warn) {
+                        console.warn(
+                            '[TabManager] setActiveTabId threw for scope "' +
+                            matchedScope + '", tab "' + tabId + '":',
+                            err
+                        );
+                    }
+                }
+            }
+
             renderActive(matchedScope);
         });
     }
@@ -325,16 +348,23 @@
             console.warn('TabManager.renderActive: no active tab for scope "' + scope + '"');
             return;
         }
+        _applyActiveClasses(scope, tabId);
         _renderTab(scope, tabId);
     }
 
     /**
      * Force a specific tab to re-render. Use after a write (save, delete,
      * import) to refresh the visible tab without a full page reload.
+     * Also applies active classes, so a programmatic re-render of a
+     * non-active tab does not visually promote it — use renderActive()
+     * for that. requestRender is for "re-run this renderer"; the active
+     * tab id does not change.
      */
     function requestRender(scope, tabId) {
         _assertScope(scope);
         _assertTabId(tabId);
+        // Do NOT change _activeTabIdByScope here — requestRender means
+        // "re-render the pane for tabId", not "activate tabId".
         _renderTab(scope, tabId);
     }
 
@@ -354,8 +384,6 @@
         if (!container) {
             // No pane. Write the empty state into the first pane we can
             // find, so the user sees something rather than a blank strip.
-            // Use the normalized root so a function-shaped containerRoot
-            // can't throw here.
             var root = _resolveContainerRoot(cfg);
             if (root) {
                 var html = cfg.buildEmptyState(tabId, 'no-container');
