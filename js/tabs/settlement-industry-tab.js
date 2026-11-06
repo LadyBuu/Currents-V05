@@ -1,202 +1,72 @@
 /**
  * =============================================================================
- * STILL WATERS - SETTLEMENT INDUSTRY TAB
+ * SETTLEMENT INDUSTRY TAB
  * js/tabs/settlement-industry-tab.js
  * =============================================================================
  *
- * INDUSTRY TAB RENDERER.
+ * Renders the settlement's enterprises (public and private) with
+ * aggregate stats and per-enterprise actions. Every mutation delegates
+ * to the industry modals. Every read goes through IndustryQueries.
  *
- * Renders the settlement's enterprises — public and private — as a
- * settlement-scoped list, with actions that open the industry modals for
- * create / details / process. The tab is a *view* over the industry
- * domain's own read and write surfaces; it does not own enterprise data.
+ * RENDERER CONTRACT:
+ *   fn(container, context) with context = { locationId, data, viewModel }
  *
- * It is a UI module. It:
- *   - reads through IndustryQueries and IndustryViewModels
- *   - opens the industry modals via IndustryModals (modals-industry.js)
- *   - opens the industry list via IndustryModals.openEnterpriseListModal
- *   - processes per-enterprise via IndustryProcessor.processAnnualEnterprise
- *     and settlement batches via IndustryProcessor.processEnterprisesForLocation
- *   - does not read canonical settlement data directly
- *   - does not read canonical industry data directly (IndustryQueries only)
- *   - does not compute domain values
- *   - does not create settlement records
- *   - does not create enterprise records
- *   - does not mutate canonical settlement data
- *   - does not mutate canonical industry data directly (only through the
- *     processor and the modals)
- *   - does not persist ad hoc — the processor owns persistence for
- *     batches; the modals own persistence for single mutations
- *   - does not fabricate missing domain values
- *   - does not render raw null/undefined as "null" or "undefined"
- *   - does not use a recursion guard
- *   - does not use setTimeout to guess when the DOM is ready
+ * DATA SOURCES:
+ *   - IndustryQueries.getLocationEnterprisesSummary(locationId)
+ *   - IndustryViewModels.buildListRow(summary)
  *
- * Contract reference: Settlement Architecture Contracts §15 (ViewModel
- * Contract), §16 (UI Contract), §13 (Enterprise Ownership Contract),
- * §32 (Completion Standard). Industry: industry-doc.txt §1 (Ownership
- * Contract), §2 (Load Order).
+ * DELEGATED MODALS (IndustryModals):
+ *   - openCreateEnterpriseModal(onSuccess, defaultData)
+ *   - openEnterpriseDetailsModal(enterpriseId, onSuccess)
+ *   - openEditEnterpriseModal(enterpriseId, onSuccess)
+ *   - openEnterpriseListModal()
  *
- * RENDERER CONTRACT
- * -----------------
- *   Registered via SettlementTabs.registerTabRenderer('industry', fn).
- *   SettlementTabs invokes fn(container, context):
+ * DELEGATED PROCESSOR (IndustryProcessor):
+ *   - processEnterprisesForLocation(locationId) — batch processing for
+ *     the settlement's OWN location (not the subtree). The processor
+ *     owns the eligibility gate (status === 'active') and the single
+ *     persist at the end of the batch.
  *
- *     container  HTMLElement       already emptied by SettlementTabs
- *     context    {
- *       locationId  string|null    selected settlement id
- *       data        Object|null    canonical settlement record
- *       viewModel   Object|null    buildSettlementSummary result
- *     }
+ * INDUSTRY HYDRATION GUARD:
+ *   IndustryState must be hydrated before any IndustryQueries read.
+ *   IndustryBootstrap.init() hydrates it, but the settlement page can
+ *   render before that bootstrap completes. _ensureIndustryStateHydrated
+ *   makes the tab render reliably regardless of page timing. The
+ *   hydrate call is idempotent.
  *
- *   SettlementTabs has already validated locationId and data before
- *   calling the renderer.
+ * PUBLIC vs. PRIVATE:
+ *   Grouped by `ownershipType` ('public' | 'private'). Enterprises with
+ *   ownershipType not in that set are grouped with private so the user
+ *   can see the anomaly. IndustryRules enforces the invariant on write.
  *
- * ENTERPRISE OWNERSHIP (settlement-docs §13)
- * ------------------------------------------
- *   Enterprises are owned by the Industry domain. Settlement does not
- *   maintain authoritative `stateEnterpriseIds` or `publicEnterpriseIds`
- *   arrays. The Settlement UI reads enterprise data through
- *   IndustryQueries:
- *
- *     getEnterprisesByLocation(locationId)   enterprises at this location
- *     getLocationEnterprisesSummary(locId)   summary projection for a list
- *     getPublicEnterprises(locationId)       ownershipType === 'public'
- *     getPrivateEnterprises(locationId)      ownershipType === 'private'
- *     getStateEnterprises(locationId)        ownerType === 'state'
- *
- *   The tab reads these; it does not maintain a parallel settlement-side
- *   enterprise list. This matches the §13 contract exactly.
- *
- * PUBLIC vs. PRIVATE
- * ------------------
- *   `ownershipType` is the settlement-facing concept. It is set to
- *   'public' when the enterprise's owner is a settlement or state (place
- *   owner type) and 'private' when the owner is a character, a household,
- *   or none. The industry domain enforces this coherence via
- *   IndustryRules.canApplyOwnershipChange.
- *
- *   The tab groups enterprises into two sections:
- *
- *     Public    ownershipType === 'public'
- *     Private   ownershipType === 'private'
- *
- *   The old tab read `enterprise.isPublic` (a derived field that Phase 3
- *   removed from the canonical record), so the value was always
- *   `undefined` on new records. The new tab reads `ownershipType`, which
- *   is the canonical stored field.
- *
- * PER-ENTERPRISE ACTIONS
- * ----------------------
- *   Every mutating action is delegated to a modals-industry.js export:
- *
- *     Details   openEnterpriseDetailsModal(enterpriseId, onSuccess)
- *     Edit      openEditEnterpriseModal(enterpriseId, onSuccess)
- *     Create    openCreateEnterpriseModal(onSuccess, { locationId,
- *                                               ownerType, ownerId })
- *
- *   The tab does not call IndustryCommands directly. The modals own
- *   persistence (IndustryCommands.persist() once per successful batch).
- *
- * AGGREGATE PROCESSING (SETTLEMENT-SCOPED)
- * ----------------------------------------
- *   The old tab's "Process All Enterprises" button called
- *   IndustryProcessor.processAllEnterprises(), which walks EVERY
- *   enterprise in the catalogue — not just this settlement's. The
- *   button's label and confirm dialog said "this settlement"; the
- *   actual scope was the world.
- *
- *   The tab now delegates to
- *   IndustryProcessor.processEnterprisesForLocation(locationId), which:
- *
- *     - selects enterprises via IndustryQueries.getEnterprisesByLocation
- *     - enforces the eligibility gate (status === 'active') inside the
- *       processor, not in this tab
- *     - persists once at the end of the batch
- *
- *   The tab does NOT pre-filter by status. The processor's eligibility
- *   gate skips ineligible enterprises and does NOT count them as
- *   failures. The prior revision pre-filtered `s.status !== 'active'`
- *   here, which duplicated the processor's gate and — because the
- *   single-enterprise entry returns { success: false } for ineligible
- *   records — would have produced spurious failures if the pre-filter
- *   were ever removed in isolation. Both concerns are now owned by the
- *   processor.
- *
- *   Scope note: processEnterprisesForLocation matches the settlement's
- *   OWN location exactly. It does not walk the location subtree. This
- *   matches the tab's historical scope ("only the enterprises at
- *   context.locationId"). A future subtree-wide entry point is a
- *   processor addition, not a tab change.
- *
- * INDUSTRY HYDRATION GUARD
- * ------------------------
- *   IndustryState must be hydrated before any IndustryQueries call.
- *   IndustryBootstrap.init() runs hydrateFromMasterData once, but the
- *   settlement page can render (and this tab can run) before that
- *   bootstrap has completed — e.g. the user selects a settlement
- *   immediately after the page loads. The tab calls
- *   IndustryState.hydrateFromMasterData(enterprises, types) defensively
- *   when IndustryState.isHydrated() is false. That call is idempotent;
- *   when the bootstrap has already hydrated, this is a no-op check.
- *
- *   The pattern matches government-type-manager-tab.js's defensive
- *   hydrate. It is not a substitute for the bootstrap; it makes the
- *   tab render reliably regardless of page timing.
- *
- * ICON POLICY
- * -----------
- *   No emojis. No inline SVG. Chrome icons come from window.getIcon if it
- *   is loaded; when icons.js is not on the page, the renderer falls back
- *   to plain text labels.
- *
- * =============================================================================
- * REFACTOR HISTORY:
- *   Current revision:
- *     - _processSettlementEnterprises now delegates entirely to
- *       IndustryProcessor.processEnterprisesForLocation(locationId).
- *       The composed fallback (query summaries, filter to active, call
- *       processAnnualEnterprise per enterprise with persist:false,
- *       persist once) is deleted. The processor owns eligibility, the
- *       batch loop, and the single persist. The tab's
- *       `s.status !== 'active'` pre-filter — which duplicated the
- *       processor's gate and would have produced spurious failures if
- *       removed in isolation, because processAnnualEnterprise returns
- *       { success: false } for ineligible records — is gone with the
- *       fallback.
- *     - _handleProcessAll continues to read the same result shape
- *       (success, processed, skipped, failed, persist) that
- *       processEnterprisesForLocation produces.
- *     - The per-enterprise row template continues to render
- *       row.workersLabel directly (a string like '3 / 10', not a
- *       number).
- *     - Defensive IndustryState hydration (from prior revision) is
- *       retained: _ensureIndustryStateHydrated() runs before any
- *       IndustryQueries read.
- *     - No behavioural change to details, edit, or create paths.
- *   Previous revisions:
- *     - Rewritten against the industry module set and the settlement
- *       module set. Signature changed from (containerId, locationId,
- *       summary) to (container, context). Recursion guard and
- *       modal-open flag removed. All per-enterprise actions delegate
- *       to modals-industry.js. Reads go through IndustryQueries only.
+ * NO CSS. Class-only rendering.
  * =============================================================================
  */
 
 (function () {
     'use strict';
 
-    // =========================================================================
-    // 1. DEPENDENCY ACCESS
-    // =========================================================================
+    var TAB_ID = 'industry';
+    var SCOPE  = 'settlement';
+
+    function H() { return window.SettlementTabHelpers; }
+    function esc(v)     { return H().esc(v); }
+    function icon(n)    { return H().icon(n); }
+    function fmtNum(v)  { return H().fmtNumber(v); }
+    function fmtGold(v) { return H().fmtGold(v); }
+    function fmtText(v) { return H().fmtText(v); }
+    function unknown()  { return H().unknown(); }
+    function refresh()  { H().requestRefresh(SCOPE, TAB_ID); }
+
+    // -------------------------------------------------------------------
+    // Dependency access (soft; each call guards)
+    // -------------------------------------------------------------------
 
     function _getIndustryQueries() {
         var Q = window.IndustryQueries;
-        if (!Q || typeof Q.getEnterprisesByLocation !== 'function') {
-            throw new Error(
-                'settlement-industry-tab: IndustryQueries is missing. ' +
-                'Load industry-queries.js before this tab.'
-            );
+        if (!Q || typeof Q.getLocationEnterprisesSummary !== 'function'
+            || typeof Q.getEnterprisesByLocation !== 'function') {
+            return null;
         }
         return Q;
     }
@@ -204,94 +74,30 @@
     function _getIndustryViewModels() {
         var VMs = window.IndustryViewModels;
         if (!VMs || typeof VMs.buildListRow !== 'function') {
-            throw new Error(
-                'settlement-industry-tab: IndustryViewModels is missing. ' +
-                'Load industry-view-models.js before this tab.'
-            );
+            return null;
         }
         return VMs;
     }
 
     function _getIndustryProcessor() {
         var P = window.IndustryProcessor;
-        if (!P || typeof P.processAnnualEnterprise !== 'function') {
-            throw new Error(
-                'settlement-industry-tab: IndustryProcessor is missing. ' +
-                'Load industry-processor.js before this tab.'
-            );
+        if (!P || typeof P.processEnterprisesForLocation !== 'function') {
+            return null;
         }
         return P;
     }
 
-    function _getIndustryState() {
-        return window.IndustryState || null;
-    }
+    function _getIndustryState() { return window.IndustryState || null; }
 
     function _getIndustryModals() {
         var M = window.IndustryModals;
         if (!M || typeof M.openEnterpriseDetailsModal !== 'function') {
-            throw new Error(
-                'settlement-industry-tab: IndustryModals is missing. ' +
-                'Load modals-industry.js before this tab.'
-            );
+            return null;
         }
         return M;
     }
 
-    function _getPlaceQueries() {
-        return window.PlaceQueries || null;
-    }
-
-    function _getTabs() {
-        return window.SettlementTabs || null;
-    }
-
-    // =========================================================================
-    // 2. HELPERS
-    // =========================================================================
-
-    function _escapeHtml(str) {
-        if (str === null || str === undefined) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function _unknown() {
-        return '<span class="value-unknown">—</span>';
-    }
-
-    function _fmtNumber(value) {
-        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
-        return _escapeHtml(value.toLocaleString());
-    }
-
-    function _fmtGold(value) {
-        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
-        return _escapeHtml(value.toLocaleString()) + 'g';
-    }
-
-    function _fmtText(value) {
-        if (value === null || value === undefined || value === '') {
-            return _unknown();
-        }
-        return _escapeHtml(value);
-    }
-
-    function _getIcon(name) {
-        if (typeof window.getIcon === 'function') {
-            try {
-                var icon = window.getIcon(name);
-                if (typeof icon === 'string') return icon;
-            } catch (e) {
-                // getIcon exists but threw; fall through to ''.
-            }
-        }
-        return '';
-    }
+    function _getPlaceQueries() { return window.PlaceQueries; }
 
     function _placeName(locationId) {
         var pq = _getPlaceQueries();
@@ -300,50 +106,9 @@
         return place ? (place.displayName || place.name || null) : null;
     }
 
-    function _toast(message, type) {
-        if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        }
-    }
-
-    function _confirm(message, title, onConfirm) {
-        if (typeof window.confirmDialog === 'function') {
-            window.confirmDialog(message, title, onConfirm);
-            return;
-        }
-        if (window.confirm(title + '\n\n' + message)) {
-            try { onConfirm(); } catch (e) {
-                if (typeof console !== 'undefined' && console.error) {
-                    console.error('settlement-industry-tab: onConfirm threw:', e);
-                }
-            }
-        }
-    }
-
-    function _requestRefresh() {
-        var tabs = _getTabs();
-        if (tabs && typeof tabs.requestRender === 'function') {
-            tabs.requestRender('industry');
-        }
-    }
-
-    // =========================================================================
-    // 3. INDUSTRY STATE HYDRATION GUARD
-    // =========================================================================
-    //
-    // IndustryState must be hydrated before any IndustryQueries read.
-    // IndustryBootstrap.init() hydrates it once, but the settlement
-    // page can render (and this tab can run) before that bootstrap has
-    // completed — e.g. the user selects a settlement immediately after
-    // the page loads. This guard makes the tab render reliably
-    // regardless of page timing.
-    //
-    // The hydrate call is idempotent. When the bootstrap has already
-    // hydrated, this is a no-op check.
-    //
-    // The guard does not replace the bootstrap. If IndustryState is
-    // missing entirely (not loaded), the query will throw anyway, and
-    // the caller's try/catch turns that into a visible error.
+    // -------------------------------------------------------------------
+    // IndustryState hydration guard
+    // -------------------------------------------------------------------
 
     function _ensureIndustryStateHydrated() {
         var IS = _getIndustryState();
@@ -356,132 +121,120 @@
         var master = window.masterData && window.masterData.data;
         if (!master) return;
 
-        var enterprises = Array.isArray(master.enterprises) ? master.enterprises : [];
-        var types = Array.isArray(master.enterpriseTypes) ? master.enterpriseTypes : [];
+        var enterprises = Array.isArray(master.enterprises)
+            ? master.enterprises : [];
+        var types = Array.isArray(master.enterpriseTypes)
+            ? master.enterpriseTypes : [];
 
-        try {
-            IS.hydrateFromMasterData(enterprises, types);
-        } catch (err) {
-            // Hydration can fail on duplicate ids (corrupted save).
-            // Report it once so the failure is not silent; the
-            // query below will re-throw and the caller's try/catch
-            // will render an error state.
+        try { IS.hydrateFromMasterData(enterprises, types); }
+        catch (err) {
             if (typeof console !== 'undefined' && console.error) {
                 console.error(
-                    'settlement-industry-tab: industry state hydrate failed:',
-                    err
-                );
+                    'settlement-industry-tab: industry state hydrate ' +
+                    'failed:', err);
             }
         }
     }
 
-    // =========================================================================
-    // 4. ACTION HANDLERS
-    // =========================================================================
+    // -------------------------------------------------------------------
+    // Confirmation
+    // -------------------------------------------------------------------
 
-    function _handleCreate(locationId) {
-        var modals = _getIndustryModals();
-        if (typeof modals.openCreateEnterpriseModal !== 'function') {
-            _toast(
-                'Create Enterprise modal is not available.',
-                'error'
-            );
+    function _confirm(message, title, onConfirm) {
+        if (typeof window.confirmDialog === 'function') {
+            window.confirmDialog(message, title, onConfirm);
             return;
         }
-
-        // Pre-fill the settlement as the location. Leave ownerType
-        // unset — the user picks whether this is a public
-        // (settlement-owned) or private enterprise. The create
-        // modal's owner selector is the place that decides.
-        modals.openCreateEnterpriseModal(function () {
-            _requestRefresh();
-        }, {
-            locationId: locationId
-        });
+        if (window.confirm(title + '\n\n' + message)) {
+            try { onConfirm(); }
+            catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'settlement-industry-tab: onConfirm threw:', e);
+                }
+            }
+        }
     }
 
-    function _handleCreatePublic(locationId) {
-        var modals = _getIndustryModals();
-        if (typeof modals.openCreateEnterpriseModal !== 'function') {
-            _toast('Create Enterprise modal is not available.', 'error');
+    // -------------------------------------------------------------------
+    // Modal delegates
+    // -------------------------------------------------------------------
+
+    function _delegateDetails(enterpriseId) {
+        var M = _getIndustryModals();
+        if (!M || typeof M.openEnterpriseDetailsModal !== 'function') {
+            H().toast('Enterprise Details modal is not available.', 'error');
             return;
         }
-
-        // Pre-fill owner as the settlement. The modal's owner-type
-        // select now exposes 'settlement' (see modals-industry.js
-        // OWNER TYPE VOCABULARY), so the pre-fill maps to the right
-        // option and the industry rules will set ownershipType to
-        // 'public' from the ownerType.
-        modals.openCreateEnterpriseModal(function () {
-            _requestRefresh();
-        }, {
-            locationId: locationId,
-            ownerType: 'settlement',
-            ownerId: locationId
-        });
+        try { M.openEnterpriseDetailsModal(enterpriseId, refresh); }
+        catch (err) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'settlement-industry-tab: openEnterpriseDetailsModal ' +
+                    'threw:', err);
+            }
+            H().toast('Could not open enterprise details.', 'error');
+        }
     }
 
-    function _handleDetails(enterpriseId) {
-        var modals = _getIndustryModals();
-        if (typeof modals.openEnterpriseDetailsModal !== 'function') {
-            _toast('Enterprise Details modal is not available.', 'error');
+    function _delegateEdit(enterpriseId) {
+        var M = _getIndustryModals();
+        if (!M || typeof M.openEditEnterpriseModal !== 'function') {
+            H().toast('Edit Enterprise modal is not available.', 'error');
             return;
         }
-        modals.openEnterpriseDetailsModal(enterpriseId, function () {
-            _requestRefresh();
-        });
+        try { M.openEditEnterpriseModal(enterpriseId, refresh); }
+        catch (err) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'settlement-industry-tab: openEditEnterpriseModal threw:',
+                    err);
+            }
+            H().toast('Could not open edit modal.', 'error');
+        }
     }
 
-    function _handleEdit(enterpriseId) {
-        var modals = _getIndustryModals();
-        if (typeof modals.openEditEnterpriseModal !== 'function') {
-            _toast('Edit Enterprise modal is not available.', 'error');
+    function _delegateCreate(locationId, prefill) {
+        var M = _getIndustryModals();
+        if (!M || typeof M.openCreateEnterpriseModal !== 'function') {
+            H().toast('Create Enterprise modal is not available.', 'error');
             return;
         }
-        modals.openEditEnterpriseModal(enterpriseId, function () {
-            _requestRefresh();
-        });
+        try { M.openCreateEnterpriseModal(refresh, prefill); }
+        catch (err) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'settlement-industry-tab: openCreateEnterpriseModal ' +
+                    'threw:', err);
+            }
+            H().toast('Could not open create modal.', 'error');
+        }
     }
 
-    function _handleOpenList() {
-        var modals = _getIndustryModals();
-        if (typeof modals.openEnterpriseListModal !== 'function') {
-            _toast('Enterprise list modal is not available.', 'error');
+    function _delegateOpenList() {
+        var M = _getIndustryModals();
+        if (!M || typeof M.openEnterpriseListModal !== 'function') {
+            H().toast('Enterprise list modal is not available.', 'error');
             return;
         }
-        modals.openEnterpriseListModal();
+        try { M.openEnterpriseListModal(); }
+        catch (err) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'settlement-industry-tab: openEnterpriseListModal threw:',
+                    err);
+            }
+            H().toast('Could not open enterprise list.', 'error');
+        }
     }
 
-    /**
-     * Settlement-scoped batch processing.
-     *
-     * Delegates entirely to
-     * IndustryProcessor.processEnterprisesForLocation(locationId), which:
-     *   - selects enterprises at this location
-     *   - enforces the eligibility gate (status === 'active') inside
-     *     the processor
-     *   - persists once at the end of the batch
-     *
-     * The tab does NOT pre-filter by status. See AGGREGATE PROCESSING
-     * in the header for why the pre-filter is now redundant and would
-     * produce spurious failures if reintroduced here.
-     *
-     * Returns the processor's structured result:
-     *   { success, attempted, processed, skipped, failed, results,
-     *     failures, persist, locationId }
-     *
-     * @param {string} locationId
-     * @returns {Object}
-     */
+    // -------------------------------------------------------------------
+    // Batch processing
+    // -------------------------------------------------------------------
+
     function _processSettlementEnterprises(locationId) {
         var processor = _getIndustryProcessor();
-
-        if (typeof processor.processEnterprisesForLocation !== 'function') {
-            // Hard failure, not a silent fallback. The tab is written
-            // against the processor's location-scoped entry point;
-            // a missing method is a load-order / version mismatch
-            // that must surface, not be papered over with a local
-            // loop that re-implements the eligibility gate.
+        if (!processor) {
             return {
                 success: false,
                 attempted: 0,
@@ -490,17 +243,13 @@
                 failed: 0,
                 results: [],
                 failures: [{
-                    reason:
-                        'IndustryProcessor.processEnterprisesForLocation ' +
-                        'is not available. Load a version of ' +
-                        'industry-processor.js that exports the ' +
-                        'location-scoped batch entry point.'
+                    reason: 'IndustryProcessor.processEnterprisesForLocation ' +
+                        'is not available.'
                 }],
                 persist: null,
                 locationId: locationId
             };
         }
-
         try {
             return processor.processEnterprisesForLocation(locationId);
         } catch (err) {
@@ -512,9 +261,7 @@
                 failed: 0,
                 results: [],
                 failures: [{
-                    reason: err && err.message
-                        ? err.message
-                        : 'unknown error'
+                    reason: err && err.message ? err.message : 'unknown error'
                 }],
                 persist: null,
                 locationId: locationId
@@ -533,12 +280,12 @@
             'Process Settlement Enterprises',
             function () {
                 var result = _processSettlementEnterprises(locationId);
-
                 if (result.success === true) {
                     var parts = [];
                     parts.push(result.processed + ' processed');
                     if (result.skipped > 0) parts.push(result.skipped + ' skipped');
-                    _toast('Enterprises processed: ' + parts.join(', '), 'success');
+                    H().toast(
+                        'Enterprises processed: ' + parts.join(', '), 'success');
                 } else {
                     var msg = 'Processing completed with errors: ' +
                         result.processed + ' processed, ' +
@@ -547,336 +294,273 @@
                         msg += ' (save failed: ' +
                             (result.persist.reason || 'unknown') + ')';
                     }
-                    _toast(msg, 'error');
+                    H().toast(msg, 'error');
                 }
-
-                _requestRefresh();
-            }
-        );
+                refresh();
+            });
     }
 
-    // =========================================================================
-    // 5. SECTION BUILDERS
-    // =========================================================================
+    // -------------------------------------------------------------------
+    // Sections
+    // -------------------------------------------------------------------
 
-    function _buildHeader(context, summaryStats) {
-        var locationId = context.locationId;
-        var name = (context.viewModel && context.viewModel.name)
+    function _buildHeader(context, stats) {
+        var name = context.viewModel && context.viewModel.name
             ? context.viewModel.name
-            : (_placeName(locationId) || '(unnamed location)');
+            : (_placeName(context.locationId) || '(unnamed location)');
 
-        var total = summaryStats.total;
-        var publicCount = summaryStats.publicCount;
-        var privateCount = summaryStats.privateCount;
+        var processBtn = '<button type="button" class="st-btn" ' +
+            'data-action="process-all">' +
+            icon('GEAR') + ' Process All</button>';
+        var refreshBtn = '<button type="button" class="st-btn" ' +
+            'data-action="refresh">' +
+            icon('REFRESH') + ' Refresh</button>';
 
-        var refreshBtn = '<button type="button" class="industry-tab-btn" ' +
-            'data-action="refresh" ' +
-            'style="font-size:0.55rem;padding:3px 10px;background:var(--bg3);' +
-            'border:1px solid var(--border);border-radius:4px;cursor:pointer;' +
-            'color:var(--text);">' +
-            _getIcon('REFRESH') + ' Refresh</button>';
-
-        var processAllBtn = '<button type="button" class="industry-tab-btn" ' +
-            'data-action="process-all" ' +
-            'style="font-size:0.55rem;padding:3px 10px;background:var(--bg3);' +
-            'border:1px solid var(--border);border-radius:4px;cursor:pointer;' +
-            'color:var(--text);">' +
-            _getIcon('GEAR') + ' Process All</button>';
-
-        return '<div style="background:var(--bg2);padding:12px 16px;' +
-            'border-radius:8px;margin-bottom:16px;display:flex;' +
-            'justify-content:space-between;align-items:center;flex-wrap:wrap;' +
-            'gap:8px;border:1px solid var(--border);">' +
+        return '<div class="st-header">' +
             '<div>' +
-            '<div style="font-size:0.8rem;font-weight:bold;color:var(--accent-light);">' +
-            _getIcon('GEAR') + ' Industry & Enterprises</div>' +
-            '<div style="font-size:0.6rem;color:var(--dim);">' +
-            _escapeHtml(name) + ' · ' +
-            _fmtNumber(total) + ' total · ' +
-            _fmtNumber(publicCount) + ' public · ' +
-            _fmtNumber(privateCount) + ' private' +
+            '<div class="st-header__title">' +
+            icon('GEAR') + ' Industry &amp; Enterprises</div>' +
+            '<div class="st-header__subtitle">' +
+            esc(name) + ' \u00b7 ' +
+            fmtNum(stats.total) + ' total \u00b7 ' +
+            fmtNum(stats.publicCount) + ' public \u00b7 ' +
+            fmtNum(stats.privateCount) + ' private' +
             '</div>' +
             '</div>' +
-            '<div style="display:flex;gap:4px;flex-wrap:wrap;">' +
-            refreshBtn + processAllBtn +
+            '<div class="st-header__actions">' +
+            refreshBtn + processBtn +
             '</div>' +
             '</div>';
     }
 
-    function _buildActionButtons(locationId) {
-        function btn(action, label, iconName, opts) {
-            opts = opts || {};
-            var style = 'font-size:0.6rem;padding:6px 14px;' +
-                'background:var(--bg3);border:1px solid ' +
-                (opts.accent ? 'var(--accent)' : 'var(--border)') + ';' +
-                'border-radius:4px;cursor:pointer;color:' +
-                (opts.accent ? 'var(--accent-light)' : 'var(--text)') + ';';
-            return '<button type="button" class="industry-tab-btn" ' +
-                'data-action="' + _escapeHtml(action) + '" ' +
-                'data-location="' + _escapeHtml(locationId) + '" ' +
-                'style="' + style + '">' +
-                (iconName ? _getIcon(iconName) + ' ' : '') +
-                _escapeHtml(label) + '</button>';
+    function _buildStatsRow(stats) {
+        var wealthClass = 'st-stat__value' +
+            (stats.totalWealth >= 0
+                ? ' st-stat__value--pos'
+                : ' st-stat__value--neg');
+        var debtClass = 'st-stat__value' +
+            (stats.totalDebt > 0
+                ? ' st-stat__value--neg'
+                : ' st-stat__value--pos');
+
+        function cell(label, valueHtml, cls) {
+            return '<div class="st-stat">' +
+                '<div class="st-stat__label">' + esc(label) + '</div>' +
+                '<div class="' + cls + '">' + valueHtml + '</div>' +
+                '</div>';
         }
 
-        return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;">' +
-            btn('create-public', 'New Public Enterprise', 'PLUS', { accent: true }) +
+        return '<div class="st-stats">' +
+            cell('Total Wealth', fmtGold(stats.totalWealth), wealthClass) +
+            cell('Total Debt', fmtGold(stats.totalDebt), debtClass) +
+            cell('Workers', fmtNum(stats.totalWorkers), 'st-stat__value') +
+            cell('Profitable',
+                fmtNum(stats.profitable) + ' / ' + fmtNum(stats.total),
+                'st-stat__value st-stat__value--pos') +
+            '</div>';
+    }
+
+    function _buildActionButtons(locationId) {
+        function btn(action, label, iconName, accent) {
+            return '<button type="button" class="st-btn' +
+                (accent ? ' st-btn--accent' : '') +
+                '" data-action="' + esc(action) + '">' +
+                (iconName ? icon(iconName) + ' ' : '') +
+                esc(label) + '</button>';
+        }
+        return '<div class="st-header__actions">' +
+            btn('create-public', 'New Public Enterprise', 'PLUS', true) +
             btn('create-private', 'New Private Enterprise', 'PLUS') +
             btn('open-list', 'All Enterprises', 'GEAR') +
             '</div>';
     }
 
-    function _buildStatsRow(stats) {
-        function cell(label, valueHtml, color) {
-            return '<div style="background:var(--bg2);padding:10px;' +
-                'border-radius:6px;text-align:center;' +
-                'border:1px solid var(--border);">' +
-                '<div style="font-size:0.5rem;color:var(--dim);">' +
-                _escapeHtml(label) + '</div>' +
-                '<div style="font-size:0.9rem;font-weight:bold;color:' +
-                (color || 'var(--text)') + ';">' +
-                valueHtml + '</div>' +
-                '</div>';
-        }
-
-        var wealthColor = stats.totalWealth >= 0 ? 'var(--success)' : 'var(--danger)';
-        var debtColor = stats.totalDebt > 0 ? 'var(--danger-lt)' : 'var(--success)';
-
-        return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;' +
-            'gap:12px;margin-bottom:16px;">' +
-            cell('Total Wealth', _fmtGold(stats.totalWealth), wealthColor) +
-            cell('Total Debt', _fmtGold(stats.totalDebt), debtColor) +
-            cell('Workers', _fmtNumber(stats.totalWorkers)) +
-            cell('Profitable', _fmtNumber(stats.profitable) + ' / ' +
-                _fmtNumber(stats.total), 'var(--success)') +
-            '</div>';
-    }
-
     function _buildEnterpriseRow(row) {
-        var profitColor = row.profitClass === 'value-pos'
-            ? 'var(--success)'
-            : (row.profitClass === 'value-neg' ? 'var(--danger)' : 'var(--text)');
+        var profitClass = 'st-row__meta';
+        if (row.profitClass === 'value-pos') profitClass += ' st-stat__value--pos';
+        else if (row.profitClass === 'value-neg') profitClass += ' st-stat__value--neg';
 
-        var statusColor = 'var(--text)';
-        if (row.statusClass === 'status-active') statusColor = 'var(--success)';
-        else if (row.statusClass === 'status-bankrupt') statusColor = 'var(--danger)';
-        else if (row.statusClass === 'status-closed') statusColor = 'var(--dim)';
-        else if (row.statusClass === 'status-inactive') statusColor = 'var(--warn)';
+        var statusCls = 'st-row';
+        if (row.statusClass === 'status-active') statusCls += ' st-row--success';
+        else if (row.statusClass === 'status-bankrupt') statusCls += ' st-row--danger';
+        else if (row.statusClass === 'status-closed') statusCls += ' st-row--dim';
+        else if (row.statusClass === 'status-inactive') statusCls += ' st-row--warn';
 
-        // row.workersLabel is a string from IndustryViewModels.buildListRow
-        // ('3 / 10'); _fmtNumber requires a number. The prior
-        // implementation passed null and always rendered '—'. Render the
-        // label directly.
         var workersText = row.workersLabel
-            ? _escapeHtml(row.workersLabel)
-            : _unknown();
+            ? esc(row.workersLabel)
+            : unknown();
 
-        return '<div class="industry-enterprise-row" ' +
-            'data-enterprise-id="' + _escapeHtml(row.id) + '" ' +
-            'style="background:var(--bg);border:1px solid var(--border);' +
-            'border-left:3px solid ' + statusColor + ';border-radius:6px;' +
-            'padding:10px 14px;margin-bottom:6px;cursor:pointer;">' +
-            '<div style="display:flex;justify-content:space-between;' +
-            'align-items:flex-start;flex-wrap:wrap;gap:6px;">' +
-            '<div style="flex:1;min-width:0;">' +
-            '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
-            '<span style="font-size:0.7rem;font-weight:bold;color:var(--text);">' +
-            _escapeHtml(row.name) + '</span>' +
-            '<span style="font-size:0.5rem;color:var(--dim);' +
-            'padding:1px 6px;border:1px solid var(--border);' +
-            'border-radius:8px;">' +
-            _fmtText(row.type) + '</span>' +
-            '<span style="font-size:0.5rem;color:' + statusColor + ';' +
-            'padding:1px 6px;border:1px solid ' + statusColor + ';' +
-            'border-radius:8px;">' +
-            _escapeHtml(row.statusLabel) + '</span>' +
-            '</div>' +
-            '<div style="font-size:0.55rem;color:var(--dim);margin-top:2px;">' +
-            'Owner: ' + _fmtText(row.ownerLabel) +
-            ' · Workers: ' + workersText +
-            '</div>' +
-            '<div style="font-size:0.55rem;color:var(--dim);margin-top:2px;">' +
-            'Wealth: ' + _escapeHtml(row.wealthLabel) +
-            ' · ' +
-            '<span style="color:' + profitColor + ';">' +
-            'Profit: ' + _escapeHtml(row.profitLabel) + 'g' +
-            '</span>' +
-            '</div>' +
-            '</div>' +
-            '<div style="display:flex;gap:4px;flex-shrink:0;">' +
-            '<button type="button" class="industry-row-btn" ' +
+        return '<div class="' + statusCls + '" ' +
             'data-action="details" ' +
-            'data-enterprise-id="' + _escapeHtml(row.id) + '" ' +
-            'style="background:none;border:none;color:var(--accent);' +
-            'cursor:pointer;font-size:0.55rem;padding:2px 6px;">' +
-            'Details</button>' +
-            '<button type="button" class="industry-row-btn" ' +
-            'data-action="edit" ' +
-            'data-enterprise-id="' + _escapeHtml(row.id) + '" ' +
-            'style="background:none;border:none;color:var(--text);' +
-            'cursor:pointer;font-size:0.55rem;padding:2px 6px;">' +
-            'Edit</button>' +
+            'data-enterprise-id="' + esc(row.id) + '">' +
+            '<div class="st-row__body">' +
+            '<div class="st-row__title">' +
+            esc(row.name) +
+            ' <span class="st-badge st-badge--dim">' +
+            fmtText(row.type) + '</span>' +
+            ' <span class="st-badge">' +
+            esc(row.statusLabel) + '</span>' +
             '</div>' +
+            '<div class="st-row__meta">' +
+            'Owner: ' + fmtText(row.ownerLabel) +
+            ' \u00b7 Workers: ' + workersText +
+            '</div>' +
+            '<div class="st-row__meta">' +
+            'Wealth: ' + esc(row.wealthLabel) +
+            ' \u00b7 <span class="' + profitClass + '">' +
+            'Profit: ' + esc(row.profitLabel) + 'g</span>' +
+            '</div>' +
+            '</div>' +
+            '<div class="st-row__actions">' +
+            '<button type="button" class="st-btn st-btn--small" ' +
+            'data-action="details" ' +
+            'data-enterprise-id="' + esc(row.id) + '">Details</button>' +
+            '<button type="button" class="st-btn st-btn--small" ' +
+            'data-action="edit" ' +
+            'data-enterprise-id="' + esc(row.id) + '">Edit</button>' +
             '</div>' +
             '</div>';
     }
 
     function _buildSection(title, enterprises, summaryMap) {
-        var html = '<div style="margin-bottom:20px;">' +
-            '<div style="font-size:0.7rem;color:var(--accent-light);' +
-            'font-weight:bold;margin-bottom:8px;">' +
-            _escapeHtml(title) + ' (' + _fmtNumber(enterprises.length) + ')' +
-            '</div>';
+        var html = '<div class="st-section">' +
+            '<div class="st-section__title">' +
+            esc(title) + ' (' + fmtNum(enterprises.length) + ')</div>';
 
         if (enterprises.length === 0) {
-            html += '<div style="text-align:center;padding:20px;' +
-                'color:var(--dim);font-size:0.6rem;background:var(--bg3);' +
-                'border-radius:6px;">' +
-                'No ' + _escapeHtml(title.toLowerCase()) + ' in this settlement.</div>';
+            html += '<div class="st-section__empty">' +
+                'No ' + esc(title.toLowerCase()) +
+                ' in this settlement.</div>';
             return html + '</div>';
         }
 
         var VMs = _getIndustryViewModels();
+        if (!VMs) {
+            html += '<div class="st-section__empty">' +
+                'IndustryViewModels is not available.</div>';
+            return html + '</div>';
+        }
+
         var rows = [];
         for (var i = 0; i < enterprises.length; i++) {
             var summary = summaryMap[enterprises[i].id];
             if (!summary) continue;
-            var row = VMs.buildListRow(summary);
+            var row;
+            try { row = VMs.buildListRow(summary); }
+            catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'settlement-industry-tab: buildListRow threw:', e);
+                }
+                continue;
+            }
             if (row) rows.push(row);
         }
 
+        html += '<div class="st-rows">';
         for (var j = 0; j < rows.length; j++) {
             html += _buildEnterpriseRow(rows[j]);
         }
-
-        return html + '</div>';
+        html += '</div></div>';
+        return html;
     }
 
     function _buildFooter() {
-        return '<div style="padding:8px;background:var(--bg3);' +
-            'border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
-            _getIcon('CIRCLE_DOT') + ' ' +
-            'Enterprises are owned by the Industry domain. This tab shows ' +
-            'enterprises located in this settlement. Public enterprises are ' +
-            'owned by the settlement; their profits route to the settlement ' +
-            'treasury. Private enterprises are owned by characters, ' +
-            'households, or no one.</div>';
+        return '<div class="st-footer">' + icon('CIRCLE_DOT') +
+            ' <span>Enterprises are owned by the Industry domain. This tab ' +
+            'shows enterprises located in this settlement. Public enterprises ' +
+            'are owned by the settlement; their profits route to the ' +
+            'settlement treasury. Private enterprises are owned by characters, ' +
+            'households, or no one.</span></div>';
     }
 
-    // =========================================================================
-    // 6. WIRING
-    // =========================================================================
+    // -------------------------------------------------------------------
+    // Wiring
+    // -------------------------------------------------------------------
+
+    function _handleAction(action, btn, locationId) {
+        if (action === 'refresh') { refresh(); return; }
+        if (action === 'process-all') { _handleProcessAll(locationId); return; }
+        if (action === 'create-public') {
+            _delegateCreate(locationId, {
+                locationId: locationId,
+                ownerType: 'settlement',
+                ownerId: locationId
+            });
+            return;
+        }
+        if (action === 'create-private') {
+            _delegateCreate(locationId, { locationId: locationId });
+            return;
+        }
+        if (action === 'open-list') { _delegateOpenList(); return; }
+        if (action === 'details') {
+            var detailsId = btn.dataset.enterpriseId;
+            if (detailsId) _delegateDetails(detailsId);
+            return;
+        }
+        if (action === 'edit') {
+            var editId = btn.dataset.enterpriseId;
+            if (editId) _delegateEdit(editId);
+            return;
+        }
+    }
 
     function _wireActions(container, locationId) {
+        if (container.__stIndustryWired) return;
+        container.__stIndustryWired = true;
         container.addEventListener('click', function (event) {
-            var target = event.target;
-            if (!target || typeof target.closest !== 'function') return;
-
-            // Row buttons first — they carry their own data-enterprise-id.
-            var rowBtn = target.closest('.industry-row-btn');
-            if (rowBtn && container.contains(rowBtn)) {
-                event.preventDefault();
-                var action = rowBtn.dataset.action;
-                var enterpriseId = rowBtn.dataset.enterpriseId;
-                if (action === 'details') _handleDetails(enterpriseId);
-                else if (action === 'edit') _handleEdit(enterpriseId);
-                return;
-            }
-
-            // Tab-level buttons.
-            var tabBtn = target.closest('.industry-tab-btn');
-            if (tabBtn && container.contains(tabBtn)) {
-                event.preventDefault();
-                var tabAction = tabBtn.dataset.action;
-                var loc = tabBtn.dataset.location || locationId;
-
-                if (tabAction === 'refresh') {
-                    _requestRefresh();
-                } else if (tabAction === 'process-all') {
-                    _handleProcessAll(loc);
-                } else if (tabAction === 'create-public') {
-                    _handleCreatePublic(loc);
-                } else if (tabAction === 'create-private') {
-                    _handleCreate(loc);
-                } else if (tabAction === 'open-list') {
-                    _handleOpenList();
-                }
-                return;
-            }
-
-            // Clicking the row body (not a button) opens details.
-            var row = target.closest('.industry-enterprise-row');
-            if (row && container.contains(row)) {
-                event.preventDefault();
-                _handleDetails(row.dataset.enterpriseId);
-                return;
-            }
+            var btn = event.target.closest('[data-action]');
+            if (!btn || !container.contains(btn)) return;
+            event.preventDefault();
+            _handleAction(btn.dataset.action, btn, locationId);
         });
     }
 
-    // =========================================================================
-    // 7. RENDER
-    // =========================================================================
+    // -------------------------------------------------------------------
+    // Renderer
+    // -------------------------------------------------------------------
 
-    /**
-     * Renders the industry tab into the container.
-     *
-     * @param {HTMLElement} container
-     * @param {Object} context  { locationId, data, viewModel }
-     */
     function renderSettlementIndustry(container, context) {
-        if (!container) {
-            throw new Error(
-                'settlement-industry-tab: container is required'
-            );
-        }
+        if (!container) return;
         if (!context || !context.locationId) {
-            throw new Error(
-                'settlement-industry-tab: context.locationId is required'
-            );
+            container.innerHTML = H().emptyState('no-context');
+            return;
         }
 
         var locationId = context.locationId;
-        var IQ = _getIndustryQueries();
 
-        // Ensure IndustryState is hydrated before any query.
-        // See INDUSTRY HYDRATION GUARD in the header.
+        // Hydrate industry state if the bootstrap hasn't yet. See
+        // INDUSTRY HYDRATION GUARD in the header.
         _ensureIndustryStateHydrated();
 
-        // Read the location-scoped enterprise summaries. If the query
-        // throws (load-order regression, corrupted state, or an
-        // unhydrated state that could not be repaired), render an
-        // error state rather than crashing the tab stack.
+        var IQ = _getIndustryQueries();
+        if (!IQ) {
+            container.innerHTML = '<div class="st-error">' +
+                'IndustryQueries is not available. Load industry-queries.js ' +
+                'before the settlement industry tab.</div>';
+            return;
+        }
+
         var summaries;
-        try {
-            summaries = IQ.getLocationEnterprisesSummary(locationId);
-        } catch (err) {
+        try { summaries = IQ.getLocationEnterprisesSummary(locationId) || []; }
+        catch (err) {
             if (typeof console !== 'undefined' && console.error) {
                 console.error(
-                    'settlement-industry-tab: query failed:', err
-                );
+                    'settlement-industry-tab: query failed:', err);
             }
-            container.innerHTML = '<div style="padding:24px;text-align:center;' +
-                'color:var(--danger);font-size:0.65rem;">' +
+            container.innerHTML = '<div class="st-error">' +
                 'Could not load industry data: ' +
-                _escapeHtml(err && err.message ? err.message : 'unknown error') +
+                esc(err && err.message ? err.message : 'unknown error') +
                 '</div>';
             return;
         }
 
-        // Split into public and private by ownershipType. The summary
-        // projection includes ownershipType, so grouping is exact.
-        //
-        // Enterprises with ownershipType not in ('public', 'private')
-        // are an integrity failure (industry-rules enforces this on
-        // write). They are grouped with private rather than dropped,
-        // so the user can see them and open details to inspect the
-        // anomaly.
         var publicEnterprises = [];
         var privateEnterprises = [];
         var summaryMap = {};
 
-        var locationStats = {
+        var stats = {
             total: summaries.length,
             totalWealth: 0,
             totalDebt: 0,
@@ -893,23 +577,23 @@
 
             if (s.ownershipType === 'public') {
                 publicEnterprises.push({ id: s.id });
-                locationStats.publicCount++;
+                stats.publicCount++;
             } else {
                 privateEnterprises.push({ id: s.id });
-                locationStats.privateCount++;
+                stats.privateCount++;
             }
 
-            if (typeof s.wealth === 'number') locationStats.totalWealth += s.wealth;
-            if (typeof s.debt === 'number') locationStats.totalDebt += s.debt;
-            if (typeof s.workerCount === 'number') locationStats.totalWorkers += s.workerCount;
+            if (typeof s.wealth === 'number') stats.totalWealth += s.wealth;
+            if (typeof s.debt === 'number') stats.totalDebt += s.debt;
+            if (typeof s.workerCount === 'number') stats.totalWorkers += s.workerCount;
             if (typeof s.annualProfit === 'number' && s.annualProfit > 0) {
-                locationStats.profitable++;
+                stats.profitable++;
             }
         }
 
-        var html = '<div style="padding:4px;">' +
-            _buildHeader(context, locationStats) +
-            _buildStatsRow(locationStats) +
+        var html = '<div class="st-tab">' +
+            _buildHeader(context, stats) +
+            _buildStatsRow(stats) +
             _buildActionButtons(locationId) +
             _buildSection('Public Enterprises', publicEnterprises, summaryMap) +
             _buildSection('Private Enterprises', privateEnterprises, summaryMap) +
@@ -920,28 +604,19 @@
         _wireActions(container, locationId);
     }
 
-    // =========================================================================
-    // 8. REGISTRATION
-    // =========================================================================
+    // -------------------------------------------------------------------
+    // Registration
+    // -------------------------------------------------------------------
 
-    function _register() {
-        var tabs = _getTabs();
-        if (!tabs || typeof tabs.registerTabRenderer !== 'function') {
-            throw new Error(
-                'settlement-industry-tab: SettlementTabs is missing. ' +
-                'Load settlement-tabs.js before this tab.'
-            );
-        }
-        tabs.registerTabRenderer('industry', renderSettlementIndustry);
+    if (window.TabManager && typeof window.TabManager.register === 'function') {
+        window.TabManager.register(SCOPE, TAB_ID, renderSettlementIndustry);
+    } else if (typeof console !== 'undefined' && console.warn) {
+        console.warn(
+            'settlement-industry-tab: TabManager is not available at load ' +
+            'time; the tab was not registered.'
+        );
     }
 
-    _register();
-
-    // =========================================================================
-    // 9. EXPORTS
-    // =========================================================================
-
     window.renderSettlementIndustry = renderSettlementIndustry;
-    window._renderSettlementIndustry = renderSettlementIndustry;
 
 })();
