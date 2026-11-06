@@ -15,37 +15,28 @@
  *     { locationId } pre-filled
  *
  * The tab does NOT compute literacy, coverage, school-age demand,
- * capacity, or health scores. Those are the education domain's queries
- * (EducationQueries). The tab does NOT render institution details,
- * enrollment, curriculum, tuition, or ownership. Those are
- * modals-education.js.
+ * capacity, or health scores. Those are the education domain's queries.
+ * The tab does NOT render institution details, enrollment, curriculum,
+ * tuition, or ownership. Those are modals-education.js.
  *
- * The only things this tab adds on top of the education domain's own
- * UI are:
- *
- *   1. A settlement-scoped header (name + budget + counts).
- *   2. A location filter on the institution list.
- *   3. A "New Institution" button that pre-fills the settlement.
- *
- * RENDERER CONTRACT:
- *   fn(container, context) with context = { locationId, data, viewModel }
- *
- * DELEGATED RENDERING (EducationUI writes into the DOM by id):
- *   - renderEducationSummary(containerId, locationId, {})
- *   - renderInstitutionList(containerId, { filters: { location }, ... })
- *
- * DELEGATED MODALS (resolved at click time):
- *   - window.openCreateInstitutionModal(onSuccess, { locationId })
- *   - window.openInstitutionDetailsModal(institutionId, onSuccess)
- *   - window.openEditInstitutionModal(institutionId, onSuccess)
+ * EDUCATION STATE HYDRATION GUARD:
+ *   EducationState must be hydrated before any EducationQueries call.
+ *   EducationBootstrap.init() hydrates it, but the settlement manager
+ *   page does not call EducationBootstrap.init() — a user who navigates
+ *   directly to SettlementManager and opens the Education tab without
+ *   ever visiting EducationManager would find EducationState un-hydrated
+ *   and every query would throw "must hydrate". The guard closes that
+ *   gap by hydrating from masterData.data.educationalInstitutions on
+ *   first use, with syncToMasterData: false (read-triggered hydrate must
+ *   not schedule a save — see EducationState HYDRATION CONTRACT).
  *
  * DOMAIN UI IS A DOM WRITER, NOT A STRING RETURNER:
  *   EducationUI's renderers write into a host element by id. To compose
  *   them into a single innerHTML assignment we create a hidden host,
- *   call the renderer, and adopt its innerHTML. This is the same
- *   approach the current education tab uses and the same approach the
- *   education-manager tabs use. It is not a workaround; it is the
- *   agreed contract.
+ *   call the renderer, and adopt its innerHTML.
+ *
+ * RENDERER CONTRACT:
+ *   fn(container, context) with context = { locationId, data, viewModel }
  *
  * NO CSS. Class-only rendering.
  * =============================================================================
@@ -90,6 +81,10 @@
         return Q;
     }
 
+    function _getEducationState() {
+        return window.EducationState || null;
+    }
+
     function _placeName(locationId) {
         var pq = window.PlaceQueries;
         if (!pq || typeof pq.getPlaceById !== 'function') return null;
@@ -102,6 +97,43 @@
         if (!SQ) return null;
         try { return SQ.getEducationBudget(locationId); }
         catch (e) { return null; }
+    }
+
+    // -------------------------------------------------------------------
+    // EducationState hydration guard
+    // -------------------------------------------------------------------
+    //
+    // See EDUCATION STATE HYDRATION GUARD in the header.
+
+    function _ensureEducationStateHydrated() {
+        var ES = _getEducationState();
+        if (!ES) return;
+        if (typeof ES.isHydrated === 'function' && ES.isHydrated()) return;
+        if (typeof ES.hydrateFromMasterData !== 'function') return;
+
+        var master = window.masterData && window.masterData.data;
+        if (!master) return;
+
+        var raw = master.educationalInstitutions;
+        if (!Array.isArray(raw)) {
+            // Absence is legitimate: pre-education save, or a fresh
+            // install. Hydrate with an empty array so isHydrated()
+            // flips and queries return zero-results rather than throwing.
+            raw = [];
+        }
+
+        try {
+            ES.hydrateFromMasterData(raw, { syncToMasterData: false });
+        } catch (err) {
+            // Duplicate ids throw in the strict path. Log and let the
+            // caller's query throw the normal "must hydrate" error, so
+            // the tab renders an error state instead of crashing.
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'settlement-education-tab: education state hydrate ' +
+                    'failed:', err);
+            }
+        }
     }
 
     // -------------------------------------------------------------------
@@ -169,11 +201,6 @@
     // -------------------------------------------------------------------
     // Host-scoped education renderers
     // -------------------------------------------------------------------
-    //
-    // EducationUI writes into a host by id. We create a hidden host,
-    // call the renderer, adopt its innerHTML, remove the host. This is
-    // the same pattern the current education tab uses (see its header
-    // for the reasoning).
 
     var _hostCounter = 0;
 
@@ -325,16 +352,12 @@
         if (container.__stEducationWired) return;
         container.__stEducationWired = true;
         container.addEventListener('click', function (event) {
-            // Header action buttons (data-action)
             var actionBtn = event.target.closest('[data-action]');
             if (actionBtn && container.contains(actionBtn)) {
                 event.preventDefault();
                 _handleAction(actionBtn.dataset.action, locationId);
                 return;
             }
-            // Institution-list buttons written by EducationUI use
-            // .view-institution-btn / .edit-institution-btn and carry
-            // data-institution-id.
             var viewBtn = event.target.closest('.view-institution-btn');
             if (viewBtn && container.contains(viewBtn)) {
                 event.preventDefault();
@@ -364,6 +387,10 @@
         }
 
         var locationId = context.locationId;
+
+        // Hydrate EducationState if the bootstrap hasn't. See
+        // EDUCATION STATE HYDRATION GUARD in the header.
+        _ensureEducationStateHydrated();
 
         if (!_getEducationUI()) {
             container.innerHTML = '<div class="st-error">' +
