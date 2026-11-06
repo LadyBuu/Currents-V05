@@ -11,15 +11,14 @@
  *   view models the tabs render.
  *
  *   No DOM. No queries. No state. No commands. Every function takes
- *   the data it needs as an argument. A tab that needs extra context
- *   (a location name, a current year) fetches it and passes it in.
+ *   the data it needs as an argument.
  *
  * OWNERSHIP:
  *   - the stable row / list-item / stats shapes the tabs consume
  *   - presentation vocabulary: label strings, color-token names, icon
  *     names (as strings -- the tab resolves them via _icon)
  *   - derivation of display-ready scalars from raw records (age label,
- *     death-year label, cause label)
+ *     death-year label, cause label, fertility label)
  *
  * WHAT THIS MODULE DOES NOT DO:
  *   - It does not read any state.
@@ -28,20 +27,41 @@
  *   - It does not resolve a color token to a literal color; it
  *     returns token NAMES like 'danger' / 'warn' / 'accent' / 'dim',
  *     which the tab wraps in var(--<token>).
- *   - It does not carry its own copy of the DEATH_CAUSE vocabulary
- *     or the disaster-type vocabulary. Every label it emits comes
- *     from either events-constants.js or from a passed-in resolver.
- *     This keeps a single source of truth for each vocabulary.
+ *   - It does not carry its own copy of the death-cause vocabulary,
+ *     the stork sort vocabulary, or any other domain vocabulary.
+ *     Every label it emits comes from either events-constants.js or
+ *     from a passed-in resolver.
  *   - It does not fabricate. A missing field on a record becomes
  *     null (not ''), a label of '?' (not 'Unknown'), or a status
  *     flag of false. Nothing is invented.
  *
  * DEPENDENCIES (required, verified at load):
- *   - EventsConstants (EVENT_CATEGORIES, DEATH_CAUSE_FILTERS,
- *     DEATH_SORT_OPTIONS, UI_COPY, DEATH_STATUS_FILTERS,
- *     DEATH_GENDER_FILTERS)
+ *   - EventsConstants
  *
  * ICON POLICY: No emojis. Icons are exposed as name strings only.
+ * =============================================================================
+ *
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 3A):
+ *     - Added the stork facet's view models:
+ *         toChildCircle(childId, childSummary, ageGroupFn)
+ *         toCoupleRow(partner, childSummaries, ageGroupFn)
+ *         toManGroup(manGroup, childSummaries, ageGroupFn)
+ *       Each takes the shapes produced by
+ *       EventsQueries.getFertileCouples plus the character summaries
+ *       it needs (either an age-group resolver callback or the raw
+ *       summaries the caller already fetched).
+ *     - toCoupleRow produces a `pregnancyLabel` ("N pregnancies")
+ *       only when the pregnancy count differs from the living
+ *       children count, so the common case (all pregnancies ->
+ *       live births) stays clean.
+ *     - No behavioural change to any deaths-facet function.
+ *   Previous revision (initial):
+ *     - Created with the deaths facet's view models
+ *       (toCharacterRow, toCharacterRows, toDeathRecordRow,
+ *       toDeathRecordRows, toDeathsStatsBarViewModel,
+ *       toMortalityStatsViewModel, toRecentEventRow,
+ *       toRecentEventRows, filter-option views, emptyStateMessage).
  * =============================================================================
  */
 
@@ -50,7 +70,9 @@
 
     var C = window.EventsConstants;
     if (!C) {
-        throw new Error('events-view-models.js requires events-constants.js (EventsConstants).');
+        throw new Error(
+            'events-view-models.js requires events-constants.js (EventsConstants).'
+        );
     }
 
     // =========================================================================
@@ -95,9 +117,8 @@
 
     /**
      * Returns a label for a death cause id. Ids match
-     * MortalityRules.DEATH_CAUSE (natural, disease, accident, murder,
-     * execution, childbed_fever, unknown). Unknown ids render as the
-     * id itself -- not 'Unknown' -- because the id was explicitly
+     * MortalityRules.DEATH_CAUSE. Unknown ids render as the id
+     * itself -- not 'Unknown' -- because the id was explicitly
      * recorded and hiding it would be a worse outcome than showing
      * an unfamiliar token.
      */
@@ -116,9 +137,8 @@
     }
 
     /**
-     * Returns a color token NAME for a death cause. The tab wraps it
-     * in var(--<token>). Tokens are theme tokens defined in
-     * css/themes.css; this module returns names, not values.
+     * Returns a color token NAME for a death cause. The tab wraps
+     * it in var(--<token>).
      */
     function deathCauseColorToken(cause) {
         switch (cause) {
@@ -143,8 +163,8 @@
     }
 
     /**
-     * Returns the icon NAME for a gender marker. The tab resolves via
-     * window.getIcon(name, 'CIRCLE').
+     * Returns the icon NAME for a gender marker. The tab resolves
+     * via window.getIcon(name, 'CIRCLE').
      */
     function genderIconName(gender) {
         if (gender === 'male')   return 'MALE';
@@ -173,18 +193,6 @@
     // =========================================================================
     // 2. DEATHS FACET: CHARACTER ROW
     // =========================================================================
-    //
-    // Input: one entry from EventsQueries.getCharacterRoster's
-    // `characters` array. That shape is:
-    //
-    //   {
-    //     id, name, surname, fullName, gender, age, birthYear,
-    //     deathYear, deathCause, deathCauseDetail, isDeceased,
-    //     locationId, locationName, rankDisplay, isDeleted
-    //   }
-    //
-    // Output: the shape the character row renderer consumes. Every
-    // field is a display-ready primitive or null. No nested records.
 
     function toCharacterRow(character, options) {
         if (!character || typeof character !== 'object') return null;
@@ -211,11 +219,7 @@
             ? character.locationName
             : null;
 
-        // Secondary line: age, location, rank (all optional, joined
-        // by the tab's row renderer). Kept as separate fields so the
-        // tab can choose separators and drop empty segments itself.
         return {
-            // Identity
             id: character.id,
             displayName: displayName,
             name: typeof character.name === 'string' ? character.name : '',
@@ -227,18 +231,15 @@
             genderIconName: genderIconName(character.gender),
             genderColorToken: genderColorToken(character.gender),
 
-            // Age
             age: typeof character.age === 'number' ? character.age : null,
             ageLabel: ageLabel,
             birthYear: typeof character.birthYear === 'number' ? character.birthYear : null,
             birthYearLabel: birthYearLabel,
 
-            // Status
             isDeceased: isDeceased,
             statusLabel: statusLabel,
             statusColorToken: statusColor,
 
-            // Death
             deathCause: isDeceased ? character.deathCause : null,
             deathCauseLabel: causeLabel,
             deathCauseDetail: isDeceased && typeof character.deathCauseDetail === 'string'
@@ -248,18 +249,13 @@
                 ? character.deathYear : null,
             deathYearLabel: deathYearLabel,
 
-            // Location
             locationId: typeof character.locationId === 'string'
                 ? character.locationId : null,
             locationName: locationDisplay,
 
-            // Rank
             rankDisplay: typeof character.rankDisplay === 'string'
                 ? character.rankDisplay : null,
 
-            // Selection flag (set by the tab's view, not by this
-            // function; present here so the shape is stable across
-            // list re-renders)
             isSelected: false
         };
     }
@@ -277,17 +273,6 @@
     // =========================================================================
     // 3. DEATHS FACET: DEATH RECORD ROW
     // =========================================================================
-    //
-    // Input: one entry from EventsQueries.getAllDeathRecords's
-    // `records` array. That shape is:
-    //
-    //   {
-    //     characterId, name, surname, gender, birthYear, deathYear,
-    //     deathCause, deathCauseDetail, deathNotes, ageAtDeath,
-    //     isMurder, killerId, murderMotive, murderMethod,
-    //     isExecution, executionReason, executionMethod,
-    //     executionLocation
-    //   }
 
     function toDeathRecordRow(record) {
         if (!record || typeof record !== 'object') return null;
@@ -351,18 +336,6 @@
     // =========================================================================
     // 4. DEATHS FACET: STATS
     // =========================================================================
-    //
-    // Two stat shapes exist:
-    //
-    //   (a) Character-population stats, from
-    //       EventsQueries.getCharacterPopulationStats.
-    //   (b) Mortality stats, from EventsQueries.getMortalityStats
-    //       (which wraps MortalityStatistics.getMortalityStatistics).
-    //
-    // toDeathsStatsBarViewModel builds the strip the Deaths tab
-    // renders at the top: Living / Deceased / Year / In-location. It
-    // does not include the full mortality breakdown; that goes into
-    // a details panel via toMortalityStatsViewModel.
 
     function toDeathsStatsBarViewModel(popStats, options) {
         options = options || {};
@@ -429,7 +402,6 @@
             return { available: false, reason: 'Mortality statistics are malformed.' };
         }
 
-        // byCause: { natural: N, disease: N, ... }
         var byCauseRows = [];
         if (s.byCause && typeof s.byCause === 'object') {
             for (var cause in s.byCause) {
@@ -444,7 +416,6 @@
             byCauseRows.sort(function(a, b) { return b.count - a.count; });
         }
 
-        // byGender: { male: N, female: N, unknown: N }
         var byGender = [];
         if (s.byGender && typeof s.byGender === 'object') {
             byGender = [
@@ -454,7 +425,6 @@
             ];
         }
 
-        // byYear: { "1250": N, "1251": N }
         var byYearRows = [];
         if (s.byYear && typeof s.byYear === 'object') {
             var years = Object.keys(s.byYear);
@@ -499,11 +469,6 @@
     // =========================================================================
     // 5. DEATHS FACET: RECENT EVENT STRIP
     // =========================================================================
-    //
-    // Input: EventsQueries.getRecentDeathEvents output.
-    // Output: the small list the tab renders beneath the stats bar
-    // (optional). Each entry is a minimal line; the tab's main list
-    // is the character roster.
 
     function toRecentEventRow(event) {
         if (!event || typeof event !== 'object') return null;
@@ -543,13 +508,6 @@
     // =========================================================================
     // 6. DEATHS FACET: FILTER OPTIONS VIEW
     // =========================================================================
-    //
-    // Input: the current filter object from the tab.
-    // Output: rows for the filter bar with `selected` flags set, so
-    // the tab can render <option> elements without re-comparing.
-    //
-    // All option labels come from EventsConstants -- this module
-    // does NOT re-copy the vocabulary.
 
     function toStatusFilterOptions(currentStatus) {
         var base = C.DEATH_STATUS_FILTERS;
@@ -606,12 +564,6 @@
     // =========================================================================
     // 7. DEATHS FACET: EMPTY-STATE MESSAGE
     // =========================================================================
-    //
-    // The tab distinguishes three kinds of empty. This helper picks
-    // the right copy for a given combination of (hadAnyCharacters,
-    // hadAnyMatches, hadContext). It does NOT decide which case
-    // applies -- the tab does, by counting; this function just maps
-    // a case to its copy.
 
     function emptyStateMessage(caseId) {
         switch (caseId) {
@@ -623,6 +575,10 @@
                 return C.UI_COPY.emptyNoMatches;
             case 'no-deaths':
                 return C.UI_COPY.emptyNoDeathsRecorded;
+            case 'no-couples':
+                return C.UI_COPY.emptyNoCouples;
+            case 'no-births':
+                return C.UI_COPY.emptyNoBirthsRecorded;
             case 'unavailable':
                 return C.UI_COPY.emptyUnavailable;
             default:
@@ -631,15 +587,203 @@
     }
 
     // =========================================================================
-    // 8. INTERNAL
+    // 8. STORK FACET: CHILD CIRCLE
+    // =========================================================================
+    //
+    // Builds the small circular marker for one child. Takes the
+    // child's character summary (already fetched by the caller) and
+    // an optional age-group resolver callback. The age-group resolver
+    // is provided by the tab (which knows whether CharacterLifecycle
+    // is loaded); this module does not reach for it directly.
+
+    function toChildCircle(childId, childSummary, ageGroupFn) {
+        if (!childSummary) return null;
+        var age = typeof childSummary.age === 'number' ? childSummary.age : null;
+        var ageGroup = (typeof ageGroupFn === 'function' && age !== null)
+            ? ageGroupFn(age) : null;
+        var displayName = ((childSummary.name || '') + ' ' +
+                           (childSummary.surname || '')).trim();
+        return {
+            id: childId,
+            displayName: displayName,
+            gender: childSummary.gender,
+            genderIconName: genderIconName(childSummary.gender),
+            genderColorToken: genderColorToken(childSummary.gender),
+            isDeceased: childSummary.isDeceased === true,
+            age: age,
+            ageLabel: formatAge(age),
+            ageGroup: ageGroup
+        };
+    }
+
+    // =========================================================================
+    // 9. STORK FACET: COUPLE ROW
+    // =========================================================================
+    //
+    // Takes one entry from EventsQueries.getFertileCouples' `men[*].partners`
+    // array, plus the child summaries needed to build the child circles.
+    //
+    // The `childSummaries` argument is a `{ [childId]: summary }` map
+    // — the shape produced by EventsQueries.getCoupleChildrenSummaries
+    // or assembled by the tab itself. Missing entries simply omit the
+    // circle.
+    //
+    // The `pregnancyLabel` is only set when the pregnancy count
+    // differs from the living children count (miscarriages /
+    // stillbirths / children who later died), so the common case
+    // stays clean.
+
+    function toCoupleRow(partner, childSummaries, ageGroupFn) {
+        if (!partner || !partner.womanSummary) return null;
+        var woman = partner.womanSummary;
+
+        var childCircles = [];
+        var childIds = Array.isArray(partner.existingChildIds)
+            ? partner.existingChildIds : [];
+        for (var i = 0; i < childIds.length; i++) {
+            var circle = toChildCircle(
+                childIds[i],
+                childSummaries ? childSummaries[childIds[i]] : null,
+                ageGroupFn
+            );
+            if (circle) childCircles.push(circle);
+        }
+
+        var existingChildren = partner.existingChildCount;
+        var pregnancies = partner.existingPregnancyCount;
+
+        var pregnancyLabel = null;
+        if (typeof pregnancies === 'number'
+            && typeof existingChildren === 'number'
+            && pregnancies !== existingChildren) {
+            pregnancyLabel = pregnancies + ' pregnancies';
+        }
+
+        var expectedTotal = partner.expectedTotal;
+        var expectedRemaining = partner.expectedRemaining;
+
+        return {
+            womanId: partner.womanId,
+            womanName: (woman.name || ''),
+            womanSurname: (woman.surname || ''),
+            womanDisplayName: ((woman.name || '') + ' ' +
+                               (woman.surname || '')).trim(),
+            womanAge: typeof woman.age === 'number' ? woman.age : null,
+            womanAgeLabel: formatAge(woman.age),
+            womanGender: woman.gender,
+            womanGenderIconName: genderIconName(woman.gender),
+            womanGenderColorToken: genderColorToken(woman.gender),
+            womanRankDisplay: _isMissing(woman.rank) ? null : woman.rank,
+            womanLocationId: _hasId(woman.locationId) ? woman.locationId : null,
+            womanLocationName: null,
+
+            relationshipId: partner.relationshipId,
+            relationshipType: partner.relationshipType,
+            relationshipStatus: partner.relationshipStatus,
+
+            existingChildIds: childIds.slice(),
+            existingChildCount: existingChildren,
+            existingPregnancyCount: pregnancies,
+            pregnancyLabel: pregnancyLabel,
+
+            childCircles: childCircles,
+
+            fertileYears: partner.fertileYears,
+            fertilityModifier: partner.fertilityModifier,
+            fertilityPercent: Math.round(
+                (typeof partner.fertilityModifier === 'number'
+                    ? partner.fertilityModifier
+                    : 0) * 100
+            ),
+            expectedTotal: expectedTotal,
+            expectedRemaining: expectedRemaining,
+            hasCapacity: partner.hasCapacity === true,
+            isFertile: partner.isFertile === true,
+
+            isSelected: false
+        };
+    }
+
+    // =========================================================================
+    // 10. STORK FACET: MAN GROUP
+    // =========================================================================
+    //
+    // Wraps a `men[*]` entry from EventsQueries.getFertileCouples into
+    // the card-level view model the renderer consumes. Aggregates
+    // partner count and total children across all partners.
+
+    function toManGroup(manGroup, childSummaries, ageGroupFn) {
+        if (!manGroup || !manGroup.manSummary) return null;
+        var man = manGroup.manSummary;
+
+        var partners = [];
+        var totalChildren = 0;
+        var totalExpected = 0;
+        for (var i = 0; i < manGroup.partners.length; i++) {
+            var row = toCoupleRow(
+                manGroup.partners[i], childSummaries, ageGroupFn
+            );
+            if (!row) continue;
+            partners.push(row);
+            totalChildren += row.existingChildCount;
+            if (typeof row.expectedTotal === 'number') {
+                totalExpected += row.expectedTotal;
+            }
+        }
+
+        return {
+            manId: manGroup.manId,
+            manName: (man.name || ''),
+            manSurname: (man.surname || ''),
+            manDisplayName: ((man.name || '') + ' ' +
+                             (man.surname || '')).trim(),
+            manAge: typeof man.age === 'number' ? man.age : null,
+            manAgeLabel: formatAge(man.age),
+            manGender: man.gender,
+            manGenderIconName: genderIconName(man.gender),
+            manGenderColorToken: genderColorToken(man.gender),
+            manRankDisplay: _isMissing(man.rank) ? null : man.rank,
+            manLocationId: _hasId(man.locationId) ? man.locationId : null,
+            manLocationName: null,
+            partners: partners,
+            partnerCount: partners.length,
+            totalChildren: totalChildren,
+            totalExpected: totalExpected
+        };
+    }
+
+    // =========================================================================
+    // 11. STORK FACET: SORT OPTION VIEW
+    // =========================================================================
+
+    function toStorkSortOptions(currentSortBy) {
+        var base = C.STORK_SORT_OPTIONS;
+        if (!Array.isArray(base)) return [];
+        var out = [];
+        for (var i = 0; i < base.length; i++) {
+            out.push({
+                id: base[i].id,
+                label: base[i].label,
+                selected: base[i].id === currentSortBy
+            });
+        }
+        return out;
+    }
+
+    // =========================================================================
+    // 12. INTERNAL
     // =========================================================================
 
     function _isMissing(v) {
         return v === undefined || v === null;
     }
 
+    function _hasId(v) {
+        return typeof v === 'string' && v.length > 0;
+    }
+
     // =========================================================================
-    // 9. EXPORTS
+    // 13. EXPORTS
     // =========================================================================
 
     window.EventsViewModels = {
@@ -654,30 +798,38 @@
         genderIconName: genderIconName,
         statusColorToken: statusColorToken,
 
-        // Character row
+        // Character row (deaths facet)
         toCharacterRow: toCharacterRow,
         toCharacterRows: toCharacterRows,
 
-        // Death record row
+        // Death record row (deaths facet)
         toDeathRecordRow: toDeathRecordRow,
         toDeathRecordRows: toDeathRecordRows,
 
-        // Stats bar
+        // Stats bar (deaths facet)
         toDeathsStatsBarViewModel: toDeathsStatsBarViewModel,
         toMortalityStatsViewModel: toMortalityStatsViewModel,
 
-        // Recent event strip
+        // Recent event strip (deaths facet)
         toRecentEventRow: toRecentEventRow,
         toRecentEventRows: toRecentEventRows,
 
-        // Filter option views
+        // Filter option views (deaths facet)
         toStatusFilterOptions: toStatusFilterOptions,
         toGenderFilterOptions: toGenderFilterOptions,
         toCauseFilterOptions: toCauseFilterOptions,
         toSortOptions: toSortOptions,
 
         // Empty-state copy
-        emptyStateMessage: emptyStateMessage
+        emptyStateMessage: emptyStateMessage,
+
+        // Child circle / couple row / man group (stork facet)
+        toChildCircle: toChildCircle,
+        toCoupleRow: toCoupleRow,
+        toManGroup: toManGroup,
+
+        // Filter option views (stork facet)
+        toStorkSortOptions: toStorkSortOptions
     };
 
     if (typeof module !== 'undefined' && module.exports) {
