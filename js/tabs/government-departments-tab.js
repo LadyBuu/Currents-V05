@@ -2,67 +2,98 @@
 /**
  * =============================================================================
  * GOVERNMENT DEPARTMENTS TAB
+ * js/tabs/government-departments-tab.js
  * =============================================================================
  *
  * LOCATION: js/tabs/government-departments-tab.js
  *
  * PURPOSE:
- *   Renders the Government Departments view for a location and delegates
+ *   Render the Government Departments view for a location and delegate
  *   every CRUD action to the canonical Government modals.
  *
- * ARCHITECTURE:
- *   This tab is a THIN SHELL. It does not own domain logic. It does not
- *   reimplement department cards, position cards, budget math, role
- *   lookup, character lookup, or any modal. Every one of those already
- *   exists in the canonical modules and is imported below.
+ * RENDERER CONTRACT (from GovernmentManagerBootstrap):
+ *   fn(container, context)
+ *   container  HTMLElement  — already emptied by TabManager
+ *   context    { locationId, locationName, governmentState }
  *
- *   - Reads       → GovernmentQueries (departments, positions)
- *                 → SettlementQueries (salary budget allocation)
- *   - Calculation → GovernmentEconomy (salary requirement per department)
- *   - Shaping     → GovernmentViewModels (list item view models)
- *   - Painting    → GovernmentUI (list renderer)
- *   - Writes      → modals-government-*.js (which call GovernmentCommands
- *                   and Commands.persist internally)
+ * DATA SOURCES:
+ *   - GovernmentQueries.getDepartmentsByLocation(locationId)
+ *   - GovernmentViewModels.toDepartmentListItems(departments, null)
+ *   - GovernmentUI.renderDepartmentList(mount, viewModels, opts)
+ *   - GovernmentEconomy.calculateDepartmentSalaryRequirements(deptId)
+ *   - SettlementQueries.getGovernmentSalaryBudget(locationId)
+ *   - LocationQueries.getPlaceSummary(locationId)   (header name)
  *
- *   The tab never writes canonical data. The tab never calls saveMasterData.
- *   The tab never calls State.hydrateFromMasterData (Commands' commit tail
- *   does that).
+ * FILTERS:
+ *   None. Department list is ordered by GovernmentViewModels's own
+ *   ordering. No user filter controls; nothing to persist.
+ *
+ * WRITE PATH:
+ *   Every action delegates to a modal that owns GovernmentCommands +
+ *   Commands.persist. This tab never calls saveMasterData, never calls
+ *   State.hydrateFromMasterData, and never mutates any query result.
  *
  * SALARY BUDGET:
- *   allocated  = SettlementQueries.getGovernmentSalaryBudget(locationId)
- *                (null when no settlement record exists or the field
- *                 has never been set — distinct from 0)
- *   required   = sum over departments of
- *                GovernmentEconomy.calculateDepartmentSalaryRequirements(deptId)
- *                .totalSalaryRequirement
+ *   allocated = SettlementQueries.getGovernmentSalaryBudget(locationId)
+ *              (null when no settlement record exists or the field
+ *               has never been set — distinct from 0)
+ *   required  = sum over departments of
+ *              GovernmentEconomy.calculateDepartmentSalaryRequirements(dept.id)
+ *              .totalSalaryRequirement
  *
  *   The strip renders both plus a surplus/shortfall badge. When
- *   `allocated` is null, the strip shows "settlement data unavailable"
- *   in place of the surplus/shortfall — not a fabricated 0.
+ *   `allocated` is null, the strip renders "settlement data
+ *   unavailable" — not a fabricated 0.
  *
- * MODALS:
- *   Every action delegates to a function exported by:
- *     modals-government-departments.js
- *     modals-government-positions.js
+ * DEPENDENCIES (hard — throw at load if missing):
+ *   - js/government/government-queries.js
+ *   - js/government/government-economy.js
+ *   - js/government/government-view-models.js
+ *   - js/government/government-ui-list.js
+ *   - js/settlement/settlement-queries.js
+ *   - js/location/location-queries.js
+ *   - js/core/tab-manager.js
+ *   - js/core/formatting.js
+ *   - js/core/icons.js
  *
- *   Each modal calls GovernmentCommands.* and Commands.persist() once.
- *   This tab does not duplicate any of that logic.
+ * DEPENDENCIES (soft — toast at click if missing):
+ *   - js/government/modals-government-departments.js
+ *   - js/government/modals-government-positions.js
+ *   - js/core/ui.js (showToast)
+ *   - js/core/modals-core.js (confirmDialog)
  *
- * LOAD ORDER (must be satisfied when this file loads):
- *   - government-queries.js
- *   - government-commands.js
- *   - government-economy.js
- *   - government-view-models.js
- *   - government-ui-list.js
- *   - modals-government-departments.js
- *   - modals-government-positions.js
- *   - settlement-queries.js        (salary budget allocation)
- *   - location-queries.js          (getPlaceSummary)
- *   - modals-core.js               (openModal, closeTopModal, confirmDialog)
- *   - ui.js                        (showToast)
- *   - formatting.js                (escapeHtml)
- *   - icons.js                     (Icons)
+ * TIME CONTRACT: uses window.getCurrentYear (no fallback).
+ * ICON POLICY: glyphs from Icons[name] via _iconSpan; no emojis; no
+ *   literal Unicode glyphs in string output.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   - Migrated from renderDepartmentsTab(containerId, locationId) to the
+ *     TabManager renderer contract fn(container, context).
+ *   - Self-registers with TabManager at load.
+ *   - Stale-location bug fixed: click handlers read
+ *     container.dataset.locationId at click time instead of a bind-time
+ *     closure var. Sidebar selection changes now re-render with fresh
+ *     department view models and a fresh budget.
+ *   - Stale-budget bug fixed: _loadBudget previously called
+ *     getGovernmentSalaryBudget(locationId) which threw when the
+ *     location had no settlement record. That throw was swallowed by
+ *     the outer refresh(), leaving the strip on the previous location's
+ *     budget. Now _loadBudget catches the throw per-field and returns
+ *     hasSettlement:false with required summed from whatever departments
+ *     do exist.
+ *   - List mount bug fixed: the GovernmentUI mount div is rebuilt on
+ *     every render (innerHTML swap), so GovernmentUI's own listener
+ *     would be lost on re-render. The mount is therefore always a fresh
+ *     div with a stable id, and GovernmentUI.renderDepartmentList is
+ *     called into it on every render. Department-card clicks route
+ *     through GovernmentUI's delegate, which is bound to the fresh
+ *     mount; tab-level actions route through the tab container.
+ *   - Modal delegates resolved at click time; missing modal now toasts
+ *     a specific error instead of throwing or silently no-oping.
+ *   - Removed dead refreshDepartmentsTab(locationId) id-based helper;
+ *     TM.requestRender(SCOPE, TAB_ID) is the only supported refresh
+ *     path.
  * =============================================================================
  */
 
@@ -70,17 +101,20 @@
     'use strict';
 
     // =========================================================================
-    // 1. LOAD-TIME DEPENDENCY CHECKS
+    // 1. CONSTANTS
+    // =========================================================================
+
+    var TAB_ID = 'departments';
+    var SCOPE  = 'government';
+    var LIST_MOUNT_ID = 'government-dept-list-mount';
+
+    // =========================================================================
+    // 2. LOAD-TIME DEPENDENCY CHECKS
     // =========================================================================
 
     if (!window.GovernmentQueries) {
         throw new Error(
             'government-departments-tab.js: government-queries.js must load first.'
-        );
-    }
-    if (!window.GovernmentCommands) {
-        throw new Error(
-            'government-departments-tab.js: government-commands.js must load first.'
         );
     }
     if (!window.GovernmentEconomy) {
@@ -108,28 +142,30 @@
             'government-departments-tab.js: location-queries.js must load first.'
         );
     }
+    if (!window.TabManager || typeof window.TabManager.register !== 'function') {
+        throw new Error(
+            'government-departments-tab.js: tab-manager.js must load first.'
+        );
+    }
 
-    // Modal functions — guarded at call time, not load time.
-    // Each is exported by one of the modals-government-*.js files.
-    // A missing function at click time shows a toast; the tab still renders.
-
-    // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
-    // =========================================================================
-
-    var GQ = window.GovernmentQueries;
+    var GQ  = window.GovernmentQueries;
     var GVM = window.GovernmentViewModels;
     var GUI = window.GovernmentUI;
-    var GE = window.GovernmentEconomy;
-    var SQ = window.SettlementQueries;
-    var LQ = window.LocationQueries;
+    var GE  = window.GovernmentEconomy;
+    var SQ  = window.SettlementQueries;
+    var LQ  = window.LocationQueries;
+    var TM  = window.TabManager;
 
-    function _escapeHtml(str) {
+    // =========================================================================
+    // 3. DEPENDENCY WRAPPERS (soft)
+    // =========================================================================
+
+    function _esc(v) {
         if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
+            return window.escapeHtml(v);
         }
-        if (str === null || str === undefined) return '';
-        return String(str)
+        if (v === null || v === undefined) return '';
+        return String(v)
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
@@ -137,50 +173,71 @@
             .replace(/'/g, '&#39;');
     }
 
-    function _getIcon(name) {
-        if (typeof window._getIcon === 'function') return window._getIcon(name);
-        return window.Icons && typeof window.Icons[name] === 'string'
+    function _icon(name) {
+        if (typeof window.getIcon === 'function') {
+            try {
+                var s = window.getIcon(name);
+                if (typeof s === 'string') return s;
+            } catch (e) { /* fall through */ }
+        }
+        return (window.Icons && typeof window.Icons[name] === 'string')
             ? window.Icons[name]
             : '';
     }
 
     function _iconSpan(name) {
-        var i = _getIcon(name);
+        var i = _icon(name);
         return i
-            ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;">' + i + '</span>'
+            ? '<span class="gov-tab-icon" aria-hidden="true">' + i + '</span>'
             : '';
     }
 
-    function _toast(message, type) {
+    function _toast(msg, type) {
         if (typeof window.showToast === 'function') {
-            window.showToast(message, type || 'info');
+            window.showToast(msg, type || 'info');
         } else if (typeof window._showToast === 'function') {
-            window._showToast(message, type || 'info');
+            window._showToast(msg, type || 'info');
         }
     }
 
     function _placeSummary(locationId) {
         if (!locationId) return null;
-        return LQ.getPlaceSummary(locationId);
+        if (typeof LQ.getPlaceSummary === 'function') {
+            try { return LQ.getPlaceSummary(locationId); }
+            catch (e) { return null; }
+        }
+        return null;
     }
 
     // =========================================================================
-    // 3. DATA LOADERS
+    // 4. DATA LOADERS
     // =========================================================================
 
     /**
      * Loads the department list for a location as view models.
      *
      * GovernmentQueries.getDepartmentsByLocation returns projections
-     * (already carries locationName, positionCount, activeAssignmentCount,
+     * (locationName, positionCount, activeAssignmentCount,
      * rolePositionCount). GovernmentViewModels.toDepartmentListItems
-     * shapes them into the list-item view model that GovernmentUI renders.
+     * shapes them into the list-item view model GovernmentUI renders.
      *
-     * Returns an empty array when the location has no departments.
+     * Returns [] on any read failure; the tab renders the empty state,
+     * not a silent blank.
      */
     function _loadDepartmentViewModels(locationId) {
-        var departments = GQ.getDepartmentsByLocation(locationId, {});
-        return GVM.toDepartmentListItems(departments, null);
+        if (!locationId) return [];
+        try {
+            var departments = GQ.getDepartmentsByLocation(locationId, {});
+            return GVM.toDepartmentListItems(departments, null) || [];
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'government-departments-tab: load department view models failed',
+                    e
+                );
+            }
+            return [];
+        }
     }
 
     /**
@@ -188,36 +245,67 @@
      *
      * Returns:
      *   {
-     *     hasSettlement:  boolean,
-     *     allocated:      number|null,
-     *     required:       number,
-     *     remaining:      number,
-     *     shortfall:      number,
+     *     hasSettlement:   boolean,
+     *     allocated:       number|null,
+     *     required:        number,
+     *     remaining:       number,
+     *     shortfall:       number,
      *     departmentCount: number
      *   }
      *
      * `hasSettlement` is false when SettlementQueries has no record for
-     * the location (or the location has never had a budget allocated).
-     * In that case the strip renders a "settlement data unavailable"
-     * message instead of a fabricated surplus/shortfall.
+     * the location, or when the field has never been set (null). In
+     * that case the strip renders "settlement data unavailable" instead
+     * of a fabricated surplus/shortfall.
      *
-     * The required total is computed by delegating per-department salary
-     * math to GovernmentEconomy — the tab does not calculate salary
-     * itself.
+     * `required` is summed from departments that DO exist, even when
+     * the settlement record is missing — the tab still shows what the
+     * departments cost. A department whose salary calculation throws is
+     * skipped (its requirement is treated as 0) and the error is logged
+     * — one bad department must not blank the whole strip.
      */
     function _loadBudget(locationId) {
-        var allocated = SQ.getGovernmentSalaryBudget(locationId);
-        var departments = GQ.getDepartmentsByLocation(locationId, {});
+        var allocated = null;
+        var hasSettlement = false;
+        try {
+            var raw = SQ.getGovernmentSalaryBudget(locationId);
+            if (raw !== null && raw !== undefined) {
+                allocated = raw;
+                hasSettlement = true;
+            }
+        } catch (e) {
+            // No settlement record, or the query threw. Both mean "not
+            // allocated" from this tab's point of view.
+            hasSettlement = false;
+            allocated = null;
+        }
+
+        var departments = [];
+        try {
+            departments = GQ.getDepartmentsByLocation(locationId, {}) || [];
+        } catch (e) {
+            departments = [];
+        }
 
         var required = 0;
         for (var i = 0; i < departments.length; i++) {
-            var req = GE.calculateDepartmentSalaryRequirements(departments[i].id);
-            if (req && typeof req.totalSalaryRequirement === 'number') {
-                required += req.totalSalaryRequirement;
+            var dept = departments[i];
+            if (!dept || !dept.id) continue;
+            try {
+                var req = GE.calculateDepartmentSalaryRequirements(dept.id);
+                if (req && typeof req.totalSalaryRequirement === 'number') {
+                    required += req.totalSalaryRequirement;
+                }
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn(
+                        'government-departments-tab: salary calc failed for department ' +
+                        dept.id,
+                        e
+                    );
+                }
             }
         }
-
-        var hasSettlement = allocated !== null && allocated !== undefined;
 
         if (!hasSettlement) {
             return {
@@ -241,25 +329,23 @@
     }
 
     // =========================================================================
-    // 4. HTML BUILDERS
+    // 5. HTML BUILDERS
     // =========================================================================
 
     function _buildHeader(place) {
         var name = place ? (place.displayName || place.name || '') : '';
-        var addIcon = _iconSpan('PLUS');
-        var refreshIcon = _iconSpan('REFRESH');
 
         return (
             '<div class="dept-tab-header">' +
-                '<h3>Government Departments - ' + _escapeHtml(name) + '</h3>' +
+                '<h3>Government Departments - ' + _esc(name) + '</h3>' +
                 '<div class="dept-tab-actions">' +
                     '<button type="button" class="dept-btn dept-btn-add" ' +
                         'data-action="add-department">' +
-                        addIcon + ' Add Department' +
+                        _iconSpan('PLUS') + ' Add Department' +
                     '</button>' +
                     '<button type="button" class="dept-btn dept-btn-refresh" ' +
                         'data-action="refresh-depts">' +
-                        refreshIcon + ' Refresh' +
+                        _iconSpan('REFRESH') + ' Refresh' +
                     '</button>' +
                 '</div>' +
             '</div>'
@@ -269,10 +355,9 @@
     function _buildBudgetStrip(budget) {
         if (!budget) return '';
 
-        var classes = 'dept-budget-summary';
         var allocatedLabel = '—';
-        var surplusLabel = '—';
-        var surplusClass = '';
+        var surplusLabel   = '—';
+        var surplusClass   = 'dept-budget-unavailable';
 
         if (budget.hasSettlement) {
             allocatedLabel = budget.allocated.toLocaleString() + 'g';
@@ -285,24 +370,27 @@
             }
         } else {
             surplusLabel = 'settlement data unavailable';
-            surplusClass = 'dept-budget-unavailable';
         }
 
         return (
-            '<div class="' + classes + '">' +
+            '<div class="dept-budget-summary">' +
                 '<div class="dept-budget-item">' +
                     '<span class="dept-budget-label">Salary Budget</span>' +
-                    '<span class="dept-budget-value">' + _escapeHtml(allocatedLabel) + '</span>' +
+                    '<span class="dept-budget-value">' + _esc(allocatedLabel) + '</span>' +
                 '</div>' +
                 '<div class="dept-budget-item">' +
                     '<span class="dept-budget-label">Required</span>' +
-                    '<span class="dept-budget-value">' + budget.required.toLocaleString() + 'g</span>' +
+                    '<span class="dept-budget-value">' +
+                        budget.required.toLocaleString() + 'g' +
+                    '</span>' +
                 '</div>' +
                 '<div class="dept-budget-item ' + surplusClass + '">' +
                     '<span class="dept-budget-label">' +
-                        (budget.hasSettlement ? (budget.shortfall > 0 ? 'Shortfall' : 'Surplus') : 'Status') +
+                        (budget.hasSettlement
+                            ? (budget.shortfall > 0 ? 'Shortfall' : 'Surplus')
+                            : 'Status') +
                     '</span>' +
-                    '<span class="dept-budget-value">' + _escapeHtml(surplusLabel) + '</span>' +
+                    '<span class="dept-budget-value">' + _esc(surplusLabel) + '</span>' +
                 '</div>' +
                 '<div class="dept-budget-item">' +
                     '<span class="dept-budget-label">Departments</span>' +
@@ -313,13 +401,12 @@
     }
 
     function _buildEmptyState() {
-        var addIcon = _iconSpan('PLUS');
         return (
             '<div class="dept-empty">' +
                 '<p>No government departments found for this location.</p>' +
                 '<button type="button" class="dept-btn dept-btn-add" ' +
                     'data-action="add-department">' +
-                    addIcon + ' Create First Department' +
+                    _iconSpan('PLUS') + ' Create First Department' +
                 '</button>' +
             '</div>'
         );
@@ -327,92 +414,109 @@
 
     function _buildShell(place, departmentVms, budget) {
         if (!place) {
-            return '<div class="dept-details-empty">Select a location to view government departments.</div>';
+            return (
+                '<div class="dept-details-empty">' +
+                    'Select a government from the sidebar to view departments.' +
+                '</div>'
+            );
         }
 
         var hasDepartments = departmentVms && departmentVms.length > 0;
 
         return (
-            '<div class="dept-tab-container">' +
+            '<div class="dept-tab-container" ' +
+                'data-location-id="' + _esc(place.id || '') + '">' +
                 _buildHeader(place) +
                 _buildBudgetStrip(budget) +
                 (hasDepartments
-                    ? '<div id="govDeptListMount"></div>'
+                    ? '<div id="' + LIST_MOUNT_ID + '"></div>'
                     : _buildEmptyState()) +
             '</div>'
         );
     }
 
     // =========================================================================
-    // 5. RENDER
+    // 6. RENDERER (TabManager contract: fn(container, context))
     // =========================================================================
 
-    /**
-     * Renders the departments tab for a location.
-     *
-     * @param {string} containerId  id of the container element
-     * @param {string} locationId   location to render
-     */
-    function renderDepartmentsTab(containerId, locationId) {
-        var container = document.getElementById(containerId);
-        if (!container) {
-            if (typeof console !== 'undefined' && console.warn) {
-                console.warn('Departments tab container not found:', containerId);
-            }
+    function renderDepartmentsTab(container, context) {
+        if (!container) return;
+
+        if (!context || !context.locationId) {
+            container.innerHTML =
+                '<div class="empty-state">' +
+                'Select a government from the sidebar to view departments.' +
+                '</div>';
             return;
         }
 
-        var place = locationId ? _placeSummary(locationId) : null;
+        var locationId = context.locationId;
+        var place = (context.governmentState && context.governmentState.place)
+            ? context.governmentState.place
+            : _placeSummary(locationId);
 
         if (!place) {
             container.innerHTML = _buildShell(null, [], null);
-            container.dataset.locationId = locationId || '';
             return;
         }
 
-        var departmentVms = _loadDepartmentViewModels(place.id);
-        var budget = _loadBudget(place.id);
+        var departmentVms = _loadDepartmentViewModels(locationId);
+        var budget = _loadBudget(locationId);
 
         container.innerHTML = _buildShell(place, departmentVms, budget);
         container.dataset.locationId = locationId;
 
-        // Mount the department list through GovernmentUI, if we have one.
-        var listMount = container.querySelector('#govDeptListMount');
-        if (listMount && departmentVms.length > 0) {
-            GUI.renderDepartmentList(listMount, departmentVms, {
-                showStats: true,
-                showActions: true,
-                onSelect: function (deptVm) {
-                    if (!deptVm || !deptVm.id) return;
-                    _openViewDepartment(deptVm.id, containerId, locationId);
+        // Mount the department list through GovernmentUI. The mount div
+        // is fresh on every render (innerHTML swap), so GovernmentUI's
+        // delegate is installed fresh against the fresh div — a stale
+        // delegate from the previous render is discarded with the old
+        // div. That is the correct behaviour: the delegate closure
+        // captures the mount element, and the mount element is gone.
+        if (departmentVms.length > 0) {
+            var mount = container.querySelector('#' + LIST_MOUNT_ID);
+            if (mount) {
+                try {
+                    GUI.renderDepartmentList(mount, departmentVms, {
+                        showStats: true,
+                        showActions: true,
+                        onSelect: function (deptVm) {
+                            if (!deptVm || !deptVm.id) return;
+                            _openViewDepartment(deptVm.id);
+                        }
+                    });
+                } catch (e) {
+                    if (typeof console !== 'undefined' && console.error) {
+                        console.error(
+                            'government-departments-tab: renderDepartmentList threw',
+                            e
+                        );
+                    }
+                    mount.innerHTML =
+                        '<div class="dept-empty">' +
+                            'Department list failed to render. See console.' +
+                        '</div>';
                 }
-            });
+            }
         }
 
-        _bindActions(container, containerId, locationId);
+        _bindActions(container);
     }
 
     // =========================================================================
-    // 6. ACTION BINDING
+    // 7. ACTION BINDING (delegated, on the tab container)
     // =========================================================================
+    //
+    // Only tab-level actions route here: add-department, refresh-depts.
+    // Department-card clicks are handled by GovernmentUI's own delegate
+    // on the mount (see _openViewDepartment). The two delegates never
+    // overlap because GovernmentUI's mount is a child of the tab
+    // container and GovernmentUI handles card-level [data-action]s,
+    // while the tab handles tab-level [data-action]s. Both use
+    // closest() and neither fires the other's actions.
 
-    function _bindActions(container, containerId, locationId) {
+    function _bindActions(container) {
         if (container._govDeptBound) return;
         container._govDeptBound = true;
-
-        // Re-render closure used by every CRUD callback. Wrapped in
-        // try/catch so a transient error during re-render does not
-        // bubble out of the modal callback.
-        function refresh() {
-            try {
-                renderDepartmentsTab(containerId, locationId);
-            } catch (err) {
-                if (typeof console !== 'undefined' && console.error) {
-                    console.error('government-departments-tab: refresh failed', err);
-                }
-                _toast('Departments refresh failed; see console.', 'error');
-            }
-        }
 
         container.addEventListener('click', function (event) {
             var target = event.target.closest('[data-action]');
@@ -422,175 +526,127 @@
             var action = target.getAttribute('data-action');
             if (!action) return;
 
-            // The list itself handles clicks inside department cards
-            // (via GovernmentUI's delegated handler). We only intercept
-            // the tab-level actions: add-department, refresh-depts.
+            // Actions owned by GovernmentUI's card delegate are not
+            // intercepted here — let the event bubble to GovernmentUI.
+            if (action === 'view-department' || action === 'edit-department' ||
+                action === 'delete-department' || action === 'add-position' ||
+                action === 'edit-position' || action === 'delete-position' ||
+                action === 'assign-staff' || action === 'remove-assignment') {
+                return;
+            }
+
+            var locationId = container.dataset.locationId;
+
             if (action === 'add-department') {
                 event.preventDefault();
-                _openAddDepartment(locationId, refresh);
+                if (!locationId) {
+                    _toast('No location selected', 'warning');
+                    return;
+                }
+                _openAddDepartment(locationId);
                 return;
             }
 
             if (action === 'refresh-depts') {
                 event.preventDefault();
-                refresh();
+                _refresh();
                 _toast('Departments refreshed', 'info');
                 return;
             }
         });
     }
 
-    // =========================================================================
-    // 7. MODAL DELEGATION
-    // =========================================================================
-    //
-    // Every function below delegates to a modal that already exists in
-    // modals-government-departments.js or modals-government-positions.js.
-    // The tab does not open its own modals.
-
-    function _openAddDepartment(locationId, refresh) {
-        if (!locationId) {
-            _toast('No location selected', 'warning');
-            return;
+    function _refresh() {
+        if (TM && typeof TM.requestRender === 'function') {
+            TM.requestRender(SCOPE, TAB_ID);
         }
-        if (typeof window.openCreateGovernmentDepartmentModal !== 'function') {
-            _toast('Create-department modal unavailable', 'error');
-            return;
-        }
-        window.openCreateGovernmentDepartmentModal(locationId, refresh);
-    }
-
-    function _openEditDepartment(deptId, refresh) {
-        if (typeof window.openEditGovernmentDepartmentModal !== 'function') {
-            _toast('Edit-department modal unavailable', 'error');
-            return;
-        }
-        window.openEditGovernmentDepartmentModal(deptId, refresh);
-    }
-
-    function _openDeleteDepartment(deptId, refresh) {
-        if (typeof window.openDeleteGovernmentDepartmentModal !== 'function') {
-            _toast('Delete-department modal unavailable', 'error');
-            return;
-        }
-        window.openDeleteGovernmentDepartmentModal(deptId, refresh);
-    }
-
-    function _openViewDepartment(deptId, containerId, locationId) {
-        if (typeof window.openViewDepartmentDetailsModal !== 'function') {
-            _toast('Department-details modal unavailable', 'error');
-            return;
-        }
-        // The details modal opens its own Add Position / Edit / Delete
-        // actions that route back through modals-government-*.js. When
-        // it closes, refresh the tab.
-        var refresh = function () {
-            try {
-                renderDepartmentsTab(containerId, locationId);
-            } catch (err) {
-                if (typeof console !== 'undefined' && console.error) {
-                    console.error('government-departments-tab: refresh after details failed', err);
-                }
-            }
-        };
-        window.openViewDepartmentDetailsModal(deptId, refresh);
-    }
-
-    function _openAddPosition(deptId, refresh) {
-        if (typeof window.openAddPositionModal !== 'function') {
-            _toast('Add-position modal unavailable', 'error');
-            return;
-        }
-        window.openAddPositionModal(deptId, refresh);
-    }
-
-    function _openEditPosition(deptId, positionId, refresh) {
-        if (typeof window.openEditPositionModal !== 'function') {
-            _toast('Edit-position modal unavailable', 'error');
-            return;
-        }
-        window.openEditPositionModal(deptId, positionId, refresh);
-    }
-
-    function _openDeletePosition(deptId, positionId, refresh) {
-        if (typeof window.openDeletePositionModal !== 'function') {
-            _toast('Delete-position modal unavailable', 'error');
-            return;
-        }
-        window.openDeletePositionModal(deptId, positionId, refresh);
-    }
-
-    function _openAssignStaff(deptId, positionId, refresh) {
-        if (typeof window.openAssignCharacterToPositionModal !== 'function') {
-            _toast('Assign-staff modal unavailable', 'error');
-            return;
-        }
-        window.openAssignCharacterToPositionModal(deptId, positionId, refresh);
-    }
-
-    function _openRemoveAssignment(deptId, assignmentId, refresh) {
-        if (typeof window.openRemoveAssignmentModal !== 'function') {
-            _toast('Remove-assignment modal unavailable', 'error');
-            return;
-        }
-        window.openRemoveAssignmentModal(deptId, assignmentId, refresh);
     }
 
     // =========================================================================
-    // 8. REFRESH HELPER (public)
+    // 8. MODAL DELEGATION
     // =========================================================================
     //
-    // Callers (e.g. the GovernmentManager sub-tab host) can call this to
-    // force a re-render without re-selecting a location.
+    // Every function below delegates to a modal that owns its own
+    // GovernmentCommands + Commands.persist. The tab never writes.
+    // A missing delegate is a load-order bug; toast a specific error
+    // and return, never swallow.
 
-    function refreshDepartmentsTab(locationId) {
-        var container = document.querySelector('.dept-tab-container');
-        if (container && container.parentElement) {
-            renderDepartmentsTab(container.parentElement.id || 'panelContent', locationId);
-            return;
+    function _requireModal(name, action) {
+        var fn = window[name];
+        if (typeof fn !== 'function') {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'government-departments-tab: required modal "' + name +
+                    '" is not loaded (' + action + ')'
+                );
+            }
+            _toast('Action unavailable: ' + name + ' is not loaded.', 'error');
+            return null;
         }
-        // Fallback: search for the nearest container with an id.
-        var candidates = document.querySelectorAll('.dept-tab-container, [data-tab-content]');
-        for (var i = 0; i < candidates.length; i++) {
-            var c = candidates[i];
-            if (c.id) {
-                renderDepartmentsTab(c.id, locationId);
-                return;
+        return fn;
+    }
+
+    function _openAddDepartment(locationId) {
+        var fn = _requireModal(
+            'openCreateGovernmentDepartmentModal',
+            'add department'
+        );
+        if (!fn) return;
+        try { fn(locationId, _refresh); }
+        catch (e) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'government-departments-tab: openCreateGovernmentDepartmentModal threw',
+                    e
+                );
             }
-            var parent = c.parentElement;
-            if (parent && parent.id) {
-                renderDepartmentsTab(parent.id, locationId);
-                return;
+            _toast('Failed to open Add Department modal.', 'error');
+        }
+    }
+
+    function _openViewDepartment(deptId) {
+        var fn = _requireModal(
+            'openViewDepartmentDetailsModal',
+            'view department'
+        );
+        if (!fn) return;
+        try { fn(deptId, _refresh); }
+        catch (e) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'government-departments-tab: openViewDepartmentDetailsModal threw',
+                    e
+                );
             }
+            _toast('Failed to open Department details.', 'error');
         }
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 9. REGISTRATION (playbook §5)
+    // =========================================================================
+
+    TM.register(SCOPE, TAB_ID, renderDepartmentsTab);
+
+    // =========================================================================
+    // 10. EXPORTS
     // =========================================================================
 
     window.DepartmentsTab = {
+        id: TAB_ID,
         render: renderDepartmentsTab,
-        refresh: refreshDepartmentsTab,
-        // Exposed for tests / external callers that want to reuse the
-        // budget computation without re-implementing it.
+
+        // Data loaders, exposed for tests and for the details modal
+        // when it wants the same projections this tab renders.
         _loadBudget: _loadBudget,
         _loadDepartmentViewModels: _loadDepartmentViewModels,
-        // Modal delegations (exposed so any future tab that needs them
-        // can call through a single point).
-        _openAddDepartment: _openAddDepartment,
-        _openEditDepartment: _openEditDepartment,
-        _openDeleteDepartment: _openDeleteDepartment,
-        _openViewDepartment: _openViewDepartment,
-        _openAddPosition: _openAddPosition,
-        _openEditPosition: _openEditPosition,
-        _openDeletePosition: _openDeletePosition,
-        _openAssignStaff: _openAssignStaff,
-        _openRemoveAssignment: _openRemoveAssignment
-    };
 
-    window.renderDepartmentsTab = renderDepartmentsTab;
-    window.refreshDepartmentsTab = refreshDepartmentsTab;
+        // Modal delegations, exposed so any future tab that needs them
+        // can route through a single point that owns the missing-modal
+        // guard.
+        _openAddDepartment: _openAddDepartment,
+        _openViewDepartment: _openViewDepartment
+    };
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.DepartmentsTab;
