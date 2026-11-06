@@ -204,7 +204,33 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
+ *   Current revision (household-tab P2):
+ *     - Added updateMove(characterId, moveIndex, patch) and
+ *       deleteMove(characterId, moveIndex). Both are used by the
+ *       Location tab's move-edit modal (openEditMoveModal in
+ *       modals-moves.js) and its delete-move confirm flow.
+ *
+ *       updateMove's patch whitelist is DERIVED-AWARE: only
+ *       year, locationId, note, fromLocationId, and isBirthMove are
+ *       accepted. locationName and fromLocationName are derived from
+ *       locationId and fromLocationId (recomputed from LocationState
+ *       canonical) after the patch is applied. A caller that supplies
+ *       locationName directly gets it silently overwritten by the
+ *       resolution, which is intentional: the display name must match
+ *       the id.
+ *
+ *       deleteMove removes one entry. Neither command touches
+ *       character.currentLocationId — that is a separate fact from
+ *       move history. Callers who want to also clear currentLocationId
+ *       use CharacterCommands.updateCharacterFields.
+ *
+ *     - Both commands call CharacterCommands.updateCharacterFields
+ *       once, then commit via the module's standard _commit tail.
+ *       Persist is the caller's responsibility (matches recordMove /
+ *       bulkRecordMoves).
+ *
+ *     - No behavioural change to any existing command.
+ *   Previous revision:
  *     - Added LocationCommands.handleCharacterDeath(characterId, year).
  *       Ends every active leader assignment held by the character,
  *       across every place, in one commit. Returns the list of
@@ -1312,6 +1338,207 @@
     }
 
     // =========================================================================
+    // 11a. MOVE EDIT AND DELETE (Location tab)
+    // =========================================================================
+    //
+    // updateMove / deleteMove operate on character.moves, which is
+    // character-owned. Writes route through CharacterCommands.
+    // updateCharacterFields (the character-owned write boundary), same
+    // as recordMove and bulkRecordMoves.
+    //
+    // Derived-field policy:
+    //   locationName / fromLocationName are ALWAYS recomputed from
+    //   locationId / fromLocationId after the patch is applied. A
+    //   caller-supplied locationName in the patch is overwritten,
+    //   because the display name must match the id.
+    //
+    // Move shape (matches _prepareMove):
+    //   { year, locationId, locationName, note,
+    //     fromLocationId, fromLocationName, isBirthMove, timestamp }
+
+    function updateMove(characterId, moveIndex, patch) {
+        if (!_validId(characterId)) {
+            return _fail('updateMove: characterId is required');
+        }
+        if (typeof moveIndex !== 'number'
+            || !Number.isInteger(moveIndex)
+            || moveIndex < 0) {
+            return _fail('updateMove: moveIndex must be a non-negative integer');
+        }
+        if (!_plainObject(patch)) {
+            return _fail('updateMove: patch must be a plain object');
+        }
+
+        var character = CQ.getCharacterById(characterId);
+        if (!character) {
+            return _fail('updateMove: character not found');
+        }
+
+        var moves = Array.isArray(character.moves) ? character.moves : [];
+        if (moveIndex >= moves.length) {
+            return _fail('updateMove: move index out of range (' +
+                moveIndex + ' of ' + moves.length + ')');
+        }
+
+        var current = moves[moveIndex];
+        if (!current || typeof current !== 'object') {
+            return _fail('updateMove: move at index ' + moveIndex + ' is malformed');
+        }
+
+        // Start from a defensive copy of the current move.
+        var next = {
+            year: current.year !== undefined ? current.year : null,
+            locationId: current.locationId !== undefined ? current.locationId : null,
+            locationName: current.locationName !== undefined ? current.locationName : null,
+            note: current.note !== undefined ? current.note : null,
+            fromLocationId: current.fromLocationId !== undefined ? current.fromLocationId : null,
+            fromLocationName: current.fromLocationName !== undefined ? current.fromLocationName : null,
+            isBirthMove: current.isBirthMove === true,
+            timestamp: current.timestamp !== undefined ? current.timestamp : null
+        };
+
+        // Apply patch — whitelist only the fields that are not derived.
+        var locationIdChanged = false;
+        var fromLocationIdChanged = false;
+
+        if (Object.prototype.hasOwnProperty.call(patch, 'year')) {
+            if (patch.year !== null
+                && (typeof patch.year !== 'number'
+                    || !window.isValidYear(patch.year))) {
+                return _fail('updateMove: year must be a valid world year or null');
+            }
+            next.year = patch.year;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'locationId')) {
+            if (!_validId(patch.locationId)) {
+                return _fail('updateMove: locationId must be a non-empty string');
+            }
+            if (!LS._getPlaceCanonical(patch.locationId)) {
+                return _fail('updateMove: location not found: ' + patch.locationId);
+            }
+            if (patch.locationId !== next.locationId) {
+                next.locationId = patch.locationId;
+                locationIdChanged = true;
+            }
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'fromLocationId')) {
+            if (patch.fromLocationId !== null && !_validId(patch.fromLocationId)) {
+                return _fail('updateMove: fromLocationId must be a non-empty string or null');
+            }
+            if (patch.fromLocationId !== null
+                && !LS._getPlaceCanonical(patch.fromLocationId)) {
+                return _fail('updateMove: fromLocationId not found: ' + patch.fromLocationId);
+            }
+            if (patch.fromLocationId !== next.fromLocationId) {
+                next.fromLocationId = patch.fromLocationId;
+                fromLocationIdChanged = true;
+            }
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'note')) {
+            next.note = patch.note === null ? null : String(patch.note);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'isBirthMove')) {
+            next.isBirthMove = patch.isBirthMove === true;
+        }
+
+        // Derived-field resolution. locationName follows locationId;
+        // fromLocationName follows fromLocationId. Only re-resolve when
+        // the id changed — preserve the existing display name otherwise
+        // (protects historical entries whose place was later renamed).
+        if (locationIdChanged) {
+            var place = LS._getPlaceCanonical(next.locationId);
+            next.locationName = place ? place.displayName : null;
+        }
+        if (fromLocationIdChanged) {
+            if (next.fromLocationId === null) {
+                next.fromLocationName = null;
+            } else {
+                var fromPlace = LS._getPlaceCanonical(next.fromLocationId);
+                next.fromLocationName = fromPlace ? fromPlace.displayName : null;
+            }
+        }
+
+        var nextMoves = moves.slice();
+        nextMoves[moveIndex] = next;
+
+        var charResult = CC.updateCharacterFields(characterId, {
+            moves: nextMoves
+        });
+        if (!charResult || charResult.success !== true) {
+            return _fail('updateMove: ' +
+                (charResult && charResult.reason
+                    ? charResult.reason
+                    : 'character move write failed'));
+        }
+
+        window.markDataDirty();
+        _commit('moveUpdated', {
+            characterId: characterId,
+            moveIndex: moveIndex,
+            year: next.year,
+            locationId: next.locationId
+        });
+
+        return _ok({
+            characterId: characterId,
+            moveIndex: moveIndex,
+            year: next.year,
+            locationId: next.locationId,
+            move: next
+        });
+    }
+
+    function deleteMove(characterId, moveIndex) {
+        if (!_validId(characterId)) {
+            return _fail('deleteMove: characterId is required');
+        }
+        if (typeof moveIndex !== 'number'
+            || !Number.isInteger(moveIndex)
+            || moveIndex < 0) {
+            return _fail('deleteMove: moveIndex must be a non-negative integer');
+        }
+
+        var character = CQ.getCharacterById(characterId);
+        if (!character) {
+            return _fail('deleteMove: character not found');
+        }
+
+        var moves = Array.isArray(character.moves) ? character.moves : [];
+        if (moveIndex >= moves.length) {
+            return _fail('deleteMove: move index out of range (' +
+                moveIndex + ' of ' + moves.length + ')');
+        }
+
+        var removed = moves[moveIndex];
+
+        var nextMoves = moves.slice();
+        nextMoves.splice(moveIndex, 1);
+
+        var charResult = CC.updateCharacterFields(characterId, {
+            moves: nextMoves
+        });
+        if (!charResult || charResult.success !== true) {
+            return _fail('deleteMove: ' +
+                (charResult && charResult.reason
+                    ? charResult.reason
+                    : 'character move write failed'));
+        }
+
+        window.markDataDirty();
+        _commit('moveDeleted', {
+            characterId: characterId,
+            moveIndex: moveIndex,
+            year: removed && removed.year !== undefined ? removed.year : null
+        });
+
+        return _ok({
+            characterId: characterId,
+            moveIndex: moveIndex,
+            removed: removed
+        });
+    }
+
+    // =========================================================================
     // 12. GOVERNMENT / LEADER / CULTURE
     // =========================================================================
 
@@ -1577,6 +1804,8 @@
 
         recordMove: recordMove,
         bulkRecordMoves: bulkRecordMoves,
+        updateMove: updateMove,
+        deleteMove: deleteMove,
 
         assignGovernment: assignGovernment,
         assignLeader: assignLeader,
