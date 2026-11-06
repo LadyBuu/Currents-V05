@@ -17,8 +17,8 @@
 
            Only css/themes.css and css/common.css are external.
            Everything below is inline, including the character-tab-*
-           and character-row* classes that the Identity tab and the
-           bootstrap emit.
+           and character-row* classes that the tab files and the view
+           model emit.
 
            STRUCTURAL ONLY. Every visual value comes from a theme
            token in themes.css. No hex values, no rgba() values, no
@@ -694,20 +694,10 @@
 
         /* ---- Traits grid ---- */
         .character-tab-traits {
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-        }
-        .character-tab-traits > label {
-            display: inline-flex;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+            gap: 0.25rem;
             align-items: center;
-            gap: 0.375rem;
-        }
-        .character-tab-traits > label {
-            /* fallback to grid via parent when JS emits a flat label list */
-        }
-        .character-tab-traits {
-            /* fallback to grid via parent when JS emits a flat label list */
         }
         .character-tab-traits .character-tab-trait {
             display: inline-flex;
@@ -725,18 +715,6 @@
         }
         .character-tab-traits .character-tab-trait input[type="checkbox"] {
             margin: 0;
-        }
-        .character-tab-traits {
-            /* the flat labels produced by _renderTraitGrid are .character-tab-trait; wrap via JS parent */
-        }
-        /* grid container actually emitted by the tab is .character-tab-traits
-           with child .character-tab-trait labels and a .character-tab-input-row
-           holding the Randomize/Clear buttons. Below is the grid layout. */
-        .character-tab-traits {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
-            gap: 0.25rem;
-            align-items: center;
         }
         .character-tab-traits .character-tab-input-row {
             grid-column: 1 / -1;
@@ -878,6 +856,150 @@
         }
 
         /* ============================================================
+           FRIENDSHIP TAB (.character-friendship-*)
+           ============================================================ */
+        .character-friendship-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        .character-friendship-header__title {
+            font-family: var(--f-display);
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--accent-light);
+            letter-spacing: 0.02em;
+        }
+        .character-friendship-header__actions {
+            display: flex;
+            gap: 0.375rem;
+            flex-wrap: wrap;
+        }
+
+        .character-friendship-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 0.375rem;
+        }
+        .character-friendship-row:hover {
+            background: var(--bg3);
+        }
+        .character-friendship-row.is-deceased {
+            opacity: 0.72;
+        }
+        .character-friendship-row__main {
+            flex: 1;
+            min-width: 0;
+        }
+        .character-friendship-meta {
+            font-size: 0.62rem;
+            color: var(--dim);
+            font-family: var(--f-mono);
+            margin-top: 0.125rem;
+        }
+
+        .character-friendship-strength {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            min-width: 8rem;
+        }
+        .character-friendship-strength__bar {
+            flex: 1;
+            height: 0.4rem;
+            background: var(--bg3);
+            border-radius: 0.2rem;
+            overflow: hidden;
+            min-width: 4rem;
+        }
+        .character-friendship-strength__fill {
+            height: 100%;
+            border-radius: 0.2rem;
+            transition: width 0.2s ease;
+        }
+        .character-friendship-strength__label {
+            font-family: var(--f-mono);
+            font-size: 0.6rem;
+            color: var(--dim);
+            min-width: 2.5rem;
+            text-align: right;
+        }
+
+        .character-friendship-actions {
+            display: flex;
+            gap: 0.25rem;
+            flex-shrink: 0;
+            flex-wrap: wrap;
+        }
+
+        .character-friendship-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+            gap: 0.5rem;
+        }
+        .character-friendship-stat-field {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 0.5rem 0.75rem;
+        }
+        .character-friendship-stat-field--wide {
+            grid-column: 1 / -1;
+        }
+        .character-friendship-stat-field__label {
+            font-family: var(--f-display);
+            font-size: 0.55rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--dim);
+        }
+        .character-friendship-stat-field__value {
+            font-family: var(--f-mono);
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text);
+            margin-top: 0.125rem;
+        }
+
+        .character-friendship-tiers {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+            margin-top: 0.25rem;
+        }
+        .character-friendship-tier {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.7rem;
+        }
+        .character-friendship-tier__dot {
+            display: inline-block;
+            width: 0.6rem;
+            height: 0.6rem;
+            border-radius: 0.3rem;
+            flex-shrink: 0;
+        }
+        .character-friendship-tier__label {
+            flex: 1;
+            color: var(--text);
+        }
+        .character-friendship-tier__count {
+            font-family: var(--f-mono);
+            color: var(--dim);
+        }
+
+        /* ============================================================
            RESPONSIVE
            ============================================================ */
         @media (max-width: 768px) {
@@ -926,6 +1048,16 @@
                 align-items: stretch;
             }
             .character-tab-rank-actions {
+                justify-content: flex-end;
+            }
+            .character-friendship-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .character-friendship-strength {
+                width: 100%;
+            }
+            .character-friendship-actions {
                 justify-content: flex-end;
             }
         }
@@ -1189,15 +1321,82 @@
 <script src="js/character/character-ui-list.js"></script>
 <script src="js/character/character-system.js"></script>
 
-<!-- ---- Character Manager modules ---- -->
+<!-- ================================================================
+     RELATIONSHIP DOMAIN
+     ================================================================ -->
+<script src="js/social/relationship-types.js"></script>
+<script src="js/social/relationship-utils.js"></script>
+<script src="js/social/relationship-state.js"></script>
+<script src="js/social/relationship-queries.js"></script>
+<script src="js/social/relationship-commands.js"></script>
+
+<script src="js/social/romance-rules.js"></script>
+<script src="js/social/romance-queries.js"></script>
+<script src="js/social/romance-commands.js"></script>
+
+<script src="js/social/friendship-rules.js"></script>
+<script src="js/social/friendship-queries.js"></script>
+<script src="js/social/friendship-commands.js"></script>
+
+<script src="js/social/rivalry-rules.js"></script>
+<script src="js/social/rivalry-queries.js"></script>
+<script src="js/social/rivalry-commands.js"></script>
+
+<script src="js/social/jealousy-rules.js"></script>
+<script src="js/social/jealousy-queries.js"></script>
+<script src="js/social/jealousy-commands.js"></script>
+
+<script src="js/social/affair-rules.js"></script>
+<script src="js/social/affair-queries.js"></script>
+<script src="js/social/affair-commands.js"></script>
+
+<script src="js/social/matchmaking-rules.js"></script>
+<script src="js/social/matchmaking-queries.js"></script>
+
+<script src="js/social/professional-rules.js"></script>
+<script src="js/social/professional-queries.js"></script>
+<script src="js/social/professional-commands.js"></script>
+
+<script src="js/social/relationship-finder-queries.js"></script>
+<script src="js/social/relationship-ui-metadata.js"></script>
+<script src="js/social/relationship-integrations.js"></script>
+
+<!-- Relationship modals. The friendship modals are used by the
+     Friendship tab; the relationship modal is used by future tabs
+     (Romance and Overview) and by the character editor. -->
+<script src="js/social/modals-relationship.js"></script>
+<script src="js/social/modals-friendship.js"></script>
+
+<!-- ================================================================
+     CHARACTER MANAGER MODULES
+     ================================================================ -->
 <script src="js/character/character-ui-state.js"></script>
 <script src="js/character/character-view-models.js"></script>
 
+<!-- ---- Tab files (each self-registers with TabManager at load) ---- -->
 <script src="js/tabs/character-identity-tab.js"></script>
+<script src="js/tabs/character-friendship-tab.js"></script>
 
+<!-- Tabs not yet built. Loaded conditionally so a missing file does
+     not break the page. The bootstrap renders the "no-renderer" empty
+     state for any tab whose file has not been loaded. When each of
+     these files lands, replace the corresponding empty <script> with
+     the real one. To "add a tab", only that <script> tag needs to be
+     added; nothing in the shell changes. -->
+
+<!-- <script src="js/tabs/character-location-tab.js"></script> -->
+<!-- <script src="js/tabs/character-family-tab.js"></script> -->
+<!-- <script src="js/tabs/character-romance-tab.js"></script> -->
+<!-- <script src="js/tabs/character-skills-tab.js"></script> -->
+<!-- <script src="js/tabs/character-overview-tab.js"></script> -->
+
+<!-- Bootstrap last. Configures TabManager, wires the sidebar, and
+     renders the initial tab. -->
 <script src="js/character/character-manager-bootstrap.js"></script>
 
-<!-- ---- Topbar wiring (inline) ---- -->
+<!-- ================================================================
+     TOPBAR WIRING (inline)
+     ================================================================ -->
 <script>
 (function () {
     'use strict';
