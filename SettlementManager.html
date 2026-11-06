@@ -180,6 +180,8 @@
         }
         .manager-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
         .manager-subpanel { min-height: 200px; padding-top: 4px; }
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
         .empty-state {
             padding: 48px 24px; text-align: center; color: var(--dim);
             font-size: 0.88rem; line-height: 1.6;
@@ -198,6 +200,145 @@
             display: block; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.8); z-index: 999;
         }
+
+        /* ==================================================================
+           SETTLEMENT TAB CLASS SYSTEM
+           Every settlement-*-tab.js emits these class names only.
+           No tab file emits inline style attributes or <style> blocks.
+           ================================================================== */
+
+        .st-tab { display: flex; flex-direction: column; gap: 16px; padding: 4px; }
+
+        .st-header {
+            display: flex; justify-content: space-between; align-items: center;
+            flex-wrap: wrap; gap: 8px; padding: 12px 16px;
+            background: var(--bg2); border: 1px solid var(--border);
+            border-radius: var(--radius);
+        }
+        .st-header__title {
+            font-size: 0.8rem; font-weight: bold; color: var(--accent-light);
+            display: flex; align-items: center; gap: 6px;
+        }
+        .st-header__subtitle { font-size: 0.65rem; color: var(--dim); margin-top: 2px; }
+        .st-header__actions { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+
+        .st-section {
+            background: var(--bg2); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 12px 16px;
+            display: flex; flex-direction: column; gap: 8px;
+        }
+        .st-section__title {
+            font-size: 0.65rem; font-weight: bold; color: var(--accent-light);
+            display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+        }
+        .st-section__title > span[style*="flex:1"] { flex: 1; }
+        .st-section__body { display: flex; flex-direction: column; gap: 8px; }
+        .st-section__empty {
+            text-align: center; padding: 16px; color: var(--dim);
+            font-size: 0.65rem; background: var(--bg3);
+            border-radius: var(--radius);
+        }
+
+        .st-stats { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .st-stats--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .st-stats--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .st-stats--5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+        .st-stat {
+            background: var(--bg); border: 1px solid var(--border-light);
+            border-radius: var(--radius); padding: 10px; text-align: center;
+        }
+        .st-stat__label { font-size: 0.5rem; color: var(--dim); }
+        .st-stat__value { font-size: 0.95rem; font-weight: bold; color: var(--text); margin-top: 2px; }
+        .st-stat__value--pos { color: var(--success); }
+        .st-stat__value--neg { color: var(--danger); }
+        .st-stat__value--warn { color: var(--warn); }
+        .st-stat__value--accent { color: var(--accent-light); }
+
+        .st-filters {
+            display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px; padding: 12px 16px; background: var(--bg2);
+            border: 1px solid var(--border); border-radius: var(--radius);
+        }
+        .st-filters__field { display: flex; flex-direction: column; gap: 2px; }
+        .st-filters__label { font-size: 0.5rem; color: var(--dim); }
+        .st-filters__input, .st-filters__select {
+            width: 100%; padding: 4px 6px; background: var(--bg);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            color: var(--text); font-size: 0.6rem; font-family: var(--f-body);
+        }
+        .st-filters__footer {
+            grid-column: 1 / -1; display: flex; justify-content: flex-end;
+            gap: 4px; align-items: center;
+        }
+
+        .st-btn {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border);
+            border-radius: var(--radius); color: var(--text); font-family: var(--f-body);
+            font-size: 0.6rem; font-weight: 500; cursor: pointer; line-height: 1.2;
+            transition: border-color 0.15s ease, background-color 0.15s ease;
+        }
+        .st-btn:hover { border-color: var(--accent); background: var(--accent-dim); }
+        .st-btn--accent { border-color: var(--accent); color: var(--accent-light); background: var(--accent-dim); }
+        .st-btn--accent:hover { background: var(--accent); color: var(--accent-fg); }
+        .st-btn--danger { border-color: var(--danger); color: var(--danger); }
+        .st-btn--danger:hover { background: var(--danger); color: var(--accent-fg); }
+        .st-btn--small { padding: 2px 8px; font-size: 0.55rem; }
+        .st-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .st-btn:disabled:hover { border-color: var(--border); background: var(--bg3); color: var(--text); }
+
+        .st-rows { display: flex; flex-direction: column; gap: 4px; }
+        .st-row {
+            display: flex; justify-content: space-between; align-items: flex-start;
+            gap: 8px; padding: 6px 10px; background: var(--bg3);
+            border-left: 3px solid var(--border); border-radius: var(--radius);
+            font-size: 0.6rem;
+        }
+        .st-row--success { border-left-color: var(--success); }
+        .st-row--warn { border-left-color: var(--warn); }
+        .st-row--danger { border-left-color: var(--danger); }
+        .st-row--accent { border-left-color: var(--accent); }
+        .st-row--dim { border-left-color: var(--text-dim); }
+        .st-row__body { flex: 1; min-width: 0; }
+        .st-row__title { color: var(--text); font-weight: bold; font-size: 0.65rem; }
+        .st-row__meta { color: var(--dim); font-size: 0.55rem; margin-top: 2px; }
+        .st-row__actions { display: flex; gap: 4px; flex-shrink: 0; }
+
+        .st-empty, .st-error {
+            padding: 40px 24px; text-align: center; border-radius: var(--radius);
+            border: 1px solid var(--border); background: var(--bg2); font-size: 0.65rem;
+        }
+        .st-empty { color: var(--dim); }
+        .st-error { color: var(--danger); }
+
+        .st-footer {
+            padding: 8px; background: var(--bg3); border-radius: var(--radius);
+            font-size: 0.55rem; color: var(--dim);
+            display: flex; align-items: flex-start; gap: 6px;
+        }
+
+        .st-progress {
+            width: 140px; height: 6px; background: var(--bg3); border-radius: 3px;
+            overflow: hidden;
+        }
+        .st-progress__fill { height: 100%; background: var(--accent); border-radius: 3px; }
+        .st-progress__fill--success { background: var(--success); }
+
+        .st-badge {
+            display: inline-block; font-size: 0.5rem; padding: 1px 6px;
+            border: 1px solid var(--border); border-radius: 8px; color: var(--dim);
+        }
+        .st-badge--pos { color: var(--success); border-color: var(--success); }
+        .st-badge--neg { color: var(--danger); border-color: var(--danger); }
+        .st-badge--warn { color: var(--warn); border-color: var(--warn); }
+        .st-badge--dim { color: var(--dim); border-color: var(--dim); }
+
+        .st-inline { display: flex; justify-content: space-between; padding: 2px 0;
+            border-bottom: 1px solid var(--border-light); font-size: 0.55rem;
+            align-items: center; gap: 8px; }
+        .st-inline__label { color: var(--dim); }
+        .st-inline__value { color: var(--text); }
+
         @media (max-width: 768px) {
             .topbar .burger-menu { display: inline-flex; }
             .topbar { padding: 6px 10px; gap: 6px; min-height: 42px; }
@@ -222,6 +363,12 @@
             .manager-subtab {
                 flex: 1 1 auto; min-width: 0; padding: 10px 14px; font-size: 0.72rem;
             }
+            .st-stats, .st-stats--2, .st-stats--3, .st-stats--5 {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .st-filters { grid-template-columns: 1fr; }
+            .st-header { flex-direction: column; align-items: stretch; }
+            .st-header__actions { justify-content: flex-end; }
         }
         @media (prefers-reduced-motion: reduce) {
             .manager-subtab, .loading { animation: none; transition: none; }
@@ -237,39 +384,52 @@
             <path d="M3 6h18M3 12h18M3 18h18"/>
         </svg>
     </button>
-    <div class="title" id="settlementManagerTitle"></div>
+    <div class="title">Settlement Manager</div>
     <div class="spacer"></div>
-    <button id="addLocationBtn" class="tb-btn primary" type="button"></button>
-    <button id="addSettlementBtn" class="tb-btn" type="button"></button>
     <div class="year-input">
         <label for="yearInput">Year</label>
         <input type="number" id="yearInput" min="1" step="1" />
         <button id="setYearBtn" class="tb-btn" type="button">Set</button>
     </div>
-    <button id="importBtn" class="tb-btn" type="button"></button>
-    <button id="exportBtn" class="tb-btn" type="button"></button>
+    <button id="refreshBtn" class="tb-btn" type="button">Refresh</button>
+    <button id="importBtn" class="tb-btn" type="button">Import</button>
+    <button id="exportBtn" class="tb-btn" type="button">Export</button>
     <input type="file" id="fileInput" accept=".json" style="display:none;" />
-    <div class="theme-toggle" role="group" aria-label="Theme">
-        <button class="tb-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
-            <span aria-hidden="true">◐</span>
-            <span id="themeName">Dark</span>
-        </button>
-        <ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden></ul>
-    </div>
 </div>
 
 <!-- WORLD APP -->
 <div class="world-app">
     <div class="locations-sidebar" id="locationsSidebar">
-        <div class="sidebar-header"><h3 id="sidebarTitle"></h3></div>
-        <div class="place-list" id="placeList">
-            <div class="loading" id="loadingText">Loading locations…</div>
+        <div class="sidebar-header"><h3>Settlements</h3></div>
+        <div class="place-list" id="settlementList">
+            <div class="loading">Loading settlements…</div>
         </div>
     </div>
     <div id="sidebarOverlay" class="sidebar-overlay"></div>
     <div class="main-panel">
-        <div class="tab-content-wrapper" id="panelContent">
-            <div class="empty-state" id="emptyStateText">Select a location from the sidebar</div>
+        <div class="manager-subtabs" id="settlementTabStrip" role="tablist">
+            <button class="manager-subtab" role="tab" data-tab="overview" type="button">Overview</button>
+            <button class="manager-subtab" role="tab" data-tab="economy" type="button">Economy</button>
+            <button class="manager-subtab" role="tab" data-tab="features" type="button">Features</button>
+            <button class="manager-subtab" role="tab" data-tab="roles" type="button">Roles</button>
+            <button class="manager-subtab" role="tab" data-tab="industry" type="button">Industry</button>
+            <button class="manager-subtab" role="tab" data-tab="residence" type="button">Residence</button>
+            <button class="manager-subtab" role="tab" data-tab="education" type="button">Education</button>
+            <button class="manager-subtab" role="tab" data-tab="religion" type="button">Religion</button>
+            <button class="manager-subtab" role="tab" data-tab="crime" type="button">Crime</button>
+            <button class="manager-subtab" role="tab" data-tab="history" type="button">History</button>
+        </div>
+        <div class="tab-content-wrapper" id="panelContent" role="tabpanel">
+            <div class="tab-pane" id="settlement-pane-overview"  data-tab-content="overview"></div>
+            <div class="tab-pane" id="settlement-pane-economy"   data-tab-content="economy"></div>
+            <div class="tab-pane" id="settlement-pane-features"  data-tab-content="features"></div>
+            <div class="tab-pane" id="settlement-pane-roles"     data-tab-content="roles"></div>
+            <div class="tab-pane" id="settlement-pane-industry"  data-tab-content="industry"></div>
+            <div class="tab-pane" id="settlement-pane-residence" data-tab-content="residence"></div>
+            <div class="tab-pane" id="settlement-pane-education" data-tab-content="education"></div>
+            <div class="tab-pane" id="settlement-pane-religion"  data-tab-content="religion"></div>
+            <div class="tab-pane" id="settlement-pane-crime"     data-tab-content="crime"></div>
+            <div class="tab-pane" id="settlement-pane-history"   data-tab-content="history"></div>
         </div>
     </div>
 </div>
@@ -323,8 +483,7 @@
             getPlaceSummaries: function () {
                 return (window.LocationQueries
                     && typeof window.LocationQueries.getPlaceSummaries === 'function')
-                    ? window.LocationQueries.getPlaceSummaries()
-                    : [];
+                    ? window.LocationQueries.getPlaceSummaries() : [];
             },
             getAllPlaces: function () {
                 return (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
@@ -416,13 +575,7 @@
 <script src="js/character/children-commands.js"></script>
 <script src="js/character/children-statistics.js"></script>
 
-<!-- BLOCK 17 — NAME SUBSYSTEM -->
-<script src="js/names/name-queries.js"></script>
-<script src="js/names/name-rules.js"></script>
-<script src="js/names/names-state.js"></script>
-<script src="js/names/name-commands.js"></script>
-<script src="js/names/name-system.js"></script>
-<script src="js/names/modals-name.js"></script>
+<!-- BLOCK 17 — (names moved to after BLOCK 21 — depends on CultureQueries) -->
 
 <!-- BLOCK 18 — RANK SUBSYSTEM -->
 <script src="js/ranks/rank-constants.js"></script>
@@ -474,6 +627,14 @@
 <script src="js/culture/culture-ui-list.js"></script>
 <script src="js/culture/modals-culture.js"></script>
 <script src="js/culture/culture-bootstrap.js"></script>
+
+<!-- BLOCK 17 (moved) — NAME SUBSYSTEM (requires CultureQueries) -->
+<script src="js/names/name-queries.js"></script>
+<script src="js/names/name-rules.js"></script>
+<script src="js/names/names-state.js"></script>
+<script src="js/names/name-commands.js"></script>
+<script src="js/names/name-system.js"></script>
+<script src="js/names/modals-name.js"></script>
 
 <!-- BLOCK 22 — RELATIONSHIP BASE -->
 <script src="js/relationships/relationship-types.js"></script>
@@ -546,14 +707,7 @@
 <script src="js/relationships/relationship-ui-metadata.js"></script>
 <script src="js/relationships/relationship-integrations.js"></script>
 
-<!-- BLOCK 27 — RELATIONSHIP MODALS -->
-<script src="js/relationships/modals-relationship.js"></script>
-<script src="js/relationships/modals-friendship.js"></script>
-
-<!-- BLOCK 28 — RELATIONSHIP BOOTSTRAP -->
-<script src="js/relationships/relationship-bootstrap.js"></script>
-
-<!-- BLOCK 29 — APPRENTICESHIP SUBSYSTEM -->
+<!-- BLOCK 27 — APPRENTICESHIP SUBSYSTEM (moved BEFORE relationship modals) -->
 <script src="js/apprenticeship/apprenticeship-constants.js"></script>
 <script src="js/apprenticeship/apprenticeship-rules.js"></script>
 <script src="js/apprenticeship/apprenticeship-queries.js"></script>
@@ -561,7 +715,15 @@
 <script src="js/apprenticeship/professional-knowledge-commands.js"></script>
 <script src="js/apprenticeship/modals-apprenticeship.js"></script>
 
+<!-- BLOCK 27b — RELATIONSHIP MODALS (requires ApprenticeshipCommands) -->
+<script src="js/relationships/modals-relationship.js"></script>
+<script src="js/relationships/modals-friendship.js"></script>
+
+<!-- BLOCK 28 — RELATIONSHIP BOOTSTRAP -->
+<script src="js/relationships/relationship-bootstrap.js"></script>
+
 <!-- BLOCK 30 — HOUSEHOLD AND RESIDENCE SUBSYSTEM -->
+<script src="js/households/household-tab-runtime.js"></script>
 <script src="js/households/household-constants.js"></script>
 <script src="js/households/household-rules.js"></script>
 <script src="js/households/household-view-models.js"></script>
@@ -607,20 +769,7 @@
 <script src="js/industry/modals-industry.js"></script>
 <script src="js/industry/industry-bootstrap.js"></script>
 
-<!-- BLOCK 32 — DISASTER SUBSYSTEM -->
-<script src="js/disaster/disaster-constants.js"></script>
-<script src="js/disaster/disaster-state.js"></script>
-<script src="js/disaster/disaster-queries.js"></script>
-<script src="js/disaster/disaster-damage.js"></script>
-<script src="js/disaster/disaster-commands.js"></script>
-<script src="js/disaster/disaster-view-models.js"></script>
-<script src="js/disaster/modals-disaster.js"></script>
-<script src="js/disaster/disaster-ui-stats.js"></script>
-<script src="js/disaster/disaster-bootstrap.js"></script>
-
-<!-- BLOCK 33 — (intentionally empty) -->
-
-<!-- BLOCK 34 — LOCATION SUBSYSTEM -->
+<!-- BLOCK 34 — LOCATION SUBSYSTEM (moved BEFORE disaster and crime) -->
 <script src="js/location/location-state.js"></script>
 <script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-commands.js"></script>
@@ -634,6 +783,17 @@
 <script src="js/location/modals-location.js"></script>
 <script src="js/location/modals-moves.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
+
+<!-- BLOCK 32 — DISASTER SUBSYSTEM (requires LocationQueries) -->
+<script src="js/disaster/disaster-constants.js"></script>
+<script src="js/disaster/disaster-state.js"></script>
+<script src="js/disaster/disaster-queries.js"></script>
+<script src="js/disaster/disaster-damage.js"></script>
+<script src="js/disaster/disaster-commands.js"></script>
+<script src="js/disaster/disaster-view-models.js"></script>
+<script src="js/disaster/modals-disaster.js"></script>
+<script src="js/disaster/disaster-ui-stats.js"></script>
+<script src="js/disaster/disaster-bootstrap.js"></script>
 
 <!-- BLOCK 35 — SETTLEMENT SUBSYSTEM -->
 <script src="js/settlement/settlement-fiscal-definitions.js"></script>
@@ -692,7 +852,7 @@
 <script src="js/education/education-ui-list.js"></script>
 <script src="js/education/modals-education.js"></script>
 
-<!-- BLOCK 37 — CRIME SUBSYSTEM -->
+<!-- BLOCK 37 — CRIME SUBSYSTEM (requires LocationQueries + RelationshipQueries) -->
 <script src="js/crime/crime-constants.js"></script>
 <script src="js/crime/crime-state.js"></script>
 <script src="js/crime/crime-law-integration.js"></script>
@@ -731,12 +891,19 @@
 <script src="js/character/character-system.js"></script>
 
 <!-- BLOCK 40 — SETTLEMENT UI + TAB RENDERERS -->
-<script src="js/settlement/settlement-tabs.js"></script>
+
+<!-- Shared helper used by every settlement tab. -->
+<script src="js/tabs/settlement-tab-helpers.js"></script>
+
+<!-- Settlement-level list renderer (not a tab). -->
 <script src="js/settlement/settlement-ui-list.js"></script>
+
+<!-- Settlement modals (unchanged). -->
 <script src="js/settlement/modals-settlement-core.js"></script>
 <script src="js/settlement/modals-settlement-economy.js"></script>
 <script src="js/settlement/modals-settlement-roles.js"></script>
 
+<!-- Foreign tab files (unchanged, 404s removed). -->
 <script src="js/tabs/apprenticeship-tab.js"></script>
 <script src="js/tabs/culture-appearance-tab.js"></script>
 <script src="js/tabs/culture-characters-tab.js"></script>
@@ -755,7 +922,6 @@
 <script src="js/tabs/household-holdings-tab.js"></script>
 <script src="js/tabs/household-members-tab.js"></script>
 <script src="js/tabs/household-overview-tab.js"></script>
-<script src="js/tabs/location-tab.js"></script>
 <script src="js/tabs/location-type-manager-tab.js"></script>
 <script src="js/tabs/rank-manager-tab.js"></script>
 <script src="js/tabs/religion-details-tab.js"></script>
@@ -763,19 +929,23 @@
 <script src="js/tabs/religion-gods-tab.js"></script>
 <script src="js/tabs/religion-laws-tab.js"></script>
 <script src="js/tabs/religion-places-tab.js"></script>
-<script src="js/tabs/roles-analytics-tab.js"></script>
-<script src="js/tabs/roles-tab.js"></script>
 
-<script src="js/tabs/settlement-economy-tab.js"></script>
-<script src="js/tabs/settlement-education-tab.js"></script>
-<script src="js/tabs/settlement-features-tab.js"></script>
-<script src="js/tabs/settlement-history-tab.js"></script>
-<script src="js/tabs/settlement-industry-tab.js"></script>
+<!-- SETTLEMENT TAB FILES — each self-registers with TabManager('settlement', <tabid>, fn). -->
 <script src="js/tabs/settlement-overview-tab.js"></script>
-<script src="js/tabs/settlement-religion-tab.js"></script>
-<script src="js/tabs/settlement-residence-tab.js"></script>
+<script src="js/tabs/settlement-economy-tab.js"></script>
+<script src="js/tabs/settlement-features-tab.js"></script>
 <script src="js/tabs/settlement-roles-tab.js"></script>
+<script src="js/tabs/settlement-industry-tab.js"></script>
+<script src="js/tabs/settlement-residence-tab.js"></script>
+<script src="js/tabs/settlement-education-tab.js"></script>
+<script src="js/tabs/settlement-religion-tab.js"></script>
 <script src="js/tabs/settlement-crime-tab.js"></script>
+<script src="js/tabs/settlement-history-tab.js"></script>
+
+<!-- SETTLEMENT MANAGER BOOTSTRAP — MUST BE LAST. Configures TabManager, -->
+<!-- wires the shell, renders the initial tab. Every settlement tab file -->
+<!-- above must have self-registered before this runs. -->
+<script src="js/settlement/settlement-manager-bootstrap.js"></script>
 
 <!-- BLOCK 41 — OPTIONAL STATE FACADE -->
 <script src="js/core/census-state.js"></script>
@@ -787,6 +957,17 @@
 <script>
     (function () {
         'use strict';
+
+        // FIX ORDER:
+        //   - Name cascade: BLOCK 17 moved after BLOCK 21 (culture).
+        //   - Relationship modal cascade: BLOCK 27 (apprenticeship)
+        //     moved before BLOCK 27b (relationship modals).
+        //   - Disaster cascade: BLOCK 34 (location) moved before
+        //     BLOCK 32 (disaster).
+        //   - Crime cascade: BLOCK 37 already after location (moved).
+        //   - Household tab runtime: added at top of BLOCK 30.
+        //   - Three 404 tabs removed from BLOCK 40.
+
         try { if (window.LocationBootstrap && window.LocationBootstrap.init) window.LocationBootstrap.init(); } catch (e) { console.error('LocationBootstrap:', e); }
         try { if (window.ReligionBootstrap && window.ReligionBootstrap.init) window.ReligionBootstrap.init(); } catch (e) { console.error('ReligionBootstrap:', e); }
         try { if (window.GovernmentBootstrap && window.GovernmentBootstrap.init) window.GovernmentBootstrap.init(); } catch (e) { console.error('GovernmentBootstrap:', e); }
@@ -796,6 +977,7 @@
         try { if (window.IndustryBootstrap && window.IndustryBootstrap.init) window.IndustryBootstrap.init(); } catch (e) { console.error('IndustryBootstrap:', e); }
         try { if (window.HouseholdBootstrap && window.HouseholdBootstrap.init) window.HouseholdBootstrap.init(); } catch (e) { console.error('HouseholdBootstrap:', e); }
         try { if (window.DisasterBootstrap && window.DisasterBootstrap.init) window.DisasterBootstrap.init(); } catch (e) { console.error('DisasterBootstrap:', e); }
+        try { if (window.SettlementManagerBootstrap && window.SettlementManagerBootstrap.init) window.SettlementManagerBootstrap.init(); } catch (e) { console.error('SettlementManagerBootstrap:', e); }
     })();
 </script>
 
