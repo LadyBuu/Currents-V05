@@ -8,46 +8,83 @@
  * LOCATION: js/tabs/character-family-tab.js
  *
  * The Family tab of the Character Manager. Shows every family
- * relationship the current tree models:
+ * relationship the current tree models, and offers write affordances
+ * for editing them. All mutations delegate to FamilyAdditionsModals
+ * (defined in modals-family-additions.js) or to FamilyCommands directly
+ * for the simple removals.
  *
- *   Parents (biological / adoptive / guardian)
- *   Children (biological / adopted / foster / wards)
- *   Siblings (full / half-mother / half-father / step / adoptive)
- *   Grandchildren (biological, one generation)
- *   Surrogacy children (intended parent)
- *   Adoptive parents / guardians / foster parents (as child)
+ * SECTIONS (each collapsible, all default expanded):
+ *   1. Parents             Biological / Adoptive / Guardian groups.
+ *                          Actions: Set Mother, Set Father (per role,
+ *                          with replace-prompt), Remove (per edge).
+ *   2. Children            Biological / Adopted / Foster / Wards groups.
+ *                          Actions: Add Biological Child, Add Adopted
+ *                          Child, Add Foster, Add Ward, Generate New
+ *                          Baby (biological, mixed-sex pairs only),
+ *                          per-child Remove. Each child row carries a
+ *                          coverage circle (solid = both parents,
+ *                          half = one parent, outline = adopted).
+ *   3. Siblings            Full / half-mother / half-father / step /
+ *                          adoptive groups.
+ *                          Actions: Add Biological Sibling, Add
+ *                          Adopted Sibling.
+ *   4. Foster Parents      (this character as the child, fostering)
+ *                          Read-only — records are created by the
+ *                          foster parent's Family tab or by
+ *                          FamilyAdditionsModals.
+ *   5. Guardians           (this character as the ward)
+ *                          Read-only, same rationale.
+ *   6. Grandchildren       (biological, one generation) Read-only.
+ *   7. Surrogacy Children  (intended parent) Read-only.
+ *   8. Adoptive Parents    (this character as the adopted child)
+ *                          Read-only.
+ *   9. Orphan status       Shown as a badge in the header.
  *
- * All data comes from CharacterViewModels.buildFamilyModel. The tab
- * does not call FamilyQueries or ChildrenQueries directly.
+ * WRITE AFFORDANCES SUMMARY
  *
- * WRITE AFFORDANCES
+ *   Set mother               openSetParentModal(characterId, 'mother', cb)
+ *   Set father               openSetParentModal(characterId, 'father', cb)
+ *   Add biological child     openAddExistingChildModal(characterId,
+ *                                                      'biological', cb)
+ *   Add adopted child        openAddExistingChildModal(characterId,
+ *                                                      'adopted', cb)
+ *   Add foster child         openAddFosterOrWardModal(characterId,
+ *                                                      'foster', cb)
+ *   Add ward                 openAddFosterOrWardModal(characterId,
+ *                                                      'guardianship', cb)
+ *   Generate new baby        openGenerateBabyModal(characterId, cb)
+ *   Add biological sibling   openAddExistingSiblingModal(childId, cb)
+ *   Add adopted sibling      openAddAdoptedSiblingModal(childId, cb)
+ *   Remove child edge        FamilyCommands.removeParent(edgeId, opts)
+ *   End adoption             FamilyCommands.removeAdoption(childId,
+ *                                                            adopterId)
  *
- *   The Family tab offers a small, deliberate set of write actions,
- *   all of which route through the existing family commands:
+ *   All "add" modals are reached via FamilyAdditionsModals (or its flat
+ *   aliases). The tab does not call the individual commands for the
+ *   "add" flows; those require multi-step transactions and inline
+ *   pickers that belong in the modal file.
  *
- *     - Remove child            FamilyCommands.removeParent(edgeId)
- *                               (see note below: "Remove" is the
- *                               tab-level label for the command
- *                               that ends a parent edge)
- *     - End adoption            FamilyCommands.removeAdoption(childId,
- *                                                      adopterId)
- *     - View target             sidebar re-selection (compact row link)
+ *   The two "remove" flows (child edge, adoption) are single-command
+ *   writes with no form. The tab calls FamilyCommands directly and
+ *   uses window.confirmDialog for confirmation. This matches the
+ *   existing pattern in this file and avoids a dedicated remove-modal
+ *   for a one-line write.
  *
- *   It deliberately does NOT offer:
+ * COVERAGE CIRCLE
  *
- *     - Setting a biological parent from this tab. Biological parent
- *       edges are set through the character edit modal (which owns
- *       parent pickers and cycle validation via FamilyRules). The tab
- *       would need to duplicate that flow; it does not.
- *     - Creating adoptions. The adoption flow is a two-part
- *       transaction (legal parent edge + metadata record) and lives
- *       in the children-adoption modal. The tab links to it via the
- *       "Add adopted child" button, which opens the adoption modal
- *       (or a notice explaining it is not loaded).
- *     - Merging or reclassifying edges. That is a domain-level
- *       concern with cycle detection and consent rules; the tab
- *       surfaces the current classification and defers edits to
- *       FamilyCommands directly via a future dedicated modal.
+ *   Biological children carry a small dot before the name indicating
+ *   how many of the child's biological parents are recorded:
+ *
+ *     solid blue      both mother and father present
+ *     half-left blue  only a mother present
+ *     half-right blue only a father present
+ *     outline grey    adopted (no biological coverage expectation)
+ *     dashed grey     no parents recorded at all
+ *
+ *   The classification is computed by the view model
+ *   (CharacterViewModels._classifyChildCoverage, exposed via the
+ *   `parentCoverage` field on each child entry). The tab renders it;
+ *   it does not re-derive.
  *
  * RENDERER CONTRACT (from CharacterManagerBootstrap):
  *   fn(container, context)
@@ -56,58 +93,73 @@
  *
  * DEPENDENCIES (required at load):
  *   - TabManager              (self-registration)
- *   - formatting.js           (escapeHtml, formatYear, formatCount,
- *                              formatYearRange)
+ *   - formatting.js           (escapeHtml, formatYear, formatCount)
  *   - icons.js                (Icons)
  *   - CharacterUIState        (collapsed state)
  *   - CharacterViewModels     (buildFamilyModel)
+ *   - FamilyCommands          (removeParent, removeAdoption —
+ *                              the direct-command writes)
+ *   - FamilyQueries           (getEdgesForChild — edge lookup
+ *                              for removal)
  *
  * DEPENDENCIES (optional, guarded at call time):
- *   - window.FamilyCommands.removeParent         Remove child
- *   - window.FamilyCommands.removeAdoption       End adoption
- *   - window.openCharacterSelector                (unused this pass)
- *   - window.openCreateAdoptionModal              Add adopted child
- *                                                 (delegates to
- *                                                  the children-adoption
- *                                                  modal when loaded)
- *   - window.showToast                            error surfacing
- *   - window.confirmDialog                        Remove confirmation
- *   - window.CharacterManagerBootstrap.renderActive
- *                                                 post-mutation refresh
+ *   - window.openSetParentModal              Set Mother / Set Father
+ *   - window.openAddExistingChildModal       Add bio / adopted child
+ *   - window.openGenerateBabyModal           Generate new baby
+ *   - window.openAddExistingSiblingModal     Add biological sibling
+ *   - window.openAddAdoptedSiblingModal      Add adopted sibling
+ *   - window.openAddFosterOrWardModal        Add foster / ward
+ *   - window.openCreateAdoptionModal         (not used — kept for
+ *                                              completeness; the tab's
+ *                                              Add Adopted Child goes
+ *                                              through
+ *                                              openAddExistingChildModal)
+ *   - window.showToast                       error surfacing
+ *   - window.confirmDialog                   Removal confirmation
+ *   - window.CharacterManagerBootstrap.renderActive  post-mutation refresh
  *
  * TIME CONTRACT: uses window.getCurrentYear where needed.
  *
  * ICON POLICY: SVG from icons.js. No emojis. No literal Unicode glyphs
- *              in output except section-toggle markers (▶ / ▼) and the
- *              typographic dagger (†) rendered by compactRow.
+ *              in the output except section-toggle markers (▶ / ▼) and
+ *              the typographic dagger (†) rendered by compactRow.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Initial revision.
- *     - Six collapsible sections:
- *         Parents (bio / adoptive / guardian, grouped)
- *         Children (bio / adopted / foster / wards, grouped)
- *         Siblings (full / half-mother / half-father / step / adoptive)
- *         Grandchildren (biological, one generation)
- *         Surrogacy children
- *         Adoptive parents / guardians (as child)
- *     - Every section renders one compact row per family member via
- *       CharacterViewModels.compactRow, plus a family-classification
- *       chip ("Biological mother", "Half-sibling (same mother)", etc.).
- *     - Orphan status shown as a small badge in the tab header.
- *     - "Remove" affordances on children and adopted children use
- *       FamilyCommands.removeParent / removeAdoption. Parent edges
- *       have no Remove here (the parent edge set is deferred to the
- *       edit modal); a small note explains why.
- *     - "Add adopted child" opens openCreateAdoptionModal if loaded,
- *       or a toast otherwise. Add biological child is not offered
- *       from this tab (that is the edit modal / children-birth flow).
- *     - Sibling classification icons: solid circle (full), half-left
- *       (half-mother), half-right (half-father), outline (adoptive),
- *       outline-dashed via CSS (step). The old Love/Family tabs used
- *       exactly this visual language; the new tab preserves it via
- *       Icons.CIRCLE / CIRCLE_HALF_LEFT / CIRCLE_HALF_RIGHT /
- *       CIRCLE_OUTLINE.
+ *   Current revision (family-tab P2):
+ *     - Family tab is now WRITEABLE. Added nine write affordances:
+ *
+ *         Set Mother / Set Father       (per role, with replace prompt)
+ *         Add Biological Child          (picks existing character)
+ *         Add Adopted Child             (picks existing character)
+ *         Add Foster Child              (picks existing character)
+ *         Add Ward                      (picks existing character)
+ *         Generate New Baby             (mixed-sex pairs only)
+ *         Add Biological Sibling        (shares some/all bio parents)
+ *         Add Adopted Sibling           (shares some/all adopting
+ *                                        parents)
+ *
+ *       All delegating to modals-family-additions.js. The tab itself
+ *       calls FamilyCommands directly only for the two removals
+ *       (removeParent, removeAdoption).
+ *
+ *     - Added Foster Parents and Guardians sections (this character
+ *       as the child). Read-only; the creating side is the other
+ *       character's Foster/Ward sections in their own Family tab.
+ *
+ *     - Added coverage circle on biological children (solid = both
+ *       parents, half = one parent, outline = adopted, dashed =
+ *       unknown). The classification is per-child `parentCoverage`
+ *       computed by CharacterViewModels._classifyChildCoverage.
+ *
+ *     - The "Add adopted child" button previously no-op'd; it is
+ *       replaced by the real "Add Adopted Child" affordance going
+ *       through openAddExistingChildModal(characterId, 'adopted', cb).
+ *
+ *     - Header WRITE AFFORDANCES SUMMARY section added.
+ *     - Header COVERAGE CIRCLE section added.
+ *   Previous revision:
+ *     - Initial six-section read-mostly tab.
  * =============================================================================
  */
 
@@ -122,12 +174,14 @@
     var SCOPE  = 'character';
 
     var SECTIONS = [
-        { key: 'parents',       label: 'Parents',                       icon: 'FAMILY_TREE' },
-        { key: 'children',      label: 'Children',                      icon: 'PERSON' },
-        { key: 'siblings',      label: 'Siblings',                      icon: 'FAMILY_TREE' },
-        { key: 'grandchildren', label: 'Grandchildren',                 icon: 'PERSON' },
-        { key: 'surrogacy',     label: 'Surrogacy Children',            icon: 'STORK' },
-        { key: 'adoptiveParents', label: 'Adoptive Parents / Guardians', icon: 'SHIELD' }
+        { key: 'parents',         label: 'Parents',                       icon: 'FAMILY_TREE' },
+        { key: 'children',        label: 'Children',                      icon: 'PERSON' },
+        { key: 'siblings',        label: 'Siblings',                      icon: 'FAMILY_TREE' },
+        { key: 'fosterAsChild',   label: 'Foster Parents',                icon: 'SHIELD' },
+        { key: 'wardAsChild',     label: 'Guardians',                     icon: 'SHIELD' },
+        { key: 'grandchildren',   label: 'Grandchildren',                 icon: 'PERSON' },
+        { key: 'surrogacy',       label: 'Surrogacy Children',            icon: 'STORK' },
+        { key: 'adoptiveParents', label: 'Adoptive Parents',              icon: 'SHIELD' }
     ];
 
     // =========================================================================
@@ -196,6 +250,10 @@
         ui.setCollapsed(TAB_ID, key, collapsed);
     }
 
+    function _modalAvailable(fnName) {
+        return window[fnName] && typeof window[fnName] === 'function';
+    }
+
     // =========================================================================
     // 2. SECTION SHELL
     // =========================================================================
@@ -238,12 +296,91 @@
         return '<div class="character-tab-unavailable">' + _esc(message) + '</div>';
     }
 
+    function _actionBtn(action, label, opts) {
+        opts = opts || {};
+        var disabledAttr = opts.disabled
+            ? ' disabled title="' + _esc(opts.disabledTitle || 'Unavailable') + '"'
+            : '';
+        var cls = 'character-tab-btn-small' + (opts.danger ? ' danger' : '')
+            + (opts.primary ? ' primary' : '');
+        var dataAttrs = '';
+        if (opts.data) {
+            for (var k in opts.data) {
+                if (!Object.prototype.hasOwnProperty.call(opts.data, k)) continue;
+                dataAttrs += ' data-' + k + '="' + _esc(opts.data[k]) + '"';
+            }
+        }
+        return '<button type="button" class="' + cls + '" ' +
+            'data-action="' + _esc(action) + '"' + dataAttrs + disabledAttr + '>' +
+            label +
+        '</button>';
+    }
+
+    function _bigActionBtn(action, label, opts) {
+        opts = opts || {};
+        var disabledAttr = opts.disabled
+            ? ' disabled title="' + _esc(opts.disabledTitle || 'Unavailable') + '"'
+            : '';
+        var cls = 'character-tab-btn' + (opts.danger ? ' danger' : '')
+            + (opts.primary ? ' primary' : '');
+        var dataAttrs = '';
+        if (opts.data) {
+            for (var k in opts.data) {
+                if (!Object.prototype.hasOwnProperty.call(opts.data, k)) continue;
+                dataAttrs += ' data-' + k + '="' + _esc(opts.data[k]) + '"';
+            }
+        }
+        return '<button type="button" class="' + cls + '" ' +
+            'data-action="' + _esc(action) + '"' + dataAttrs + disabledAttr + '>' +
+            label +
+        '</button>';
+    }
+
     // =========================================================================
-    // 3. MEMBER ROW RENDERING
+    // 3. COVERAGE CIRCLE
     // =========================================================================
     //
-    // Each member row is a compact row (from CharacterViewModels) plus a
-    // family-classification chip and (optionally) actions.
+    // Renders the parent-coverage indicator for a child entry. The
+    // classification lives on the entry as `parentCoverage`; this
+    // function only maps it to a CSS class.
+    //
+    //   both         solid (two-parent coverage)
+    //   mother-only  half-left
+    //   father-only  half-right
+    //   adopted      outline
+    //   unknown      dashed outline
+
+    function _coverageCircleClass(coverage) {
+        if (coverage === 'both') return 'child-both-parents';
+        if (coverage === 'mother-only') return 'child-mother-only';
+        if (coverage === 'father-only') return 'child-father-only';
+        if (coverage === 'adopted') return 'child-adopted';
+        return 'child-unknown';
+    }
+
+    function _coverageTitle(coverage) {
+        if (coverage === 'both') return 'Both parents recorded';
+        if (coverage === 'mother-only') return 'Only mother recorded';
+        if (coverage === 'father-only') return 'Only father recorded';
+        if (coverage === 'adopted') return 'Adopted';
+        return 'Parent coverage unknown';
+    }
+
+    function _coverageCircleHtml(coverage) {
+        var cls = _coverageCircleClass(coverage);
+        return '<span class="character-family-coverage-dot ' + cls + '" ' +
+            'title="' + _esc(_coverageTitle(coverage)) + '"></span>';
+    }
+
+    // =========================================================================
+    // 4. MEMBER ROW RENDERING
+    // =========================================================================
+    //
+    // Each family member row is a compact character reference plus a
+    // role chip and (optionally) per-row action buttons.
+    //
+    // The `parentCoverage` field is present only on children; when
+    // present, a coverage circle is rendered before the compact row.
 
     function _chipHtml(relClass, relType, extra) {
         if (!_hasId(relType)) return '';
@@ -286,6 +423,11 @@
             '</span>';
         }
 
+        var coverageHtml = '';
+        if (options.showCoverage && member.parentCoverage) {
+            coverageHtml = _coverageCircleHtml(member.parentCoverage);
+        }
+
         var actions = '';
         if (options.showActions) {
             actions = _memberActionsHtml(member, options.actionsKind);
@@ -296,6 +438,7 @@
                 (member.isDeceased ? ' is-deceased' : '') +
                 '" data-member-id="' + _esc(member.id) + '">' +
                 '<div class="character-family-row__main">' +
+                    coverageHtml +
                     siblingIconHtml +
                     compact +
                     '<div class="character-family-row__chips">' +
@@ -339,22 +482,22 @@
     }
 
     // =========================================================================
-    // 4. SECTION BODIES
+    // 5. SECTION BODIES
     // =========================================================================
 
-    function _bodyParents(model) {
+    // ---------- 5a. Parents ----------
+
+    function _bodyParents(model, characterId) {
         if (!model.parents) {
             var err = model.errors && model.errors.parents
                 ? model.errors.parents : 'unknown error';
             return _unavailable('Parents could not be loaded: ' + err);
         }
         var p = model.parents;
-        if (!p.all || p.all.length === 0) {
-            return _empty('No parents recorded. Biological parents are set in the Edit Character modal.');
-        }
 
         var html = '';
 
+        // Grouped parents.
         if (p.biological && p.biological.length > 0) {
             html += '<div class="character-tab-subhead">Biological</div>';
             for (var i = 0; i < p.biological.length; i++) {
@@ -376,35 +519,72 @@
             }
         }
 
+        if (!p.all || p.all.length === 0) {
+            html += _empty('No parents recorded.');
+        }
+
+        // Action buttons: Set Mother / Set Father.
+        var motherCurrent = p.mother ? p.mother.name : null;
+        var fatherCurrent = p.father ? p.father.name : null;
+
+        var setMotherDisabled = !_modalAvailable('openSetParentModal');
+        var setFatherDisabled = !_modalAvailable('openSetParentModal');
+
+        html += '<div class="character-tab-actions">' +
+            _bigActionBtn('set-mother',
+                motherCurrent ? 'Change Mother' : '+ Set Mother', {
+                primary: !motherCurrent,
+                disabled: setMotherDisabled,
+                disabledTitle: setMotherDisabled
+                    ? 'Set-parent modal is not available'
+                    : null,
+                data: { role: 'mother' }
+            }) +
+            _bigActionBtn('set-father',
+                fatherCurrent ? 'Change Father' : '+ Set Father', {
+                primary: !fatherCurrent,
+                disabled: setFatherDisabled,
+                disabledTitle: setFatherDisabled
+                    ? 'Set-parent modal is not available'
+                    : null,
+                data: { role: 'father' }
+            }) +
+        '</div>';
+
         html += '<div class="character-family-note">' +
-            'Biological parents are set via the character edit modal. ' +
-            'Adoption and guardianship are recorded via the child\'s ' +
-            'adoption record (see the Children section when editing the ' +
-            'child).' +
+            'Set Mother and Set Father replace the biological parent ' +
+            'at that role. You will be prompted to confirm a ' +
+            'replacement. Adoptive and guardian parents are recorded ' +
+            'via the adopted-child and foster/ward flows on the ' +
+            'other character\'s Family tab.' +
         '</div>';
 
         return html;
     }
 
-    function _bodyChildren(model) {
+    // ---------- 5b. Children ----------
+
+    function _bodyChildren(model, characterId) {
         if (!model.children) {
             var err = model.errors && model.errors.children
                 ? model.errors.children : 'unknown error';
             return _unavailable('Children could not be loaded: ' + err);
         }
         var c = model.children;
-        if (!c.all || c.all.length === 0) {
-            return _empty('No children recorded.');
-        }
 
         var html = '';
+
+        if (!c.all || c.all.length === 0) {
+            html += _empty('No children recorded.');
+        }
 
         if (c.biological && c.biological.length > 0) {
             html += '<div class="character-tab-subhead">Biological</div>';
             for (var i = 0; i < c.biological.length; i++) {
                 html += _memberRowHtml(c.biological[i], {
                     showActions: true,
-                    actionsKind: 'child'
+                    actionsKind: 'child',
+                    showCoverage: true
                 });
             }
         }
@@ -416,6 +596,7 @@
                 html += _memberRowHtml(c.adopted[j], {
                     showActions: true,
                     actionsKind: 'adoption',
+                    showCoverage: true,
                     extra: (typeof year === 'number') ? 'adopted ' + _year(year) : ''
                 });
             }
@@ -445,30 +626,71 @@
             }
         }
 
-        html += '<div class="character-family-actions character-family-actions--footer">';
-        html += '<button type="button" class="character-tab-btn" ' +
-            'data-action="add-adopted-child"' +
-            ((window.openCreateAdoptionModal
-                && typeof window.openCreateAdoptionModal === 'function')
-                ? '' : ' disabled title="Adoption modal is not loaded"') +
-            '>+ Add adopted child</button>';
-        html += '</div>';
+        // Action buttons: Add Biological, Add Adopted, Add Foster, Add
+        // Ward, Generate Baby.
+        var addBioDisabled = !_modalAvailable('openAddExistingChildModal');
+        var addAdoptedDisabled = !_modalAvailable('openAddExistingChildModal');
+        var addFosterDisabled = !_modalAvailable('openAddFosterOrWardModal');
+        var addWardDisabled = !_modalAvailable('openAddFosterOrWardModal');
+        var genBabyDisabled = !_modalAvailable('openGenerateBabyModal');
+
+        html += '<div class="character-tab-actions">' +
+            _bigActionBtn('add-biological-child', '+ Add Biological Child', {
+                primary: true,
+                disabled: addBioDisabled,
+                disabledTitle: addBioDisabled
+                    ? 'Add-child modal is not available'
+                    : null
+            }) +
+            _bigActionBtn('add-adopted-child', '+ Add Adopted Child', {
+                disabled: addAdoptedDisabled,
+                disabledTitle: addAdoptedDisabled
+                    ? 'Add-child modal is not available'
+                    : null
+            }) +
+            _bigActionBtn('add-foster-child', '+ Add Foster Child', {
+                disabled: addFosterDisabled,
+                disabledTitle: addFosterDisabled
+                    ? 'Add-foster/ward modal is not available'
+                    : null
+            }) +
+            _bigActionBtn('add-ward', '+ Add Ward', {
+                disabled: addWardDisabled,
+                disabledTitle: addWardDisabled
+                    ? 'Add-foster/ward modal is not available'
+                    : null
+            }) +
+            _bigActionBtn('generate-baby', 'Generate New Baby', {
+                disabled: genBabyDisabled,
+                disabledTitle: genBabyDisabled
+                    ? 'Generate-baby modal is not available'
+                    : null
+            }) +
+        '</div>';
+
+        html += '<div class="character-family-note">' +
+            'Add Biological / Adopted / Foster / Ward add an ' +
+            'existing character as a child. Generate New Baby ' +
+            'creates a brand-new biological child of this character ' +
+            'and a chosen partner. The coverage dot before a child\'s ' +
+            'name indicates whether both parents are recorded (solid), ' +
+            'one parent (half), or the child is adopted (outline).' +
+        '</div>';
 
         return html;
     }
 
-    function _bodySiblings(model) {
+    // ---------- 5c. Siblings ----------
+
+    function _bodySiblings(model, characterId) {
         if (!model.siblings) {
             var err = model.errors && model.errors.siblings
                 ? model.errors.siblings : 'unknown error';
             return _unavailable('Siblings could not be loaded: ' + err);
         }
         var s = model.siblings;
-        if (!s.all || s.all.length === 0) {
-            return _empty('No siblings recorded.');
-        }
-
         var counts = s.counts || {};
+
         var legend = '' +
             '<div class="character-family-sib-legend">' +
                 '<span class="character-family-sib-legend__item">' +
@@ -496,11 +718,82 @@
             '</div>';
 
         var html = legend;
-        for (var i = 0; i < s.all.length; i++) {
-            html += _memberRowHtml(s.all[i], { siblingIcon: true });
+
+        if (!s.all || s.all.length === 0) {
+            html += _empty('No siblings recorded.');
+        } else {
+            for (var i = 0; i < s.all.length; i++) {
+                html += _memberRowHtml(s.all[i], { siblingIcon: true });
+            }
+        }
+
+        // Action buttons: Add Biological Sibling, Add Adopted Sibling.
+        var addBioSibDisabled = !_modalAvailable('openAddExistingSiblingModal');
+        var addAdoptedSibDisabled = !_modalAvailable('openAddAdoptedSiblingModal');
+
+        html += '<div class="character-tab-actions">' +
+            _bigActionBtn('add-biological-sibling', '+ Add Biological Sibling', {
+                primary: true,
+                disabled: addBioSibDisabled,
+                disabledTitle: addBioSibDisabled
+                    ? 'Add-sibling modal is not available'
+                    : null
+            }) +
+            _bigActionBtn('add-adopted-sibling', '+ Add Adopted Sibling', {
+                disabled: addAdoptedSibDisabled,
+                disabledTitle: addAdoptedSibDisabled
+                    ? 'Add-sibling modal is not available'
+                    : null
+            }) +
+        '</div>';
+
+        html += '<div class="character-family-note">' +
+            'Add Biological Sibling picks an existing character and ' +
+            'shares some or all of this character\'s biological ' +
+            'parents with them. Add Adopted Sibling does the same ' +
+            'for this character\'s adopting parents.' +
+        '</div>';
+
+        return html;
+    }
+
+    // ---------- 5d. Foster Parents (this character as the child) ----------
+
+    function _bodyFosterAsChild(model) {
+        var entries = Array.isArray(model.fosterAsChild)
+            ? model.fosterAsChild : [];
+        if (entries.length === 0) {
+            return _empty('Not currently in foster care.');
+        }
+        var html = '';
+        for (var i = 0; i < entries.length; i++) {
+            var year = entries[i].adoptionYear;
+            html += _memberRowHtml(entries[i], {
+                extra: (typeof year === 'number') ? 'since ' + _year(year) : ''
+            });
         }
         return html;
     }
+
+    // ---------- 5e. Guardians (this character as the ward) ----------
+
+    function _bodyWardAsChild(model) {
+        var entries = Array.isArray(model.wardAsChild)
+            ? model.wardAsChild : [];
+        if (entries.length === 0) {
+            return _empty('No guardians recorded.');
+        }
+        var html = '';
+        for (var i = 0; i < entries.length; i++) {
+            var year = entries[i].adoptionYear;
+            html += _memberRowHtml(entries[i], {
+                extra: (typeof year === 'number') ? 'since ' + _year(year) : ''
+            });
+        }
+        return html;
+    }
+
+    // ---------- 5f. Grandchildren ----------
 
     function _bodyGrandchildren(model) {
         if (!model.grandchildren) {
@@ -518,6 +811,8 @@
         return html;
     }
 
+    // ---------- 5g. Surrogacy Children ----------
+
     function _bodySurrogacy(model) {
         if (!model.surrogacyChildren) {
             var err = model.errors && model.errors.surrogacyChildren
@@ -534,6 +829,8 @@
         return html;
     }
 
+    // ---------- 5h. Adoptive Parents (this character as the adopted child) ----------
+
     function _bodyAdoptiveParents(model) {
         if (!model.adoptedParents) {
             var err = model.errors && model.errors.adoptedParents
@@ -542,14 +839,12 @@
         }
         var a = model.adoptedParents;
         if (!a.all || a.all.length === 0) {
-            return _empty('No adoptive parents or guardians recorded.');
+            return _empty('No adoptive parents recorded.');
         }
         var html = '';
         for (var i = 0; i < a.all.length; i++) {
             var year = a.all[i].adoptionYear;
             html += _memberRowHtml(a.all[i], {
-                showActions: true,
-                actionsKind: 'adoption',
                 extra: (typeof year === 'number')
                     ? 'since ' + _year(year)
                     : ''
@@ -559,7 +854,7 @@
     }
 
     // =========================================================================
-    // 5. RENDER
+    // 6. RENDER
     // =========================================================================
 
     function renderFamilyTab(container, context) {
@@ -617,36 +912,49 @@
             ? model.siblings.all.length
             : 0;
 
+        var fosterAsChildCount = Array.isArray(model.fosterAsChild)
+            ? model.fosterAsChild.length : 0;
+
+        var wardAsChildCount = Array.isArray(model.wardAsChild)
+            ? model.wardAsChild.length : 0;
+
         var grandchildrenCount = model.grandchildren
-            ? model.grandchildren.length
-            : 0;
+            ? model.grandchildren.length : 0;
 
         var surrogacyCount = model.surrogacyChildren
-            ? model.surrogacyChildren.length
-            : 0;
+            ? model.surrogacyChildren.length : 0;
 
         var adoptiveParentsCount = model.adoptedParents && model.adoptedParents.all
-            ? model.adoptedParents.all.length
-            : 0;
+            ? model.adoptedParents.all.length : 0;
 
         var body = '';
         body += headerHtml;
-        body += _sectionHtml(SECTIONS[0], _bodyParents(model), parentsCount);
-        body += _sectionHtml(SECTIONS[1], _bodyChildren(model), childrenCount);
-        body += _sectionHtml(SECTIONS[2], _bodySiblings(model), siblingsCount);
-        body += _sectionHtml(SECTIONS[3], _bodyGrandchildren(model), grandchildrenCount);
-        body += _sectionHtml(SECTIONS[4], _bodySurrogacy(model), surrogacyCount);
-        body += _sectionHtml(SECTIONS[5], _bodyAdoptiveParents(model), adoptiveParentsCount);
+        body += _sectionHtml(SECTIONS[0],
+            _bodyParents(model, context.characterId), parentsCount);
+        body += _sectionHtml(SECTIONS[1],
+            _bodyChildren(model, context.characterId), childrenCount);
+        body += _sectionHtml(SECTIONS[2],
+            _bodySiblings(model, context.characterId), siblingsCount);
+        body += _sectionHtml(SECTIONS[3],
+            _bodyFosterAsChild(model), fosterAsChildCount);
+        body += _sectionHtml(SECTIONS[4],
+            _bodyWardAsChild(model), wardAsChildCount);
+        body += _sectionHtml(SECTIONS[5],
+            _bodyGrandchildren(model), grandchildrenCount);
+        body += _sectionHtml(SECTIONS[6],
+            _bodySurrogacy(model), surrogacyCount);
+        body += _sectionHtml(SECTIONS[7],
+            _bodyAdoptiveParents(model), adoptiveParentsCount);
 
         container.innerHTML = body;
-        _wire(container, context.characterId);
+        _wire(container, context.characterId, model);
     }
 
     // =========================================================================
-    // 6. WIRING
+    // 7. WIRING
     // =========================================================================
 
-    function _wire(container, characterId) {
+    function _wire(container, characterId, model) {
         var headers = container.querySelectorAll('.character-tab-section__header');
         for (var i = 0; i < headers.length; i++) {
             headers[i].addEventListener('click', _onToggleSection);
@@ -679,7 +987,7 @@
             if (btn.disabled) return;
 
             e.preventDefault();
-            _dispatchAction(action, btn, characterId);
+            _dispatchAction(action, btn, characterId, model);
         });
     }
 
@@ -688,10 +996,8 @@
         if (!btn) return;
         var key = btn.getAttribute('data-section-key');
         if (!_hasId(key)) return;
-
         var section = btn.parentNode;
         if (!section) return;
-
         var isExpanded = section.classList.contains('is-expanded');
         if (isExpanded) {
             section.classList.remove('is-expanded');
@@ -715,14 +1021,36 @@
         _refresh();
     }
 
-    function _dispatchAction(action, btn, characterId) {
+    function _dispatchAction(action, btn, characterId, model) {
         switch (action) {
+            // Parents
+            case 'set-mother':
+                _onSetParent(characterId, 'mother'); return;
+            case 'set-father':
+                _onSetParent(characterId, 'father'); return;
+
+            // Children
+            case 'add-biological-child':
+                _onAddExistingChild(characterId, 'biological'); return;
             case 'add-adopted-child':
-                _onAddAdoptedChild(characterId); return;
+                _onAddExistingChild(characterId, 'adopted'); return;
+            case 'add-foster-child':
+                _onAddFosterOrWard(characterId, 'foster'); return;
+            case 'add-ward':
+                _onAddFosterOrWard(characterId, 'guardianship'); return;
+            case 'generate-baby':
+                _onGenerateBaby(characterId, model); return;
             case 'remove-child':
                 _onRemoveChild(characterId, btn); return;
             case 'end-adoption':
                 _onEndAdoption(characterId, btn); return;
+
+            // Siblings
+            case 'add-biological-sibling':
+                _onAddBiologicalSibling(characterId); return;
+            case 'add-adopted-sibling':
+                _onAddAdoptedSibling(characterId); return;
+
             default:
                 if (typeof console !== 'undefined' && console.warn) {
                     console.warn('[family-tab] unknown action: ' + action);
@@ -731,38 +1059,77 @@
     }
 
     // =========================================================================
-    // 7. ACTION IMPLEMENTATIONS
+    // 8. ACTION IMPLEMENTATIONS
     // =========================================================================
 
-    function _onAddAdoptedChild(characterId) {
-        if (typeof window.openCreateAdoptionModal !== 'function') {
-            _toast('Adoption modal is not loaded.', 'error');
+    function _onSetParent(characterId, role) {
+        if (typeof window.openSetParentModal !== 'function') {
+            _toast('Set-parent modal is not available.', 'error');
             return;
         }
-        var parentSummary;
-        try { parentSummary = window.CharacterQueries.getCharacterSummary(characterId); }
-        catch (e) { parentSummary = null; }
-        if (!parentSummary) {
-            _toast('Subject character not found.', 'error');
-            return;
-        }
+        window.openSetParentModal(characterId, role, function () {
+            _refresh();
+        });
+    }
 
-        // The adoption modal signature per the supplied file is
-        // openCreateAdoptionModal(childId, adopterId, onSuccess).
-        // The tab is looking to add a child TO the current character,
-        // so the child must be selected first. The modal itself
-        // expects a child already chosen; when the adoption modal's
-        // own selector exists we can delegate to it. Otherwise the
-        // correct flow is through the children-adoption modals, which
-        // own the two-part transaction. For phase 1, we simply notify
-        // the user that the modal exists and let them use the proper
-        // entry point (the children-adoption UI lives outside this
-        // manager).
-        _toast(
-            'Adoption is recorded via the adoption flow (children-adoption ' +
-            'modals). Use that flow to add an adopted child.',
-            'info'
-        );
+    function _onAddExistingChild(characterId, type) {
+        if (typeof window.openAddExistingChildModal !== 'function') {
+            _toast('Add-child modal is not available.', 'error');
+            return;
+        }
+        window.openAddExistingChildModal(characterId, type, function () {
+            _refresh();
+        });
+    }
+
+    function _onAddFosterOrWard(characterId, kind) {
+        if (typeof window.openAddFosterOrWardModal !== 'function') {
+            _toast('Add-foster/ward modal is not available.', 'error');
+            return;
+        }
+        window.openAddFosterOrWardModal(characterId, kind, function () {
+            _refresh();
+        });
+    }
+
+    function _onGenerateBaby(characterId, model) {
+        if (typeof window.openGenerateBabyModal !== 'function') {
+            _toast('Generate-baby modal is not available.', 'error');
+            return;
+        }
+        // Pass the pre-resolved partner from the model when there is
+        // exactly one committed partner (see the "auto-select the
+        // committed partner" decision). The modal itself also handles
+        // the picker fallback, but passing the resolved partner
+        // improves UX.
+        var opts = {};
+        if (model && model.partnerForBaby
+            && _hasId(model.partnerForBaby.partnerId)) {
+            opts.partnerId = model.partnerForBaby.partnerId;
+        }
+        window.openGenerateBabyModal(characterId, function () {
+            _refresh();
+        }, opts);
+    }
+
+    function _onAddBiologicalSibling(characterId) {
+        if (typeof window.openAddExistingSiblingModal !== 'function') {
+            _toast('Add-sibling modal is not available.', 'error');
+            return;
+        }
+        window.openAddExistingSiblingModal(characterId, function () {
+            _refresh();
+        });
+    }
+
+    function _onAddAdoptedSibling(characterId) {
+        if (typeof window.openAddAdoptedSiblingModal !== 'function') {
+            _toast('Add-adopted-sibling modal is not available.', 'error');
+            return;
+        }
+        window.openAddAdoptedSiblingModal(characterId, function () {
+            _refresh();
+        });
     }
 
     function _onRemoveChild(characterId, btn) {
@@ -775,9 +1142,6 @@
         var childId = btn.getAttribute('data-child-id');
         if (!_hasId(childId)) return;
 
-        // Find the specific parent edge to end. FamilyCommands.removeParent
-        // takes an edgeId, not a (parent, child) pair, so we look up the
-        // edge via FamilyQueries.
         var edgeId = _findActiveParentEdge(characterId, childId);
         if (!edgeId) {
             _toast('Could not find the parent edge to remove.', 'error');
@@ -832,24 +1196,14 @@
         var childId = btn.getAttribute('data-child-id');
         if (!_hasId(childId)) return;
 
-        // removeAdoption signature: removeAdoption(childId, adopterId, options).
-        // The adopterId is the current character; the childId is the row's.
-        // The characterId is the perspective — could be either adopter or child.
-        // For a child row on the parent's tab, characterId IS the adopter.
-        // For an adopted-parent row on the child's tab, characterId is the child
-        // and the row's member.id is the adopter.
         var adopterId;
         var resolvedChildId;
         var membershipId = childId;
-        if (btn.closest('[data-section]') &&
-            btn.closest('[data-section]').getAttribute('data-section') === 'adoptiveParents') {
-            // Row is inside the adoptiveParents section: member is the
-            // adopter, subject is the child.
+        if (btn.closest('[data-section]')
+            && btn.closest('[data-section]').getAttribute('data-section') === 'adoptiveParents') {
             adopterId = membershipId;
             resolvedChildId = characterId;
         } else {
-            // Row is inside the children section: subject is the
-            // adopter, member is the child.
             adopterId = characterId;
             resolvedChildId = membershipId;
         }
@@ -883,10 +1237,6 @@
         }
     }
 
-    /**
-     * Finds the ongoing parent edge for (parentId, childId) via
-     * FamilyQueries. Returns the edge id or null.
-     */
     function _findActiveParentEdge(parentId, childId) {
         if (typeof window.FamilyQueries === 'undefined'
             || !window.FamilyQueries
@@ -906,7 +1256,7 @@
     }
 
     // =========================================================================
-    // 8. REGISTRATION
+    // 9. REGISTRATION
     // =========================================================================
 
     if (window.TabManager && typeof window.TabManager.register === 'function') {
@@ -919,7 +1269,7 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.CharacterFamilyTab = {
