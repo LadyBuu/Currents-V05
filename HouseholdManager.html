@@ -1004,33 +1004,64 @@
 <script src="js/relationships/relationship-queries.js"></script>
 <script src="js/relationships/relationship-commands.js"></script>
 
-<!-- 8c. Flat-global shim — exposes the six relationship functions that
-         household-bootstrap.js and household-servant.js require on
-         window. Points at the SAME functions as the namespaced exports
-         (no duplication). Safe to remove once household-bootstrap.js
-         and household-servant.js are migrated to the namespaced API. -->
+<!-- 8c. Flat-global shim — maps the names household-bootstrap.js and
+         household-servant.js expect to the actual names the
+         relationship domain exports.
+
+         Bootstrap wants              → Domain ships as
+         createRelationship           → RelationshipCommands.create
+         endRelationship              → RelationshipCommands.end
+         updateRelationship           → RelationshipCommands.update
+         getRelationshipBetween       → RelationshipQueries.getBetween
+         getRelationshipsForCharacter → RelationshipQueries.getForCharacter
+         getRelationshipById          → RelationshipQueries.getById
+
+         Bound to their source, so no duplication, no drift. Safe to
+         remove once household-bootstrap.js and household-servant.js
+         are migrated to the namespaced API. -->
 <script>
     (function () {
         'use strict';
         var RC = window.RelationshipCommands;
         var RQ = window.RelationshipQueries;
-        if (!RC && !RQ) return;
 
-        var flat = [
-            ['createRelationship',           RC],
-            ['endRelationship',              RC],
-            ['updateRelationship',           RC],
-            ['getRelationshipBetween',       RQ],
-            ['getRelationshipsForCharacter', RQ],
-            ['getRelationshipById',          RQ]
+        var MAP = [
+            ['createRelationship',           RC, 'create'],
+            ['endRelationship',              RC, 'end'],
+            ['updateRelationship',           RC, 'update'],
+            ['getRelationshipBetween',       RQ, 'getBetween'],
+            ['getRelationshipsForCharacter', RQ, 'getForCharacter'],
+            ['getRelationshipById',          RQ, 'getById']
         ];
-        for (var i = 0; i < flat.length; i++) {
-            var name = flat[i][0];
-            var source = flat[i][1];
-            if (typeof window[name] !== 'function'
-                && source && typeof source[name] === 'function') {
-                window[name] = source[name].bind(source);
+
+        var bound = 0;
+        var missing = [];
+        for (var i = 0; i < MAP.length; i++) {
+            var name   = MAP[i][0];
+            var source = MAP[i][1];
+            var method = MAP[i][2];
+
+            if (typeof window[name] === 'function') { bound++; continue; }
+
+            if (source && typeof source[method] === 'function') {
+                window[name] = source[method].bind(source);
+                bound++;
+            } else {
+                missing.push(name + ' (want ' + method + ')');
             }
+        }
+
+        if (missing.length > 0) {
+            console.warn(
+                '[HouseholdManager.html] relationship shim: bound ' + bound +
+                ' of ' + MAP.length + ' flat globals. Could not bind: ' +
+                missing.join(', ') + '.'
+            );
+        } else {
+            console.log(
+                '[HouseholdManager.html] relationship shim: bound all ' +
+                MAP.length + ' flat globals.'
+            );
         }
     })();
 </script>
