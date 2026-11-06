@@ -9,13 +9,19 @@
  *   Vocabulary, thresholds, and enumerations for the Events domain.
  *
  *   "Events" is the name of the manager shell that hosts the
- *   per-facet event tabs (deaths, stork, disasters, social,
- *   educational). There is NO masterData.data.events collection.
- *   Each tab reads through the owning domain's public query surface:
+ *   per-facet event tabs. There is NO masterData.data.events
+ *   collection. Each tab reads through the owning domain's public
+ *   query surface:
  *
- *     deaths      -> MortalityQueries / CharacterQueries
- *     stork       -> ChildrenQueries / ChildrenStatistics
- *     disasters   -> DisasterQueries
+ *     deaths      -> MortalityQueries / CharacterQueries /
+ *                    MortalityStatistics
+ *     stork       -> RomanceQueries / FamilyQueries /
+ *                    ChildrenQueries / ChildrenRules
+ *     adoption    -> ChildrenQueries (adoption metadata) /
+ *                    FamilyQueries
+ *     surrogacy   -> ChildrenQueries (surrogacy arrangements) /
+ *                    RomanceQueries
+ *     disasters   -> DisasterQueries / DisasterConstants
  *     social      -> RelationshipQueries / RomanceQueries /
  *                    FriendshipQueries / RivalryQueries
  *     educational -> EducationQueries / ApprenticeshipQueries
@@ -28,6 +34,7 @@
  *       gender, sort)
  *     - the canonical PANEL_ID prefix used by UIState
  *     - default filter shapes per facet
+ *     - UI copy strings
  *
  *   This module does NOT own:
  *     - any policy (defer to the owning domain)
@@ -42,17 +49,43 @@
  *   resolves names via window.getIcon(name, 'CIRCLE'). The names
  *   below are the exact keys exported by js/core/icons.js:
  *
- *     DEATHSTARS, STORK, DISASTERS -> EVENTS (there is no DISASTERS
- *       key; use EVENTS), RELATIONSHIP (no such key; use
- *       FRIENDSHIP for social), BOOK (education).
+ *     deaths      -> DEATHSTARS
+ *     stork       -> STORK
+ *     adoption    -> ADOPTION_LEGAL
+ *     surrogacy   -> GUARDIANSHIP
+ *     disasters   -> EVENTS
+ *     social      -> FRIENDSHIP
+ *     educational -> BOOK
  *
  *   Any name not present in icons.js falls back to CIRCLE via
- *   window.getIcon's second-argument contract. The defaultFallbackIcon
- *   below names that explicitly.
+ *   window.getIcon's second-argument contract.
  *
  * DEPENDENCIES: None.
  *
  * ICON POLICY: No emojis. No inline Unicode glyphs. Icon names only.
+ * =============================================================================
+ *
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 3A):
+ *     - Added the stork facet's filter vocabulary: STORK_SORT_OPTIONS
+ *       and STORK_DEFAULT_FILTERS. STORK_DEFAULT_FILTERS encodes the
+ *       default filter state the deaths tab also uses:
+ *         - showAllLocations true (sidebar location is opt-in scope)
+ *         - collapsed false (filters expanded on first visit)
+ *       The stork-specific defaults (fertileOnly: true,
+ *       hasCapacityOnly: true, childlessOnly: false) mirror the old
+ *       bioChildrenTabUI.js defaults.
+ *     - DEFAULT_FILTERS_BY_FACET gains a `stork` entry pointing at
+ *       STORK_DEFAULT_FILTERS.
+ *     - EVENT_FACETS already had the stork entry from the initial
+ *       delivery; no change.
+ *     - Exports for STORK_SORT_OPTIONS and STORK_DEFAULT_FILTERS
+ *       added.
+ *   Previous revision (initial):
+ *     - Created with the deaths facet's vocabulary and the
+ *       facet catalog for the six declared tabs (deaths, stork,
+ *       disasters, social, educational -- adoption and surrogacy
+ *       land in Phase 3B / 3C).
  * =============================================================================
  */
 
@@ -64,15 +97,11 @@
     // =========================================================================
     //
     // The Events Manager hosts one tab per event family. The
-    // "events" facet (non-death, non-birth, non-disaster,
-    // non-educational lifecycle events -- relationships, moves,
-    // skills, etc.) is a future tab. It is declared here so the
-    // tab strip can render its button, but its renderer is not
-    // registered until the corresponding tab file lands.
-    //
-    // Adding a facet is a single-entry append. Removing one is not
-    // supported (facet ids are stable strings; retired facets keep
-    // their entry with `enabled: false`).
+    // "adoption" and "surrogacy" entries are declared here so the
+    // tab strip can render their buttons; their renderers land in
+    // Phase 3B / 3C. Until then, TabManager renders the "not loaded
+    // in this build" empty state from _buildEmptyState's
+    // 'no-renderer' branch.
 
     var EVENT_FACETS = Object.freeze([
         Object.freeze({
@@ -85,13 +114,25 @@
             id: 'stork',
             label: 'Births',
             iconName: 'STORK',
-            description: 'Pregnancies, births, stillbirths, and adoptions.'
+            description: 'Fertile couples and their children.'
+        }),
+        Object.freeze({
+            id: 'adoption',
+            label: 'Adoption',
+            iconName: 'ADOPTION_LEGAL',
+            description: 'Adoption metadata records.'
+        }),
+        Object.freeze({
+            id: 'surrogacy',
+            label: 'Surrogacy',
+            iconName: 'GUARDIANSHIP',
+            description: 'Surrogacy arrangements.'
         }),
         Object.freeze({
             id: 'disasters',
             label: 'Disasters',
             iconName: 'EVENTS',
-            description: 'Disasters and their structural / population impact.'
+            description: 'Disasters and their structural and population impact.'
         }),
         Object.freeze({
             id: 'social',
@@ -113,44 +154,35 @@
     //
     // These are the values that window.logEvent writes into the
     // `category` field of each entry in masterData.data.eventLog.
-    // They are produced by the owning domain modules (character-*,
-    // children-*, disaster-*, crime-*, relationship-*, education-*,
-    // apprenticeship-*).
-    //
-    // This catalog is READ-ONLY for the Events Manager: it is used
-    // to filter the raw event log by category when a facet wants a
-    // "recent events" strip. The manager does not write events.
-    //
-    // Every category listed here is confirmed to appear in the
-    // supplied codebase's logEvent call sites. A future category
-    // added by an owning domain is appended here; existing tabs
-    // keep working without changes (unknown categories simply are
-    // not matched by the filter).
+    // They are produced by the owning domain modules. This catalog
+    // is read-only for the Events Manager: it is used to filter the
+    // raw event log by category when a facet wants a "recent events"
+    // strip.
 
     var EVENT_CATEGORIES = Object.freeze({
-        DEATH:        'death',
-        BIRTH:        'birth',
-        MARRIAGE:     'marriage',
-        ROMANCE:      'romance',
-        FRIENDSHIP:   'friendship',
-        RIVALRY:      'rivalry',
-        AFFAIR:       'affair',
-        JEALOUSY:     'jealousy',
-        FAMILY:       'family',
-        DISASTER:     'disaster',
-        CRIME:        'crime',
-        MURDER:       'murder',
-        EXECUTION:    'execution',
-        VENDETTA:     'vendetta',
-        EDUCATION:    'education',
+        DEATH:          'death',
+        BIRTH:          'birth',
+        MARRIAGE:       'marriage',
+        ROMANCE:        'romance',
+        FRIENDSHIP:     'friendship',
+        RIVALRY:        'rivalry',
+        AFFAIR:         'affair',
+        JEALOUSY:       'jealousy',
+        FAMILY:         'family',
+        DISASTER:       'disaster',
+        CRIME:          'crime',
+        MURDER:         'murder',
+        EXECUTION:      'execution',
+        VENDETTA:       'vendetta',
+        EDUCATION:      'education',
         APPRENTICESHIP: 'apprenticeship',
-        PROFESSIONAL: 'professional',
-        RELIGION:     'religion',
-        MOVE:         'move',
-        HOUSEHOLD:    'household',
-        SETTLEMENT:   'settlement',
-        RANK:         'rank',
-        ROLE:         'role'
+        PROFESSIONAL:   'professional',
+        RELIGION:       'religion',
+        MOVE:           'move',
+        HOUSEHOLD:      'household',
+        SETTLEMENT:     'settlement',
+        RANK:           'rank',
+        ROLE:           'role'
     });
 
     // Reverse lookup (string -> constant name) for diagnostics.
@@ -168,14 +200,16 @@
     // =========================================================================
     //
     // UIState is keyed by panel id. Every Events-facet tab uses a
-    // panel id of the form "events-<facetId>". This lets a single
-    // UIState store host all facets without collision with any other
-    // manager (each manager has its own panel-id namespace).
+    // panel id of the form "events-<facetId>:<locationId|all>". This
+    // lets a single UIState store host all facets, and lets each
+    // facet remember its own filter state per location.
 
     var PANEL_ID_PREFIX = 'events';
 
     function panelIdFor(facetId) {
-        if (typeof facetId !== 'string' || facetId.length === 0) return PANEL_ID_PREFIX;
+        if (typeof facetId !== 'string' || facetId.length === 0) {
+            return PANEL_ID_PREFIX;
+        }
         return PANEL_ID_PREFIX + '-' + facetId;
     }
 
@@ -193,15 +227,12 @@
     // 5. DEATHS FACET: FILTER VOCABULARY
     // =========================================================================
 
-    // Character status filter.
     var DEATH_STATUS_FILTERS = Object.freeze([
         Object.freeze({ id: 'all',      label: 'All Characters' }),
         Object.freeze({ id: 'living',   label: 'Living'         }),
         Object.freeze({ id: 'deceased', label: 'Deceased'       })
     ]);
 
-    // Gender filter. Values match the canonical gender ids from
-    // CharacterState (male / female / unknown).
     var DEATH_GENDER_FILTERS = Object.freeze([
         Object.freeze({ id: 'all',     label: 'All Genders' }),
         Object.freeze({ id: 'male',    label: 'Male'        }),
@@ -209,10 +240,10 @@
         Object.freeze({ id: 'unknown', label: 'Unknown'     })
     ]);
 
-    // Cause-family filter. Values are the stable ids from
-    // MortalityRules.DEATH_CAUSE, plus 'all'. The tab matches
-    // against character.deathCause (the stable id), NOT against
-    // deathCauseDetail (free text).
+    // Values match MortalityRules.DEATH_CAUSE (natural, disease,
+    // accident, murder, execution, childbed_fever, unknown) plus
+    // 'all'. The tab matches against character.deathCause (the
+    // stable id), NOT against deathCauseDetail (free text).
     var DEATH_CAUSE_FILTERS = Object.freeze([
         Object.freeze({ id: 'all',             label: 'All Causes'     }),
         Object.freeze({ id: 'natural',         label: 'Natural'        }),
@@ -224,9 +255,6 @@
         Object.freeze({ id: 'unknown',         label: 'Unknown'        })
     ]);
 
-    // Sort options for the character list. The list is always
-    // grouped living-before-deceased (that ordering is a UX
-    // invariant enforced by the tab, not by the sort).
     var DEATH_SORT_OPTIONS = Object.freeze([
         Object.freeze({ id: 'name',       label: 'Name'          }),
         Object.freeze({ id: 'age',        label: 'Age'           }),
@@ -234,36 +262,62 @@
         Object.freeze({ id: 'location',   label: 'Location'      })
     ]);
 
-    // =========================================================================
-    // 6. DEATHS FACET: DEFAULT FILTERS
-    // =========================================================================
-    //
-    // The shape a tab's filter object has when nothing is set. Every
-    // facet declares its own default shape so that
-    // UIState.getFilters(panelId) can be merged against a
-    // documented baseline rather than an ad-hoc `{}`.
-
     var DEATHS_DEFAULT_FILTERS = Object.freeze({
         search: '',
         status: 'all',
         cause: 'all',
         gender: 'all',
         sortBy: 'name',
-        // Location scope: when `null`, show all locations. When a
-        // location id is set, only characters whose current
-        // location is that id (or a sub-location) are shown.
-        // The sidebar's selection seeds this; the tab's own
-        // "Show all locations" toggle clears it.
         locationId: null,
-        showAllLocations: true
+        showAllLocations: true,
+        collapsed: false
     });
 
-    // Per-facet default filter shapes. New facets append an entry.
+    // =========================================================================
+    // 6. STORK FACET: FILTER VOCABULARY
+    // =========================================================================
+    //
+    // The stork tab groups couples by man. Its filters narrow which
+    // couples are shown within each man card:
+    //   - search           matches man name, woman name, or either surname
+    //   - fertileOnly      woman is inside the fertility window
+    //                      (ChildrenRules.FERTILITY_CONSTANTS)
+    //   - hasCapacityOnly  estimated remaining children > 0
+    //   - childlessOnly    couple has zero existing biological children
+    //
+    // Sorting reorders the man cards themselves:
+    //   - rank             ascending by active rank priority (lower is
+    //                      higher rank), then by man name
+    //   - name             ascending by man name
+    //   - children         ascending by total children across all
+    //                      partners, then by man name
+
+    var STORK_SORT_OPTIONS = Object.freeze([
+        Object.freeze({ id: 'rank',     label: 'Rank'     }),
+        Object.freeze({ id: 'name',     label: 'Name'     }),
+        Object.freeze({ id: 'children', label: 'Children' })
+    ]);
+
+    var STORK_DEFAULT_FILTERS = Object.freeze({
+        search: '',
+        fertileOnly: true,
+        hasCapacityOnly: true,
+        childlessOnly: false,
+        sortBy: 'rank',
+        locationId: null,
+        showAllLocations: true,
+        collapsed: false
+    });
+
+    // =========================================================================
+    // 7. DEFAULT FILTERS PER FACET
+    // =========================================================================
+
     var DEFAULT_FILTERS_BY_FACET = Object.freeze({
-        deaths: DEATHS_DEFAULT_FILTERS
-        // stork, disasters, social, educational: added when their
-        // tabs land. Absent facets fall back to
-        // DEFAULT_FILTERS_FALLBACK below.
+        deaths: DEATHS_DEFAULT_FILTERS,
+        stork:  STORK_DEFAULT_FILTERS
+        // adoption, surrogacy, social, educational: added when their
+        // tabs land.
     });
 
     // The fallback shape for a facet whose defaults have not yet
@@ -275,27 +329,31 @@
     });
 
     // =========================================================================
-    // 7. UI COPY
+    // 8. UI COPY
     // =========================================================================
     //
     // Long-form UI strings used by the tabs. Kept here so that a
-    // copy pass is a single-file edit. This is presentational text
-    // ONLY -- no policy, no thresholds, no fabricated defaults.
+    // copy pass is a single-file edit. Presentational text ONLY --
+    // no policy, no thresholds, no fabricated defaults.
 
     var UI_COPY = Object.freeze({
         emptyNoContext:         'Select a location from the sidebar, or enable "Show all locations".',
         emptyNoCharacters:      'No characters exist yet.',
         emptyNoMatches:         'No characters match your filters.',
         emptyNoDeathsRecorded:  'No deaths have been recorded.',
+        emptyNoCouples:         'No fertile couples found. Women must be between 14 and 47 and in an active committed relationship with a living man.',
+        emptyNoBirthsRecorded:  'No births have been recorded.',
         emptyUnavailable:       'This information is not available in the current build.',
         loadFailed:             'Could not load data.',
         killUnavailable:        'Kill action is unavailable: the death modal is not loaded.',
+        birthUnavailable:       'Birth modal is unavailable.',
+        characterDetailsUnavailable: 'Character details are unavailable.',
         refreshSuccess:         'Refreshed.',
         filtersCleared:         'Filters cleared.'
     });
 
     // =========================================================================
-    // 8. HELPERS (pure)
+    // 9. HELPERS (pure)
     // =========================================================================
 
     function getFacet(facetId) {
@@ -308,7 +366,9 @@
 
     function getFacetIds() {
         var out = [];
-        for (var i = 0; i < EVENT_FACETS.length; i++) out.push(EVENT_FACETS[i].id);
+        for (var i = 0; i < EVENT_FACETS.length; i++) {
+            out.push(EVENT_FACETS[i].id);
+        }
         return out;
     }
 
@@ -345,7 +405,7 @@
     /**
      * Returns a fresh array copy of a frozen filter-option list. The
      * catalog itself is frozen; the copy is not, so callers can
-     * `.map()` / `.filter()` without touching the catalog.
+     * .map() / .filter() without touching the catalog.
      */
     function copyFilterList(list) {
         if (!Array.isArray(list)) return [];
@@ -364,7 +424,7 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     var EventsConstants = {
@@ -391,9 +451,13 @@
         DEATH_GENDER_FILTERS: DEATH_GENDER_FILTERS,
         DEATH_CAUSE_FILTERS: DEATH_CAUSE_FILTERS,
         DEATH_SORT_OPTIONS: DEATH_SORT_OPTIONS,
+        DEATHS_DEFAULT_FILTERS: DEATHS_DEFAULT_FILTERS,
+
+        // Stork facet vocabulary
+        STORK_SORT_OPTIONS: STORK_SORT_OPTIONS,
+        STORK_DEFAULT_FILTERS: STORK_DEFAULT_FILTERS,
 
         // Default filters
-        DEATHS_DEFAULT_FILTERS: DEATHS_DEFAULT_FILTERS,
         DEFAULT_FILTERS_FALLBACK: DEFAULT_FILTERS_FALLBACK,
         getDefaultFiltersForFacet: getDefaultFiltersForFacet,
 
