@@ -791,20 +791,26 @@
 <script src="js/apprenticeship/modals-apprenticeship.js"></script>
 
 <!-- ============================================================ -->
-<!-- MODALS — WRITE PATH FOR THE TAB SET                           -->
+<!-- MODALS — WRITE / READ PATH FOR THE LOADED TABS                -->
 <!--                                                                -->
-<!-- deaths      -> modals-death.js                                -->
-<!-- stork       -> modals-children-birth.js                        -->
-<!-- adoption    -> modals-children-adoption.js    (Phase 3B)      -->
-<!-- surrogacy   -> modals-children-surrogacy.js  (Phase 3C)      -->
-<!-- disasters   -> modals-disaster.js  (already loaded above)      -->
+<!-- deaths      -> modals-death.js          (kill)                -->
+<!--             -> modals-character.js      (row click)          -->
+<!-- stork       -> modals-children-birth.js (add / surprise)     -->
+<!--             -> modals-character.js      (child circle click) -->
+<!-- disasters   -> modals-disaster.js       (create / destroyed) -->
+<!--             -> (loaded above in the DISASTER group)          -->
 <!--                                                                -->
-<!-- Only the first two are loaded here. The other two land with   -->
-<!-- their tabs in Phase 3B / 3C.                                  -->
+<!-- modals-character.js is loaded here because both deaths and    -->
+<!-- stork tabs delegate to openCharacterDetailsModal. It requires -->
+<!-- CharacterCommands, CharacterQueries, CharacterCreation-       -->
+<!-- Commands, CharacterDeletionCommands, CharacterState,          -->
+<!-- FamilyQueries, FamilyCommands, FamilyRules, plus formatting,  -->
+<!-- icons, modals-core, accessors, time — all loaded earlier.     -->
 <!-- ============================================================ -->
 
 <script src="js/core/modals/modals-death.js"></script>
 <script src="js/core/modals/modals-children-birth.js"></script>
+<script src="js/core/modals/modals-character.js"></script>
 
 <!-- ============================================================ -->
 <!-- EVENTS MODULE (aggregate read facade over the seven facets)   -->
