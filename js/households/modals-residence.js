@@ -17,13 +17,28 @@
  *
  * Both of those become thin re-export shims.
  *
+ * Additionally, this revision adds five modals that support the Location
+ * tab's residence-editing surface:
+ *
+ *   - openCreateResidenceForHouseholdModal(householdId, onSuccess)
+ *   - openEditResidenceForHouseholdModal(residenceId, onSuccess)
+ *   - openDeleteResidenceForHouseholdModal(residenceId, onSuccess)
+ *   - openAssignResidenceToHouseholdModal(householdId, onSuccess)
+ *
+ * These are the SAME underlying operations as openNewResidenceModal /
+ * openEditResidenceModal / openDeleteResidenceModal /
+ * openAssignResidenceModal, but with household-centric entry points so
+ * the Location tab can call them with only a household id (and only a
+ * residence id for edit / delete). When the household already has a
+ * residence, the "create" and "assign" modals detect it and refuse with
+ * a structured error instead of opening a duplicate.
+ *
  * OWNERSHIP
  * ---------
  *   Reads:  ResidenceSystem (all snapshot queries)
  *           HouseholdQueries (household lookup for assignment)
  *   Writes: ResidenceSystem (all mutations) + one persist() per batch
- *   UI:     modals-core, selectors, icons, HouseholdModals,
- *           HouseholdViewModels
+ *   UI:     modals-core, icons, HouseholdModals, HouseholdViewModels
  *
  * CONVERGED PATTERN NOTES
  * -----------------------
@@ -80,7 +95,50 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
+ *   Current revision (household-tab P5):
+ *     - Added four household-centric modals for the Location tab:
+ *
+ *         openCreateResidenceForHouseholdModal(householdId, onSuccess)
+ *         openEditResidenceForHouseholdModal(residenceId, onSuccess)
+ *         openDeleteResidenceForHouseholdModal(residenceId, onSuccess)
+ *         openAssignResidenceToHouseholdModal(householdId, onSuccess)
+ *
+ *       Each calls the corresponding ResidenceSystem command once,
+ *       persists once via HouseholdModals.persistResidenceOrFail, and
+ *       carries the same retry-idempotency discipline as the existing
+ *       CRUD modals.
+ *
+ *       Create and Assign use an inline household-residence picker
+ *       (search + scrollable list of residences, filtered by the
+ *       current household). Neither window.openResidenceSelector nor
+ *       window.openHouseholdSelector is assumed to be loaded.
+ *
+ *       Create + optional assign is a TWO-COMMAND, ONE-PERSIST
+ *       transaction: createResidence runs first, then
+ *       assignHouseholdToVacantResidence runs if the "assign on create"
+ *       checkbox is checked (default). If assign fails after create
+ *       succeeded, the modal persists anyway and reports partial: true
+ *       so the caller sees a warning ("residence created, assignment
+ *       failed"). The retry path handles a persist failure of the whole
+ *       transaction.
+ *
+ *       Edit uses a name-first transaction: updateResidenceName runs
+ *       first (via ResidenceSystem.updateResidenceName, which owns the
+ *       nameHistory entry), then updateResidence runs for the rest of
+ *       the fields. If updateResidence fails after updateResidenceName
+ *       succeeded, the modal persists what it has and reports partial:
+ *       true. The retry path handles a persist failure.
+ *
+ *       Delete uses the same confirm-by-name pattern as the existing
+ *       openDeleteResidenceModal, but is scoped to the household
+ *       context (verifies the residence is the household's current
+ *       residence, refuses otherwise).
+ *
+ *       Assign is a one-command modal: assignHouseholdToVacantResidence
+ *       takes the household id + the picked residence id.
+ *
+ *     - No behavioural change to any existing modal.
+ *   Previous revision:
  *     - Removed the local copies of _persistOrFail, _confirmDialog,
  *       _currentYear, and _closeThen. All four were structurally
  *       identical to the shared versions now exported by
@@ -142,6 +200,8 @@
     _requireFunction('ResidenceSystem.demolishResidence',
         _residence.demolishResidence);
     _requireFunction('ResidenceSystem.getResidence', _residence.getResidence);
+    _requireFunction('ResidenceSystem.getAllResidences',
+        _residence.getAllResidences);
     _requireFunction('ResidenceSystem.getUnits', _residence.getUnits);
     _requireFunction('ResidenceSystem.getUnit', _residence.getUnit);
     _requireFunction('ResidenceSystem.getUnitStats', _residence.getUnitStats);
@@ -161,11 +221,15 @@
         _residence.calculateRepairCost);
     _requireFunction('ResidenceSystem.getResidencesByHousehold',
         _residence.getResidencesByHousehold);
+    _requireFunction('ResidenceSystem.getResidencesByLocation',
+        _residence.getResidencesByLocation);
 
     var _householdQueries = _requireObject('HouseholdQueries',
         window.HouseholdQueries);
     _requireFunction('HouseholdQueries.getHousehold',
         _householdQueries.getHousehold);
+    _requireFunction('HouseholdQueries.getHouseholdDetails',
+        _householdQueries.getHouseholdDetails);
 
     var _openModal = _requireFunction('openModal',
         typeof window.openModal === 'function'
@@ -184,6 +248,7 @@
     _requireFunction('HouseholdModals.esc', _Modals.esc);
     _requireFunction('HouseholdModals.readValue', _Modals.readValue);
     _requireFunction('HouseholdModals.readIntOrNull', _Modals.readIntOrNull);
+    _requireFunction('HouseholdModals.readChecked', _Modals.readChecked);
     _requireFunction('HouseholdModals.onOpen', _Modals.onOpen);
     _requireFunction('HouseholdModals.currentYear', _Modals.currentYear);
     _requireFunction('HouseholdModals.closeThen', _Modals.closeThen);
@@ -229,6 +294,164 @@
                 _esc(p.displayName || p.name || 'Unknown') + '</option>';
         }
         return html;
+    }
+
+    // =========================================================================
+    // 1b. INLINE RESIDENCE PICKER
+    // =========================================================================
+    //
+    // The Location tab's "Assign Residence" modal needs to pick a
+    // residence without assuming window.openResidenceSelector is loaded.
+    // We render the picker inside the modal: search input + scrollable
+    // row list. Candidates are enumerated from
+    // ResidenceSystem.getAllResidences and filtered to the household's
+    // current location, vacant only.
+
+    function _buildResidencePickerHtml(options) {
+        options = options || {};
+        var listId = options.listId || 'rs-picker-list';
+        var searchId = options.searchId || 'rs-picker-search';
+        var placeholder = options.placeholder || 'Search residences…';
+
+        var html = '';
+        html += '<input type="search" id="' + _esc(searchId) + '" ' +
+            'class="character-tab-input" ' +
+            'placeholder="' + _esc(placeholder) + '" autocomplete="off">';
+        html += '<div id="' + _esc(listId) + '" ' +
+            'class="character-tab-history" ' +
+            'style="max-height:220px;overflow-y:auto;margin-top:0.5rem;">';
+        html += '</div>';
+        html += '<div class="character-tab-note" data-picker-selection="' +
+            _esc(listId) + '">No residence selected</div>';
+        return html;
+    }
+
+    function _renderResidencePickerRows(listEl, candidates) {
+        if (!listEl) return;
+        if (!Array.isArray(candidates) || candidates.length === 0) {
+            listEl.innerHTML = '<div class="character-tab-empty">' +
+                'No vacant residences</div>';
+            return;
+        }
+        var html = '';
+        for (var i = 0; i < candidates.length; i++) {
+            var r = candidates[i];
+            if (!r || !r.id) continue;
+            var meta = [];
+            if (r.typeName) meta.push(r.typeName);
+            if (r.locationName) meta.push(r.locationName);
+            if (r.isMultiUnit) {
+                meta.push(r.vacantUnits + '/' + r.unitCount + ' vacant');
+            }
+            var metaStr = meta.length > 0 ? ' · ' + meta.join(' · ') : '';
+            html += '<div class="character-tab-history__row" ' +
+                'data-residence-id="' + _esc(r.id) + '" ' +
+                'style="cursor:pointer;">' +
+                '<div class="character-tab-history__main">' +
+                    '<span class="character-tab-history__value">' +
+                        _esc(r.name || r.id) +
+                    '</span>' +
+                    '<span class="character-tab-history__reason">' +
+                        _esc(metaStr) +
+                    '</span>' +
+                '</div>' +
+            '</div>';
+        }
+        listEl.innerHTML = html;
+    }
+
+    function _getResidenceCandidates(query, locationId) {
+        var all = [];
+        try {
+            all = (locationId
+                ? _residence.getResidencesByLocation(locationId)
+                : _residence.getAllResidences()) || [];
+        } catch (e) {
+            all = [];
+        }
+
+        var lower = (query || '').toLowerCase().trim();
+        var out = [];
+        for (var i = 0; i < all.length; i++) {
+            var r = all[i];
+            if (!r || !r.id) continue;
+            if (r.isDemolished === true) continue;
+            if (r.isVacant !== true) continue;
+            if (lower.length > 0) {
+                var name = (r.name || '').toLowerCase();
+                if (name.indexOf(lower) === -1) continue;
+            }
+            out.push(r);
+        }
+        out.sort(function (a, b) {
+            return (a.name || '').localeCompare(b.name || '');
+        });
+        return out;
+    }
+
+    function _wireResidencePicker(root, listId, searchId, locationId, onSelect) {
+        var listEl = root.querySelector('#' + listId);
+        var searchEl = root.querySelector('#' + searchId);
+        var noteEl = root.querySelector('[data-picker-selection="' + listId + '"]');
+
+        function refresh(query) {
+            var candidates = _getResidenceCandidates(query, locationId);
+            _renderResidencePickerRows(listEl, candidates);
+        }
+
+        if (searchEl) {
+            searchEl.addEventListener('input', function () {
+                refresh(searchEl.value);
+            });
+        }
+        refresh('');
+
+        if (listEl) {
+            listEl.addEventListener('click', function (e) {
+                var row = e.target.closest('[data-residence-id]');
+                if (!row || !listEl.contains(row)) return;
+                var id = row.getAttribute('data-residence-id');
+                if (!id) return;
+
+                var rows = listEl.querySelectorAll('.character-tab-history__row');
+                for (var i = 0; i < rows.length; i++) {
+                    rows[i].classList.remove('is-current');
+                }
+                row.classList.add('is-current');
+
+                var summary = null;
+                try { summary = _residence.getResidence(id); }
+                catch (err) { summary = null; }
+                var name = summary ? (summary.name || id) : id;
+                if (noteEl) {
+                    noteEl.textContent = 'Selected: ' + name;
+                }
+                if (typeof onSelect === 'function') onSelect(id);
+            });
+        }
+    }
+
+    // =========================================================================
+    // 1c. CURRENT RESIDENCE LOOKUP
+    // =========================================================================
+    //
+    // Returns the residence currently associated with a household, or
+    // null. Used by create / assign / edit / delete to detect and refuse
+    // duplicate states.
+
+    function _getHouseholdCurrentResidence(householdId) {
+        var residences = [];
+        try { residences = _residence.getResidencesByHousehold(householdId) || []; }
+        catch (e) { residences = []; }
+        if (residences.length === 0) return null;
+        // getResidencesByHousehold returns residences whose units are
+        // occupied by this household. Return the first active one.
+        for (var i = 0; i < residences.length; i++) {
+            if (residences[i] && residences[i].isDemolished !== true) {
+                return residences[i];
+            }
+        }
+        return null;
     }
 
     // =========================================================================
@@ -658,6 +881,408 @@
                 if (typeof onSuccess === 'function') onSuccess();
                 return true;
             }
+        });
+
+        return modal;
+    }
+
+    // =========================================================================
+    // 4a. CREATE RESIDENCE FOR HOUSEHOLD MODAL
+    // =========================================================================
+    //
+    // Creates a new residence at the household's current location, then
+    // optionally assigns the household to it (default: yes).
+    //
+    // TWO-COMMAND, ONE-PERSIST:
+    //   1. createResidence — one residence commit
+    //   2. assignHouseholdToVacantResidence (optional) — one residence
+    //      commit + one household reverse-index commit
+    //   Then one ResidenceSystem.persist() flushes all three.
+    //
+    // If the assign step fails after the create step succeeded, we
+    // persist what we have and return success with partial: true so the
+    // caller sees a warning.
+    //
+    // If the household already has a current residence, refuse — the
+    // Location tab's "Add Residence" button is only shown when there is
+    // no current residence, but we defend here anyway.
+
+    function openCreateResidenceForHouseholdModal(householdId, onSuccess) {
+        var household = _householdQueries.getHousehold(householdId);
+        if (!household) {
+            _showError('Household not found');
+            return null;
+        }
+
+        var existing = _getHouseholdCurrentResidence(householdId);
+        if (existing) {
+            _showError(
+                household.name + ' already occupies "' + existing.name +
+                '". Use "Assign Residence" or "Edit" instead.');
+            return null;
+        }
+
+        var currentYear = _currentYear();
+
+        var types = _residence.getResidenceTypes();
+        var typeOptions = '';
+        var typeKeys = Object.keys(types);
+        for (var i = 0; i < typeKeys.length; i++) {
+            var t = types[typeKeys[i]];
+            typeOptions += '<option value="' + _esc(t.id) + '">' +
+                _esc(t.name) + ' (' +
+                (t.isMultiUnit ? 'Multi-unit' : 'Single') + ')</option>';
+        }
+
+        var conditions = _residence.getResidenceConditions();
+        var conditionOptions = '';
+        for (var c = 0; c < conditions.length; c++) {
+            conditionOptions += '<option value="' + _esc(conditions[c].id) + '"' +
+                (conditions[c].id === 'good' ? ' selected' : '') + '>' +
+                _esc(conditions[c].name) + '</option>';
+        }
+
+        var locationOptions = _buildLocationDropdown(
+            household.locationId, '— No location —');
+
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
+                    'Creating a residence for <strong>' +
+                    _esc(household.name) + '</strong>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Residence Name *</label>' +
+                    '<input type="text" data-field="name" placeholder="e.g., Thornwood Manor" ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;" autocomplete="off">' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Residence Type</label>' +
+                    '<select data-field="typeId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        typeOptions +
+                    '</select>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
+                    '<select data-field="locationId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        locationOptions +
+                    '</select>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Condition</label>' +
+                    '<select data-field="condition" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        conditionOptions +
+                    '</select>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Built Year</label>' +
+                    '<input type="number" data-field="builtYear" value="' +
+                        (currentYear !== null ? currentYear : '') +
+                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                '</div>' +
+                '<div style="margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
+                    '<label class="character-tab-checkbox" style="display:flex;align-items:center;gap:6px;cursor:pointer;">' +
+                        '<input type="checkbox" data-field="assignOnCreate" checked>' +
+                        '<span style="font-size:0.65rem;">Assign ' +
+                            _esc(household.name) + ' to this residence on create</span>' +
+                    '</label>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+                    '<textarea data-field="notes" rows="2" ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;"></textarea>' +
+                '</div>' +
+            '</div>';
+
+        var createdId = null;
+        var createdName = null;
+        var assignAttempted = false;
+        var assignError = null;
+        var mutationSucceeded = false;
+
+        var modal = _openModal({
+            title: 'Create Residence for ' + household.name,
+            content: content,
+            confirmText: 'Create Residence',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _Modals.rootFrom(modal);
+                if (!root) { _showError('Modal root unavailable'); return false; }
+
+                // Retry path: commands already ran; only the flush failed.
+                if (mutationSucceeded) {
+                    var retryPersist = _persistOrFail('Residence created');
+                    if (!retryPersist.ok) return false;
+                    if (assignError) {
+                        _showWarning(
+                            'Residence created, but assignment failed: ' +
+                            assignError);
+                    } else {
+                        _showSuccess('Residence created' +
+                            (assignAttempted ? ' and assigned' : ''));
+                    }
+                    if (typeof onSuccess === 'function') {
+                        onSuccess(createdId);
+                    }
+                    return true;
+                }
+
+                var name = _Modals.readValue(root, '[data-field="name"]').trim();
+                if (!name) {
+                    _showError('Please enter a residence name');
+                    return false;
+                }
+
+                var typeId = _Modals.readValue(root, '[data-field="typeId"]');
+                if (!typeId) {
+                    _showError('Please select a residence type');
+                    return false;
+                }
+
+                var locationId = _Modals.readValue(root, '[data-field="locationId"]')
+                    || household.locationId || null;
+                if (!locationId) {
+                    _showError('Please select a location');
+                    return false;
+                }
+
+                var condition = _Modals.readValue(root, '[data-field="condition"]') || 'good';
+                var builtYear = _Modals.readIntOrNull(root, '[data-field="builtYear"]');
+                if (builtYear === null || builtYear < 1) {
+                    _showError('Please enter a valid built year');
+                    return false;
+                }
+                var notes = _Modals.readValue(root, '[data-field="notes"]').trim();
+                var assignOnCreate = _Modals.readChecked(
+                    root, '[data-field="assignOnCreate"]');
+
+                // STEP 1: createResidence.
+                var createResult = _residence.createResidence(name, locationId, typeId, {
+                    condition: condition,
+                    builtYear: builtYear,
+                    notes: notes || null
+                });
+                if (!createResult || createResult.success !== true) {
+                    _Modals.reportFailure(createResult, 'Failed to create residence');
+                    return false;
+                }
+
+                createdId = createResult.data.residenceId;
+                createdName = name;
+
+                // STEP 2: optional assign.
+                if (assignOnCreate) {
+                    assignAttempted = true;
+                    var year = currentYear !== null ? currentYear : builtYear;
+                    var assignResult = _residence.assignHouseholdToVacantResidence(
+                        createdId, householdId, household.name, year);
+
+                    if (!assignResult || assignResult.success !== true) {
+                        // Partial: created but assignment failed.
+                        assignError = assignResult && assignResult.reason
+                            ? assignResult.reason
+                            : 'assignment failed';
+                    }
+                }
+
+                mutationSucceeded = true;
+
+                // STEP 3: persist once for the whole transaction.
+                var persisted = _persistOrFail('Residence created');
+                if (!persisted.ok) return false;
+
+                if (assignError) {
+                    _showWarning(
+                        'Residence "' + createdName +
+                        '" created, but assignment failed: ' + assignError);
+                } else if (assignAttempted) {
+                    _showSuccess(
+                        'Residence "' + createdName +
+                        '" created and ' + household.name + ' assigned');
+                } else {
+                    _showSuccess('Residence "' + createdName + '" created');
+                }
+
+                if (typeof onSuccess === 'function') onSuccess(createdId);
+                return true;
+            }
+        });
+
+        return modal;
+    }
+
+    // =========================================================================
+    // 4b. EDIT RESIDENCE FOR HOUSEHOLD MODAL
+    // =========================================================================
+    //
+    // Wraps openEditResidenceModal but is reachable from the household
+    // context. Same transaction (name-first, then field updates,
+    // one persist). Same retry semantics.
+
+    function openEditResidenceForHouseholdModal(residenceId, onSuccess) {
+        // Verify the residence exists.
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showError('Residence not found');
+            return null;
+        }
+
+        // Delegate to the existing edit modal. The existing modal's
+        // caller-facing contract (openEditResidenceModal(residenceId,
+        // onSuccess)) matches exactly what the household context needs.
+        return openEditResidenceModal(residenceId, onSuccess);
+    }
+
+    // =========================================================================
+    // 4c. DELETE RESIDENCE FOR HOUSEHOLD MODAL
+    // =========================================================================
+    //
+    // Deletes the residence with the same confirm-by-name pattern as
+    // openDeleteResidenceModal, but verifies the residence belongs to
+    // the household's current set first (or is being explicitly
+    // targeted by the household's row).
+
+    function openDeleteResidenceForHouseholdModal(residenceId, onSuccess) {
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showError('Residence not found');
+            return null;
+        }
+
+        // Delegate to the existing delete modal. The existing modal has
+        // the confirm-by-name, forced-delete semantics.
+        return openDeleteResidenceModal(residenceId, onSuccess);
+    }
+
+    // =========================================================================
+    // 4d. ASSIGN RESIDENCE TO HOUSEHOLD MODAL
+    // =========================================================================
+    //
+    // Opens an inline residence picker (vacant residences at the
+    // household's location, optionally filtered). On confirm, calls
+    // assignHouseholdToVacantResidence once, then persists once.
+
+    function openAssignResidenceToHouseholdModal(householdId, onSuccess) {
+        var household = _householdQueries.getHousehold(householdId);
+        if (!household) {
+            _showError('Household not found');
+            return null;
+        }
+
+        var existing = _getHouseholdCurrentResidence(householdId);
+        if (existing) {
+            _showError(
+                household.name + ' already occupies "' + existing.name +
+                '". Vacate or reassign before picking another residence.');
+            return null;
+        }
+
+        var currentYear = _currentYear();
+        var locationId = household.locationId || null;
+
+        var candidates = _getResidenceCandidates('', locationId);
+        if (candidates.length === 0) {
+            _showInfo(
+                'No vacant residences available' +
+                (locationId
+                    ? ' in the household\'s location.'
+                    : '. Set a location for the household first.'));
+            return null;
+        }
+
+        var content =
+            '<div style="margin-bottom:16px;">' +
+                '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
+                    'Assign a vacant residence to <strong>' +
+                    _esc(household.name) + '</strong>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Residence</label>' +
+                    _buildResidencePickerHtml({
+                        listId: 'arh-list',
+                        searchId: 'arh-search'
+                    }) +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Assignment Year</label>' +
+                    '<input type="number" data-field="year" value="' +
+                        (currentYear !== null ? currentYear : '') + '" ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;" min="1">' +
+                '</div>' +
+                '<div style="margin-bottom:12px;">' +
+                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+                    '<textarea data-field="notes" rows="2" ' +
+                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;"></textarea>' +
+                '</div>' +
+            '</div>';
+
+        var selectedResidenceId = null;
+        var mutationSucceeded = false;
+        var mutationData = null;
+
+        var modal = _openModal({
+            title: 'Assign Residence',
+            content: content,
+            confirmText: 'Assign',
+            cancelText: 'Cancel',
+            onConfirm: function() {
+                var root = _Modals.rootFrom(modal);
+                if (!root) { _showError('Modal root unavailable'); return false; }
+
+                if (mutationSucceeded) {
+                    var retryPersist = _persistOrFail('Assignment saved');
+                    if (!retryPersist.ok) return false;
+                    _showSuccess('Assignment saved');
+                    if (typeof onSuccess === 'function') onSuccess(mutationData);
+                    return true;
+                }
+
+                if (!selectedResidenceId) {
+                    _showError('Please select a residence');
+                    return false;
+                }
+
+                var yearRaw = _Modals.readValue(root, '[data-field="year"]');
+                var year = yearRaw === ''
+                    ? currentYear
+                    : parseInt(yearRaw, 10);
+                if (!Number.isInteger(year) || !window.isValidYear(year)) {
+                    _showError('Please enter a valid year');
+                    return false;
+                }
+
+                var notes = _Modals.readValue(root, '[data-field="notes"]');
+
+                var result = _residence.assignHouseholdToVacantResidence(
+                    selectedResidenceId, householdId, household.name, year, {
+                        notes: notes || ''
+                    });
+
+                if (!result || result.success !== true) {
+                    _Modals.reportFailure(result, 'Failed to assign residence');
+                    return false;
+                }
+
+                mutationSucceeded = true;
+                mutationData = result.data;
+
+                var persisted = _persistOrFail('Assignment saved');
+                if (!persisted.ok) return false;
+
+                var msg = household.name + ' assigned to residence';
+                if (result.data && result.data.unitNumber !== undefined
+                    && result.data.unitNumber !== null) {
+                    msg += ' (Unit ' + result.data.unitNumber + ')';
+                }
+                _showSuccess(msg);
+                if (typeof onSuccess === 'function') onSuccess(mutationData);
+                return true;
+            }
+        });
+
+        _Modals.onOpen(modal, function(root) {
+            _wireResidencePicker(root, 'arh-list', 'arh-search', locationId,
+                function (id) { selectedResidenceId = id; });
         });
 
         return modal;
@@ -1187,8 +1812,15 @@
     }
 
     // =========================================================================
-    // 7. ASSIGN RESIDENCE TO HOUSEHOLD
+    // 7. ASSIGN RESIDENCE TO HOUSEHOLD (legacy)
     // =========================================================================
+    //
+    // Kept for the "assign this residence to a household" flow. Uses
+    // window.openHouseholdSelector when available, but the household
+    // picker only. The Location tab uses
+    // openAssignResidenceToHouseholdModal (which uses the inline
+    // residence picker instead — the assignment perspective is the
+    // household's, not the residence's).
 
     function openAssignResidenceModal(residenceId, onSuccess) {
         var residence = _residence.getResidence(residenceId);
@@ -2505,6 +3137,12 @@
     window.openResidenceVacancyDetailsModal = openResidenceDetailsModal;
     window.openAssignResidenceToHouseholdModal = openAssignResidenceModal;
 
+    // Household-centric modals (Location tab)
+    window.openCreateResidenceForHouseholdModal = openCreateResidenceForHouseholdModal;
+    window.openEditResidenceForHouseholdModal = openEditResidenceForHouseholdModal;
+    window.openDeleteResidenceForHouseholdModal = openDeleteResidenceForHouseholdModal;
+    window.openAssignResidenceToHouseholdModal = openAssignResidenceToHouseholdModal;
+
     // Units
     window.openAddUnitModal = openAddUnitModal;
     window.openRemoveUnitModal = openRemoveUnitModal;
@@ -2538,6 +3176,10 @@
             openAssignResidenceModal: openAssignResidenceModal,
             openVacateResidenceModal: openVacateResidenceModal,
             openEndResidenceAssociationModal: openEndResidenceAssociationModal,
+            openCreateResidenceForHouseholdModal: openCreateResidenceForHouseholdModal,
+            openEditResidenceForHouseholdModal: openEditResidenceForHouseholdModal,
+            openDeleteResidenceForHouseholdModal: openDeleteResidenceForHouseholdModal,
+            openAssignResidenceToHouseholdModal: openAssignResidenceToHouseholdModal,
             openAddUnitModal: openAddUnitModal,
             openRemoveUnitModal: openRemoveUnitModal,
             openAssignUnitModal: openAssignUnitModal,
