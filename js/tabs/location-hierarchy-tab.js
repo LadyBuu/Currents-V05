@@ -9,43 +9,55 @@
  *
  * Displays the ancestor chain and all descendants for the selected location.
  * Each ancestor and descendant has a "Go to" button that dispatches a
- * 'locationSelected' custom event; the bootstrap listens and routes it.
+ * 'locationSelected' custom event; the bootstrap listens and routes it to
+ * _selectLocation.
+ *
+ * SCOPE
+ * -----
+ * - Reads the place, its ancestors, and its descendants via LocationQueries.
+ * - Renders two sections: Hierarchy Path (root → self) and Descendants.
+ * - Delegates navigation to the bootstrap via a 'locationSelected' event.
+ *
+ * OUT OF SCOPE
+ * ------------
+ * - Selection state (owned by LocationUIState + the bootstrap).
+ * - Navigation routing (owned by the bootstrap's locationSelected listener).
+ * - Inline CSS. Classes resolve from the shell's inline <style> block.
  *
  * RENDERER CONTRACT (from LocationManagerBootstrap):
  *   fn(container, context) where context = { locationId, locationName }
  *
  * DATA SOURCES:
  *   - LocationQueries.getPlace(id)
- *   - LocationQueries.getPlaceHierarchy(id)     (ancestors root→self)
+ *   - LocationQueries.getPlaceHierarchy(id)      (ancestors root→self)
  *   - LocationQueries.getPlaceChildren(id, true) (descendants)
  *   - LocationQueries.getLocationTypeName(typeId)
  *
  * FILTERS: none.
  *
  * DEPENDENCIES (all soft; guarded at call time):
- *   - LocationQueries — REQUIRED
- *   - TabManager      — REQUIRED
- *   - formatting.js   (escapeHtml) — REQUIRED
+ *   - LocationQueries — REQUIRED (renderer refuses if absent)
+ *   - TabManager      — REQUIRED (registration; logs on absence)
+ *   - formatting.js   (escapeHtml) — soft fallback in _esc
  *   - icons.js        (Icons)      — soft
  *
  * TIME CONTRACT: none.
- * ICON POLICY: no emojis, no literal Unicode box-drawing glyphs. Indentation
- *   uses CSS padding-left driven by the node's depth; the tree-guide glyph
- *   is rendered as a CSS pseudo-element in css/location-tabs.css.
+ * ICON POLICY: no emojis, no literal Unicode box-drawing glyphs in JS output.
+ *   The tree-guide glyph is a CSS ::before content rule (\2514) keyed off
+ *   [data-depth], defined in the shell's inline <style>.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Refactored to the Education tab skeleton:
- *     - Renderer contract is fn(container, context).
- *     - Registers with TabManager at load time.
- *     - Removed every inline style attribute. All layout comes from
- *       .loc-hier-* classes in css/location-tabs.css.
- *     - Removed the literal '└─' glyph. Depth is now a data-depth attribute,
- *       styled via CSS.
- *     - Removed per-button listeners. One delegated click handler on
- *       the container, routed via data-action + data-id.
- *     - Empty states are three-way: no-context / no-place / no-data.
- *     - _esc throws if escapeHtml is missing (was: silently returned '').
+ *   - Renderer contract is fn(container, context); registers with TabManager
+ *     at load time via _registerTab (signature-adaptive, never throws).
+ *   - Removed every inline style attribute; layout from .loc-hier-* classes.
+ *   - Removed the literal '└─' glyph from JS. Depth is data-depth="N";
+ *     the guide is CSS.
+ *   - Removed per-button listeners. One delegated click handler on the
+ *     container, routed via data-action + data-id.
+ *   - Empty states are three-way: no-context / no-place / no-data.
+ *   - Removed all file-scope throw blocks; the renderer refuses with a
+ *     visible rt-unavailable panel when LocationQueries is missing.
  * =============================================================================
  */
 
@@ -56,7 +68,7 @@
     var SCOPE  = 'location';
 
     // =========================================================================
-    // 1. DEPENDENCY HELPERS (soft; strict fallbacks)
+    // 1. DEPENDENCY HELPERS (soft; no throws at load time)
     // =========================================================================
 
     function _queries() {
@@ -74,8 +86,10 @@
     }
     function _icon(name) {
         if (typeof window.getIcon === 'function') {
-            try { var s = window.getIcon(name); if (typeof s === 'string') return s; }
-            catch (e) { /* fall through */ }
+            try {
+                var s = window.getIcon(name);
+                if (typeof s === 'string') return s;
+            } catch (e) { /* fall through */ }
         }
         if (window.Icons && typeof window.Icons[name] === 'string') return window.Icons[name];
         return '';
@@ -83,9 +97,67 @@
     function _toast(msg, type) {
         if (typeof window.showToast === 'function') window.showToast(msg, type);
     }
+    function _refresh() {
+        var TM = _tabManager();
+        if (TM && typeof TM.requestRender === 'function') {
+            try { TM.requestRender(SCOPE, TAB_ID); } catch (e) { /* ignore */ }
+        }
+    }
+
+    /**
+     * Register this tab with TabManager, adapting to whichever register()
+     * signature the loaded TabManager exposes. Never throws.
+     *
+     *   A: register(scope, tabId, renderFn)
+     *   B: register(scope, { id, render })
+     *   C: register(tabId, renderFn)
+     */
+    function _registerTab(scope, tabId, renderFn) {
+        var TM = _tabManager();
+        if (!TM || typeof TM.register !== 'function') {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn('location-' + tabId + '-tab.js: TabManager.register unavailable; tab not registered.');
+            }
+            return false;
+        }
+
+        var eA = null, eB = null, eC = null;
+
+        try {
+            TM.register(scope, tabId, renderFn);
+            if (typeof console !== 'undefined' && console.info) {
+                console.info('location-' + tabId + '-tab.js: registered via signature A (scope, tabId, render).');
+            }
+            return true;
+        } catch (err) { eA = err; }
+
+        try {
+            TM.register(scope, { id: tabId, render: renderFn });
+            if (typeof console !== 'undefined' && console.info) {
+                console.info('location-' + tabId + '-tab.js: registered via signature B (scope, {id, render}).');
+            }
+            return true;
+        } catch (err) { eB = err; }
+
+        try {
+            TM.register(tabId, renderFn);
+            if (typeof console !== 'undefined' && console.info) {
+                console.info('location-' + tabId + '-tab.js: registered via signature C (tabId, render).');
+            }
+            return true;
+        } catch (err) { eC = err; }
+
+        if (typeof console !== 'undefined' && console.error) {
+            console.error(
+                'location-' + tabId + '-tab.js: no TabManager.register signature accepted this tab.',
+                { A: eA && eA.message, B: eB && eB.message, C: eC && eC.message }
+            );
+        }
+        return false;
+    }
 
     // =========================================================================
-    // 2. RENDER
+    // 2. RENDER SECTIONS
     // =========================================================================
 
     function _renderAncestry(chain, locationId, Q) {
@@ -146,6 +218,10 @@
         return html;
     }
 
+    // =========================================================================
+    // 3. RENDER
+    // =========================================================================
+
     function renderHierarchyTab(container, context) {
         if (!container) return;
 
@@ -198,18 +274,13 @@
     }
 
     // =========================================================================
-    // 3. REGISTRATION
+    // 4. REGISTRATION
     // =========================================================================
 
-    var TM = _tabManager();
-    if (TM && typeof TM.register === 'function') {
-        TM.register(SCOPE, TAB_ID, renderHierarchyTab);
-    } else if (typeof console !== 'undefined' && console.warn) {
-        console.warn('location-hierarchy-tab.js: TabManager is not available at load time; the tab was not registered. Load tab-manager.js first.');
-    }
+    _registerTab(SCOPE, TAB_ID, renderHierarchyTab);
 
     // =========================================================================
-    // 4. EXPORTS
+    // 5. EXPORTS
     // =========================================================================
 
     window.LocationHierarchyTab = { id: TAB_ID, render: renderHierarchyTab };
