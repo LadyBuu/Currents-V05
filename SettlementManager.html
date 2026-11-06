@@ -495,6 +495,20 @@
 <!-- BLOCK 5 — CORE VALIDATION, WORLD, NAMES -->
 <script src="js/core/validation.js"></script>
 <script src="js/core/world.js"></script>
+
+<!-- getCurrentLocation alias (disaster + others read this name) -->
+<script>
+    (function () {
+        'use strict';
+        if (typeof window.getCurrentLocation !== 'function'
+            && typeof window.getCurrentLocationId === 'function') {
+            window.getCurrentLocation = function (characterId) {
+                return window.getCurrentLocationId(characterId);
+            };
+        }
+    })();
+</script>
+
 <script src="js/core/names.js"></script>
 
 <!-- BLOCK 6 — CORE UI PRIMITIVES -->
@@ -643,36 +657,49 @@
 <script src="js/relationships/relationship-queries.js"></script>
 <script src="js/relationships/relationship-commands.js"></script>
 
-<!-- BLOCK 22b — RELATIONSHIP FLAT-GLOBAL SHIM -->
+<!-- BLOCK 22b — RELATIONSHIP FLAT-GLOBAL SHIM (late-binding) -->
 <script>
     (function () {
         'use strict';
-        if (!window.RelationshipCommands) return;
-        var RC = window.RelationshipCommands;
-        if (typeof RC.createRelationship === 'function'
-            && typeof window.createRelationship !== 'function') {
+        function _ensure() {
+            if (typeof window.createRelationship === 'function') return true;
+            var RC = window.RelationshipCommands || null;
+            if (!RC) return false;
+            var fn = RC.createRelationship || RC.addRelationship
+                || RC.create || RC.link || null;
+            if (typeof fn !== 'function') return false;
             window.createRelationship = function (a, b, options) {
-                return RC.createRelationship(a, b, options);
+                return fn.call(RC, a, b, options);
             };
+            return true;
         }
-        if (typeof RC.endRelationship === 'function'
-            && typeof window.endRelationship !== 'function') {
-            window.endRelationship = function (id, year, reason) {
-                return RC.endRelationship(id, year, reason);
+        _ensure();
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', _ensure);
+        }
+        window.__ensureCreateRelationship = _ensure;
+
+        // getRelationshipsForCharacter flat alias — crime-commands reads
+        // this as a global. RelationshipQueries is the source.
+        function _ensureRelationshipsForCharacter() {
+            if (typeof window.getRelationshipsForCharacter === 'function') return true;
+            var RQ = window.RelationshipQueries || null;
+            if (!RQ) return false;
+            var fn = RQ.getRelationshipsForCharacter
+                || RQ.getRelationshipsFor
+                || RQ.getCharacterRelationships
+                || null;
+            if (typeof fn !== 'function') return false;
+            window.getRelationshipsForCharacter = function (characterId, options) {
+                return fn.call(RQ, characterId, options);
             };
+            return true;
         }
-        if (typeof RC.updateRelationship === 'function'
-            && typeof window.updateRelationship !== 'function') {
-            window.updateRelationship = function (id, patch) {
-                return RC.updateRelationship(id, patch);
-            };
+        _ensureRelationshipsForCharacter();
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', _ensureRelationshipsForCharacter);
         }
-        if (typeof RC.getRelationshipById === 'function'
-            && typeof window.getRelationshipById !== 'function') {
-            window.getRelationshipById = function (id) {
-                return RC.getRelationshipById(id);
-            };
-        }
+        window.__ensureRelationshipsForCharacter = _ensureRelationshipsForCharacter;
     })();
 </script>
 
@@ -707,7 +734,7 @@
 <script src="js/relationships/relationship-ui-metadata.js"></script>
 <script src="js/relationships/relationship-integrations.js"></script>
 
-<!-- BLOCK 27 — APPRENTICESHIP SUBSYSTEM (moved BEFORE relationship modals) -->
+<!-- BLOCK 27 — APPRENTICESHIP SUBSYSTEM (before relationship modals) -->
 <script src="js/apprenticeship/apprenticeship-constants.js"></script>
 <script src="js/apprenticeship/apprenticeship-rules.js"></script>
 <script src="js/apprenticeship/apprenticeship-queries.js"></script>
@@ -715,7 +742,7 @@
 <script src="js/apprenticeship/professional-knowledge-commands.js"></script>
 <script src="js/apprenticeship/modals-apprenticeship.js"></script>
 
-<!-- BLOCK 27b — RELATIONSHIP MODALS (requires ApprenticeshipCommands) -->
+<!-- BLOCK 27b — RELATIONSHIP MODALS (require ApprenticeshipCommands) -->
 <script src="js/relationships/modals-relationship.js"></script>
 <script src="js/relationships/modals-friendship.js"></script>
 
@@ -723,7 +750,6 @@
 <script src="js/relationships/relationship-bootstrap.js"></script>
 
 <!-- BLOCK 30 — HOUSEHOLD AND RESIDENCE SUBSYSTEM -->
-<script src="js/households/household-tab-runtime.js"></script>
 <script src="js/households/household-constants.js"></script>
 <script src="js/households/household-rules.js"></script>
 <script src="js/households/household-view-models.js"></script>
@@ -769,7 +795,7 @@
 <script src="js/industry/modals-industry.js"></script>
 <script src="js/industry/industry-bootstrap.js"></script>
 
-<!-- BLOCK 34 — LOCATION SUBSYSTEM (moved BEFORE disaster and crime) -->
+<!-- BLOCK 34 — LOCATION SUBSYSTEM (before disaster and crime) -->
 <script src="js/location/location-state.js"></script>
 <script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-commands.js"></script>
@@ -898,13 +924,15 @@
 <!-- Settlement-level list renderer (not a tab). -->
 <script src="js/settlement/settlement-ui-list.js"></script>
 
-<!-- Settlement modals (unchanged). -->
+<!-- Settlement modals. -->
 <script src="js/settlement/modals-settlement-core.js"></script>
 <script src="js/settlement/modals-settlement-economy.js"></script>
 <script src="js/settlement/modals-settlement-roles.js"></script>
 
-<!-- Foreign tab files (unchanged, 404s removed). -->
-<script src="js/tabs/apprenticeship-tab.js"></script>
+<!-- Household tab runtime — MUST load before the six household tabs. -->
+<script src="js/tabs/household-tab-runtime.js"></script>
+
+<!-- Foreign tab files. -->
 <script src="js/tabs/culture-appearance-tab.js"></script>
 <script src="js/tabs/culture-characters-tab.js"></script>
 <script src="js/tabs/culture-editor-tab.js"></script>
@@ -930,7 +958,7 @@
 <script src="js/tabs/religion-laws-tab.js"></script>
 <script src="js/tabs/religion-places-tab.js"></script>
 
-<!-- SETTLEMENT TAB FILES — each self-registers with TabManager('settlement', <tabid>, fn). -->
+<!-- SETTLEMENT TABS — self-register with TabManager('settlement', <tabid>, fn). -->
 <script src="js/tabs/settlement-overview-tab.js"></script>
 <script src="js/tabs/settlement-economy-tab.js"></script>
 <script src="js/tabs/settlement-features-tab.js"></script>
@@ -942,10 +970,8 @@
 <script src="js/tabs/settlement-crime-tab.js"></script>
 <script src="js/tabs/settlement-history-tab.js"></script>
 
-<!-- SETTLEMENT MANAGER BOOTSTRAP — MUST BE LAST. Configures TabManager, -->
-<!-- wires the shell, renders the initial tab. Every settlement tab file -->
-<!-- above must have self-registered before this runs. -->
-<script src="js/settlement/settlement-manager-bootstrap.js"></script>
+<!-- SETTLEMENT MANAGER BOOTSTRAP — path is js/tabs/. Must be last. -->
+<script src="js/tabs/settlement-manager-bootstrap.js"></script>
 
 <!-- BLOCK 41 — OPTIONAL STATE FACADE -->
 <script src="js/core/census-state.js"></script>
@@ -958,15 +984,15 @@
     (function () {
         'use strict';
 
-        // FIX ORDER:
-        //   - Name cascade: BLOCK 17 moved after BLOCK 21 (culture).
-        //   - Relationship modal cascade: BLOCK 27 (apprenticeship)
-        //     moved before BLOCK 27b (relationship modals).
-        //   - Disaster cascade: BLOCK 34 (location) moved before
-        //     BLOCK 32 (disaster).
-        //   - Crime cascade: BLOCK 37 already after location (moved).
-        //   - Household tab runtime: added at top of BLOCK 30.
-        //   - Three 404 tabs removed from BLOCK 40.
+        // Order of bootstrap calls:
+        //   - Location first (many domains read LocationQueries).
+        //   - Religion, Government, Culture (each self-contained).
+        //   - Relationships (after Culture — name resolution).
+        //   - Crime (after Location + Relationships).
+        //   - Industry (reads Location, Household).
+        //   - Household (requires createRelationship shim fired).
+        //   - Disaster (requires getCurrentLocation alias).
+        //   - Settlement last (reads everything above).
 
         try { if (window.LocationBootstrap && window.LocationBootstrap.init) window.LocationBootstrap.init(); } catch (e) { console.error('LocationBootstrap:', e); }
         try { if (window.ReligionBootstrap && window.ReligionBootstrap.init) window.ReligionBootstrap.init(); } catch (e) { console.error('ReligionBootstrap:', e); }
@@ -975,8 +1001,18 @@
         try { if (window.Relationships && window.Relationships.init) window.Relationships.init(); } catch (e) { console.error('Relationships:', e); }
         try { if (window.CrimeBootstrap && window.CrimeBootstrap.init) window.CrimeBootstrap.init(); } catch (e) { console.error('CrimeBootstrap:', e); }
         try { if (window.IndustryBootstrap && window.IndustryBootstrap.init) window.IndustryBootstrap.init(); } catch (e) { console.error('IndustryBootstrap:', e); }
-        try { if (window.HouseholdBootstrap && window.HouseholdBootstrap.init) window.HouseholdBootstrap.init(); } catch (e) { console.error('HouseholdBootstrap:', e); }
+
+        try {
+            if (typeof window.__ensureCreateRelationship === 'function') {
+                window.__ensureCreateRelationship();
+            }
+            if (window.HouseholdBootstrap && window.HouseholdBootstrap.init) {
+                window.HouseholdBootstrap.init();
+            }
+        } catch (e) { console.error('HouseholdBootstrap:', e); }
+
         try { if (window.DisasterBootstrap && window.DisasterBootstrap.init) window.DisasterBootstrap.init(); } catch (e) { console.error('DisasterBootstrap:', e); }
+
         try { if (window.SettlementManagerBootstrap && window.SettlementManagerBootstrap.init) window.SettlementManagerBootstrap.init(); } catch (e) { console.error('SettlementManagerBootstrap:', e); }
     })();
 </script>
