@@ -13,11 +13,267 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
-    <!-- 3. Stylesheets -->
+    <!-- 3. Shared design system (themes.css + common.css) -->
     <link rel="stylesheet" href="css/themes.css" />
     <link rel="stylesheet" href="css/common.css" />
-    <link rel="stylesheet" href="css/data-manager.css" />
-    <link rel="stylesheet" href="css/gov-manager.css" /> <!-- For .tb-btn and .panel-tabs -->
+
+    <!-- 4. Inline page shell CSS (was css/data-manager.css) -->
+    <style id="data-manager-shell-styles">
+        /* ==================================================================
+           DATA MANAGER — SHELL CSS (inlined)
+           ==================================================================
+           Structural styles for the Data Manager app frame. NO colour,
+           radius, shadow, or font literals. Every visual value is a
+           themes.css token.
+
+           The three tab modules inject their OWN structural CSS at load:
+             - location-type-manager-tab.js  → .ltm-*
+             - government-type-manager-tab.js → .gtm-*
+             - rank-manager-tab.js            → .rtm-*
+             - category-manager-tab.js        → .rcat-*
+
+           Shared classes (empty-state, location-tree-badge, .btn) live in
+           common.css. Do NOT redeclare them here.
+           ================================================================== */
+
+        /* ---- 1. App wrapper ---- */
+        .data-manager-app {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background: var(--bg);
+            color: var(--text);
+            overflow: hidden;
+        }
+
+        /* ---- 2. Topbar ---- */
+        .data-manager-app .topbar {
+            background: var(--bg2);
+            padding: 6px 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            min-height: var(--topbar-height, 42px);
+            flex-wrap: wrap;
+            position: relative;
+            z-index: 10;
+        }
+        .data-manager-app .topbar .title {
+            font-family: var(--f-display);
+            font-weight: 600;
+            font-size: 0.8rem;
+            color: var(--accent);
+            white-space: nowrap;
+            letter-spacing: 0.06em;
+        }
+        .data-manager-app .topbar .spacer {
+            flex: 1;
+            min-width: 8px;
+        }
+        .data-manager-app .topbar label {
+            font-family: var(--f-display);
+            font-size: 0.6rem;
+            color: var(--dim);
+            letter-spacing: 0.05em;
+        }
+        .data-manager-app .topbar .year-input {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 3px 6px;
+            border-radius: var(--radius);
+            font-family: var(--f-mono);
+            font-size: 0.6rem;
+            width: 64px;
+        }
+        .data-manager-app .topbar .year-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px var(--accent-soft);
+        }
+        .data-manager-app .topbar .tb-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 12px;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.6rem;
+            font-weight: 500;
+            transition: border-color 0.15s ease,
+                        background-color 0.15s ease,
+                        color 0.15s ease;
+        }
+        .data-manager-app .topbar .tb-btn:hover {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+        .data-manager-app .topbar .tb-btn.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--accent-fg);
+        }
+        .data-manager-app .topbar .tb-btn.primary:hover {
+            background: var(--accent-dark);
+            border-color: var(--accent-dark);
+            color: var(--accent-fg);
+        }
+
+        /* ---- 3. Panel tabs ---- */
+        .data-manager-app .panel-tabs {
+            display: flex;
+            gap: 2px;
+            padding: 0 12px;
+            border-bottom: 1px solid var(--accent);
+            background: var(--bg2);
+            flex-shrink: 0;
+            overflow-x: auto;
+            white-space: nowrap;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+            min-height: var(--tab-height, 38px);
+            align-items: center;
+            position: relative;
+        }
+        .data-manager-app .panel-tabs::-webkit-scrollbar {
+            display: none;
+            width: 0;
+            height: 0;
+        }
+        .data-manager-app .panel-tabs .tab-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            font-family: var(--f-display);
+            font-size: 0.6rem;
+            color: var(--dim);
+            letter-spacing: 0.05em;
+            white-space: nowrap;
+            flex-shrink: 0;
+            min-height: calc(var(--tab-height, 38px) - 2px);
+            transition: color 0.15s ease,
+                        background-color 0.15s ease,
+                        border-color 0.15s ease;
+        }
+        .data-manager-app .panel-tabs .tab-btn:hover {
+            color: var(--accent-light);
+            background: var(--accent-dim);
+        }
+        .data-manager-app .panel-tabs .tab-btn.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+            background: var(--accent-dim);
+            font-weight: 600;
+            text-shadow: var(--glow-sm);
+        }
+        .data-manager-app .panel-tabs .tab-btn .tab-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1em;
+            height: 1em;
+            color: currentColor;
+        }
+        .data-manager-app .panel-tabs .tab-btn .tab-icon svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+            fill: currentColor;
+        }
+
+        /* ---- 4. Tab content ---- */
+        .data-manager-app .tab-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 20px;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 0;
+        }
+        .data-manager-app .tab-pane {
+            display: none;
+        }
+        .data-manager-app .tab-pane.active {
+            display: block;
+            animation: dmFadeIn 0.2s ease;
+        }
+        @keyframes dmFadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ---- 5. Responsive ---- */
+        @media (max-width: 768px) {
+            .data-manager-app .topbar {
+                padding: 4px 10px;
+                gap: 6px;
+                min-height: 38px;
+            }
+            .data-manager-app .topbar .title { font-size: 0.7rem; }
+            .data-manager-app .topbar .tb-btn {
+                padding: 3px 8px;
+                font-size: 0.55rem;
+            }
+            .data-manager-app .topbar .year-input {
+                width: 50px;
+                font-size: 0.55rem;
+                padding: 2px 4px;
+            }
+            .data-manager-app .topbar label { font-size: 0.55rem; }
+            .data-manager-app .panel-tabs {
+                padding: 0 8px;
+                min-height: 34px;
+            }
+            .data-manager-app .panel-tabs .tab-btn {
+                padding: 6px 10px;
+                font-size: 0.55rem;
+                min-height: 32px;
+            }
+            .data-manager-app .tab-content {
+                padding: 12px 14px;
+            }
+        }
+        @media (max-width: 480px) {
+            .data-manager-app .topbar {
+                padding: 3px 8px;
+                gap: 4px;
+                min-height: 34px;
+            }
+            .data-manager-app .topbar .title { font-size: 0.6rem; }
+            .data-manager-app .topbar .tb-btn {
+                padding: 2px 6px;
+                font-size: 0.5rem;
+            }
+            .data-manager-app .topbar .year-input {
+                width: 44px;
+                font-size: 0.5rem;
+            }
+            .data-manager-app .topbar label { font-size: 0.5rem; }
+            .data-manager-app .panel-tabs {
+                min-height: 30px;
+                padding: 0 6px;
+            }
+            .data-manager-app .panel-tabs .tab-btn {
+                padding: 5px 8px;
+                font-size: 0.5rem;
+                min-height: 28px;
+            }
+            .data-manager-app .tab-content {
+                padding: 8px 10px;
+            }
+        }
+    </style>
 </head>
 <body>
 
@@ -27,7 +283,7 @@
     <div class="topbar">
         <span class="title">Data Manager</span>
         <span class="spacer"></span>
-        
+
         <label for="yearInput">Year</label>
         <input type="number" class="year-input" id="yearInput" value="1250" />
         <button class="tb-btn" id="setYearBtn">Set</button>
@@ -56,17 +312,8 @@
         <button class="tab-btn" data-tab="ranks">
             <span class="tab-icon" id="icon-ranks"></span> Ranks
         </button>
-        <button class="tab-btn" data-tab="census">
-            <span class="tab-icon" id="icon-census"></span> Census
-        </button>
-        <button class="tab-btn" data-tab="history">
-            <span class="tab-icon" id="icon-history"></span> History
-        </button>
-        <button class="tab-btn" data-tab="relations">
-            <span class="tab-icon" id="icon-relations"></span> Relations
-        </button>
-        <button class="tab-btn" data-tab="settings">
-            <span class="tab-icon" id="icon-settings"></span> Settings
+        <button class="tab-btn" data-tab="categories">
+            <span class="tab-icon" id="icon-categories"></span> Categories
         </button>
     </div>
 
@@ -75,34 +322,7 @@
         <div class="tab-pane active" id="tab-locationtypes"></div>
         <div class="tab-pane" id="tab-governmenttypes"></div>
         <div class="tab-pane" id="tab-ranks"></div>
-        <div class="tab-pane" id="tab-census">
-            <div class="empty-state">
-                <div class="icon" id="empty-census-icon"></div>
-                <div class="message">Census data will appear here</div>
-                <div class="sub-message">(placeholder – coming soon)</div>
-            </div>
-        </div>
-        <div class="tab-pane" id="tab-history">
-            <div class="empty-state">
-                <div class="icon" id="empty-history-icon"></div>
-                <div class="message">Historical records will appear here</div>
-                <div class="sub-message">(placeholder – coming soon)</div>
-            </div>
-        </div>
-        <div class="tab-pane" id="tab-relations">
-            <div class="empty-state">
-                <div class="icon" id="empty-relations-icon"></div>
-                <div class="message">Relationship data will appear here</div>
-                <div class="sub-message">(placeholder – coming soon)</div>
-            </div>
-        </div>
-        <div class="tab-pane" id="tab-settings">
-            <div class="empty-state">
-                <div class="icon" id="empty-settings-icon"></div>
-                <div class="message">Settings will appear here</div>
-                <div class="sub-message">(placeholder – coming soon)</div>
-            </div>
-        </div>
+        <div class="tab-pane" id="tab-categories"></div>
     </div>
 
 </div>
@@ -134,6 +354,7 @@
                     ranks: [],
                     rankInheritanceRules: {},
                     roles: [],
+                    categories: {},
                     locationTypes: [],
                     governmentTypes: [],
                     governmentDepartments: [],
@@ -255,6 +476,16 @@
 
 <!-- RANK TAB MANAGER -->
 <script src="js/tabs/rank-manager-tab.js"></script>
+
+<!-- ============================================================ -->
+<!-- ROLES (needed by CategoryManager)                             -->
+<!-- ============================================================ -->
+<script src="js/roles/role-constants.js"></script>
+<script src="js/roles/role-state.js"></script>
+<script src="js/roles/role-commands.js"></script>
+
+<!-- CATEGORY MANAGER TAB (DataManager direct-call export) -->
+<script src="js/tabs/category-manager-tab.js"></script>
 
 <!-- ============================================================ -->
 <!-- GOVERNMENT DEPENDENCY STUBS                                   -->
@@ -386,14 +617,7 @@
                 'icon-locationtypes':      window.Icons.LOCATION,
                 'icon-governmenttypes':    window.Icons.GEAR,
                 'icon-ranks':              window.Icons.CROWN,
-                'icon-census':             window.Icons.PERSON,
-                'icon-history':            window.Icons.BOOK,
-                'icon-relations':          window.Icons.CIRCLE_DOT,
-                'icon-settings':           window.Icons.GEAR,
-                'empty-census-icon':       window.Icons.PERSON,
-                'empty-history-icon':      window.Icons.BOOK,
-                'empty-relations-icon':    window.Icons.CIRCLE_DOT,
-                'empty-settings-icon':     window.Icons.GEAR
+                'icon-categories':         window.Icons.BOOK
             };
 
             for (var id in iconMap) {
@@ -412,10 +636,7 @@
             locationtypes:   document.getElementById('tab-locationtypes'),
             governmenttypes: document.getElementById('tab-governmenttypes'),
             ranks:           document.getElementById('tab-ranks'),
-            census:          document.getElementById('tab-census'),
-            history:         document.getElementById('tab-history'),
-            relations:       document.getElementById('tab-relations'),
-            settings:        document.getElementById('tab-settings')
+            categories:      document.getElementById('tab-categories')
         };
 
         var TAB_RENDERERS = {
@@ -432,6 +653,13 @@
             ranks: function () {
                 if (window.RankManager) {
                     window.RankManager.renderRankList('tab-ranks');
+                }
+            },
+            categories: function () {
+                if (window.CategoryManager && typeof window.CategoryManager.render === 'function') {
+                    window.CategoryManager.render(
+                        document.getElementById('tab-categories')
+                    );
                 }
             }
         };
@@ -543,6 +771,9 @@
                                 ? d.rankInheritanceRules
                                 : {}
                         );
+                    }
+                    if (window.RoleState && typeof window.RoleState.refresh === 'function') {
+                        try { window.RoleState.refresh(); } catch (e) {}
                     }
 
                     Object.keys(TAB_RENDERERS).forEach(function(key) {
