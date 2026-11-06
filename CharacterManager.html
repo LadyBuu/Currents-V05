@@ -17,8 +17,8 @@
 
            Only css/themes.css and css/common.css are external.
            Everything below is inline, including the character-tab-*,
-           character-row*, character-friendship-*, and
-           character-romance-* classes that the tabs emit.
+           character-row*, character-friendship-*, character-romance-*,
+           and character-family-* classes that the tabs emit.
 
            STRUCTURAL ONLY. Every visual value comes from a theme
            token in themes.css. No hex values, no rgba() values, no
@@ -420,13 +420,8 @@
         }
 
         /* ============================================================
-           CHARACTER TAB CONTENT (.character-tab-*)
+           CHARACTER TAB CONTENT
            ============================================================ */
-        .character-tab {
-            max-width: 60rem;
-            margin: 0 auto;
-        }
-
         .character-tab-section {
             margin-bottom: 1rem;
             border: 1px solid var(--border);
@@ -496,6 +491,7 @@
             text-transform: uppercase;
             color: var(--accent);
         }
+        .character-tab-subhead:first-child { margin-top: 0; }
 
         .character-tab-field {
             display: flex;
@@ -504,7 +500,6 @@
             align-items: flex-start;
             margin-bottom: 0.75rem;
         }
-        .character-tab-field:last-child { margin-bottom: 0; }
         .character-tab-field__label {
             flex: 0 0 10rem;
             font-family: var(--f-display);
@@ -842,7 +837,7 @@
         }
 
         /* ============================================================
-           FRIENDSHIP TAB (.character-friendship-*)
+           FRIENDSHIP TAB
            ============================================================ */
         .character-friendship-header {
             display: flex;
@@ -864,7 +859,6 @@
             gap: 0.375rem;
             flex-wrap: wrap;
         }
-
         .character-friendship-row {
             display: flex;
             flex-wrap: wrap;
@@ -877,12 +871,8 @@
             border-radius: var(--radius);
             margin-bottom: 0.375rem;
         }
-        .character-friendship-row:hover {
-            background: var(--bg3);
-        }
-        .character-friendship-row.is-deceased {
-            opacity: 0.72;
-        }
+        .character-friendship-row:hover { background: var(--bg3); }
+        .character-friendship-row.is-deceased { opacity: 0.72; }
         .character-friendship-row__main {
             flex: 1;
             min-width: 0;
@@ -893,7 +883,6 @@
             font-family: var(--f-mono);
             margin-top: 0.125rem;
         }
-
         .character-friendship-strength {
             display: flex;
             align-items: center;
@@ -920,14 +909,12 @@
             min-width: 2.5rem;
             text-align: right;
         }
-
         .character-friendship-actions {
             display: flex;
             gap: 0.25rem;
             flex-shrink: 0;
             flex-wrap: wrap;
         }
-
         .character-friendship-stats {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
@@ -956,7 +943,6 @@
             color: var(--text);
             margin-top: 0.125rem;
         }
-
         .character-friendship-tiers {
             display: flex;
             flex-direction: column;
@@ -986,7 +972,7 @@
         }
 
         /* ============================================================
-           ROMANCE TAB (.character-romance-*)
+           ROMANCE TAB
            ============================================================ */
         .character-romance-header {
             display: flex;
@@ -1026,7 +1012,6 @@
         .character-romance-poly svg {
             width: 0.85em; height: 0.85em; fill: currentColor;
         }
-
         .character-romance-row {
             display: flex;
             flex-wrap: wrap;
@@ -1039,17 +1024,12 @@
             border-radius: var(--radius);
             margin-bottom: 0.375rem;
         }
-        .character-romance-row:hover {
-            background: var(--bg3);
-        }
-        .character-romance-row.is-partner-deceased {
-            opacity: 0.78;
-        }
+        .character-romance-row:hover { background: var(--bg3); }
+        .character-romance-row.is-partner-deceased { opacity: 0.78; }
         .character-romance-row__main {
             flex: 1;
             min-width: 0;
         }
-
         .character-romance-badges {
             display: flex;
             flex-wrap: wrap;
@@ -1073,14 +1053,12 @@
         .character-romance-badge svg {
             width: 0.85em; height: 0.85em; fill: currentColor;
         }
-
         .character-romance-meta {
             font-size: 0.62rem;
             color: var(--dim);
             font-family: var(--f-mono);
             margin-top: 0.25rem;
         }
-
         .character-romance-status {
             font-family: var(--f-mono);
             font-size: 0.62rem;
@@ -1098,14 +1076,12 @@
         .character-romance-status.is-partner-deceased { color: var(--dim); font-style: italic; }
         .character-romance-status.is-deceased-subject { color: var(--danger-lt); }
         .character-romance-status.is-both-deceased { color: var(--danger-lt); font-style: italic; }
-
         .character-romance-actions {
             display: flex;
             gap: 0.25rem;
             flex-shrink: 0;
             flex-wrap: wrap;
         }
-
         .character-romance-stats {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
@@ -1134,7 +1110,6 @@
             color: var(--text);
             margin-top: 0.125rem;
         }
-
         .character-romance-detail__row {
             display: flex;
             gap: 0.5rem;
@@ -1143,6 +1118,188 @@
         }
         .character-romance-detail__row:last-child {
             border-bottom: none;
+        }
+
+        /* ============================================================
+           FAMILY TAB
+           ============================================================ */
+        .character-family-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        .character-family-header__title {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-family: var(--f-display);
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--accent-light);
+            letter-spacing: 0.02em;
+        }
+        .character-family-orphan-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.0625rem 0.5rem;
+            border-radius: 0.625rem;
+            background: var(--warning-soft, rgba(200, 112, 64, 0.12));
+            color: var(--warning, #c87040);
+            font-family: var(--f-body);
+            font-size: 0.6rem;
+            font-weight: 500;
+        }
+        .character-family-section-count {
+            font-family: var(--f-mono);
+            font-size: 0.65rem;
+            color: var(--dim);
+            padding: 0 0.375rem;
+        }
+        .character-family-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 0.375rem;
+        }
+        .character-family-row:hover { background: var(--bg3); }
+        .character-family-row.is-deceased { opacity: 0.72; }
+        .character-family-row__main {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+        .character-family-row__chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.25rem;
+        }
+        .character-family-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.0625rem 0.5rem;
+            border-radius: 0.625rem;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--dim);
+            font-family: var(--f-body);
+            font-size: 0.55rem;
+            font-weight: 500;
+            line-height: 1.4;
+        }
+        .character-family-chip.parent-bio-mother,
+        .character-family-chip.parent-bio-father,
+        .character-family-chip.parent-bio-parent {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .character-family-chip.parent-legal-mother,
+        .character-family-chip.parent-legal-father,
+        .character-family-chip.parent-legal-parent {
+            border-color: var(--accent-dim);
+            color: var(--accent-light);
+        }
+        .character-family-chip.parent-social {
+            border-color: var(--dim);
+            color: var(--dim);
+        }
+        .character-family-chip.child-bio {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .character-family-chip.child-legal {
+            border-color: var(--accent-dim);
+            color: var(--accent-light);
+        }
+        .character-family-chip.child-foster,
+        .character-family-chip.child-guardianship {
+            border-color: var(--dim);
+            color: var(--dim);
+        }
+        .character-family-chip.child-surrogacy {
+            border-color: var(--accent);
+            color: var(--accent);
+            font-style: italic;
+        }
+        .character-family-chip.sibling-full {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .character-family-chip.sibling-half-mother,
+        .character-family-chip.sibling-half-father,
+        .character-family-chip.sibling-half {
+            border-color: var(--accent-light);
+            color: var(--accent-light);
+        }
+        .character-family-chip.sibling-adoptive,
+        .character-family-chip.sibling-step {
+            border-color: var(--dim);
+            color: var(--dim);
+        }
+        .character-family-sib-icon {
+            display: inline-flex;
+            width: 0.9em;
+            height: 0.9em;
+            align-items: center;
+            justify-content: center;
+            color: var(--accent);
+            flex-shrink: 0;
+        }
+        .character-family-sib-icon svg {
+            width: 100%; height: 100%; fill: currentColor; stroke: currentColor;
+        }
+        .character-family-sib-icon--dashed {
+            opacity: 0.55;
+        }
+        .character-family-sib-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            align-items: center;
+            padding: 0.5rem 0.75rem;
+            background: var(--bg3);
+            border-radius: var(--radius);
+            margin-bottom: 0.5rem;
+            font-family: var(--f-body);
+            font-size: 0.6rem;
+            color: var(--dim);
+        }
+        .character-family-sib-legend__item {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+        .character-family-actions {
+            display: flex;
+            gap: 0.25rem;
+            flex-wrap: wrap;
+            flex-shrink: 0;
+        }
+        .character-family-actions--footer {
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--border);
+        }
+        .character-family-note {
+            margin-top: 0.75rem;
+            padding: 0.5rem 0.75rem;
+            background: var(--bg3);
+            border-radius: var(--radius);
+            font-family: var(--f-body);
+            font-size: 0.6rem;
+            color: var(--dim);
+            font-style: italic;
+            line-height: 1.55;
         }
 
         /* ============================================================
@@ -1211,6 +1368,13 @@
                 align-items: stretch;
             }
             .character-romance-actions {
+                justify-content: flex-end;
+            }
+            .character-family-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .character-family-actions {
                 justify-content: flex-end;
             }
         }
@@ -1441,7 +1605,7 @@
 <script src="js/names/name-system.js"></script>
 <script src="js/names/modals-name.js"></script>
 
-<!-- ---- Character subsystem (rules → state → commands → queries) ---- -->
+<!-- ---- Character subsystem ---- -->
 <script src="js/character/family-rules.js"></script>
 <script src="js/character/children-rules.js"></script>
 <script src="js/character/mortality-rules.js"></script>
@@ -1527,6 +1691,7 @@
 <script src="js/tabs/character-identity-tab.js"></script>
 <script src="js/tabs/character-friendship-tab.js"></script>
 <script src="js/tabs/character-romance-tab.js"></script>
+<script src="js/tabs/character-family-tab.js"></script>
 
 <!-- Tabs not yet built. Loaded conditionally so a missing file does
      not break the page. The bootstrap renders the "no-renderer" empty
@@ -1536,7 +1701,6 @@
      added; nothing else in the shell changes. -->
 
 <!-- <script src="js/tabs/character-location-tab.js"></script> -->
-<!-- <script src="js/tabs/character-family-tab.js"></script> -->
 <!-- <script src="js/tabs/character-skills-tab.js"></script> -->
 <!-- <script src="js/tabs/character-overview-tab.js"></script> -->
 
