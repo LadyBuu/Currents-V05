@@ -15,8 +15,8 @@
  *   - buildIdentityModel(id)
  *   - buildFriendshipModel(id)
  *   - buildRomanceModel(id)
- *   - buildFamilyModel(id)
- *   - buildLocationModel(id)          NEW
+ *   - buildFamilyModel(id)          EXPANDED
+ *   - buildLocationModel(id)
  *
  * SCOPE (future revisions, as tabs are built):
  *   - buildSkillsModel, buildOverviewModel
@@ -36,78 +36,61 @@
  *   - RomanceQueries, FriendshipQueries, AffairQueries
  *   - RelationshipUI
  *   - formatting.js, icons.js
- *   - HouseholdQueries (for buildLocationModel — read via getHouseholdMembers)
- *   - ResidenceSystem (for buildLocationModel — read via
- *     getResidencesByHousehold / getUnit / getUnitStats)
- *   - LocationQueries (for buildLocationModel — read via
- *     getCurrentLocationId, getPlace, getAllPlaces)
- *   - FamilyRules (for buildLocationModel's relationship classification)
+ *   - HouseholdQueries, ResidenceSystem, LocationQueries, FamilyRules
  *
  * OPTIONAL DEPENDENCIES (guarded at call time):
  *   - window.getRankById, window.getPlaceById
  *   - ReligionQueries, CultureQueries, RelationshipQueries
- *   - world.getCurrentLocationId (semantic resolver)
+ *   - world.getCurrentLocationId
  *
  * ICON POLICY: Uses SVG from icons.js. No emojis.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (household-tab P7):
- *     - Added buildLocationModel(characterId). Returns a complete
- *       render-ready model for the Location tab:
+ *   Current revision (family-tab P2):
+ *     - buildFamilyModel expanded with:
+ *         parents.father / parents.mother  — the biological father and
+ *           mother ids/names, or null. Convenience for the tab's "Set
+ *           mother" / "Set father" controls, which need to know whether
+ *           the role is currently filled and by whom.
  *
- *         {
- *           characterId,
- *           identity: { id, name, surname, fullName, isDeceased },
- *           currentLocation: { locationId, locationName, source,
- *                              rawCurrentLocationId,
- *                              resolvedDiffersFromRaw },
- *           birthplace: { placeId, placeName },
- *           moves: [ MoveEntry ],
- *           household: { available, householdId, householdName, role,
- *                        isHead, memberCount, currentNameSince,
- *                        currentLocationName },
- *           householdMembers: [ HouseholdMemberEntry ],
- *           householdHistory: [ HouseholdHistoryEntry ],
- *           householdHistoryStructured: boolean,
- *           residences: { available, entries: [ ResidenceSummary ] },
- *           relationshipCircles: { byTargetId: { id: 'spouse' | 'blood'
- *                                              | 'relative' } },
- *           notes: string,
- *           errors: { ... }
- *         }
+ *         children.<each>.parentCoverage  — new per-child field:
+ *             'both'          both of this character's partners are on
+ *                             the child (solid circle)
+ *             'mother-only'   only the mother is on the child
+ *             'father-only'   only the father is on the child
+ *             'adopted'       child was adopted by this character
+ *             'unknown'       cannot be determined
+ *           Computed from the child's biological parent ids and this
+ *           character's partner set (if any). If this character has no
+ *           partner, every child is 'both' or 'mother-only' /
+ *           'father-only' based on which role this character fills.
  *
- *       Section availability flags (household.available,
- *       residences.available, householdHistoryStructured) let the tab
- *       render fallback states instead of guessing from empty arrays.
+ *         fosterAsChild[]      — foster parents OF this character (this
+ *                                character as the child in a foster
+ *                                adoption record).
+ *         wardAsChild[]        — guardians OF this character.
+ *         fosterChildren[]     — foster children OF this character.
+ *         wardChildren[]       — wards OF this character.
+ *           All four blocks return enriched entries, or [] when no
+ *           records exist.
  *
- *     - Added _resolveRelationshipClass(subjectId, targetId) helper:
- *         'spouse'   active committed romantic partner
- *         'blood'    FamilyRules.classifyKinship reports a blood relation
- *                    (anything except SELF / UNRELATED)
- *         'relative' any other tracked relationship (friendship, non-
- *                    committed romance)
- *         null       no tracked relationship
+ *         partnerForBaby       — the single active committed partner of
+ *                                this character, or null. Convenience
+ *                                for the "generate new baby" flow,
+ *                                which needs a partner to resolve the
+ *                                second parent without prompting when
+ *                                exactly one committed partner exists.
  *
- *     - Added the sub-block helpers used by buildLocationModel:
- *         _resolveCurrentLocationBlock(summary)
- *         _resolveBirthplaceBlock(summary)
- *         _resolveMovesBlock(characterId, errors)
- *         _resolveHouseholdBlock(summary, errors)
- *         _resolveHouseholdMembersBlock(householdId, errors)
- *         _resolveHouseholdHistoryBlock(summary, errors)
- *         _resolveResidencesBlock(householdId, errors)
- *         _resolveRelationshipCirclesBlock(subjectId, memberIds, errors)
- *
- *     - No behavioural change to any existing builder.
+ *       All new fields are additive; no existing field changed shape.
+ *   Previous revision (household-tab P7):
+ *     - Added buildLocationModel.
  *   Previous revision:
- *     - buildFamilyModel(characterId) added. Sections:
- *         identity, parents, children, siblings, grandchildren,
- *         surrogacyChildren, errors.
+ *     - Added buildFamilyModel.
  *   Previous revision:
- *     - buildRomanceModel(characterId) added.
+ *     - Added buildRomanceModel.
  *   Earlier revision:
- *     - buildFriendshipModel(characterId) added.
+ *     - Added buildFriendshipModel.
  *   Initial revision:
  *     - Shared resolvers + buildIdentityModel.
  * =============================================================================
@@ -984,41 +967,7 @@
     // =========================================================================
     // 8. FAMILY — HELPERS
     // =========================================================================
-    //
-    // FamilyQueries exposes:
-    //   getBiologicalParentIds(childId), getLegalParentIds(childId),
-    //   getSocialParentIds(childId), getAllParentIds(childId)
-    //   getBiologicalChildIds(parentId), getLegalChildIds(parentId)
-    //   getSiblings(childId)  -> [{ siblingId, primaryType,
-    //                              sharedBiologicalParents,
-    //                              sharedLegalParents,
-    //                              sharedSocialParents }]
-    //   getGrandparentIds(childId, generation),
-    //   getGrandchildIds(parentId, generation)
-    //   getParentsByRole(childId) -> { fathers[], mothers[], others[] }
-    //     (each entry is an edge wrapper: { id, parentId, childId,
-    //                                       parentType, parentRole, ... })
-    //
-    // ChildrenQueries exposes:
-    //   getAdoptionsForChild(childId)   -> adoption metadata records
-    //   getAdoptionsForAdopter(adopterId)
-    //   getActiveAdoptionsForChild, getActiveAdoptionsForAdopter
-    //   getSurrogacyArrangementForChild(childId)
-    //   getSurrogacyChildrenForIntendedParent(characterId)
-    //
-    // Every enriched family entry carries the target character's
-    // summary plus:
-    //   - relType     role-specific label ("Biological mother" etc.)
-    //   - relClass    a stable CSS hook ("parent-bio-mother" etc.)
-    //   - birthYear, birthYearDisplay
-    //   - isDeceased
-    //   - (for siblings) siblingType ("full" | "half-mother" |
-    //                                 "half-father" | "step" | "adoptive")
 
-    /**
-     * Enriches a bare character id with family-display data. Used by
-     * every family section. Returns null for a missing target.
-     */
     function _enrichFamilyMember(targetId, relType, relClass, extra) {
         if (!_hasId(targetId)) return null;
         var summary = null;
@@ -1058,17 +1007,9 @@
     }
 
     /**
-     * Reads the biological / legal / social parents of a child and
-     * groups them by (parentType, parentRole) so the tab can label
-     * them:
-     *   "Biological mother" / "Biological father" / "Biological parent"
-     *   "Adoptive mother" / ...
-     *   "Social guardian" / ...
-     *
-     * Parent role comes from the edge wrapper (getParents returns edges
-     * with .parentRole). When a role is missing on the edge, we fall
-     * back to the parent's gender: female → mother, male → father,
-     * otherwise → parent.
+     * Reads the biological / legal / social parents of a child and groups.
+     * Also exposes `father` and `mother` convenience fields for the tab's
+     * Set-mother / Set-father controls.
      */
     function _buildParentGroups(childId, errors) {
         return _safe('parents', function () {
@@ -1078,22 +1019,17 @@
                 legal: [],
                 social: [],
                 all: [],
+                father: null,
+                mother: null,
                 counts: { biological: 0, legal: 0, social: 0 }
             };
             if (!Array.isArray(parentEdges) || parentEdges.length === 0) {
                 return grouped;
             }
-            // Deduplicate by (parentType + parentRole + parentId) — the
-            // edge list can contain multiple edges for the same
-            // (parentId, parentType) if history has been messy.
             var seen = {};
             for (var i = 0; i < parentEdges.length; i++) {
                 var edge = parentEdges[i];
                 if (!edge || !_hasId(edge.parentId)) continue;
-
-                // Only ongoing edges; the tab is about the current
-                // family. Ended parent edges appear in the FamilyRules
-                // history but should not clutter this tab.
                 if (edge.status && edge.status !== 'ongoing') continue;
 
                 var parentType = edge.parentType || 'biological';
@@ -1118,6 +1054,15 @@
                 else grouped.social.push(entry);
 
                 grouped.all.push(entry);
+
+                // Convenience: expose biological father / mother.
+                if (parentType === 'biological') {
+                    if (parentRole === 'father' && !grouped.father) {
+                        grouped.father = entry;
+                    } else if (parentRole === 'mother' && !grouped.mother) {
+                        grouped.mother = entry;
+                    }
+                }
             }
             grouped.counts.biological = grouped.biological.length;
             grouped.counts.legal = grouped.legal.length;
@@ -1159,13 +1104,51 @@
     }
 
     /**
-     * Reads the biological + legal children of a parent and groups by
-     * child type. Adopted children come from ChildrenQueries'
-     * adoption metadata; legal child edges are only the parent-child
-     * link, so the distinction "legal by adoption" versus "legal by
-     * blood legitimization" is made via the presence of an active
-     * adoption record with parentType='legal'.
+     * Classifies a child's parent coverage from the perspective of the
+     * subject:
+     *   'both'          both a mother and a father are recorded on the
+     *                   child
+     *   'mother-only'   only a mother is recorded
+     *   'father-only'   only a father is recorded
+     *   'adopted'       child is legally adopted by the subject
+     *   'unknown'       cannot be determined
+     *
+     * The classification is derived from the child's parent edges
+     * (biological mother + biological father), independent of the
+     * subject. It is the same classification the sibling-circle uses,
+     * applied to children.
+     *
+     * @param {string} childId
+     * @param {boolean} adoptedBySubject
+     * @returns {'both'|'mother-only'|'father-only'|'adopted'|'unknown'}
      */
+    function _classifyChildCoverage(childId, adoptedBySubject) {
+        if (adoptedBySubject) return 'adopted';
+
+        var bioParents;
+        try { bioParents = FQ.getBiologicalParentIds(childId); }
+        catch (e) { bioParents = []; }
+        if (!Array.isArray(bioParents) || bioParents.length === 0) {
+            return 'unknown';
+        }
+
+        var hasMother = false;
+        var hasFather = false;
+        for (var i = 0; i < bioParents.length; i++) {
+            var summary = null;
+            try { summary = CQ.getCharacterSummary(bioParents[i]); }
+            catch (e) { summary = null; }
+            if (!summary) continue;
+            if (summary.gender === 'female') hasMother = true;
+            else if (summary.gender === 'male') hasFather = true;
+        }
+
+        if (hasMother && hasFather) return 'both';
+        if (hasMother) return 'mother-only';
+        if (hasFather) return 'father-only';
+        return 'unknown';
+    }
+
     function _buildChildGroups(parentId, errors) {
         return _safe('children', function () {
             var biologicalIds = FQ.getBiologicalChildIds(parentId);
@@ -1176,39 +1159,42 @@
                 if (_hasId(biologicalIds[i])) bioSet[biologicalIds[i]] = true;
             }
 
-            var biological = [];
-            for (var b = 0; b < biologicalIds.length; b++) {
-                var bioEntry = _enrichFamilyMember(
-                    biologicalIds[b],
-                    'Biological child',
-                    'child-bio',
-                    { childType: 'biological' }
-                );
-                if (bioEntry) biological.push(bioEntry);
-            }
-
-            // Adopted children: legal children whose id is NOT in the
-            // biological set. (If a legal child is also biological, the
-            // biological entry already covers them; adoptions never
-            // overlap with biological children — the family domain
-            // prevents it via FamilyRules.canCreateAdoption.)
-            var adopted = [];
+            // Collect legal-adopted child ids (legal children who are
+            // NOT also biological) so we can flag their coverage.
+            var adoptedSet = {};
             for (var l = 0; l < legalIds.length; l++) {
                 var cid = legalIds[l];
                 if (!_hasId(cid)) continue;
                 if (bioSet[cid]) continue;
+                adoptedSet[cid] = true;
+            }
+
+            var biological = [];
+            for (var b = 0; b < biologicalIds.length; b++) {
+                var coverage = _classifyChildCoverage(biologicalIds[b], false);
+                var bioEntry = _enrichFamilyMember(
+                    biologicalIds[b],
+                    'Biological child',
+                    'child-bio',
+                    { childType: 'biological', parentCoverage: coverage }
+                );
+                if (bioEntry) biological.push(bioEntry);
+            }
+
+            var adopted = [];
+            for (var l2 = 0; l2 < legalIds.length; l2++) {
+                var cid2 = legalIds[l2];
+                if (!_hasId(cid2)) continue;
+                if (bioSet[cid2]) continue;
                 var adoptedEntry = _enrichFamilyMember(
-                    cid,
+                    cid2,
                     'Adopted child',
                     'child-legal',
-                    { childType: 'legal' }
+                    { childType: 'legal', parentCoverage: 'adopted' }
                 );
                 if (adoptedEntry) adopted.push(adoptedEntry);
             }
 
-            // Foster / guardianship children: adoption metadata records
-            // where this parent is the adopter and the record's type is
-            // foster or guardianship.
             var foster = [];
             var guardianship = [];
             try {
@@ -1257,22 +1243,6 @@
         }, errors);
     }
 
-    /**
-     * Siblings with classification:
-     *   - full           : share both biological parents
-     *   - half-mother    : share mother only (biological)
-     *   - half-father    : share father only (biological)
-     *   - adoptive       : share a legal parent but no biological parent
-     *   - step           : share only a social parent (or no parent but
-     *                      are co-wards of the same legal parent)
-     *
-     * FamilyQueries.getSiblings returns { siblingId, primaryType,
-     * sharedBiologicalParents, sharedLegalParents,
-     * sharedSocialParents }. We re-derive the specific half-mother /
-     * half-father distinction from sharedBiologicalParents by checking
-     * whether the shared biological parent is the child's mother or
-     * father.
-     */
     function _buildSiblingGroup(childId, errors) {
         return _safe('siblings', function () {
             var wrappers = FQ.getSiblings(childId);
@@ -1280,9 +1250,6 @@
                 return { all: [], counts: { full: 0, halfMother: 0, halfFather: 0, adoptive: 0, step: 0 } };
             }
 
-            // Find the subject's biological mother / father ids so we
-            // can classify each half sibling as half-mother vs
-            // half-father.
             var bioParents = FQ.getBiologicalParentIds(childId);
             var bioFatherId = null;
             var bioMotherId = null;
@@ -1338,7 +1305,7 @@
                         siblingType = 'half-parent';
                         relLabel = 'Half-sibling';
                         relClass = 'sibling-half';
-                        countKey = 'halfMother'; // bucket in either half bucket
+                        countKey = 'halfMother';
                     }
                 } else if (sharedLegal.length > 0) {
                     siblingType = 'adoptive';
@@ -1351,8 +1318,6 @@
                     relClass = 'sibling-step';
                     countKey = 'step';
                 } else {
-                    // Fall back to the wrapper's own primaryType if it
-                    // is one we recognise.
                     var pt = w.primaryType;
                     if (pt === 'full') {
                         siblingType = 'full';
@@ -1400,10 +1365,6 @@
         }, errors);
     }
 
-    /**
-     * Grandchildren, biological, one generation.
-     * Also enriches with birth year.
-     */
     function _buildGrandchildrenGroup(parentId, errors) {
         return _safe('grandchildren', function () {
             var ids = FQ.getGrandchildIds(parentId, 1);
@@ -1423,10 +1384,6 @@
         }, errors);
     }
 
-    /**
-     * Surrogacy children of this character (as intended parent).
-     * Read via ChildrenQueries.getSurrogacyChildrenForIntendedParent.
-     */
     function _buildSurrogacyChildrenGroup(characterId, errors) {
         return _safe('surrogacyChildren', function () {
             var ids = ChQ.getSurrogacyChildrenForIntendedParent(characterId);
@@ -1446,11 +1403,6 @@
         }, errors);
     }
 
-    /**
-     * Adopted parents + guardians of this character (as child). Read
-     * from adoption metadata records where this character is the child.
-     * Type distinguishes adopted parent / guardian / foster parent.
-     */
     function _buildAdoptedParentsGroup(childId, errors) {
         return _safe('adoptedParents', function () {
             var records = [];
@@ -1509,38 +1461,87 @@
         }, errors);
     }
 
+    /**
+     * Reads the foster / guardianship relationships OF this character
+     * (i.e. this character as the child). These are the records where
+     * this character appears as `childId` in an adoption record of type
+     * 'foster' or 'guardianship'. Returned as two arrays so the tab can
+     * render them under Foster Parents / Guardians sections.
+     */
+    function _buildAsChildFosterAndGuardianBlock(childId, errors) {
+        return _safe('asChildFosterGuardian', function () {
+            var records = [];
+            try { records = ChQ.getActiveAdoptionsForChild(childId); }
+            catch (e) { records = []; }
+            if (!Array.isArray(records)) {
+                return { fosterParents: [], guardians: [] };
+            }
+
+            var fosterParents = [];
+            var guardians = [];
+            var seen = {};
+
+            for (var i = 0; i < records.length; i++) {
+                var rec = records[i];
+                if (!rec || !_hasId(rec.adopterId)) continue;
+                if (rec.type !== 'foster' && rec.type !== 'guardianship') continue;
+
+                var key = rec.type + '|' + rec.adopterId;
+                if (seen[key]) continue;
+                seen[key] = true;
+
+                var relType = rec.type === 'foster' ? 'Foster parent' : 'Guardian';
+                var relClass = rec.type === 'foster'
+                    ? 'adoptive-parent-foster'
+                    : 'adoptive-parent-guardianship';
+
+                var entry = _enrichFamilyMember(
+                    rec.adopterId,
+                    relType,
+                    relClass,
+                    { adoptionType: rec.type, adoptionYear: rec.year }
+                );
+                if (!entry) continue;
+
+                if (rec.type === 'foster') fosterParents.push(entry);
+                else guardians.push(entry);
+            }
+
+            return { fosterParents: fosterParents, guardians: guardians };
+        }, errors);
+    }
+
+    /**
+     * Resolves the single active committed partner of this character, or
+     * null. Used by the generate-new-baby flow to pre-select the second
+     * parent without prompting when there is exactly one committed
+     * partner.
+     */
+    function _buildPartnerForBabyBlock(subjectId, errors) {
+        return _safe('partnerForBaby', function () {
+            var active;
+            try { active = RQm.getActiveCommittedPartners(subjectId); }
+            catch (e) { return null; }
+            if (!Array.isArray(active) || active.length === 0) return null;
+            if (active.length > 1) return null;
+            var p = active[0];
+            if (!p || !_hasId(p.partnerId)) return null;
+            var summary = null;
+            try { summary = CQ.getCharacterSummary(p.partnerId); }
+            catch (e) { summary = null; }
+            if (!summary) return null;
+            return {
+                partnerId: p.partnerId,
+                partnerName: summary.fullName || summary.name || p.partnerId,
+                partnerGender: summary.gender || 'unknown'
+            };
+        }, errors);
+    }
+
     // =========================================================================
     // 9. FAMILY — PUBLIC BUILDER
     // =========================================================================
 
-    /**
-     * Builds the model the Family tab consumes.
-     *
-     * Shape:
-     *   {
-     *     characterId,
-     *     identity: { id, name, surname, fullName },
-     *     parents: {
-     *       biological[], legal[], social[], all[],
-     *       counts: { biological, legal, social }
-     *     },
-     *     children: {
-     *       biological[], adopted[], foster[], guardianship[], all[],
-     *       counts: { biological, adopted, foster, guardianship }
-     *     },
-     *     siblings: {
-     *       all[],
-     *       counts: { full, halfMother, halfFather, adoptive, step }
-     *     },
-     *     grandchildren: [ <enriched> ],
-     *     surrogacyChildren: [ <enriched> ],
-     *     adoptedParents: {
-     *       all[], adopted[], guardianship[], foster[]
-     *     },
-     *     isOrphan: boolean,
-     *     errors: { ... }
-     *   }
-     */
     function buildFamilyModel(characterId) {
         if (!_hasId(characterId)) return null;
 
@@ -1556,12 +1557,14 @@
                 id: summary.id,
                 name: summary.name || '',
                 surname: summary.surname || '',
-                fullName: summary.fullName || summary.name || ''
+                fullName: summary.fullName || summary.name || '',
+                gender: summary.gender || 'unknown'
             };
         }, errors);
 
         var parents = _buildParentGroups(characterId, errors) || {
             biological: [], legal: [], social: [], all: [],
+            father: null, mother: null,
             counts: { biological: 0, legal: 0, social: 0 }
         };
 
@@ -1580,6 +1583,10 @@
         var adoptedParents = _buildAdoptedParentsGroup(characterId, errors) || {
             all: [], adopted: [], guardianship: [], foster: []
         };
+
+        var asChildFG = _buildAsChildFosterAndGuardianBlock(characterId, errors)
+            || { fosterParents: [], guardians: [] };
+        var partnerForBaby = _buildPartnerForBabyBlock(characterId, errors);
 
         var isOrphan = false;
         try {
@@ -1603,6 +1610,14 @@
             grandchildren: grandchildren,
             surrogacyChildren: surrogacyChildren,
             adoptedParents: adoptedParents,
+
+            // Foster / guardianship of this character (as the child):
+            fosterAsChild: asChildFG.fosterParents,
+            wardAsChild: asChildFG.guardians,
+
+            // Convenience for the "generate new baby" flow:
+            partnerForBaby: partnerForBaby,
+
             isOrphan: isOrphan,
             errors: errors
         };
@@ -1611,38 +1626,7 @@
     // =========================================================================
     // 10. LOCATION — SUB-BLOCK BUILDERS
     // =========================================================================
-    //
-    // buildLocationModel is the Location tab's single read surface. Every
-    // sub-block has its own _safe() wrapper so a broken dependency in one
-    // section (e.g. HouseholdQueries not loaded) does not blank the whole
-    // tab; the affected block is null and the error is recorded under
-    // model.errors[<block>].
 
-    /**
-     * Resolves the character's current location, raw field, and whether
-     * the resolved location differs from the raw field.
-     *
-     * Priority:
-     *   1. World.getCurrentLocationId(character) — semantic (explicit
-     *      override / moves / birthplace)
-     *   2. CharacterQueries.getCurrentLocationId(characterId) — raw field
-     *   3. null
-     *
-     * The tab distinguishes "no location recorded" (both null) from
-     * "raw field is null but a move placed them elsewhere" (resolved
-     * differs from raw) — the same three-state model as
-     * character-ui-list.js.
-     *
-     * @param {Object} summary  projection
-     * @param {string} characterId
-     * @returns {{
-     *   locationId: string|null,
-     *   locationName: string|null,
-     *   source: 'explicit'|'move'|'birthplace'|'none',
-     *   rawCurrentLocationId: string|null,
-     *   resolvedDiffersFromRaw: boolean
-     * }}
-     */
     function _resolveCurrentLocationBlock(summary, characterId) {
         var raw = (summary && typeof summary.locationId === 'string')
             ? summary.locationId
@@ -1651,27 +1635,16 @@
         var resolved = raw;
         var source = raw ? 'explicit' : 'none';
 
-        // Semantic resolver — window.getCurrentLocationId takes a
-        // character object (world.js signature). Fall back to the raw
-        // field if the resolver is not present.
         if (typeof window.getCurrentLocationId === 'function' && summary) {
             try {
                 var semantic = window.getCurrentLocationId(summary);
                 if (typeof semantic === 'string' && semantic.length > 0) {
                     if (semantic === raw) {
-                        // Confirms the explicit field is authoritative.
                         resolved = raw;
                         source = 'explicit';
                     } else {
                         resolved = semantic;
-                        // The resolver returns the resolved location;
-                        // the source is one of move/birthplace when
-                        // the raw field is null or differs.
                         source = raw ? 'explicit' : 'move';
-                        // We cannot distinguish move vs birthplace
-                        // without re-reading the character. Leave the
-                        // classification coarse; the tab displays the
-                        // resolved name either way.
                     }
                 }
             } catch (e) { /* fall through */ }
@@ -1706,8 +1679,6 @@
                 catch (e) { moves = []; }
             }
             if (!Array.isArray(moves)) return [];
-            // Return a fresh, normalized copy. Every field the tab
-            // reads is present.
             var out = [];
             for (var i = 0; i < moves.length; i++) {
                 var m = moves[i];
@@ -1728,7 +1699,6 @@
                     timestamp: _isMissing(m.timestamp) ? null : m.timestamp
                 });
             }
-            // Ascending by year (stable for null-year entries).
             out.sort(function (a, b) {
                 var ya = typeof a.year === 'number' ? a.year : -Infinity;
                 var yb = typeof b.year === 'number' ? b.year : -Infinity;
@@ -1782,7 +1752,6 @@
             catch (e) { h = null; }
 
             if (!h) {
-                // Character points at a household that no longer exists.
                 return {
                     available: true,
                     householdId: householdId,
@@ -1796,9 +1765,6 @@
                 };
             }
 
-            // Derive this character's role from householdHistory if
-            // available (the projection's householdHistory is what
-            // CharacterState emits; we look up the current entry).
             var role = null;
             var isHead = false;
             if (Array.isArray(summary.householdHistory)) {
@@ -1865,7 +1831,6 @@
                     joinedYear: _isMissing(m.joinedYear) ? null : m.joinedYear
                 });
             }
-            // Sort: head first, then by name.
             out.sort(function (a, b) {
                 if (a.isHead !== b.isHead) return a.isHead ? -1 : 1;
                 var an = (a.characterName || a.name || '').toLowerCase();
@@ -1887,10 +1852,6 @@
             for (var i = 0; i < raw.length; i++) {
                 var e = raw[i];
                 if (!e || typeof e !== 'object') {
-                    // A string entry means the projection is still
-                    // emitting the pre-fix shape (character-state.js
-                    // before household-tab P1). Surface it as
-                    // unstructured so the tab can warn.
                     if (typeof e === 'string') {
                         structured = false;
                     }
@@ -1909,7 +1870,6 @@
                 });
             }
 
-            // Sort by joinedYear ascending, current entry last.
             out.sort(function (a, b) {
                 var ja = typeof a.joinedYear === 'number' ? a.joinedYear : -Infinity;
                 var jb = typeof b.joinedYear === 'number' ? b.joinedYear : -Infinity;
@@ -1950,8 +1910,6 @@
                 var r = residences[i];
                 if (!r || !_hasId(r.id)) continue;
 
-                // Look up which unit this household occupies in this
-                // residence.
                 var unitNumber = null;
                 var unitId = null;
                 try {
@@ -1990,7 +1948,6 @@
                     builtYear: _isMissing(r.builtYear) ? null : r.builtYear
                 });
             }
-            // Sort: active first, then by name.
             entries.sort(function (a, b) {
                 if (a.isDemolished !== b.isDemolished) {
                     return a.isDemolished ? 1 : -1;
@@ -2001,32 +1958,10 @@
         }, errors);
     }
 
-    /**
-     * Classifies the relationship between the subject character and a
-     * target character for the Location tab's member-circle indicator.
-     *
-     * Precedence (higher wins):
-     *   'spouse'   target is an active committed romantic partner of
-     *              the subject
-     *   'blood'    FamilyRules.classifyKinship reports a blood relation
-     *              (anything except SELF / UNRELATED)
-     *   'relative' target appears in any other tracked relationship
-     *              (friendship, non-committed romance)
-     *   null       no tracked relationship
-     *
-     * The function does not throw. Missing dependencies cause the
-     * affected check to be skipped; if none of the three checks report
-     * a relationship, returns null.
-     *
-     * @param {string} subjectId
-     * @param {string} targetId
-     * @returns {'spouse'|'blood'|'relative'|null}
-     */
     function _resolveRelationshipClass(subjectId, targetId) {
         if (!_hasId(subjectId) || !_hasId(targetId)) return null;
         if (subjectId === targetId) return null;
 
-        // --- Spouse: active committed partner.
         try {
             if (RQm && typeof RQm.getActiveCommittedPartners === 'function') {
                 var committed = RQm.getActiveCommittedPartners(subjectId);
@@ -2039,8 +1974,6 @@
             }
         } catch (e) { /* skip */ }
 
-        // --- Blood: any kinship classification other than SELF /
-        // UNRELATED.
         try {
             if (typeof window.FamilyRules !== 'undefined'
                 && window.FamilyRules !== null
@@ -2054,14 +1987,11 @@
             }
         } catch (e) { /* skip */ }
 
-        // --- Relative: any other tracked relationship.
-        //   Friendship.
         try {
             if (typeof FrQ.isFriends === 'function' && FrQ.isFriends(subjectId, targetId)) {
                 return 'relative';
             }
         } catch (e) { /* skip */ }
-        //   Non-committed romance (casual / one-night).
         try {
             if (RQm && typeof RQm.getActiveRomanticRelationships === 'function') {
                 var active = RQm.getActiveRomanticRelationships(subjectId);
@@ -2100,14 +2030,6 @@
     // 11. LOCATION — PUBLIC BUILDER
     // =========================================================================
 
-    /**
-     * Builds the model the Location tab consumes. The tab reads from
-     * this shape and does not call HouseholdQueries / ResidenceSystem /
-     * LocationQueries directly.
-     *
-     * @param {string} characterId
-     * @returns {Object|null}
-     */
     function buildLocationModel(characterId) {
         if (!_hasId(characterId)) return null;
 
@@ -2205,26 +2127,16 @@
     // =========================================================================
 
     window.CharacterViewModels = {
-        // Shared resolvers
         resolveName: resolveName,
         resolvePlaceName: resolvePlaceName,
         resolveRankDisplay: resolveRankDisplay,
         skillTierLabel: skillTierLabel,
         compactRow: compactRow,
 
-        // Identity
         buildIdentityModel: buildIdentityModel,
-
-        // Friendship
         buildFriendshipModel: buildFriendshipModel,
-
-        // Romance
         buildRomanceModel: buildRomanceModel,
-
-        // Family
         buildFamilyModel: buildFamilyModel,
-
-        // Location
         buildLocationModel: buildLocationModel
     };
 
