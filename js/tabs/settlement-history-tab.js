@@ -1,10 +1,8 @@
 /**
  * =============================================================================
- * STILL WATERS - SETTLEMENT HISTORY TAB
+ * SETTLEMENT HISTORY TAB
  * js/tabs/settlement-history-tab.js
  * =============================================================================
- *
- * HISTORY TAB RENDERER.
  *
  * Renders the settlement's two append-only history logs as a single
  * chronological timeline:
@@ -14,270 +12,78 @@
  *
  * Each entry is one event. The two logs have different shapes; the
  * renderer normalizes them into a common { year, kind, label, details }
- * record for display, then groups by year.
+ * record, then groups by year.
  *
- * It is a UI module. It:
- *   - reads annualHistory and demolitionHistory via SettlementQueries
- *   - renders DOM
- *   - does not read canonical settlement data directly
- *   - does not compute domain values
- *   - does not call any command
- *   - does not create settlement records
- *   - does not mutate canonical settlement data
- *   - does not persist
- *   - does not fabricate missing domain values
- *   - does not render raw null/undefined as "null" or "undefined"
- *   - does not use a recursion guard
- *   - does not use setTimeout to guess when the DOM is ready
+ * RENDERER CONTRACT:
+ *   fn(container, context) with context = { locationId, data, viewModel }
  *
- * Contract reference: Settlement Architecture Contracts §15 (ViewModel
- * Contract), §16 (UI Contract), §17 (Historical Data Contract), §32
- * (Completion Standard).
+ * DATA SOURCES:
+ *   - SettlementQueries.getSettlementData(locationId)
+ *     reads settlement.annualHistory / settlement.demolitionHistory
  *
- * RENDERER CONTRACT
- * -----------------
- *   Registered via SettlementTabs.registerTabRenderer('history', fn).
- *   SettlementTabs invokes fn(container, context):
+ * FILTERS:
+ *   - search (free-text, matched against the rendered label + details)
+ *   - kind   ('all' | 'annual' | 'demolition')
+ *   - year range (optional start / end)
  *
- *     container  HTMLElement       already emptied by SettlementTabs
- *     context    {
- *       locationId  string|null    selected settlement id
- *       data        Object|null    canonical settlement record
- *       viewModel   Object|null    buildSettlementSummary result
- *     }
+ *   Filter state is persisted per-settlement to localStorage under
+ *   `settlement_history_filters_<locationId>`. Restored on next render.
  *
- *   SettlementTabs has already validated locationId and data before
- *   calling the renderer.
+ * EXPORT:
+ *   Serializes annualHistory + demolitionHistory as JSON and triggers a
+ *   download. The export is the raw canonical record, not the current
+ *   filter view.
  *
- * HISTORY SOURCE
- * --------------
- *   The settlement record carries two append-only history arrays. The
- *   records are documented in settlement-docs.txt §17
- *   (HISTORICAL DATA CONTRACT) and in the modules that write them:
+ * NO CLEAR BUTTON: history arrays are canonical append-only state. No
+ * command exists to clear them, and the UI must not mutate canonical
+ * state (§16).
  *
- *     annualHistory       settlement-annual-processor.js
- *                         { year, debtBefore, debtAfter, interest,
- *                           wealthBefore, wealthAfter }
+ * TIME CONTRACT: every year shown is the year stored on the entry. The
+ * tab does not call getCurrentYear.
  *
- *     demolitionHistory   settlement-feature-commands.js
- *                         { featureId, featureName, category,
- *                           demolishedYear, demolishedReason,
- *                           recordedAt }
- *
- *   There is no settlement.history array under the new architecture.
- *   The prior history tab read SettlementState.getSettlementHistory,
- *   which does not exist; every history view was dead. This renderer
- *   reads the two real arrays.
- *
- *   BEHAVIOURAL NOTE. The new system records only the two categories
- *   above. User-visible events the prior tab displayed — "tax rate
- *   changed", "fiscal policy updated", "civil law added", "specialization
- *   set", "role assigned" — are NOT recorded anywhere by the new
- *   modules. If a future revision adds a broader history log to the
- *   settlement record (say, a general `events` array), this renderer
- *   should be extended to read it. The `_collectEvents` function is
- *   the one place that needs to change.
- *
- * TIME CONTRACT
- * -------------
- *   window.getCurrentYear from time.js is NOT called by this renderer.
- *   Every year shown is the year stored on the entry itself. A filter
- *   that offers "current year" would need it; this renderer does not
- *   have such a filter (see FILTERS below).
- *
- * FILTERS
- * -------
- *   Three filters, all applied client-side after the events are
- *   normalized:
- *
- *     search      free-text, matched against the entry's rendered label
- *                 and details
- *     kind        'all' | 'annual' | 'demolition'
- *     year range  optional start / end year
- *
- *   The filter state is stored in localStorage under
- *   `settlement_history_filters_<locationId>` and restored on the next
- *   render for the same settlement. Filters are per-settlement so a
- *   user switching settlements does not carry an unrelated filter.
- *
- *   Filter parsing is defensive: an out-of-range or unparseable year
- *   is dropped, not silently coerced. localStorage access is wrapped
- *   in try/catch — private browsing or a quota error must not break
- *   the tab.
- *
- * EXPORT
- * ------
- *   The Export button serializes the current canonical history
- *   (annualHistory + demolitionHistory) as JSON and triggers a download
- *   via a Blob URL. It does not include the current filter state — the
- *   export is the raw canonical record, not the current view.
- *
- * CLEAR
- * -----
- *   The Clear button does not exist. Under the new architecture, the
- *   history arrays are canonical append-only state owned by the
- *   settlement record. There is no command to clear them, and the UI
- *   must not mutate canonical state (§16). If a "clear history"
- *   operation is ever wanted, it belongs in a
- *   SettlementHistoryCommands module — not in a renderer. The old tab
- *   called SettlementState._updateSettlementData(locationId, { history: [] }),
- *   which does not exist and would have been a §16 violation anyway.
- *
- * ICON POLICY
- * -----------
- *   No emojis. No inline SVG. Chrome icons come from window.getIcon if
- *   it is loaded; when icons.js is not on the page, the renderer falls
- *   back to plain text labels.
- *
- * =============================================================================
- * REFACTOR HISTORY:
- *   Current revision:
- *     - Rewritten against the new settlement module set.
- *     - Signature changed from (containerId, locationId, summary) to
- *       (container, context), matching settlement-tabs.js.
- *     - Recursion guard (_rendering) and the modal-open flag removed
- *       (§20 prohibits recursion guards).
- *     - Reads annualHistory and demolitionHistory. The phantom
- *       settlement.history / SettlementState.getSettlementHistory path
- *       is deleted.
- *     - Clear button removed. No command to clear history exists; the
- *       old handler called SettlementState._updateSettlementData, which
- *       does not exist and would violate §16.
- *     - Export serializes the two raw arrays (canonical record), not
- *       the filtered view. Prior revisions exported the derived
- *       `history` array (which was always empty in the new architecture).
- *     - Event type / label / color resolution keyed to the two real
- *       event kinds. The old EVENT_TYPES map (which referenced ~30
- *       event categories that no module writes) is gone.
- *     - Filter state stored per-settlement. Prior revisions also stored
- *       per-settlement, but the key was `settlement_history_filters_<id>`
- *       and the stored object included a `category` field keyed to the
- *       old EVENT_TYPES; the new filter is `kind` keyed to the two
- *       real event kinds, and old stored state is silently dropped
- *       (unknown keys are ignored on load).
- *     - All numeric values route through _fmtNumber; all text values
- *       route through _fmtText. No raw null/undefined reaches the DOM.
- *     - window.getCurrentYearSafe is not referenced. window.getCurrentYear
- *       is not called either (no year-defaulting filter).
- *   Previous revisions:
- *     - Pre-refactor implementation against SettlementState /
- *       SettlementCommands / SettlementCrud, all of which no longer
- *       exist.
+ * NO CSS. Class-only rendering.
  * =============================================================================
  */
 
 (function () {
     'use strict';
 
-    // =========================================================================
-    // 1. DEPENDENCY ACCESS
-    // =========================================================================
+    var TAB_ID = 'history';
+    var SCOPE  = 'settlement';
+    var FILTER_KEY_PREFIX = 'settlement_history_filters_';
 
-    function _getSettlementQueries() {
-        var Q = window.SettlementQueries;
-        if (!Q || typeof Q.getSettlementData !== 'function') {
-            throw new Error(
-                'settlement-history-tab: SettlementQueries is missing. ' +
-                'Load settlement-queries.js before this tab.'
-            );
-        }
-        return Q;
-    }
+    function H() { return window.SettlementTabHelpers; }
+    function esc(v)       { return H().esc(v); }
+    function icon(n)      { return H().icon(n); }
+    function fmtNum(v)    { return H().fmtNumber(v); }
+    function unknown()    { return H().unknown(); }
+    function refresh()    { H().requestRefresh(SCOPE, TAB_ID); }
 
-    function _getPlaceQueries() {
-        return window.PlaceQueries || null;
-    }
-
-    function _getUIState() {
-        return window.SettlementUIState || null;
-    }
-
-    function _getTabs() {
-        return window.SettlementTabs || null;
-    }
-
-    // =========================================================================
-    // 2. HELPERS
-    // =========================================================================
-
-    function _escapeHtml(str) {
-        if (str === null || str === undefined) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function _unknown() {
-        return '<span class="value-unknown">—</span>';
-    }
-
-    function _fmtNumber(value) {
-        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
-        return _escapeHtml(value.toLocaleString());
-    }
-
-    function _fmtText(value) {
-        if (value === null || value === undefined || value === '') {
-            return _unknown();
-        }
-        return _escapeHtml(value);
-    }
-
-    function _getIcon(name) {
-        if (typeof window.getIcon === 'function') {
-            try {
-                var icon = window.getIcon(name);
-                if (typeof icon === 'string') return icon;
-            } catch (e) {
-                // getIcon exists but threw; fall through to ''.
-            }
-        }
-        return '';
-    }
+    function _getSettlementQueries() { return window.SettlementQueries; }
 
     function _placeName(locationId) {
-        var pq = _getPlaceQueries();
+        var pq = window.PlaceQueries;
         if (!pq || typeof pq.getPlaceById !== 'function') return null;
         var place = pq.getPlaceById(locationId);
         return place ? (place.displayName || place.name || null) : null;
     }
 
-    // =========================================================================
-    // 3. EVENT NORMALIZATION
-    // =========================================================================
-    //
-    // The two history arrays have different shapes. This section converts
-    // each entry into a common normalized record:
-    //
-    //   {
-    //     kind      'annual' | 'demolition'
-    //     year      number | null
-    //     label     string                short summary
-    //     details   string                optional longer text
-    //     color     CSS var or hex        for the left border
-    //     icon      string                optional svg from getIcon
-    //     searchText string               pre-lowercased, for filtering
-    //     raw       Object                the original entry
-    //   }
-    //
-    // The normalizer is the only place that knows the entry shapes. If
-    // a new history array is added to the settlement record, this is
-    // where it gets wired in.
+    // -------------------------------------------------------------------
+    // Event normalization
+    // -------------------------------------------------------------------
 
     function _normalizeAnnual(entry) {
         var year = typeof entry.year === 'number' ? entry.year : null;
         var interest = typeof entry.interest === 'number' ? entry.interest : null;
         var debtAfter = typeof entry.debtAfter === 'number' ? entry.debtAfter : null;
-        var wealthAfter = typeof entry.wealthAfter === 'number' ? entry.wealthAfter : null;
-        var wealthBefore = typeof entry.wealthBefore === 'number' ? entry.wealthBefore : null;
+        var wealthAfter = typeof entry.wealthAfter === 'number'
+            ? entry.wealthAfter : null;
+        var wealthBefore = typeof entry.wealthBefore === 'number'
+            ? entry.wealthBefore : null;
 
         var label;
         if (interest !== null && interest > 0) {
-            label = 'Debt interest applied: ' +
-                interest.toLocaleString() + 'g';
+            label = 'Debt interest applied: ' + interest.toLocaleString() + 'g';
         } else {
             label = 'Annual processing complete';
         }
@@ -287,15 +93,11 @@
             detailsParts.push('Debt: ' + debtAfter.toLocaleString() + 'g');
         }
         if (wealthAfter !== null) {
-            var delta = (wealthBefore !== null)
-                ? wealthAfter - wealthBefore
-                : null;
+            var delta = wealthBefore !== null ? wealthAfter - wealthBefore : null;
             if (delta !== null && delta !== 0) {
                 var sign = delta > 0 ? '+' : '';
-                detailsParts.push(
-                    'Wealth: ' + wealthAfter.toLocaleString() +
-                    'g (' + sign + delta.toLocaleString() + 'g)'
-                );
+                detailsParts.push('Wealth: ' + wealthAfter.toLocaleString() +
+                    'g (' + sign + delta.toLocaleString() + 'g)');
             } else {
                 detailsParts.push('Wealth: ' + wealthAfter.toLocaleString() + 'g');
             }
@@ -305,9 +107,7 @@
             kind: 'annual',
             year: year,
             label: label,
-            details: detailsParts.join(' · '),
-            color: 'var(--text-dim)',
-            icon: _getIcon('REFRESH'),
+            details: detailsParts.join(' \u00b7 '),
             searchText: (label + ' ' + detailsParts.join(' ')).toLowerCase(),
             raw: entry
         };
@@ -315,8 +115,7 @@
 
     function _normalizeDemolition(entry) {
         var year = typeof entry.demolishedYear === 'number'
-            ? entry.demolishedYear
-            : null;
+            ? entry.demolishedYear : null;
         var featureName = entry.featureName || entry.featureId || 'Feature';
         var reason = entry.demolishedReason || 'Demolished';
         var category = entry.category || '';
@@ -329,52 +128,35 @@
             kind: 'demolition',
             year: year,
             label: label,
-            details: detailsParts.join(' · '),
-            color: 'var(--danger)',
-            icon: _getIcon('TRASH'),
+            details: detailsParts.join(' \u00b7 '),
             searchText: (label + ' ' + detailsParts.join(' ')).toLowerCase(),
             raw: entry
         };
     }
 
-    /**
-     * Collects the two arrays into a single normalized list.
-     *
-     * @param {string} locationId
-     * @returns {Array<Object>}  normalized events, sorted (see _sortEvents)
-     */
     function _collectEvents(locationId) {
-        var data = _getSettlementQueries().getSettlementData(locationId);
+        var Q = _getSettlementQueries();
+        if (!Q) return [];
+        var data = Q.getSettlementData(locationId);
         if (!data) return [];
 
         var events = [];
 
         var annual = Array.isArray(data.annualHistory) ? data.annualHistory : [];
         for (var i = 0; i < annual.length; i++) {
-            var entry = annual[i];
-            if (!entry || typeof entry !== 'object') continue;
-            events.push(_normalizeAnnual(entry));
+            var a = annual[i];
+            if (!a || typeof a !== 'object') continue;
+            events.push(_normalizeAnnual(a));
         }
 
         var demolition = Array.isArray(data.demolitionHistory)
-            ? data.demolitionHistory
-            : [];
+            ? data.demolitionHistory : [];
         for (var j = 0; j < demolition.length; j++) {
-            var dEntry = demolition[j];
-            if (!dEntry || typeof dEntry !== 'object') continue;
-            events.push(_normalizeDemolition(dEntry));
+            var d = demolition[j];
+            if (!d || typeof d !== 'object') continue;
+            events.push(_normalizeDemolition(d));
         }
 
-        _sortEvents(events);
-        return events;
-    }
-
-    /**
-     * Sorts in place: year descending, then by recordedAt / timestamp
-     * descending, then by kind (annual before demolition) when both
-     * other keys tie. Entries with no year sort to the end.
-     */
-    function _sortEvents(events) {
         events.sort(function (a, b) {
             if (a.year === null && b.year === null) {
                 return _kindOrder(a) - _kindOrder(b);
@@ -387,68 +169,52 @@
             if (at !== bt) return bt - at;
             return _kindOrder(a) - _kindOrder(b);
         });
+
+        return events;
     }
 
-    function _kindOrder(event) {
-        return event.kind === 'annual' ? 0 : 1;
+    function _kindOrder(e) {
+        return e.kind === 'annual' ? 0 : 1;
     }
 
-    // =========================================================================
-    // 4. FILTER STATE
-    // =========================================================================
-
-    var _FILTER_KEY_PREFIX = 'settlement_history_filters_';
+    // -------------------------------------------------------------------
+    // Filter state
+    // -------------------------------------------------------------------
 
     function _filterKey(locationId) {
-        return _FILTER_KEY_PREFIX + locationId;
+        return FILTER_KEY_PREFIX + locationId;
     }
 
     function _loadFilterState(locationId) {
-        var defaults = {
-            search: '',
-            kind: 'all',
-            yearStart: '',
-            yearEnd: ''
-        };
+        var defaults = { search: '', kind: 'all', yearStart: '', yearEnd: '' };
+        if (!locationId) return defaults;
         try {
             var raw = localStorage.getItem(_filterKey(locationId));
             if (!raw) return defaults;
-            var parsed = JSON.parse(raw);
-            if (!parsed || typeof parsed !== 'object') return defaults;
-
-            // Only accept known keys. A stored `category` field from
-            // the pre-refactor schema is silently dropped.
+            var p = JSON.parse(raw);
+            if (!p || typeof p !== 'object') return defaults;
             return {
-                search: typeof parsed.search === 'string' ? parsed.search : '',
-                kind: (parsed.kind === 'annual' || parsed.kind === 'demolition')
-                    ? parsed.kind
-                    : 'all',
-                yearStart: (typeof parsed.yearStart === 'string' ||
-                            typeof parsed.yearStart === 'number')
-                    ? String(parsed.yearStart)
-                    : '',
-                yearEnd: (typeof parsed.yearEnd === 'string' ||
-                          typeof parsed.yearEnd === 'number')
-                    ? String(parsed.yearEnd)
-                    : ''
+                search: typeof p.search === 'string' ? p.search : '',
+                kind: (p.kind === 'annual' || p.kind === 'demolition')
+                    ? p.kind : 'all',
+                yearStart: (typeof p.yearStart === 'string'
+                            || typeof p.yearStart === 'number')
+                    ? String(p.yearStart) : '',
+                yearEnd: (typeof p.yearEnd === 'string'
+                          || typeof p.yearEnd === 'number')
+                    ? String(p.yearEnd) : ''
             };
         } catch (e) {
             return defaults;
         }
     }
 
-    function _saveFilterState(locationId, state) {
+    function _writeFilterState(locationId, state) {
+        if (!locationId) return;
         try {
             localStorage.setItem(_filterKey(locationId), JSON.stringify(state));
-        } catch (e) {
-            // Private browsing or quota exceeded. Filter state is
-            // session-scoped convenience; failure to save is not fatal.
-        }
+        } catch (e) { /* non-fatal */ }
     }
-
-    // =========================================================================
-    // 5. FILTERING
-    // =========================================================================
 
     function _parseYear(raw) {
         if (raw === '' || raw === null || raw === undefined) return null;
@@ -457,201 +223,117 @@
         return n;
     }
 
-    /**
-     * Applies the filter state to the event list. Filters are applied
-     * client-side, after normalization.
-     *
-     * A filter with an unparseable year bound is silently ignored for
-     * that bound only — the other filters still apply. An out-of-range
-     * year (e.g. -50) is not specially handled; it just makes the range
-     * exclude everything, which is what the user typed.
-     */
-    function _applyFilters(events, filterState) {
-        var search = (filterState.search || '').trim().toLowerCase();
-        var kind = filterState.kind || 'all';
-        var yearStart = _parseYear(filterState.yearStart);
-        var yearEnd = _parseYear(filterState.yearEnd);
+    function _applyFilters(events, state) {
+        var search = (state.search || '').trim().toLowerCase();
+        var kind = state.kind || 'all';
+        var yearStart = _parseYear(state.yearStart);
+        var yearEnd = _parseYear(state.yearEnd);
 
         var out = [];
         for (var i = 0; i < events.length; i++) {
             var e = events[i];
-
             if (kind !== 'all' && e.kind !== kind) continue;
-
             if (yearStart !== null) {
                 if (e.year === null || e.year < yearStart) continue;
             }
             if (yearEnd !== null) {
                 if (e.year === null || e.year > yearEnd) continue;
             }
-
-            if (search) {
-                if (e.searchText.indexOf(search) === -1) continue;
-            }
-
+            if (search && e.searchText.indexOf(search) === -1) continue;
             out.push(e);
         }
         return out;
     }
 
-    // =========================================================================
-    // 6. HTML BUILDERS
-    // =========================================================================
+    // -------------------------------------------------------------------
+    // Sections
+    // -------------------------------------------------------------------
 
     function _buildHeader(context, counts) {
-        var locationId = context.locationId;
         var name = context.viewModel && context.viewModel.name
             ? context.viewModel.name
-            : (_placeName(locationId) || '(unnamed location)');
+            : (_placeName(context.locationId) || '(unnamed location)');
         var total = counts.annual + counts.demolition;
 
-        var exportBtn = '<button type="button" class="history-action-btn" ' +
-            'data-action="export" ' +
-            'style="font-size:0.55rem;padding:3px 10px;background:var(--bg3);' +
-            'border:1px solid var(--border);border-radius:4px;cursor:pointer;' +
-            'color:var(--text);">' +
-            _getIcon('COIN') + ' Export</button>';
+        var exportBtn = '<button type="button" class="st-btn" ' +
+            'data-action="export">' +
+            icon('COIN') + ' Export</button>';
+        var refreshBtn = '<button type="button" class="st-btn" ' +
+            'data-action="refresh">' +
+            icon('REFRESH') + ' Refresh</button>';
 
-        var refreshBtn = '<button type="button" class="history-action-btn" ' +
-            'data-action="refresh" ' +
-            'style="font-size:0.55rem;padding:3px 10px;background:var(--bg3);' +
-            'border:1px solid var(--border);border-radius:4px;cursor:pointer;' +
-            'color:var(--text);">' +
-            _getIcon('REFRESH') + ' Refresh</button>';
-
-        return '<div style="background:var(--bg2);padding:12px 16px;' +
-            'border-radius:8px;margin-bottom:16px;display:flex;' +
-            'justify-content:space-between;align-items:center;flex-wrap:wrap;' +
-            'gap:8px;border:1px solid var(--border);">' +
+        return '<div class="st-header">' +
             '<div>' +
-            '<div style="font-size:0.8rem;font-weight:bold;color:var(--accent-light);">' +
-            _getIcon('BOOK') + ' Settlement History</div>' +
-            '<div style="font-size:0.65rem;color:var(--dim);">' +
-            _escapeHtml(name) + ' · ' +
-            _fmtNumber(total) + ' recorded event' +
-            (total === 1 ? '' : 's') +
+            '<div class="st-header__title">' +
+            icon('BOOK') + ' Settlement History</div>' +
+            '<div class="st-header__subtitle">' +
+            esc(name) + ' \u00b7 ' + fmtNum(total) +
+            ' recorded event' + (total === 1 ? '' : 's') +
             '</div>' +
             '</div>' +
-            '<div style="display:flex;gap:4px;flex-wrap:wrap;">' +
+            '<div class="st-header__actions">' +
             refreshBtn + exportBtn +
             '</div>' +
             '</div>';
     }
 
-    function _buildFilterBar(filterState) {
-        function yearInput(id, label, value) {
-            return '<div>' +
-                '<label style="font-size:0.55rem;color:var(--dim);' +
-                'display:block;margin-bottom:2px;">' +
-                _escapeHtml(label) + '</label>' +
-                '<input type="number" id="' + id + '" value="' +
-                _escapeHtml(value) + '" placeholder="Any" ' +
-                'style="width:100%;padding:4px 6px;background:var(--bg);' +
-                'border:1px solid var(--border);border-radius:4px;' +
-                'color:var(--text);font-size:0.55rem;">' +
+    function _buildFilterBar(state) {
+        function yearField(id, label, value) {
+            return '<div class="st-filters__field">' +
+                '<label class="st-filters__label">' + esc(label) + '</label>' +
+                '<input type="number" class="st-filters__input" ' +
+                'data-filter="' + esc(id) + '" ' +
+                'value="' + esc(value) + '" placeholder="Any">' +
                 '</div>';
         }
 
-        return '<div style="background:var(--bg2);padding:12px 16px;' +
-            'border-radius:8px;margin-bottom:16px;border:1px solid var(--border);">' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;' +
-            'gap:12px;margin-bottom:8px;">' +
-            '<div>' +
-            '<label style="font-size:0.55rem;color:var(--dim);' +
-            'display:block;margin-bottom:2px;">' +
-            _getIcon('SEARCH') + ' Search</label>' +
-            '<input type="text" id="historySearch" value="' +
-            _escapeHtml(filterState.search) + '" ' +
-            'placeholder="Search events..." ' +
-            'style="width:100%;padding:4px 6px;background:var(--bg);' +
-            'border:1px solid var(--border);border-radius:4px;' +
-            'color:var(--text);font-size:0.55rem;">' +
+        function kindOption(value, label) {
+            return '<option value="' + esc(value) + '"' +
+                (state.kind === value ? ' selected' : '') + '>' +
+                esc(label) + '</option>';
+        }
+
+        return '<div class="st-filters">' +
+            '<div class="st-filters__field">' +
+            '<label class="st-filters__label">' +
+            icon('SEARCH') + ' Search</label>' +
+            '<input type="text" class="st-filters__input" ' +
+            'data-filter="search" ' +
+            'value="' + esc(state.search) + '" ' +
+            'placeholder="Search events...">' +
             '</div>' +
-            '<div>' +
-            '<label style="font-size:0.55rem;color:var(--dim);' +
-            'display:block;margin-bottom:2px;">Kind</label>' +
-            '<select id="historyKind" ' +
-            'style="width:100%;padding:4px 6px;background:var(--bg);' +
-            'border:1px solid var(--border);border-radius:4px;' +
-            'color:var(--text);font-size:0.55rem;">' +
-            '<option value="all"' +
-            (filterState.kind === 'all' ? ' selected' : '') +
-            '>All kinds</option>' +
-            '<option value="annual"' +
-            (filterState.kind === 'annual' ? ' selected' : '') +
-            '>Annual</option>' +
-            '<option value="demolition"' +
-            (filterState.kind === 'demolition' ? ' selected' : '') +
-            '>Demolition</option>' +
+            '<div class="st-filters__field">' +
+            '<label class="st-filters__label">Kind</label>' +
+            '<select class="st-filters__select" data-filter="kind">' +
+            kindOption('all', 'All kinds') +
+            kindOption('annual', 'Annual') +
+            kindOption('demolition', 'Demolition') +
             '</select>' +
             '</div>' +
-            yearInput('historyYearStart', 'Year From', filterState.yearStart) +
-            yearInput('historyYearEnd', 'Year To', filterState.yearEnd) +
-            '</div>' +
-            '<div style="display:flex;justify-content:space-between;' +
-            'align-items:center;flex-wrap:wrap;gap:4px;">' +
-            '<span id="historyCountDisplay" style="font-size:0.5rem;' +
-            'color:var(--dim);"></span>' +
-            '<button type="button" id="historyClearFiltersBtn" ' +
-            'style="font-size:0.5rem;padding:2px 10px;background:var(--bg3);' +
-            'border:1px solid var(--border);border-radius:4px;cursor:pointer;' +
-            'color:var(--text);">' +
-            _getIcon('X_HEAVY') + ' Clear Filters</button>' +
-            '</div>' +
-            '</div>';
-    }
-
-    function _buildStatsSection(events) {
-        if (events.length === 0) return '';
-
-        var counts = { annual: 0, demolition: 0 };
-        for (var i = 0; i < events.length; i++) {
-            if (events[i].kind === 'annual') counts.annual++;
-            else counts.demolition++;
-        }
-
-        function pill(label, count, color) {
-            return '<span style="font-size:0.5rem;background:var(--bg);' +
-                'padding:2px 10px;border-radius:12px;border:1px solid var(--border);' +
-                'color:' + color + ';">' +
-                _escapeHtml(label) + ': <strong>' +
-                _escapeHtml(String(count)) + '</strong></span>';
-        }
-
-        return '<div style="background:var(--bg2);padding:12px 16px;' +
-            'border-radius:8px;margin-bottom:16px;border:1px solid var(--border);">' +
-            '<div style="font-size:0.6rem;color:var(--accent-light);' +
-            'font-weight:bold;margin-bottom:6px;">' +
-            _getIcon('COIN') + ' Event Totals</div>' +
-            '<div style="display:flex;flex-wrap:wrap;gap:6px;">' +
-            pill('Annual', counts.annual, 'var(--text)') +
-            pill('Demolition', counts.demolition, 'var(--danger-lt)') +
+            yearField('yearStart', 'Year From', state.yearStart) +
+            yearField('yearEnd', 'Year To', state.yearEnd) +
+            '<div class="st-filters__footer">' +
+            '<button type="button" class="st-btn st-btn--small" ' +
+            'data-action="clear-filters">Clear Filters</button>' +
             '</div>' +
             '</div>';
     }
 
     function _buildEventRow(event) {
         var yearDisplay = event.year === null
-            ? _unknown()
-            : _escapeHtml(String(event.year));
+            ? unknown() : esc(String(event.year));
+        var cls = event.kind === 'demolition'
+            ? 'st-row st-row--danger'
+            : 'st-row st-row--dim';
 
         var detailsLine = event.details
-            ? '<div style="font-size:0.5rem;color:var(--dim);margin-top:2px;">' +
-            _escapeHtml(event.details) + '</div>'
+            ? '<div class="st-row__meta">' + esc(event.details) + '</div>'
             : '';
 
-        return '<div class="history-event" ' +
-            'style="display:flex;align-items:flex-start;gap:8px;' +
-            'padding:6px 10px;background:var(--bg3);' +
-            'border-left:3px solid ' + event.color + ';' +
-            'border-radius:4px;font-size:0.55rem;">' +
-            '<span style="min-width:48px;color:var(--dim);font-weight:bold;">' +
-            yearDisplay + '</span>' +
-            '<span style="color:' + event.color + ';flex-shrink:0;">' +
-            (event.icon || '') + '</span>' +
-            '<div style="flex:1;min-width:0;">' +
-            '<div style="color:' + event.color + ';font-weight:bold;">' +
-            _escapeHtml(event.label) + '</div>' +
+        return '<div class="' + cls + '">' +
+            '<div class="st-row__meta">' + yearDisplay + '</div>' +
+            '<div class="st-row__body">' +
+            '<div class="st-row__title">' + esc(event.label) + '</div>' +
             detailsLine +
             '</div>' +
             '</div>';
@@ -659,20 +341,13 @@
 
     function _buildTimeline(events) {
         if (events.length === 0) {
-            return '<div style="background:var(--bg2);padding:40px;' +
-                'border-radius:8px;text-align:center;color:var(--dim);' +
-                'font-size:0.65rem;border:1px solid var(--border);">' +
-                _getIcon('BOOK') + ' No events match the current filters.' +
-                '</div>';
+            return '<div class="st-empty">' +
+                icon('BOOK') + ' No events match the current filters.</div>';
         }
 
-        // Group by year, preserving the sort order (year descending).
-        // Entries with no year go into a final group labelled "Year
-        // unknown".
         var groups = [];
         var currentYear = undefined;
         var currentGroup = null;
-
         for (var i = 0; i < events.length; i++) {
             var e = events[i];
             if (currentGroup === null || e.year !== currentYear) {
@@ -683,72 +358,81 @@
             currentGroup.events.push(e);
         }
 
-        var html = '<div style="background:var(--bg2);padding:12px 16px;' +
-            'border-radius:8px;border:1px solid var(--border);">' +
-            '<div style="font-size:0.65rem;color:var(--accent-light);' +
-            'font-weight:bold;margin-bottom:8px;">' +
-            _getIcon('BOOK') + ' Timeline</div>' +
-            '<div style="display:flex;flex-direction:column;gap:12px;">';
-
+        var html = '<div class="st-rows">';
         for (var g = 0; g < groups.length; g++) {
             var group = groups[g];
             var yearHeader = group.year === null
-                ? 'Year unknown'
-                : String(group.year);
-
+                ? 'Year unknown' : String(group.year);
             html += '<div>' +
-                '<div style="font-size:0.6rem;font-weight:bold;' +
-                'color:var(--accent);margin-bottom:4px;">' +
-                _escapeHtml(yearHeader) + ' (' +
-                _escapeHtml(String(group.events.length)) + ')</div>' +
-                '<div style="display:flex;flex-direction:column;gap:4px;">';
-
+                '<div class="st-row__meta">' +
+                esc(yearHeader) + ' (' + group.events.length + ')</div>';
             for (var k = 0; k < group.events.length; k++) {
                 html += _buildEventRow(group.events[k]);
             }
-
-            html += '</div></div>';
+            html += '</div>';
         }
-
-        html += '</div></div>';
+        html += '</div>';
         return html;
     }
 
-    // =========================================================================
-    // 7. EXPORT
-    // =========================================================================
-    //
-    // Serializes the two raw arrays (canonical record) as JSON. The
-    // current filter state is not included; the export is what the
-    // settlement actually recorded.
+    function _buildStatsSection(events) {
+        if (events.length === 0) return '';
+        var counts = { annual: 0, demolition: 0 };
+        for (var i = 0; i < events.length; i++) {
+            if (events[i].kind === 'annual') counts.annual++;
+            else counts.demolition++;
+        }
+
+        function pill(label, count, cls) {
+            return '<span class="st-badge ' + cls + '">' +
+                esc(label) + ': <strong>' + fmtNum(count) + '</strong></span>';
+        }
+
+        return '<div class="st-section">' +
+            '<div class="st-section__title">' +
+            icon('COIN') + ' Event Totals</div>' +
+            '<div class="st-header__actions">' +
+            pill('Annual', counts.annual, 'st-badge--dim') +
+            pill('Demolition', counts.demolition, 'st-badge--neg') +
+            '</div>' +
+            '</div>';
+    }
+
+    function _buildFooter() {
+        return '<div class="st-footer">' + icon('CIRCLE_DOT') +
+            ' <span>History tracks annual financial processing and feature ' +
+            'demolitions. Other settlement changes (fiscal policy, laws, ' +
+            'specialization) are not recorded in this log.</span></div>';
+    }
+
+    // -------------------------------------------------------------------
+    // Export
+    // -------------------------------------------------------------------
 
     function _exportHistory(locationId) {
-        var data = _getSettlementQueries().getSettlementData(locationId);
+        var Q = _getSettlementQueries();
+        if (!Q) {
+            H().toast('Settlement not found.', 'error');
+            return;
+        }
+        var data = Q.getSettlementData(locationId);
         if (!data) {
-            if (typeof window.showToast === 'function') {
-                window.showToast('Settlement not found', 'error');
-            }
+            H().toast('Settlement not found.', 'error');
             return;
         }
 
         var annual = Array.isArray(data.annualHistory) ? data.annualHistory : [];
         var demolition = Array.isArray(data.demolitionHistory)
-            ? data.demolitionHistory
-            : [];
+            ? data.demolitionHistory : [];
 
         if (annual.length === 0 && demolition.length === 0) {
-            if (typeof window.showToast === 'function') {
-                window.showToast('No history to export', 'warning');
-            }
+            H().toast('No history to export.', 'warning');
             return;
         }
 
         var placeName = _placeName(locationId) || locationId;
         var payload = {
-            settlement: {
-                locationId: locationId,
-                name: placeName
-            },
+            settlement: { locationId: locationId, name: placeName },
             exportedAt: new Date().toISOString(),
             annualHistory: annual,
             demolitionHistory: demolition
@@ -766,135 +450,110 @@
                 '_' + stamp + '.json';
             a.click();
             URL.revokeObjectURL(url);
-
-            if (typeof window.showToast === 'function') {
-                window.showToast('History exported', 'success');
-            }
+            H().toast('History exported.', 'success');
         } catch (err) {
-            if (typeof window.showToast === 'function') {
-                window.showToast(
-                    'Failed to export history: ' +
-                    (err && err.message ? err.message : 'unknown error'),
-                    'error'
-                );
-            }
+            H().toast(
+                'Failed to export history: ' +
+                (err && err.message ? err.message : 'unknown error'),
+                'error');
         }
     }
 
-    // =========================================================================
-    // 8. EVENT WIRING
-    // =========================================================================
-    //
-    // Filters are applied by re-rendering the timeline container only,
-    // not the whole tab. The header, filter bar, and stats section stay
-    // put. Filter state is saved on each change.
-    //
-    // No setTimeout / debounce timer is needed here: the input events
-    // that trigger a re-render are text input, select change, and
-    // number change. Text input fires on every keystroke, which is
-    // fine — the filter runs against a small normalized array.
+    // -------------------------------------------------------------------
+    // Wiring
+    // -------------------------------------------------------------------
 
-    function _renderTimelineInto(timelineEl, events) {
-        if (!timelineEl) return;
-        timelineEl.innerHTML = _buildTimeline(events);
+    function _collectFilterState(container) {
+        var search = container.querySelector('[data-filter="search"]');
+        var kind = container.querySelector('[data-filter="kind"]');
+        var yearStart = container.querySelector('[data-filter="yearStart"]');
+        var yearEnd = container.querySelector('[data-filter="yearEnd"]');
+        return {
+            search: search ? search.value : '',
+            kind: kind ? kind.value : 'all',
+            yearStart: yearStart ? yearStart.value : '',
+            yearEnd: yearEnd ? yearEnd.value : ''
+        };
     }
 
-    function _updateCount(countEl, filteredCount, totalCount) {
-        if (!countEl) return;
-        if (filteredCount === totalCount) {
-            countEl.textContent = 'Showing all ' + totalCount + ' events';
-        } else {
-            countEl.textContent =
-                'Showing ' + filteredCount + ' of ' + totalCount + ' events';
-        }
-    }
-
-    function _wireFilters(container, locationId, allEvents) {
-        var searchInput = container.querySelector('#historySearch');
-        var kindSelect = container.querySelector('#historyKind');
-        var yearStartInput = container.querySelector('#historyYearStart');
-        var yearEndInput = container.querySelector('#historyYearEnd');
-        var clearFiltersBtn = container.querySelector('#historyClearFiltersBtn');
-        var countEl = container.querySelector('#historyCountDisplay');
-        var timelineEl = container.querySelector('#historyTimeline');
-
-        function currentState() {
-            return {
-                search: searchInput ? searchInput.value : '',
-                kind: kindSelect ? kindSelect.value : 'all',
-                yearStart: yearStartInput ? yearStartInput.value : '',
-                yearEnd: yearEndInput ? yearEndInput.value : ''
-            };
-        }
-
-        function apply() {
-            var state = currentState();
-            _saveFilterState(locationId, state);
-            var filtered = _applyFilters(allEvents, state);
-            _renderTimelineInto(timelineEl, filtered);
-            _updateCount(countEl, filtered.length, allEvents.length);
-        }
-
-        if (searchInput) searchInput.addEventListener('input', apply);
-        if (kindSelect) kindSelect.addEventListener('change', apply);
-        if (yearStartInput) yearStartInput.addEventListener('input', apply);
-        if (yearEndInput) yearEndInput.addEventListener('input', apply);
-
-        if (clearFiltersBtn) {
-            clearFiltersBtn.addEventListener('click', function () {
-                if (searchInput) searchInput.value = '';
-                if (kindSelect) kindSelect.value = 'all';
-                if (yearStartInput) yearStartInput.value = '';
-                if (yearEndInput) yearEndInput.value = '';
-                apply();
-            });
-        }
-
-        // Initial render: apply the loaded filter state.
-        apply();
+    function _rerenderTimeline(container, locationId) {
+        var allEvents = _collectEvents(locationId);
+        var state = _collectFilterState(container);
+        _writeFilterState(locationId, state);
+        var filtered = _applyFilters(allEvents, state);
+        var host = container.querySelector('[data-timeline-host]');
+        if (host) host.innerHTML = _buildTimeline(filtered);
     }
 
     function _wireActions(container, locationId) {
-        container.addEventListener('click', function (event) {
-            var target = event.target;
-            if (!target || typeof target.closest !== 'function') return;
-            var btn = target.closest('.history-action-btn');
-            if (!btn) return;
-            if (!container.contains(btn)) return;
-            event.preventDefault();
+        if (container.__stHistoryWired) return;
+        container.__stHistoryWired = true;
 
+        container.addEventListener('click', function (event) {
+            var btn = event.target.closest('[data-action]');
+            if (!btn || !container.contains(btn)) return;
             var action = btn.dataset.action;
             if (action === 'refresh') {
-                var tabs = _getTabs();
-                if (tabs && typeof tabs.requestRender === 'function') {
-                    tabs.requestRender('history');
-                }
-            } else if (action === 'export') {
+                event.preventDefault();
+                refresh();
+                return;
+            }
+            if (action === 'export') {
+                event.preventDefault();
                 _exportHistory(locationId);
+                return;
+            }
+            if (action === 'clear-filters') {
+                event.preventDefault();
+                _writeFilterState(locationId, {
+                    search: '', kind: 'all', yearStart: '', yearEnd: ''
+                });
+                refresh();
+                return;
             }
         });
+
+        // Debounced input: coalesce keystrokes via requestAnimationFrame.
+        var searchEl = container.querySelector('[data-filter="search"]');
+        if (searchEl) {
+            var rafHandle = null;
+            searchEl.addEventListener('input', function () {
+                if (rafHandle !== null) return;
+                rafHandle = requestAnimationFrame(function () {
+                    rafHandle = null;
+                    _rerenderTimeline(container, locationId);
+                });
+            });
+        }
+        var kindEl = container.querySelector('[data-filter="kind"]');
+        if (kindEl) {
+            kindEl.addEventListener('change', function () {
+                _rerenderTimeline(container, locationId);
+            });
+        }
+        var yearStartEl = container.querySelector('[data-filter="yearStart"]');
+        if (yearStartEl) {
+            yearStartEl.addEventListener('input', function () {
+                _rerenderTimeline(container, locationId);
+            });
+        }
+        var yearEndEl = container.querySelector('[data-filter="yearEnd"]');
+        if (yearEndEl) {
+            yearEndEl.addEventListener('input', function () {
+                _rerenderTimeline(container, locationId);
+            });
+        }
     }
 
-    // =========================================================================
-    // 9. RENDER
-    // =========================================================================
+    // -------------------------------------------------------------------
+    // Renderer
+    // -------------------------------------------------------------------
 
-    /**
-     * Renders the history tab into the container.
-     *
-     * @param {HTMLElement} container
-     * @param {Object} context  { locationId, data, viewModel }
-     */
     function renderSettlementHistory(container, context) {
-        if (!container) {
-            throw new Error(
-                'settlement-history-tab: container is required'
-            );
-        }
+        if (!container) return;
         if (!context || !context.locationId) {
-            throw new Error(
-                'settlement-history-tab: context.locationId is required'
-            );
+            container.innerHTML = H().emptyState('no-context');
+            return;
         }
 
         var locationId = context.locationId;
@@ -907,57 +566,39 @@
         }
 
         var filterState = _loadFilterState(locationId);
+        var filtered = _applyFilters(allEvents, filterState);
 
-        var html = '<div style="padding:4px;">' +
+        var html = '<div class="st-tab">' +
             _buildHeader(context, counts) +
             _buildStatsSection(allEvents) +
             _buildFilterBar(filterState) +
-            '<div id="historyTimeline"></div>' +
-            '<div style="margin-top:16px;padding:8px;background:var(--bg3);' +
-            'border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
-            _getIcon('CIRCLE_DOT') +
-            ' History tracks annual financial processing and feature ' +
-            'demolitions. Other settlement changes (fiscal policy, ' +
-            'laws, specialization) are not recorded in this log.</div>' +
+            '<div class="st-section">' +
+            '<div class="st-section__title">' +
+            icon('BOOK') + ' Timeline</div>' +
+            '<div data-timeline-host>' +
+            _buildTimeline(filtered) +
+            '</div>' +
+            '</div>' +
+            _buildFooter() +
             '</div>';
 
         container.innerHTML = html;
-
         _wireActions(container, locationId);
-        _wireFilters(container, locationId, allEvents);
     }
 
-    // =========================================================================
-    // 10. REGISTRATION
-    // =========================================================================
+    // -------------------------------------------------------------------
+    // Registration
+    // -------------------------------------------------------------------
 
-    function _register() {
-        var tabs = _getTabs();
-        if (!tabs || typeof tabs.registerTabRenderer !== 'function') {
-            throw new Error(
-                'settlement-history-tab: SettlementTabs is missing. ' +
-                'Load settlement-tabs.js before this tab.'
-            );
-        }
-        tabs.registerTabRenderer('history', renderSettlementHistory);
+    if (window.TabManager && typeof window.TabManager.register === 'function') {
+        window.TabManager.register(SCOPE, TAB_ID, renderSettlementHistory);
+    } else if (typeof console !== 'undefined' && console.warn) {
+        console.warn(
+            'settlement-history-tab: TabManager is not available at load ' +
+            'time; the tab was not registered.'
+        );
     }
-
-    _register();
-
-    // =========================================================================
-    // 11. EXPORTS
-    // =========================================================================
-    //
-    // The renderer is registered with SettlementTabs under the tab id
-    // 'history'. Legacy global names are aliased so any un-migrated
-    // caller that has the old (containerId, locationId, summary)
-    // signature still finds the module surface. Note that the legacy
-    // signature will not match what SettlementTabs invokes — the alias
-    // exists only so callers that reference the name don't throw on
-    // property access.
-    //
 
     window.renderSettlementHistory = renderSettlementHistory;
-    window._renderSettlementHistory = renderSettlementHistory;
 
 })();
