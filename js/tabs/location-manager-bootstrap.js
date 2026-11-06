@@ -19,32 +19,19 @@
  *
  * NON-OBVIOUS DECISIONS (per playbook §4):
  *   1. containerRoot must contain both the tab strip and the pane container.
- *      TabManager's click router walks up from the click target and asks each
- *      scope's containerRoot.contains(button). If containerRoot were only
- *      #panelContent (a sibling of the strip), clicks on the strip would fail
- *      to route. We use strip.parentNode (.main-panel), which contains both.
+ *      See _ensureStripAndPanes / init.
  *   2. TabManager does NOT toggle .active on panes. _syncTabStrip must.
- *      Without this, the strip highlights the right tab but the pane below
- *      stays display:none.
- *   3. init() is idempotent. Import / refresh topbar actions call it again.
- *   4. Hydrate LocationState before TabManager.configure, because buildContext
- *      reads through LocationQueries which reads through LocationState.
- *
- * DEPENDENCIES (load-time):
- *   - js/core/tab-manager.js        (window.TabManager)
- *   - js/core/formatting.js         (window.escapeHtml)
- *   - js/core/icons.js              (window.getIcon)
- *   - js/location/location-queries.js (window.LocationQueries)
- *   - js/location/location-commands.js (window.LocationCommands)
- *   - js/location/location-bootstrap.js (window.LocationBootstrap)
- *   - js/location/location-ui-state.js (window.LocationUIState)
- *   - js/location/location-ui-list.js (window.LocationUI)
+ *   3. init() is idempotent.
+ *   4. Hydrate LocationState before TabManager.configure.
+ *   5. TabManager.requestRender REQUIRES (scope, tabId). Never call it with
+ *      only (scope). Use _activeTabId() at every call site.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Initial revision — extracted from the inline MANAGER INIT script and the
- *   inline SUBTAB HOST script in LocationManager.html. Replaces both. Also
- *   retires the hand-rolled SUBTABS array; tab files self-register.
+ *   - Extracted from the inline MANAGER INIT + SUBTAB HOST scripts.
+ *   - Fix: every requestRender() call now passes (SCOPE, _activeTabId()).
+ *     The prior revision called requestRender(SCOPE) with no tabId, which
+ *     throws "TabManager: tabId must be a non-empty string".
  * =============================================================================
  */
 
@@ -105,7 +92,6 @@
 
     function _esc(v) {
         if (typeof window.escapeHtml === 'function') return window.escapeHtml(v);
-        // Strict fallback: same regex set as escapeHtml. Never silently disables escaping.
         if (v === null || v === undefined) return '';
         return String(v)
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -130,9 +116,48 @@
         return '<span class="tb-btn-glyph">' + icon + '</span><span>' + (text || '') + '</span>';
     }
 
+    /**
+     * Resolve the currently-active tab id, with a documented default.
+     * TabManager.requestRender requires (scope, tabId); this helper exists
+     * so every caller passes a real id and never hits _assertTabId.
+     */
+    function _activeTabId() {
+        try {
+            var ui = window.LocationUIState;
+            if (ui && typeof ui.getActiveTabId === 'function') {
+                var id = ui.getActiveTabId();
+                if (typeof id === 'string' && id.length > 0 && KNOWN_TAB_IDS.indexOf(id) !== -1) {
+                    return id;
+                }
+            }
+        } catch (e) { /* fall through */ }
+        return DEFAULT_ACTIVE_TAB_ID;
+    }
+
+    function _requestRender() {
+        var TM = window.TabManager;
+        if (!TM || typeof TM.requestRender !== 'function') return;
+        try {
+            TM.requestRender(SCOPE, _activeTabId());
+        } catch (e) {
+            console.error('[location-manager] requestRender failed:', e);
+        }
+    }
+
     // =========================================================================
-    // 3. TAB STRIP + PANE MIRROR (must exist — TabManager does not do this)
+    // 3. TAB STRIP + PANE MIRROR
     // =========================================================================
+
+    function _tabLabel(id) {
+        switch (id) {
+            case 'details':    return 'Details';
+            case 'hierarchy':  return 'Hierarchy';
+            case 'population': return 'Population';
+            case 'movement':   return 'Movement';
+            case 'leadership': return 'Leadership';
+            default:           return id;
+        }
+    }
 
     function _ensureStripAndPanes() {
         var strip = document.getElementById('locationTabStrip');
@@ -140,8 +165,6 @@
         if (!strip || !panel) {
             throw new Error('location-manager-bootstrap: #locationTabStrip or #panelContent is missing from the shell.');
         }
-        // Strip buttons. Idempotent: only write if the strip is empty
-        // (or the ids drifted from KNOWN_TAB_IDS — a load-order bug).
         var needStrip = strip.children.length !== KNOWN_TAB_IDS.length;
         if (!needStrip) {
             for (var i = 0; i < KNOWN_TAB_IDS.length; i++) {
@@ -161,7 +184,6 @@
             }
             strip.innerHTML = html;
         }
-        // Panes. Idempotent by id.
         var panes = '';
         for (var k = 0; k < KNOWN_TAB_IDS.length; k++) {
             var pid = KNOWN_TAB_IDS[k];
@@ -171,17 +193,6 @@
             }
         }
         if (panes) panel.insertAdjacentHTML('beforeend', panes);
-    }
-
-    function _tabLabel(id) {
-        switch (id) {
-            case 'details':    return 'Details';
-            case 'hierarchy':  return 'Hierarchy';
-            case 'population': return 'Population';
-            case 'movement':   return 'Movement';
-            case 'leadership': return 'Leadership';
-            default:           return id;
-        }
     }
 
     function _syncTabStrip(tabId) {
@@ -228,7 +239,7 @@
     }
 
     // =========================================================================
-    // 5. EMPTY STATES (per-reason; called by TabManager before the renderer)
+    // 5. EMPTY STATES
     // =========================================================================
 
     function _buildEmptyState(tabId, reason) {
@@ -327,11 +338,7 @@
         if (!id) return;
 
         if (id === _currentPlaceId) {
-            // Re-selecting the current place: force a re-render of the active tab.
-            var TM = window.TabManager;
-            if (TM && typeof TM.requestRender === 'function') {
-                TM.requestRender(SCOPE);
-            }
+            _requestRender();
             return;
         }
 
@@ -348,12 +355,7 @@
         }
 
         _applySidebarSelection(previousId, id);
-
-        var TM = window.TabManager;
-        if (TM && typeof TM.requestRender === 'function') {
-            try { TM.requestRender(SCOPE); }
-            catch (e) { console.error('[location-manager] requestRender failed:', e); }
-        }
+        _requestRender();
 
         if (window.innerWidth <= 768) _closeSidebar();
     }
@@ -431,10 +433,7 @@
             _toast('Year set to ' + y, 'success');
             sync();
             _setupSidebar();
-            var TM = window.TabManager;
-            if (TM && typeof TM.requestRender === 'function') {
-                try { TM.requestRender(SCOPE); } catch (e) { /* ignore */ }
-            }
+            _requestRender();
         }
 
         btn.addEventListener('click', applyYear);
@@ -463,10 +462,7 @@
             }
             window.openEditPlaceModal(_currentPlaceId, function () {
                 _setupSidebar();
-                var TM = window.TabManager;
-                if (TM && typeof TM.requestRender === 'function') {
-                    try { TM.requestRender(SCOPE); } catch (e) { /* ignore */ }
-                }
+                _requestRender();
             });
         };
 
@@ -497,10 +493,7 @@
                     try { window.LocationBootstrap.init(); } catch (e) { /* ignore */ }
                 }
                 _setupSidebar();
-                var TM = window.TabManager;
-                if (TM && typeof TM.requestRender === 'function') {
-                    try { TM.requestRender(SCOPE); } catch (e) { /* ignore */ }
-                }
+                _requestRender();
                 _toast('Import successful', 'success');
             }).catch(function (err) {
                 _toast('Import failed: ' + (err && err.message ? err.message : 'unknown'), 'error');
@@ -519,12 +512,9 @@
         var refreshBtn = document.getElementById('refreshBtn');
         if (refreshBtn) refreshBtn.onclick = function () {
             if (typeof window.loadMasterData === 'function') window.loadMasterData();
-            setTimeout(function () {
+            window.setTimeout(function () {
                 _setupSidebar();
-                var TM = window.TabManager;
-                if (TM && typeof TM.requestRender === 'function') {
-                    try { TM.requestRender(SCOPE); } catch (e) { /* ignore */ }
-                }
+                _requestRender();
                 _toast('Refreshed', 'success');
             }, 100);
         };
@@ -580,7 +570,6 @@
         if (_initialized) return;
         _initialized = true;
 
-        // Load dependencies. Throw → render a visible failure.
         var TabManager, uiState;
         try {
             TabManager = _requireTabManager();
@@ -596,14 +585,12 @@
             return;
         }
 
-        // Storage + domain hydration.
         try { if (typeof window.loadMasterData === 'function') window.loadMasterData(); } catch (e) { /* ignore */ }
         if (window.LocationBootstrap) {
             try { window.LocationBootstrap.init(); }
             catch (e) { console.error('[location-manager-bootstrap] LocationBootstrap.init failed:', e); }
         }
 
-        // Build the strip and panes before configuring TabManager.
         try { _ensureStripAndPanes(); }
         catch (e) {
             var p = document.getElementById('panelContent');
@@ -611,7 +598,6 @@
             return;
         }
 
-        // Ensure UI state has the known tab ids.
         if (typeof uiState.setKnownTabIds === 'function') {
             try { uiState.setKnownTabIds(KNOWN_TAB_IDS); } catch (e) { /* ignore */ }
         }
@@ -626,8 +612,6 @@
             try { uiState.setActiveTabId(DEFAULT_ACTIVE_TAB_ID); } catch (e) { /* ignore */ }
         }
 
-        // containerRoot MUST contain both the tab strip and the pane container.
-        // See NON-OBVIOUS DECISIONS #1 in the header.
         var strip = document.getElementById('locationTabStrip');
         var containerRoot = strip ? strip.parentNode : document.getElementById('panelContent');
 
@@ -645,7 +629,6 @@
                 if (typeof uiState.setActiveTabId === 'function') {
                     try { uiState.setActiveTabId(tabId); } catch (e) { /* ignore */ }
                 }
-                // REQUIRED: TabManager does not toggle .active on panes. See #2.
                 _syncTabStrip(tabId);
             },
             buildEmptyState: _buildEmptyState
@@ -653,7 +636,12 @@
 
         TabManager.init();
 
-        // Shell chrome.
+        // Route 'locationSelected' (emitted by the hierarchy tab's Go-to buttons).
+        document.addEventListener('locationSelected', function (e) {
+            var id = e && e.detail && e.detail.id;
+            if (id) _selectLocation(id);
+        });
+
         _setupTopbarText();
         _setupTopbarActions();
         _setupYearControl();
@@ -664,7 +652,6 @@
         var overlay = document.getElementById('sidebarOverlay');
         if (overlay) overlay.addEventListener('click', _closeSidebar);
 
-        // Initial tab and initial selection.
         var initialTab = DEFAULT_ACTIVE_TAB_ID;
         if (typeof uiState.getActiveTabId === 'function') {
             var got = uiState.getActiveTabId();
@@ -674,7 +661,6 @@
 
         _pickInitialSelection();
         if (!_currentPlaceId) {
-            // No places at all — render the empty state for the default tab.
             var p2 = document.getElementById('panelContent');
             if (p2) {
                 p2.innerHTML = '<div class="empty-state">Select a location from the sidebar.</div>';
