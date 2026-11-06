@@ -4,7 +4,7 @@
  * STILL WATERS - HOUSEHOLD TAB RUNTIME (household-tab-runtime.js)
  * =============================================================================
  *
- * LOCATION: js/households/household-tab-runtime.js
+ * LOCATION: js/tab/household-tab-runtime.js
  *
  * PURPOSE
  * -------
