@@ -15,10 +15,11 @@
  *   - buildIdentityModel(id)
  *   - buildFriendshipModel(id)
  *   - buildRomanceModel(id)
- *   - buildFamilyModel(id)          NEW
+ *   - buildFamilyModel(id)
+ *   - buildSkillsModel(id)          NEW
  *
  * SCOPE (future revisions, as tabs are built):
- *   - buildLocationModel, buildSkillsModel, buildOverviewModel
+ *   - buildLocationModel, buildOverviewModel
  *
  * OUT OF SCOPE:
  *   - Any DOM writes, mutations, localStorage, new query logic
@@ -38,6 +39,12 @@
  *
  * OPTIONAL DEPENDENCIES (guarded at call time):
  *   - window.getRankById, window.getPlaceById
+ *   - RoleState.getRole, window.getRoleById  (skills section)
+ *   - SUBJECTS_BY_ID                          (skills section)
+ *   - ApprenticeshipQueries                   (skills section —
+ *                                              absent on CharacterManager.html;
+ *                                              degrades to
+ *                                              { available: false })
  *   - ReligionQueries, CultureQueries, RelationshipQueries
  *
  * ICON POLICY: Uses SVG from icons.js. No emojis.
@@ -45,24 +52,31 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - buildSkillsModel(characterId) added. Sections: identity,
+ *       professions[], education[], educationHistory[],
+ *       subjectProgress[], literacy, apprenticeship, traits, errors.
+ *     - Apprenticeship section degrades cleanly when
+ *       ApprenticeshipQueries is not loaded (CharacterManager.html does
+ *       not load the apprenticeship domain). It returns
+ *       { available: false, reason, ... } so the tab renders an
+ *       unavailable message rather than an empty list.
+ *     - _resolveRoleName(roleId) and _resolveSubjectName(key) helpers
+ *       added. Both are tolerant: they fall back to the raw id / key
+ *       and never throw. Not exported — they are internal to the
+ *       skills builder.
+ *     - Professions enriched with roleName (via _resolveRoleName) and
+ *       tierLabel (via skillTierLabel).
+ *     - SubjectProgress enriched with name (via _resolveSubjectName)
+ *       and tierLabel. Sorted by level descending.
+ *     - No public resolvers changed. No builder changed. Purely
+ *       additive.
+ *   Previous revision:
  *     - buildFamilyModel(characterId) added. Sections:
  *         identity, parents, children, siblings, grandchildren,
- *         surrogacyChildren, errors.
- *       Each family reference is enriched with the target character's
- *       summary (name, gender, age, location, deceased) plus
- *       FamilyRules-derived classification metadata where applicable
+ *         surrogacyChildren, adoptedParents, isOrphan.
+ *       Each family reference enriched with the target character's
+ *       summary plus FamilyRules-derived classification metadata
  *       (sibling type, parent role).
- *     - The Family model distinguishes:
- *         bio parents / legal parents / social parents
- *         bio children / legal children
- *         siblings with full / half-mother / half-father / step /
- *           adoptive classification
- *         adopted parents, adopted children (via adoption metadata)
- *         guardians, foster children (via adoption type)
- *         grandchildren (biological, one generation)
- *         surrogacy children (via surrogacy arrangement lookup)
- *     - FamilyRules, FamilyState, ChildrenState are pulled in via
- *       FamilyQueries / ChildrenQueries — no direct reads of state.
  *   Previous revision:
  *     - buildRomanceModel(characterId) added.
  *   Earlier revision:
@@ -1568,7 +1582,375 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 10. SKILLS — HELPERS
+    // =========================================================================
+
+    /**
+     * Resolves a role id to a display name using the canonical role
+     * reader. Returns the raw id when neither reader is available or the
+     * role is missing. NEVER throws.
+     *
+     * Preferred path: RoleState.getRole (returns clones).
+     * Fallback path:  window.getRoleById (aliased to RoleState.getRole
+     *                 by role-system.js; also clones).
+     */
+    function _resolveRoleName(roleId) {
+        if (!_hasId(roleId)) return '';
+        var role = null;
+        try {
+            if (typeof window.RoleState !== 'undefined'
+                && window.RoleState !== null
+                && typeof window.RoleState.getRole === 'function') {
+                role = window.RoleState.getRole(roleId);
+            } else if (typeof window.getRoleById === 'function') {
+                role = window.getRoleById(roleId);
+            }
+        } catch (e) {
+            role = null;
+        }
+        if (role && typeof role.name === 'string' && role.name.length > 0) {
+            return role.name;
+        }
+        return roleId;
+    }
+
+    /**
+     * Resolves a subject key (bare id or 'role_<roleId>') to a display
+     * name. Uses SUBJECTS_BY_ID when loaded; otherwise strips the
+     * 'role_' prefix and resolves the role name; otherwise returns the
+     * raw key. NEVER throws.
+     */
+    function _resolveSubjectName(key) {
+        if (!_hasId(key)) return '';
+        if (typeof window.SUBJECTS_BY_ID !== 'undefined'
+            && window.SUBJECTS_BY_ID !== null) {
+            var sub = window.SUBJECTS_BY_ID[key];
+            if (sub && typeof sub.name === 'string' && sub.name.length > 0) {
+                return sub.name;
+            }
+        }
+        if (key.indexOf('role_') === 0) {
+            var roleId = key.substring(5);
+            var roleName = _resolveRoleName(roleId);
+            if (roleName) return roleName;
+        }
+        return key;
+    }
+
+    function _buildProfessionsList(characterId, errors) {
+        return _safe('professions', function () {
+            var raw = CC.getProfessions(characterId);
+            if (!Array.isArray(raw)) return [];
+            var out = [];
+            for (var i = 0; i < raw.length; i++) {
+                var p = raw[i];
+                if (!p || !_hasId(p.id)) continue;
+                out.push({
+                    id: p.id,
+                    name: typeof p.name === 'string' ? p.name : _resolveRoleName(p.id),
+                    roleName: _resolveRoleName(p.id),
+                    skillLevel: typeof p.skillLevel === 'number' ? p.skillLevel : 0,
+                    tierLabel: skillTierLabel(p.skillLevel),
+                    startYear: _isMissing(p.startYear) ? null : p.startYear,
+                    primary: p.primary === true,
+                    notes: typeof p.notes === 'string' ? p.notes : '',
+                    specs: Array.isArray(p.specs) ? p.specs.slice() : [],
+                    baseSalary: typeof p.baseSalary === 'number' ? p.baseSalary : 0,
+                    customSalary: _isMissing(p.customSalary) ? null : p.customSalary,
+                    paysSalary: p.paysSalary === true
+                });
+            }
+            out.sort(function (a, b) {
+                if (a.primary !== b.primary) return a.primary ? -1 : 1;
+                if (b.skillLevel !== a.skillLevel) return b.skillLevel - a.skillLevel;
+                return a.roleName.localeCompare(b.roleName);
+            });
+            return out;
+        }, errors);
+    }
+
+    function _buildEducationList(characterId, errors) {
+        return _safe('education', function () {
+            var raw = CC.getEducationRecords(characterId);
+            if (!Array.isArray(raw)) return [];
+            var out = [];
+            for (var i = 0; i < raw.length; i++) {
+                var e = raw[i];
+                if (!e || !_hasId(e.institutionId)) continue;
+                out.push({
+                    institutionId: e.institutionId,
+                    institutionName: typeof e.institutionName === 'string'
+                        ? e.institutionName : e.institutionId,
+                    institutionType: typeof e.institutionType === 'string'
+                        ? e.institutionType : '',
+                    enrolledYear: _isMissing(e.enrolledYear) ? null : e.enrolledYear,
+                    graduated: e.graduated === true,
+                    graduationYear: _isMissing(e.graduationYear) ? null : e.graduationYear,
+                    grantedRole: _isMissing(e.grantedRole) ? null : e.grantedRole,
+                    grantedRoleName: e.grantedRole ? _resolveRoleName(e.grantedRole) : null,
+                    withdrawn: e.withdrawn === true,
+                    withdrawnReason: typeof e.withdrawnReason === 'string'
+                        ? e.withdrawnReason : '',
+                    withdrawnYear: _isMissing(e.withdrawnYear) ? null : e.withdrawnYear
+                });
+            }
+            out.sort(function (a, b) {
+                var ya = typeof a.enrolledYear === 'number' ? a.enrolledYear : 0;
+                var yb = typeof b.enrolledYear === 'number' ? b.enrolledYear : 0;
+                return yb - ya;
+            });
+            return out;
+        }, errors);
+    }
+
+    function _buildEducationHistoryList(characterId, errors) {
+        return _safe('educationHistory', function () {
+            var raw = CC.getEducationHistory(characterId);
+            if (!Array.isArray(raw)) return [];
+            var out = [];
+            for (var i = 0; i < raw.length; i++) {
+                var e = raw[i];
+                if (!e || typeof e !== 'object') continue;
+                out.push({
+                    institutionId: _isMissing(e.institutionId) ? null : e.institutionId,
+                    institutionName: typeof e.institutionName === 'string'
+                        ? e.institutionName : '',
+                    institutionType: typeof e.institutionType === 'string'
+                        ? e.institutionType : '',
+                    enrolledYear: _isMissing(e.enrolledYear) ? null : e.enrolledYear,
+                    graduationYear: _isMissing(e.graduationYear) ? null : e.graduationYear,
+                    grantedRole: _isMissing(e.grantedRole) ? null : e.grantedRole,
+                    grantedRoleName: e.grantedRole ? _resolveRoleName(e.grantedRole) : null,
+                    taughtRoles: Array.isArray(e.taughtRoles) ? e.taughtRoles.slice() : [],
+                    curriculum: Array.isArray(e.curriculum) ? e.curriculum.slice() : []
+                });
+            }
+            out.sort(function (a, b) {
+                var ya = typeof a.graduationYear === 'number' ? a.graduationYear : 0;
+                var yb = typeof b.graduationYear === 'number' ? b.graduationYear : 0;
+                return yb - ya;
+            });
+            return out;
+        }, errors);
+    }
+
+    function _buildSubjectProgressList(characterId, errors) {
+        return _safe('subjectProgress', function () {
+            var raw = CC.getAllSubjectProgress(characterId);
+            if (!Array.isArray(raw)) return [];
+            var out = [];
+            for (var i = 0; i < raw.length; i++) {
+                var p = raw[i];
+                if (!p || !_hasId(p.key)) continue;
+                var level = (typeof p.level === 'number' && p.level >= 0 && p.level <= 100)
+                    ? p.level : 0;
+                out.push({
+                    key: p.key,
+                    name: _resolveSubjectName(p.key),
+                    level: level,
+                    tierLabel: skillTierLabel(level),
+                    lastStudied: _isMissing(p.lastStudied) ? null : p.lastStudied,
+                    source: _isMissing(p.source) ? null : p.source,
+                    type: p.type === 'role' ? 'role' : 'subject',
+                    roleId: _isMissing(p.roleId) ? null : p.roleId
+                });
+            }
+            out.sort(function (a, b) { return b.level - a.level; });
+            return out;
+        }, errors);
+    }
+
+    function _buildLiteracyBlock(characterId, errors) {
+        return _safe('literacy', function () {
+            var isLit = false;
+            try { isLit = CC.isLiterate(characterId) === true; }
+            catch (e) { isLit = false; }
+
+            var literacyLevel = 0;
+            var all = CC.getAllSubjectProgress(characterId);
+            if (Array.isArray(all)) {
+                for (var i = 0; i < all.length; i++) {
+                    if (all[i] && all[i].key === 'literacy'
+                        && typeof all[i].level === 'number') {
+                        literacyLevel = all[i].level;
+                        break;
+                    }
+                }
+            }
+
+            return {
+                isLiterate: isLit,
+                literacyLevel: literacyLevel,
+                tierLabel: skillTierLabel(literacyLevel),
+                canTeach: literacyLevel >= 51
+            };
+        }, errors);
+    }
+
+    function _buildApprenticeshipBlock(characterId, errors) {
+        return _safe('apprenticeship', function () {
+            var AQs = window.ApprenticeshipQueries;
+            if (!AQs
+                || typeof AQs.getMasters !== 'function'
+                || typeof AQs.getApprentices !== 'function') {
+                return {
+                    available: false,
+                    reason: 'Apprenticeship domain is not loaded on this page. ' +
+                            'Use the Apprenticeship Manager to view or edit ' +
+                            'training relationships.',
+                    isMaster: false,
+                    master: null,
+                    apprentices: []
+                };
+            }
+
+            var masterEntry = null;
+            var apprentices = [];
+
+            try {
+                var masters = AQs.getMasters(characterId, true);
+                if (Array.isArray(masters) && masters.length > 0) {
+                    var m = masters[0];
+                    if (m && _hasId(m.masterId)) {
+                        masterEntry = {
+                            masterId: m.masterId,
+                            masterName: typeof m.masterName === 'string'
+                                ? m.masterName : resolveName(m.masterId),
+                            roleId: _isMissing(m.roleId) ? null : m.roleId,
+                            roleName: _resolveRoleName(m.roleId),
+                            skillLevel: typeof m.skillLevel === 'number' ? m.skillLevel : 0,
+                            stage: m.stage && typeof m.stage === 'object'
+                                ? { id: m.stage.id, name: m.stage.name }
+                                : null,
+                            startYear: _isMissing(m.startYear) ? null : m.startYear
+                        };
+                    }
+                }
+            } catch (e) {
+                errors['apprenticeship.master'] = (e && e.message) ? e.message : 'unknown error';
+            }
+
+            try {
+                var apprs = AQs.getApprentices(characterId, true);
+                if (Array.isArray(apprs)) {
+                    for (var i = 0; i < apprs.length; i++) {
+                        var a = apprs[i];
+                        if (!a || !_hasId(a.apprenticeId)) continue;
+                        apprentices.push({
+                            apprenticeId: a.apprenticeId,
+                            apprenticeName: typeof a.apprenticeName === 'string'
+                                ? a.apprenticeName : resolveName(a.apprenticeId),
+                            roleId: _isMissing(a.roleId) ? null : a.roleId,
+                            roleName: _resolveRoleName(a.roleId),
+                            skillLevel: typeof a.skillLevel === 'number' ? a.skillLevel : 0,
+                            stage: a.stage && typeof a.stage === 'object'
+                                ? { id: a.stage.id, name: a.stage.name }
+                                : null,
+                            startYear: _isMissing(a.startYear) ? null : a.startYear
+                        });
+                    }
+                }
+            } catch (e) {
+                errors['apprenticeship.apprentices'] = (e && e.message) ? e.message : 'unknown error';
+            }
+
+            return {
+                available: true,
+                isMaster: apprentices.length > 0,
+                master: masterEntry,
+                apprentices: apprentices
+            };
+        }, errors);
+    }
+
+    function _buildTraitsBlock(characterId, errors) {
+        return _safe('traits', function () {
+            var raw = CC.getTraits(characterId);
+            if (!Array.isArray(raw)) return [];
+            return raw.slice();
+        }, errors);
+    }
+
+    // =========================================================================
+    // 11. SKILLS — PUBLIC BUILDER
+    // =========================================================================
+
+    /**
+     * Builds the model the Skills tab consumes.
+     *
+     * Shape:
+     *   {
+     *     characterId,
+     *     identity: { id, name, surname, fullName, isLiterate },
+     *     professions: [ ProfessionEnriched ],
+     *     education: [ EducationEntry ],
+     *     educationHistory: [ EducationHistoryEntry ],
+     *     subjectProgress: [ SubjectProgressEntry ],
+     *     literacy: { isLiterate, literacyLevel, tierLabel, canTeach },
+     *     apprenticeship: {
+     *       available: boolean,
+     *       reason?: string,
+     *       isMaster: boolean,
+     *       master: { masterId, masterName, roleId, roleName,
+     *                 skillLevel, stage, startYear } | null,
+     *       apprentices: [ { apprenticeId, apprenticeName, roleId,
+     *                        roleName, skillLevel, stage, startYear } ]
+     *     },
+     *     traits: string[],
+     *     errors: { ... }
+     *   }
+     *
+     * This builder is READ-ONLY. It does not call any command that
+     * mutates. It does not call persist. Every section wrapped in
+     * _safe(...) so a single section failure lands in errors[section]
+     * without blanking the whole model.
+     *
+     * Apprenticeship section degrades cleanly when the apprenticeship
+     * domain is not loaded on the page (CharacterManager.html does not
+     * load it). It returns { available: false, reason, ... } so the tab
+     * can render the "unavailable" message rather than an empty list.
+     */
+    function buildSkillsModel(characterId) {
+        if (!_hasId(characterId)) return null;
+
+        var summary;
+        try { summary = CQ.getCharacterSummary(characterId); }
+        catch (e) { return null; }
+        if (!summary) return null;
+
+        var errors = {};
+
+        var identityBlock = _safe('identity', function () {
+            return {
+                id: summary.id,
+                name: summary.name || '',
+                surname: summary.surname || '',
+                fullName: summary.fullName || summary.name || '',
+                isLiterate: summary.isLiterate === true
+            };
+        }, errors);
+
+        return {
+            characterId: characterId,
+            identity: identityBlock,
+            professions: _buildProfessionsList(characterId, errors) || [],
+            education: _buildEducationList(characterId, errors) || [],
+            educationHistory: _buildEducationHistoryList(characterId, errors) || [],
+            subjectProgress: _buildSubjectProgressList(characterId, errors) || [],
+            literacy: _buildLiteracyBlock(characterId, errors) || {
+                isLiterate: false, literacyLevel: 0,
+                tierLabel: 'Untrained', canTeach: false
+            },
+            apprenticeship: _buildApprenticeshipBlock(characterId, errors) || {
+                available: false, isMaster: false, master: null, apprentices: []
+            },
+            traits: _buildTraitsBlock(characterId, errors) || [],
+            errors: errors
+        };
+    }
+
+    // =========================================================================
+    // 12. EXPORTS
     // =========================================================================
 
     window.CharacterViewModels = {
@@ -1589,7 +1971,10 @@
         buildRomanceModel: buildRomanceModel,
 
         // Family
-        buildFamilyModel: buildFamilyModel
+        buildFamilyModel: buildFamilyModel,
+
+        // Skills
+        buildSkillsModel: buildSkillsModel
     };
 
     if (typeof module !== 'undefined' && module.exports) {
