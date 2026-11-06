@@ -28,6 +28,27 @@
  *   3. Hydrate domain state before TabManager.configure.
  *   4. init() is idempotent.
  *
+ * TOPBAR
+ *   The topbar carries:
+ *     + Household  → opens the standard create-household modal, then
+ *                    refreshes the sidebar and auto-selects the new
+ *                    household on success.
+ *     Year input   → sets masterData.data.currentYear, saves, re-renders.
+ *     Import/Export/Refresh
+ *
+ *   The create-household modal is owned by modals-household.js. This
+ *   file only wires the button and handles the onSuccess callback.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Added _openCreateHousehold() and wired it to #createHouseholdBtn
+ *       in _setupTopBar(). The button itself was added to
+ *       HouseholdManager.html; this file dispatches its click.
+ *   Previous revision:
+ *     - Layout fix: min-height: 0 on flex chain in the HTML shell so
+ *       the layout fills the viewport with no empty band at the
+ *       bottom. No JS change was needed for that fix.
  * =============================================================================
  */
 
@@ -41,6 +62,10 @@
         'economy', 'holdings', 'activity'
     ];
     var DEFAULT_ACTIVE_TAB_ID = 'details';
+
+    // =========================================================================
+    // 1. DEPENDENCY HELPERS
+    // =========================================================================
 
     function _requireTabManager() {
         var TM = window.TabManager;
@@ -86,6 +111,10 @@
         return window.HouseholdTabRuntime;
     }
 
+    // =========================================================================
+    // 2. SELECTION
+    // =========================================================================
+
     function _getSelectedHouseholdId() {
         var HS = window.HouseholdState;
         if (HS && typeof HS.getUIState === 'function') {
@@ -124,6 +153,10 @@
         return all[0].id;
     }
 
+    // =========================================================================
+    // 3. CONTEXT BUILDER
+    // =========================================================================
+
     function _buildContext() {
         var runtime = _requireRuntime();
         var householdId = _getSelectedHouseholdId();
@@ -141,6 +174,10 @@
             }
         };
     }
+
+    // =========================================================================
+    // 4. EMPTY STATE BUILDER
+    // =========================================================================
 
     function _buildEmptyState(tabId, reason) {
         if (reason === 'no-context') {
@@ -171,6 +208,10 @@
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
     }
+
+    // =========================================================================
+    // 5. TAB STRIP SYNC
+    // =========================================================================
 
     function _syncTabStrip(tabId) {
         var strip = document.getElementById(SCOPE + 'TabStrip');
@@ -204,6 +245,10 @@
         if (layout) return layout;
         return document.body;
     }
+
+    // =========================================================================
+    // 6. SIDEBAR
+    // =========================================================================
 
     function _setupSidebar() {
         var listEl = document.getElementById('householdListContainer');
@@ -271,7 +316,7 @@
         if (all.length === 0) {
             listEl.innerHTML =
                 '<div class="hh-empty" style="padding:16px;">' +
-                'No households yet.' +
+                'No households yet. Click "+ Household" to create one.' +
                 '</div>';
             return;
         }
@@ -332,22 +377,37 @@
         }
     }
 
+    // =========================================================================
+    // 7. TOPBAR
+    // =========================================================================
+
     function _setupTopBar() {
+        // Create Household — opens the standard create modal owned by
+        // modals-household.js. On success, refresh the sidebar and
+        // auto-select the new household so the user sees it
+        // immediately.
+        _wireTopBarButton('createHouseholdBtn', function () {
+            _openCreateHousehold();
+        });
+
         _wireTopBarButton('refreshBtn', function () { _refreshAll(); });
         _wireTopBarButton('importBtn', function () {
             var fileInput = document.getElementById('fileInput');
             if (fileInput) fileInput.click();
         });
         _wireTopBarButton('exportBtn', function () { _exportMasterData(); });
+
         var fileInput = document.getElementById('fileInput');
         if (fileInput) {
             fileInput.addEventListener('change', _handleImportFile);
         }
+
         var yearInput = document.getElementById('yearInput');
         if (yearInput && typeof window.getCurrentYear === 'function') {
             try { yearInput.value = window.getCurrentYear(); }
             catch (e) { /* no-op */ }
         }
+
         _wireTopBarButton('setYearBtn', function () {
             var yi = document.getElementById('yearInput');
             if (!yi) return;
@@ -369,6 +429,62 @@
         if (!btn) return;
         btn.addEventListener('click', fn);
     }
+
+    /**
+     * Opens the standard Create Household modal.
+     *
+     * The modal is owned by modals-household.js. It handles validation,
+     * command dispatch, persistence, and its own modal lifecycle. We
+     * only supply the onSuccess callback that refreshes the sidebar
+     * and auto-selects the newly created household.
+     *
+     * Failure surface: if the modal is not loaded (build missing
+     * modals-household.js), toast a clear error naming the file. This
+     * matches the fail-loud convention used everywhere else — no
+     * silent no-op.
+     */
+    function _openCreateHousehold() {
+        if (typeof window.openCreateHouseholdModal !== 'function') {
+            if (typeof window.showToast === 'function') {
+                window.showToast(
+                    'Create Household modal is not loaded. ' +
+                    'Load js/households/modals-household.js.',
+                    'error'
+                );
+            } else if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'household-manager-bootstrap: openCreateHouseholdModal ' +
+                    'is not available.'
+                );
+            }
+            return;
+        }
+
+        window.openCreateHouseholdModal(function (data) {
+            // Refresh the sidebar and active tab. Order matters:
+            //   1. _renderSidebarList() reads the fresh state, so the
+            //      new household appears.
+            //   2. If the modal returned an id, select it so the
+            //      active tab points at the new household.
+            //   3. _requestRenderActive() re-renders the active tab
+            //      against the freshly-selected household.
+            _renderSidebarList();
+
+            if (data && data.householdId) {
+                _setSelectedHouseholdId(data.householdId);
+                _renderSidebarList();       // re-render with new selection active
+                _requestRenderActive();
+            } else {
+                // Modal didn't return an id (older version). Refresh the
+                // active tab against whatever is currently selected.
+                _requestRenderActive();
+            }
+        });
+    }
+
+    // =========================================================================
+    // 8. REFRESH / EXPORT / IMPORT
+    // =========================================================================
 
     function _refreshAll() {
         var HS = window.HouseholdState;
@@ -424,6 +540,10 @@
         reader.readAsText(file);
     }
 
+    // =========================================================================
+    // 9. TAB STRIP WIRING
+    // =========================================================================
+
     function _wireTabStrip() {
         var strip = document.getElementById(SCOPE + 'TabStrip');
         if (!strip) return;
@@ -446,6 +566,10 @@
             }
         });
     }
+
+    // =========================================================================
+    // 10. INIT
+    // =========================================================================
 
     var _initialized = false;
 
@@ -532,6 +656,10 @@
             console.log('[HouseholdManagerBootstrap] initialized');
         }
     }
+
+    // =========================================================================
+    // 11. EXPORTS + AUTO-INIT
+    // =========================================================================
 
     window.HouseholdManagerBootstrap = { init: init };
 
