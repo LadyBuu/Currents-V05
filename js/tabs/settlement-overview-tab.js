@@ -1,152 +1,58 @@
 /**
  * =============================================================================
- * STILL WATERS - SETTLEMENT OVERVIEW TAB
+ * SETTLEMENT OVERVIEW TAB
  * js/tabs/settlement-overview-tab.js
  * =============================================================================
  *
- * OVERVIEW TAB RENDERER.
- *
  * Renders the settlement summary: rank, population, prosperity, wealth,
- * debt, feature count, tax rate, justice severity, religion, upgrade
- * status, and recent history. Hosts the action buttons that open the
- * other settlement modals and tabs.
+ * debt, features, tax, justice, religion, upgrade status, recent
+ * history, and action buttons that open the modals.
  *
- * It is a UI module. It:
- *   - reads through SettlementViewModels and SettlementQueries
- *   - opens modals via SettlementModals (core) and SettlementEconomyModals
- *   - delegates to SettlementTabs.requestRender for tab navigation
- *   - does not read canonical settlement data directly
- *   - does not compute domain values
- *   - does not create settlement records
- *   - does not mutate canonical settlement data
- *   - does not persist
- *   - does not fabricate missing domain values
- *   - does not render a raw null/undefined as "null" or "undefined"
- *   - does not use a recursion guard
- *   - does not use setTimeout to guess when the DOM is ready
+ * RENDERER CONTRACT:
+ *   fn(container, context) with context = { locationId, data, viewModel }
  *
- * Contract reference: Settlement Architecture Contracts §15 (ViewModel
- * Contract), §16 (UI Contract), §32 (Completion Standard).
+ * DATA SOURCES:
+ *   - context.viewModel (SettlementViewModels.buildSettlementSummary)
+ *   - SettlementViewModels.buildRankView
+ *   - SettlementQueries.getSettlementData (for history arrays)
+ *   - window.getLocationPopulationCount
  *
- * PROSPERITY BAND COLORS
- * ----------------------
- *   SettlementProsperityDefinitions.PROSPERITY_BANDS carries a `color`
- *   field per band (thriving / stable / struggling). This tab reads that
- *   field directly instead of re-deriving a color from the band id. The
- *   domain owns the palette; the tab renders it.
+ * ACTIONS (delegated to modals):
+ *   - SettlementModals.openManageFeaturesModal
+ *   - SettlementModals.openUpgradeSettlementModal
+ *   - SettlementModals.openSpecializationModal
+ *   - SettlementModals.openBudgetModal
+ *   - SettlementModals.openEmploymentModal
+ *   - SettlementModals.openStateEnterpriseModal
  *
- * =============================================================================
- * REFACTOR HISTORY:
- *   Current revision (Step-1 duplication cleanup):
- *     - Removed _prosperityBandColor(band). The function switched on
- *       band.id and re-derived a CSS color. The band already carries a
- *       `color` field in SettlementProsperityDefinitions.PROSPERITY_BANDS.
- *       Callers now read band.color directly (with 'var(--dim)' as the
- *       "no band" fallback). No behavior change; single source of truth.
- *     - No other behavioral change. Every read, mutation-delegation, and
- *       modal-open path is byte-identical.
- *   Previous revisions:
- *     - Rewritten against the current settlement module set.
+ * NO CSS. Class-only rendering.
  * =============================================================================
  */
 
 (function () {
     'use strict';
 
-    // =========================================================================
-    // 1. DEPENDENCY ACCESS
-    // =========================================================================
+    var TAB_ID = 'overview';
+    var SCOPE  = 'settlement';
 
-    function _getSummaryModel() {
-        var VMs = window.SettlementViewModels;
-        if (!VMs || typeof VMs.buildSettlementSummary !== 'function') {
-            throw new Error(
-                'settlement-overview-tab: SettlementViewModels.' +
-                'buildSettlementSummary is missing. Load ' +
-                'settlement-view-models.js before this tab.'
-            );
-        }
-        return VMs;
-    }
+    // -------------------------------------------------------------------
+    // Helpers (thin wrappers over SettlementTabHelpers)
+    // -------------------------------------------------------------------
 
-    function _getRankView() {
-        var VMs = window.SettlementViewModels;
-        if (!VMs || typeof VMs.buildRankView !== 'function') {
-            throw new Error(
-                'settlement-overview-tab: SettlementViewModels.' +
-                'buildRankView is missing.'
-            );
-        }
-        return VMs;
-    }
+    function H() { return window.SettlementTabHelpers; }
+    function esc(v)       { return H().esc(v); }
+    function icon(n)      { return H().icon(n); }
+    function fmtNum(v)    { return H().fmtNumber(v); }
+    function fmtGold(v)   { return H().fmtGold(v); }
+    function fmtPercent(v){ return H().fmtPercent(v); }
+    function fmtText(v)   { return H().fmtText(v); }
+    function unknown()    { return H().unknown(); }
+    function refresh()    { H().requestRefresh(SCOPE, TAB_ID); }
 
-    function _getSettlementQueries() {
-        var Q = window.SettlementQueries;
-        if (!Q || typeof Q.getSettlementData !== 'function') {
-            throw new Error(
-                'settlement-overview-tab: SettlementQueries is missing.'
-            );
-        }
-        return Q;
-    }
-
-    function _getPlaceQueries() {
-        return window.PlaceQueries || null;
-    }
-
-    function _getPopulationAccessor() {
-        return window.getLocationPopulationCount || null;
-    }
-
-    function _getUIState() {
-        return window.SettlementUIState || null;
-    }
-
-    function _getTabs() {
-        return window.SettlementTabs || null;
-    }
-
-    // =========================================================================
-    // 2. HELPERS
-    // =========================================================================
-
-    function _escapeHtml(str) {
-        if (str === null || str === undefined) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function _unknown() {
-        return '<span class="value-unknown">—</span>';
-    }
-
-    function _fmtNumber(value) {
-        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
-        return _escapeHtml(value.toLocaleString());
-    }
-
-    function _fmtText(value) {
-        if (value === null || value === undefined || value === '') {
-            return _unknown();
-        }
-        return _escapeHtml(value);
-    }
-
-    function _getIcon(name) {
-        if (typeof window.getIcon === 'function') {
-            try {
-                var icon = window.getIcon(name);
-                if (typeof icon === 'string') return icon;
-            } catch (e) {
-                // getIcon exists but threw; fall through to ''.
-            }
-        }
-        return '';
-    }
+    function _getViewModels()       { return window.SettlementViewModels; }
+    function _getSettlementQueries(){ return window.SettlementQueries; }
+    function _getPlaceQueries()     { return window.PlaceQueries; }
+    function _getPopulationAcc()    { return window.getLocationPopulationCount; }
 
     function _placeName(locationId) {
         var pq = _getPlaceQueries();
@@ -155,501 +61,201 @@
         return place ? (place.displayName || place.name || null) : null;
     }
 
+    function _modal(name, args) {
+        var bundle = window.SettlementModals;
+        if (!bundle || typeof bundle[name] !== 'function') {
+            H().toast('Modal "' + name + '" is not available.', 'error');
+            return;
+        }
+        try { bundle[name].apply(bundle, args || []); }
+        catch (e) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('settlement-overview-tab: modal threw:', e);
+            }
+            H().toast('Could not open modal.', 'error');
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Reason-code label helpers (religion)
+    // -------------------------------------------------------------------
+
     function _religiousUnityLabel(reason, value) {
-        if (reason === 'available') return _fmtNumber(value);
-        if (reason === 'no_population') return _escapeHtml('No population');
-        if (reason === 'no_breakdown') return _escapeHtml('Unavailable');
-        return _unknown();
+        if (reason === 'available') return fmtNum(value);
+        if (reason === 'no_population') return esc('No population');
+        if (reason === 'no_breakdown') return esc('Unavailable');
+        return unknown();
     }
 
     function _dominantReligionLabel(reason, religion) {
         if (reason === 'available' && religion) {
-            return _escapeHtml(religion.name || religion.id || 'Unknown');
+            return esc(religion.name || religion.id || 'Unknown');
         }
-        if (reason === 'no_population') return _escapeHtml('No population');
-        if (reason === 'no_breakdown') return _escapeHtml('Unavailable');
-        if (reason === 'unaffiliated_majority') return _escapeHtml('Unaffiliated majority');
-        if (reason === 'no_religions') return _escapeHtml('No religions');
-        return _unknown();
+        if (reason === 'no_population') return esc('No population');
+        if (reason === 'no_breakdown') return esc('Unavailable');
+        if (reason === 'unaffiliated_majority') return esc('Unaffiliated majority');
+        if (reason === 'no_religions') return esc('No religions');
+        return unknown();
     }
 
-    function _rankColor(rank) {
-        if (!rank || typeof rank.order !== 'number') return 'var(--dim)';
-        // Order ascends. Color lightens as rank ascends. Purely
-        // presentational — no domain meaning.
-        switch (rank.order) {
-            case 1: return 'var(--text-dim)';
-            case 2: return 'var(--text)';
-            case 3: return 'var(--accent)';
-            case 4: return 'var(--accent-light)';
-            case 5: return 'var(--success)';
-            default: return 'var(--text)';
-        }
-    }
-
-    /**
-     * Returns the CSS color for a prosperity band.
-     *
-     * Reads band.color from SettlementProsperityDefinitions (which is
-     * exposed on the band object returned by
-     * SettlementProsperityQueries.getProsperity / buildSettlementSummary).
-     *
-     * The band object is the single source of truth for its color. This
-     * helper exists so the "no band" case has a single fallback; it does
-     * NOT re-derive a color from the band id.
-     *
-     * @param {Object|null} band
-     * @returns {string}
-     */
-    function _prosperityColor(band) {
-        if (!band) return 'var(--dim)';
-        if (typeof band.color === 'string' && band.color.length > 0) {
-            return band.color;
-        }
-        return 'var(--dim)';
-    }
-
-    // =========================================================================
-    // 3. NAVIGATION
-    // =========================================================================
-
-    function _activateTab(tabId) {
-        var ui = _getUIState();
-        if (!ui || typeof ui.setActiveTabId !== 'function') return;
-        ui.setActiveTabId(tabId);
-    }
-
-    function _openSettlementModal(name, args) {
-        var bundle = window.SettlementModals;
-        if (!bundle || typeof bundle[name] !== 'function') {
-            throw new Error(
-                'settlement-overview-tab: SettlementModals.' + name +
-                ' is missing. Load modals-settlement-core.js before this tab.'
-            );
-        }
-        return bundle[name].apply(bundle, args || []);
-    }
-
-    function _openEconomyModal(name, args) {
-        var bundle = window.SettlementEconomyModals;
-        if (!bundle || typeof bundle[name] !== 'function') {
-            throw new Error(
-                'settlement-overview-tab: SettlementEconomyModals.' + name +
-                ' is missing. Load modals-settlement-economy.js before this tab.'
-            );
-        }
-        return bundle[name].apply(bundle, args || []);
-    }
-
-    function _openRolesModal(name, args) {
-        var bundle = window.SettlementRolesModals;
-        if (!bundle || typeof bundle[name] !== 'function') {
-            throw new Error(
-                'settlement-overview-tab: SettlementRolesModals.' + name +
-                ' is missing. Load modals-settlement-roles.js before this tab.'
-            );
-        }
-        return bundle[name].apply(bundle, args || []);
-    }
-
-    // =========================================================================
-    // 4. ACTION BUTTONS
-    // =========================================================================
-
-    function _buildActionsRow(locationId) {
-        var icon = _getIcon;
-
-        function btn(action, label, iconName, extraStyle) {
-            var style = 'font-size:0.6rem;padding:6px 14px;' +
-                'background:var(--bg3);border:1px solid var(--border);' +
-                'border-radius:4px;cursor:pointer;color:var(--text);' +
-                (extraStyle || '');
-            return '<button type="button" class="overview-action-btn" ' +
-                'data-action="' + _escapeHtml(action) + '" ' +
-                'data-location="' + _escapeHtml(locationId) + '" ' +
-                'style="' + style + '">' +
-                (iconName ? icon(iconName) + ' ' : '') +
-                _escapeHtml(label) + '</button>';
-        }
-
-        return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">' +
-            btn('manage-features', 'Features', 'GEAR') +
-            btn('economy', 'Economy', 'COIN') +
-            btn('roles', 'Roles', 'PERSON') +
-            btn('religion', 'Religion', 'CIRCLE_DOT') +
-            btn('specialization', 'Specialization', 'STAR_4') +
-            '</div>';
-    }
-
-    function _handleAction(action, locationId) {
-        switch (action) {
-            case 'upgrade':
-                _openSettlementModal('openUpgradeSettlementModal', [locationId]);
-                return;
-            case 'manage-features':
-                _openSettlementModal('openManageFeaturesModal', [locationId]);
-                return;
-            case 'economy':
-                _activateTab('economy');
-                return;
-            case 'roles':
-                _activateTab('roles');
-                return;
-            case 'religion':
-                _activateTab('religion');
-                return;
-            case 'specialization':
-                _openSettlementModal('openSpecializationModal', [locationId]);
-                return;
-            case 'employment':
-                _openSettlementModal('openEmploymentModal', [locationId]);
-                return;
-            case 'budget':
-                _openSettlementModal('openBudgetModal', [locationId]);
-                return;
-            case 'state-enterprises':
-                _openSettlementModal('openStateEnterpriseModal', [locationId]);
-                return;
-            case 'details':
-                _openSettlementModal('openSettlementDetailsModal', [locationId]);
-                return;
-            case 'refresh':
-                var tabs = _getTabs();
-                if (tabs && typeof tabs.requestRender === 'function') {
-                    tabs.requestRender('overview');
-                }
-                return;
-            default:
-                return;
-        }
-    }
-
-    function _wireActions(container, locationId) {
-        container.addEventListener('click', function (event) {
-            var target = event.target;
-            if (!target || typeof target.closest !== 'function') return;
-            var btn = target.closest('[data-action]');
-            if (!btn) return;
-            if (!container.contains(btn)) return;
-            event.preventDefault();
-            var action = btn.dataset.action;
-            var loc = btn.dataset.location || locationId;
-            try {
-                _handleAction(action, loc);
-            } catch (err) {
-                if (typeof console !== 'undefined' && console.error) {
-                    console.error(
-                        'settlement-overview-tab: action "' + action + '" failed:', err
-                    );
-                }
-                if (typeof window.showToast === 'function') {
-                    window.showToast(
-                        'Could not complete action: ' +
-                        (err && err.message ? err.message : 'unknown error'),
-                        'error'
-                    );
-                }
-            }
-        });
-    }
-
-    // =========================================================================
-    // 5. HISTORY SECTION
-    // =========================================================================
-
-    function _readHistory(locationId) {
-        var data = _getSettlementQueries().getSettlementData(locationId);
-        if (!data) return { annual: [], demolition: [] };
-
-        var annual = Array.isArray(data.annualHistory) ? data.annualHistory : [];
-        var demolition = Array.isArray(data.demolitionHistory) ? data.demolitionHistory : [];
-
-        return { annual: annual, demolition: demolition };
-    }
-
-    function _eventYear(event) {
-        if (typeof event.year === 'number') return event.year;
-        if (typeof event.demolishedYear === 'number') return event.demolishedYear;
-        return null;
-    }
-
-    function _eventLabel(event, kind) {
-        if (kind === 'annual') {
-            var interest = typeof event.interest === 'number' ? event.interest : 0;
-            var debtAfter = typeof event.debtAfter === 'number' ? event.debtAfter : null;
-            if (interest > 0) {
-                return 'Debt interest applied (' +
-                    _fmtNumber(interest) + 'g, debt now ' +
-                    _fmtNumber(debtAfter) + 'g)';
-            }
-            return 'Annual processing complete';
-        }
-        var name = event.featureName || event.featureId || 'Feature';
-        var reason = event.demolishedReason || 'Demolished';
-        return 'Demolished "' + String(name) + '" (' + String(reason) + ')';
-    }
-
-    function _eventIcon(kind) {
-        if (kind === 'annual') return _getIcon('REFRESH');
-        return _getIcon('TRASH');
-    }
-
-    function _mergeRecentEvents(annual, demolition, limit) {
-        var events = [];
-        for (var i = 0; i < annual.length; i++) {
-            events.push({ kind: 'annual', record: annual[i] });
-        }
-        for (var j = 0; j < demolition.length; j++) {
-            events.push({ kind: 'demolition', record: demolition[j] });
-        }
-
-        events.sort(function (a, b) {
-            var ay = _eventYear(a.record);
-            var by = _eventYear(b.record);
-            if (ay === null && by === null) return 0;
-            if (ay === null) return 1;
-            if (by === null) return -1;
-            if (ay !== by) return by - ay;
-            var at = a.record.recordedAt || a.record.timestamp || 0;
-            var bt = b.record.recordedAt || b.record.timestamp || 0;
-            return bt - at;
-        });
-
-        return events.slice(0, limit);
-    }
-
-    function _buildHistorySection(locationId) {
-        var hist = _readHistory(locationId);
-        var recent = _mergeRecentEvents(hist.annual, hist.demolition, 5);
-
-        if (recent.length === 0) {
-            return '<div style="background:var(--bg2);padding:12px 16px;border-radius:8px;' +
-                'margin-bottom:16px;border:1px solid var(--border);">' +
-                '<div style="font-size:0.65rem;color:var(--accent-light);' +
-                'font-weight:bold;margin-bottom:6px;">' + _getIcon('CIRCLE_DOT') +
-                ' Recent History</div>' +
-                '<div style="font-size:0.55rem;color:var(--dim);text-align:center;padding:8px 0;">' +
-                'No history recorded yet.</div>' +
-                '</div>';
-        }
-
-        var rows = '';
-        for (var i = 0; i < recent.length; i++) {
-            var entry = recent[i];
-            var year = _eventYear(entry.record);
-            var label = _eventLabel(entry.record, entry.kind);
-            rows += '<div style="display:flex;justify-content:space-between;' +
-                'padding:3px 0;border-bottom:1px solid var(--border-light);' +
-                'font-size:0.55rem;">' +
-                '<span style="color:var(--dim);min-width:40px;">' +
-                (year === null ? _unknown() : _escapeHtml(String(year))) +
-                '</span>' +
-                '<span style="color:' + (entry.kind === 'demolition'
-                    ? 'var(--danger-lt)'
-                    : 'var(--text)') + ';flex:1;text-align:right;">' +
-                _escapeHtml(label) + '</span>' +
-                '</div>';
-        }
-
-        return '<div style="background:var(--bg2);padding:12px 16px;border-radius:8px;' +
-            'margin-bottom:16px;border:1px solid var(--border);">' +
-            '<div style="font-size:0.65rem;color:var(--accent-light);' +
-            'font-weight:bold;margin-bottom:6px;">' + _getIcon('CIRCLE_DOT') +
-            ' Recent History</div>' +
-            rows +
-            '</div>';
-    }
-
-    // =========================================================================
-    // 6. SECTIONS
-    // =========================================================================
+    // -------------------------------------------------------------------
+    // Sections
+    // -------------------------------------------------------------------
 
     function _buildHeader(context, population) {
-        var locationId = context.locationId;
-        var summary = context.viewModel;
-        var name = summary && summary.name
-            ? summary.name
-            : (_placeName(locationId) || '(unnamed location)');
-        var refreshBtn = '<button type="button" class="overview-action-btn" ' +
-            'data-action="refresh" data-location="' + _escapeHtml(locationId) + '" ' +
-            'style="font-size:0.6rem;padding:4px 12px;background:var(--bg3);' +
-            'border:1px solid var(--border);border-radius:4px;cursor:pointer;' +
-            'color:var(--text);">' +
-            _getIcon('REFRESH') + ' Refresh</button>';
+        var name = context.viewModel && context.viewModel.name
+            ? context.viewModel.name
+            : (_placeName(context.locationId) || '(unnamed location)');
 
-        return '<div style="background:var(--bg2);padding:12px 16px;border-radius:8px;' +
-            'margin-bottom:16px;display:flex;justify-content:space-between;' +
-            'align-items:center;flex-wrap:wrap;gap:8px;border:1px solid var(--border);">' +
+        return '<div class="st-header">' +
             '<div>' +
-            '<div style="font-size:0.9rem;font-weight:bold;color:var(--accent-light);">' +
-            _getIcon('LOCATION') + ' ' + _escapeHtml(name) + '</div>' +
-            '<div style="font-size:0.6rem;color:var(--dim);">' +
-            'Population: ' + _fmtNumber(population) +
+            '<div class="st-header__title">' + icon('LOCATION') + ' ' +
+                esc(name) + '</div>' +
+            '<div class="st-header__subtitle">Population: ' +
+                fmtNum(population) + '</div>' +
             '</div>' +
+            '<div class="st-header__actions">' +
+            '<button type="button" class="st-btn" data-action="refresh">' +
+                icon('REFRESH') + ' Refresh</button>' +
             '</div>' +
-            '<div>' + refreshBtn + '</div>' +
             '</div>';
     }
 
     function _buildKeyStats(context, population) {
-        var summary = context.viewModel || {};
-        var rankName = summary.rank ? summary.rank.name : null;
-        var prosperity = summary.prosperity;
-        var prosperityValue = prosperity && typeof prosperity.value === 'number'
-            ? prosperity.value
-            : null;
+        var s = context.viewModel || {};
+        var rankName = s.rank ? s.rank.name : null;
+        var prosperity = s.prosperity;
+        var prosperityValue = (prosperity && typeof prosperity.value === 'number')
+            ? prosperity.value : null;
         var prosperityBand = prosperity ? prosperity.band : null;
-        var prosperityColor = _prosperityColor(prosperityBand);
+        var prosperityColor = 'st-stat__value';
+        if (prosperityBand && prosperityBand.id) {
+            if (prosperityBand.id === 'thriving') prosperityColor += ' st-stat__value--pos';
+            else if (prosperityBand.id === 'struggling') prosperityColor += ' st-stat__value--neg';
+            else prosperityColor += ' st-stat__value--accent';
+        }
 
-        function cell(label, iconName, valueHtml, extraStyle) {
-            return '<div style="background:var(--bg2);padding:12px;' +
-                'border-radius:8px;text-align:center;border:1px solid var(--border);">' +
-                '<div style="font-size:0.55rem;color:var(--dim);">' +
-                (iconName ? _getIcon(iconName) + ' ' : '') +
-                _escapeHtml(label) + '</div>' +
-                '<div style="font-size:1rem;font-weight:bold;' + (extraStyle || '') + '">' +
+        var wealthClass = 'st-stat__value';
+        if (typeof s.wealth === 'number') {
+            wealthClass += s.wealth >= 0 ? ' st-stat__value--pos' : ' st-stat__value--neg';
+        }
+
+        function cell(label, iconName, valueHtml, cls) {
+            return '<div class="st-stat">' +
+                '<div class="st-stat__label">' +
+                (iconName ? icon(iconName) + ' ' : '') + esc(label) +
+                '</div>' +
+                '<div class="' + (cls || 'st-stat__value') + '">' +
                 valueHtml + '</div>' +
                 '</div>';
         }
 
-        return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;' +
-            'gap:12px;margin-bottom:16px;">' +
+        return '<div class="st-stats">' +
             cell('Rank', 'HOME',
-                rankName ? _escapeHtml(rankName) : _unknown(),
-                'color:' + _rankColor(summary.rank) + ';') +
-            cell('Population', 'PERSON', _fmtNumber(population)) +
+                rankName ? esc(rankName) : unknown(),
+                'st-stat__value st-stat__value--accent') +
+            cell('Population', 'PERSON', fmtNum(population)) +
             cell('Prosperity', 'STAR_4',
-                prosperityValue === null
-                    ? _unknown()
-                    : _escapeHtml(String(prosperityValue)) + '%',
-                'color:' + prosperityColor + ';') +
-            cell('Wealth', 'COIN', _fmtNumber(summary.wealth),
-                'color:' + (typeof summary.wealth === 'number' && summary.wealth >= 0
-                    ? 'var(--success)'
-                    : 'var(--danger)') + ';') +
+                prosperityValue === null ? unknown() : esc(String(prosperityValue)) + '%',
+                prosperityColor) +
+            cell('Wealth', 'COIN', fmtGold(s.wealth), wealthClass) +
             '</div>';
     }
 
     function _buildSecondaryStats(context) {
-        var summary = context.viewModel || {};
+        var s = context.viewModel || {};
+        var debtClass = 'st-stat__value';
+        if (typeof s.totalDebt === 'number') {
+            debtClass += s.totalDebt > 0 ? ' st-stat__value--neg' : ' st-stat__value--pos';
+        }
 
-        function cell(label, valueHtml, extraStyle) {
-            return '<div style="background:var(--bg2);padding:12px;' +
-                'border-radius:8px;text-align:center;border:1px solid var(--border);">' +
-                '<div style="font-size:0.55rem;color:var(--dim);">' +
-                _escapeHtml(label) + '</div>' +
-                '<div style="font-size:1rem;font-weight:bold;' + (extraStyle || '') + '">' +
+        function cell(label, valueHtml, cls) {
+            return '<div class="st-stat">' +
+                '<div class="st-stat__label">' + esc(label) + '</div>' +
+                '<div class="' + (cls || 'st-stat__value') + '">' +
                 valueHtml + '</div>' +
                 '</div>';
         }
 
-        var debtColor = typeof summary.totalDebt === 'number' && summary.totalDebt > 0
-            ? 'var(--danger-lt)'
-            : 'var(--success)';
-
-        return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;' +
-            'gap:12px;margin-bottom:16px;">' +
-            cell('Debt', _fmtNumber(summary.totalDebt),
-                'color:' + debtColor + ';') +
-            cell('Features', _fmtNumber(summary.featureCount)) +
+        return '<div class="st-stats">' +
+            cell('Debt', fmtGold(s.totalDebt), debtClass) +
+            cell('Features', fmtNum(s.featureCount)) +
             cell('Tax Rate',
-                typeof summary.taxRate === 'number'
-                    ? _escapeHtml(String(summary.taxRate)) + '%'
-                    : _unknown()) +
+                typeof s.taxRate === 'number' ? esc(String(s.taxRate)) + '%' : unknown()) +
             cell('Justice',
-                summary.justiceSeverityName
-                    ? _escapeHtml(summary.justiceSeverityName)
-                    : _unknown()) +
+                s.justiceSeverityName ? esc(s.justiceSeverityName) : unknown()) +
             '</div>';
     }
 
     function _buildUpgradeSection(context) {
         var locationId = context.locationId;
-        var rankView = _getRankView().buildRankView(locationId);
-        if (!rankView) return '';
+        var vm = _getViewModels().buildRankView(locationId);
+        if (!vm) return '';
 
-        var currentRank = rankView.currentRank;
-        var nextRank = rankView.nextRank;
-        var population = rankView.population;
-        var eligible = rankView.upgradeEligible === true;
+        var currentRank = vm.currentRank;
+        var nextRank = vm.nextRank;
+        var population = vm.population;
+        var eligible = vm.upgradeEligible === true;
 
         var progressPercent = 0;
         if (nextRank && typeof population === 'number'
             && typeof nextRank.minPopulation === 'number'
             && nextRank.minPopulation > 0) {
-            progressPercent = Math.min(
-                100,
-                Math.round((population / nextRank.minPopulation) * 100)
-            );
+            progressPercent = Math.min(100,
+                Math.round((population / nextRank.minPopulation) * 100));
         }
 
         var statusLine;
         if (!nextRank) {
-            statusLine = '<div style="font-size:0.7rem;color:var(--success);">' +
-                _getIcon('STAR_4') + ' Maximum rank reached</div>';
+            statusLine = '<div class="st-row__meta">' +
+                icon('STAR_4') + ' Maximum rank reached</div>';
         } else if (eligible) {
-            statusLine = '<div style="font-size:0.7rem;color:var(--success);">' +
-                _getIcon('ARROW_UP') + ' Ready to upgrade to ' +
-                _escapeHtml(nextRank.name) + '</div>';
+            statusLine = '<div class="st-row__meta">' +
+                icon('ARROW_UP') + ' Ready to upgrade to ' +
+                esc(nextRank.name) + '</div>';
         } else {
-            var reasons = Array.isArray(rankView.upgradeReasons)
-                ? rankView.upgradeReasons
-                : [];
-            var reasonHtml = '';
+            var reasons = Array.isArray(vm.upgradeReasons) ? vm.upgradeReasons : [];
+            var parts = [];
             for (var i = 0; i < reasons.length; i++) {
-                reasonHtml += _describeUpgradeReason(reasons[i]);
-                if (i < reasons.length - 1) reasonHtml += ' · ';
+                parts.push(_describeUpgradeReason(reasons[i]));
             }
-            statusLine = '<div style="font-size:0.6rem;color:var(--dim);">' +
-                (reasonHtml || 'Not eligible for upgrade') + '</div>';
+            statusLine = '<div class="st-row__meta">' +
+                (parts.length ? esc(parts.join(' \u00b7 ')) : 'Not eligible for upgrade') +
+                '</div>';
         }
 
         var progressHtml = '';
         if (nextRank) {
-            progressHtml =
-                '<div style="text-align:right;">' +
-                '<div style="font-size:0.6rem;color:var(--dim);">Progress to ' +
-                _escapeHtml(nextRank.name) + '</div>' +
-                '<div style="width:140px;height:6px;background:var(--bg3);' +
-                'border-radius:3px;overflow:hidden;margin-top:4px;">' +
-                '<div style="width:' + progressPercent + '%;height:100%;' +
-                'background:' + (eligible ? 'var(--success)' : 'var(--accent)') + ';' +
-                'border-radius:3px;transition:width 0.3s;"></div>' +
+            progressHtml = '<div>' +
+                '<div class="st-row__meta">Progress to ' + esc(nextRank.name) + '</div>' +
+                '<div class="st-progress">' +
+                '<div class="st-progress__fill' +
+                (eligible ? ' st-progress__fill--success' : '') +
+                '" style="width:' + progressPercent + '%"></div>' +
                 '</div>' +
-                '<div style="font-size:0.5rem;color:var(--dim);margin-top:2px;">' +
-                _fmtNumber(population) + ' / ' +
-                _fmtNumber(nextRank.minPopulation) + '</div>' +
+                '<div class="st-row__meta">' + fmtNum(population) + ' / ' +
+                fmtNum(nextRank.minPopulation) + '</div>' +
                 '</div>';
         }
 
-        var upgradeButton = '';
+        var upgradeBtn = '';
         if (eligible && nextRank) {
-            upgradeButton = '<button type="button" class="overview-action-btn" ' +
-                'data-action="upgrade" data-location="' + _escapeHtml(locationId) + '" ' +
-                'style="margin-top:8px;font-size:0.6rem;padding:6px 20px;' +
-                'background:var(--accent);border:none;border-radius:4px;' +
-                'cursor:pointer;color:#ffffff;font-weight:600;">' +
-                _getIcon('ARROW_UP') + ' Upgrade to ' +
-                _escapeHtml(nextRank.name) + '</button>';
+            upgradeBtn = '<button type="button" class="st-btn st-btn--accent" ' +
+                'data-action="upgrade">' +
+                icon('ARROW_UP') + ' Upgrade to ' + esc(nextRank.name) + '</button>';
         }
 
-        return '<div style="background:var(--bg2);padding:12px 16px;' +
-            'border-radius:8px;margin-bottom:16px;border:1px solid var(--border);">' +
-            '<div style="display:flex;justify-content:space-between;' +
-            'align-items:center;flex-wrap:wrap;gap:8px;">' +
-            '<div>' +
-            '<div style="font-size:0.65rem;color:var(--accent-light);' +
-            'font-weight:bold;margin-bottom:4px;">' +
-            _getIcon('ARROW_UP') + ' Upgrade Status</div>' +
-            '<div style="font-size:0.7rem;color:var(--text);">Current: ' +
-            '<strong style="color:var(--accent-light);">' +
-            (currentRank ? _escapeHtml(currentRank.name) : _unknown()) +
-            '</strong></div>' +
+        return '<div class="st-section">' +
+            '<div class="st-section__title">' +
+            icon('ARROW_UP') + ' Upgrade Status</div>' +
+            '<div class="st-section__body">' +
+            '<div>Current: ' +
+            (currentRank ? esc(currentRank.name) : unknown()) +
+            '</div>' +
             statusLine +
-            '</div>' +
             progressHtml +
+            (upgradeBtn ? '<div>' + upgradeBtn + '</div>' : '') +
             '</div>' +
-            upgradeButton +
             '</div>';
     }
 
@@ -660,129 +266,247 @@
                 return 'Need ' + (reason.deficit || 0) + ' more people';
             case 'INSUFFICIENT_PROSPERITY':
                 return 'Prosperity must be at least ' + reason.required;
-            case 'ALREADY_MAX_RANK':
-                return 'At maximum rank';
-            case 'UNKNOWN_CURRENT_RANK':
-                return 'Current rank not recognized';
-            default:
-                return String(reason.code);
+            case 'ALREADY_MAX_RANK': return 'At maximum rank';
+            case 'UNKNOWN_CURRENT_RANK': return 'Current rank not recognized';
+            default: return String(reason.code);
         }
     }
 
     function _buildReligionSection(context) {
-        var summary = context.viewModel || {};
-
-        var unityHtml = _religiousUnityLabel(
-            summary.religiousUnityReason,
-            summary.religiousUnity
-        );
+        var s = context.viewModel || {};
+        var unityHtml = _religiousUnityLabel(s.religiousUnityReason, s.religiousUnity);
         var dominantHtml = _dominantReligionLabel(
-            summary.dominantReligionReason,
-            summary.dominantReligion
-        );
+            s.dominantReligionReason, s.dominantReligion);
 
-        var unityColor = 'var(--text)';
-        if (summary.religiousUnityReason === 'available'
-            && typeof summary.religiousUnity === 'number') {
-            if (summary.religiousUnity >= 70) unityColor = 'var(--success)';
-            else if (summary.religiousUnity >= 40) unityColor = 'var(--accent)';
-            else unityColor = 'var(--danger)';
+        var unityClass = 'st-stat__value';
+        if (s.religiousUnityReason === 'available'
+            && typeof s.religiousUnity === 'number') {
+            if (s.religiousUnity >= 70) unityClass += ' st-stat__value--pos';
+            else if (s.religiousUnity >= 40) unityClass += ' st-stat__value--accent';
+            else unityClass += ' st-stat__value--neg';
         }
 
-        var placeCount = typeof summary.activePlaceOfWorshipCount === 'number'
-            ? summary.activePlaceOfWorshipCount
-            : null;
+        var placeCount = typeof s.activePlaceOfWorshipCount === 'number'
+            ? s.activePlaceOfWorshipCount : null;
 
-        return '<div style="background:var(--bg2);padding:12px 16px;' +
-            'border-radius:8px;margin-bottom:16px;border:1px solid var(--border);">' +
-            '<div style="font-size:0.65rem;color:var(--accent-light);' +
-            'font-weight:bold;margin-bottom:6px;">' +
-            _getIcon('CIRCLE_DOT') + ' Religion</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">' +
-            '<div style="background:var(--bg);padding:8px;border-radius:4px;' +
-            'text-align:center;border:1px solid var(--border-light);">' +
-            '<div style="font-size:0.5rem;color:var(--dim);">Dominant</div>' +
-            '<div style="font-size:0.75rem;font-weight:bold;color:var(--text);">' +
-            dominantHtml + '</div>' +
-            '</div>' +
-            '<div style="background:var(--bg);padding:8px;border-radius:4px;' +
-            'text-align:center;border:1px solid var(--border-light);">' +
-            '<div style="font-size:0.5rem;color:var(--dim);">Unity</div>' +
-            '<div style="font-size:0.75rem;font-weight:bold;color:' + unityColor + ';">' +
-            unityHtml + '</div>' +
-            '</div>' +
-            '<div style="background:var(--bg);padding:8px;border-radius:4px;' +
-            'text-align:center;border:1px solid var(--border-light);">' +
-            '<div style="font-size:0.5rem;color:var(--dim);">Places of Worship</div>' +
-            '<div style="font-size:0.75rem;font-weight:bold;color:var(--text);">' +
-            _fmtNumber(placeCount) + '</div>' +
-            '</div>' +
+        function cell(label, valueHtml, cls) {
+            return '<div class="st-stat">' +
+                '<div class="st-stat__label">' + esc(label) + '</div>' +
+                '<div class="' + (cls || 'st-stat__value') + '">' +
+                valueHtml + '</div>' +
+                '</div>';
+        }
+
+        return '<div class="st-section">' +
+            '<div class="st-section__title">' +
+            icon('CIRCLE_DOT') + ' Religion</div>' +
+            '<div class="st-stats st-stats--3">' +
+            cell('Dominant', dominantHtml) +
+            cell('Unity', unityHtml, unityClass) +
+            cell('Places of Worship', fmtNum(placeCount)) +
             '</div>' +
             '</div>';
     }
 
     function _buildDetailsSection(context) {
-        var summary = context.viewModel || {};
+        var s = context.viewModel || {};
+        var lastUpgraded = typeof s.lastUpgraded === 'number'
+            ? esc(String(s.lastUpgraded)) : unknown();
+        var spec = s.specializationRoleId
+            ? esc(s.specializationRoleId) : esc('None');
 
-        function row(label, valueHtml) {
-            return '<div><span style="color:var(--dim);">' +
-                _escapeHtml(label) + ':</span> ' +
-                '<span style="color:var(--text);">' +
-                valueHtml + '</span></div>';
+        function inline(label, valueHtml) {
+            return '<div class="st-inline">' +
+                '<span class="st-inline__label">' + esc(label) + '</span>' +
+                '<span class="st-inline__value">' + valueHtml + '</span>' +
+                '</div>';
         }
 
-        var lastUpgraded = typeof summary.lastUpgraded === 'number'
-            ? _escapeHtml(String(summary.lastUpgraded))
-            : _unknown();
-
-        var spec = summary.specializationRoleId
-            ? _escapeHtml(summary.specializationRoleId)
-            : _escapeHtml('None');
-
-        return '<div style="background:var(--bg2);padding:12px 16px;' +
-            'border-radius:8px;margin-bottom:16px;border:1px solid var(--border);">' +
-            '<div style="font-size:0.65rem;color:var(--accent-light);' +
-            'font-weight:bold;margin-bottom:6px;">' +
-            _getIcon('GEAR') + ' Settlement Details</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;' +
-            'gap:6px 20px;font-size:0.7rem;">' +
-            row('Founded', _fmtNumber(summary.foundedYear)) +
-            row('Last Upgraded', lastUpgraded) +
-            row('Specialization', spec) +
-            row('Civil Laws', _fmtNumber(summary.civilLawCount)) +
+        return '<div class="st-section">' +
+            '<div class="st-section__title">' + icon('GEAR') +
+            ' Settlement Details</div>' +
+            '<div class="st-section__body">' +
+            inline('Founded', fmtNum(s.foundedYear)) +
+            inline('Last Upgraded', lastUpgraded) +
+            inline('Specialization', spec) +
+            inline('Civil Laws', fmtNum(s.civilLawCount)) +
             '</div>' +
             '</div>';
     }
 
-    // =========================================================================
-    // 7. RENDER
-    // =========================================================================
+    function _readHistory(locationId) {
+        var data = _getSettlementQueries().getSettlementData(locationId);
+        if (!data) return { annual: [], demolition: [] };
+        return {
+            annual: Array.isArray(data.annualHistory) ? data.annualHistory : [],
+            demolition: Array.isArray(data.demolitionHistory)
+                ? data.demolitionHistory : []
+        };
+    }
+
+    function _eventYear(rec) {
+        if (typeof rec.year === 'number') return rec.year;
+        if (typeof rec.demolishedYear === 'number') return rec.demolishedYear;
+        return null;
+    }
+
+    function _eventLabel(rec, kind) {
+        if (kind === 'annual') {
+            var interest = typeof rec.interest === 'number' ? rec.interest : 0;
+            var debtAfter = typeof rec.debtAfter === 'number' ? rec.debtAfter : null;
+            if (interest > 0) {
+                return 'Debt interest applied (' + fmtNum(interest) +
+                    'g, debt now ' + fmtNum(debtAfter) + 'g)';
+            }
+            return 'Annual processing complete';
+        }
+        var name = rec.featureName || rec.featureId || 'Feature';
+        var reason = rec.demolishedReason || 'Demolished';
+        return 'Demolished "' + String(name) + '" (' + String(reason) + ')';
+    }
+
+    function _buildHistorySection(locationId) {
+        var h = _readHistory(locationId);
+        var events = [];
+        for (var i = 0; i < h.annual.length; i++) events.push({ kind: 'annual', rec: h.annual[i] });
+        for (var j = 0; j < h.demolition.length; j++) events.push({ kind: 'demolition', rec: h.demolition[j] });
+        events.sort(function (a, b) {
+            var ay = _eventYear(a.rec), by = _eventYear(b.rec);
+            if (ay === null && by === null) return 0;
+            if (ay === null) return 1;
+            if (by === null) return -1;
+            if (ay !== by) return by - ay;
+            var at = a.rec.recordedAt || a.rec.timestamp || 0;
+            var bt = b.rec.recordedAt || b.rec.timestamp || 0;
+            return bt - at;
+        });
+        var recent = events.slice(0, 5);
+
+        if (recent.length === 0) {
+            return '<div class="st-section">' +
+                '<div class="st-section__title">' +
+                icon('CIRCLE_DOT') + ' Recent History</div>' +
+                '<div class="st-section__empty">No history recorded yet.</div>' +
+                '</div>';
+        }
+
+        var rows = '';
+        for (var k = 0; k < recent.length; k++) {
+            var e = recent[k];
+            var year = _eventYear(e.rec);
+            var label = _eventLabel(e.rec, e.kind);
+            var rowClass = e.kind === 'demolition' ? 'st-row st-row--danger' : 'st-row';
+            rows += '<div class="' + rowClass + '">' +
+                '<span class="st-row__meta">' +
+                (year === null ? unknown() : esc(String(year))) +
+                '</span>' +
+                '<span class="st-row__body">' + esc(label) + '</span>' +
+                '</div>';
+        }
+
+        return '<div class="st-section">' +
+            '<div class="st-section__title">' +
+            icon('CIRCLE_DOT') + ' Recent History</div>' +
+            '<div class="st-rows">' + rows + '</div>' +
+            '</div>';
+    }
+
+    function _buildActionsRow() {
+        function btn(action, label, iconName) {
+            return '<button type="button" class="st-btn" data-action="' +
+                esc(action) + '">' +
+                (iconName ? icon(iconName) + ' ' : '') +
+                esc(label) + '</button>';
+        }
+        return '<div class="st-header__actions">' +
+            btn('manage-features', 'Features', 'GEAR') +
+            btn('budget', 'Budget', 'COIN') +
+            btn('employment', 'Employment', 'PERSON') +
+            btn('specialization', 'Specialization', 'STAR_4') +
+            btn('state-enterprises', 'State Enterprises', 'GEAR') +
+            '</div>';
+    }
+
+    function _buildFooter() {
+        return '<div class="st-footer">' + icon('CIRCLE_DOT') +
+            ' <span>Settlement data loaded. Use the action buttons above to ' +
+            'manage this settlement.</span></div>';
+    }
+
+    // -------------------------------------------------------------------
+    // Actions
+    // -------------------------------------------------------------------
+
+    function _handleAction(action, locationId) {
+        switch (action) {
+            case 'refresh':
+                refresh();
+                return;
+            case 'upgrade':
+                _modal('openUpgradeSettlementModal', [locationId]);
+                return;
+            case 'manage-features':
+                _modal('openManageFeaturesModal', [locationId]);
+                return;
+            case 'budget':
+                _modal('openBudgetModal', [locationId]);
+                return;
+            case 'employment':
+                _modal('openEmploymentModal', [locationId]);
+                return;
+            case 'specialization':
+                _modal('openSpecializationModal', [locationId]);
+                return;
+            case 'state-enterprises':
+                _modal('openStateEnterpriseModal', [locationId]);
+                return;
+            default:
+                return;
+        }
+    }
+
+    function _wireActions(container, locationId) {
+        if (container.__stOverviewWired) return;
+        container.__stOverviewWired = true;
+        container.addEventListener('click', function (event) {
+            var btn = event.target.closest('[data-action]');
+            if (!btn || !container.contains(btn)) return;
+            event.preventDefault();
+            try {
+                _handleAction(btn.dataset.action, locationId);
+            } catch (err) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'settlement-overview-tab: action failed:', err);
+                }
+                H().toast('Could not complete action.', 'error');
+            }
+        });
+    }
+
+    // -------------------------------------------------------------------
+    // Renderer
+    // -------------------------------------------------------------------
 
     function renderSettlementOverview(container, context) {
-        if (!container) {
-            throw new Error(
-                'settlement-overview-tab: container is required'
-            );
-        }
+        if (!container) return;
         if (!context || !context.locationId) {
-            throw new Error(
-                'settlement-overview-tab: context.locationId is required'
-            );
+            container.innerHTML = H().emptyState('no-context');
+            return;
         }
         if (!context.viewModel) {
-            throw new Error(
-                'settlement-overview-tab: context.viewModel is required'
-            );
+            container.innerHTML = '<div class="st-error">' +
+                'Could not build settlement summary.</div>';
+            return;
         }
 
         var locationId = context.locationId;
-
-        var populationAccessor = _getPopulationAccessor();
-        var population = populationAccessor
-            ? populationAccessor(locationId)
+        var popAccessor = _getPopulationAcc();
+        var population = popAccessor
+            ? popAccessor(locationId)
             : context.viewModel.population;
 
-        var html = '<div style="padding:4px;">' +
+        var html = '<div class="st-tab">' +
             _buildHeader(context, population) +
             _buildKeyStats(context, population) +
             _buildSecondaryStats(context) +
@@ -790,40 +514,27 @@
             _buildReligionSection(context) +
             _buildDetailsSection(context) +
             _buildHistorySection(locationId) +
-            _buildActionsRow(locationId) +
-            '<div style="margin-top:16px;padding:8px;background:var(--bg3);' +
-            'border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
-            _getIcon('CIRCLE_DOT') +
-            ' Settlement data loaded. Use the action buttons above to manage ' +
-            'this settlement.</div>' +
+            _buildActionsRow() +
+            _buildFooter() +
             '</div>';
 
         container.innerHTML = html;
         _wireActions(container, locationId);
     }
 
-    // =========================================================================
-    // 8. REGISTRATION
-    // =========================================================================
+    // -------------------------------------------------------------------
+    // Registration
+    // -------------------------------------------------------------------
 
-    function _register() {
-        var tabs = _getTabs();
-        if (!tabs || typeof tabs.registerTabRenderer !== 'function') {
-            throw new Error(
-                'settlement-overview-tab: SettlementTabs is missing. ' +
-                'Load settlement-tabs.js before this tab.'
-            );
-        }
-        tabs.registerTabRenderer('overview', renderSettlementOverview);
+    if (window.TabManager && typeof window.TabManager.register === 'function') {
+        window.TabManager.register(SCOPE, TAB_ID, renderSettlementOverview);
+    } else if (typeof console !== 'undefined' && console.warn) {
+        console.warn(
+            'settlement-overview-tab: TabManager is not available at load ' +
+            'time; the tab was not registered.'
+        );
     }
 
-    _register();
-
-    // =========================================================================
-    // 9. EXPORTS
-    // =========================================================================
-
     window.renderSettlementOverview = renderSettlementOverview;
-    window._renderSettlementOverview = renderSettlementOverview;
 
 })();
