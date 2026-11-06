@@ -1,81 +1,131 @@
 // js/tabs/government-history-tab.js
 /**
  * =============================================================================
- * GOVERNMENT HISTORY TAB (js/tabs/government-history-tab.js)
+ * GOVERNMENT HISTORY TAB
+ * js/tabs/government-history-tab.js
  * =============================================================================
  *
- * PURPOSE: Provides a modular tab for viewing government history including:
- *          - Current and former leaders with their terms
- *          - Add leaders (current or retroactive)
- *          - Track associated characters (ministers, officials, etc.)
+ * LOCATION: js/tabs/government-history-tab.js
  *
- * DEPENDENCIES (checked at load time):
- *   - accessors.js          (getPlaceById, getCharacterById)
- *   - government-state.js   (GovernmentState)
- *   - location-commands.js  (LocationCommands — assignLeader,
- *                           endLeaderTerm, persist)
- *   - formatting.js         (escapeHtml)
- *   - icons.js              (Icons)
- *   - ui.js                 (showToast)
- *   - modals-core.js        (openModal, confirmDialog)
- *   - modals-char-selector.js (openCharacterSelector)
- *   - time.js               (getCurrentYear, calculateAge)
+ * PURPOSE:
+ *   Render government history — current and former leaders with their
+ *   terms, and associated government officials (department position
+ *   holders) — and manage leader assignments through LocationCommands.
+ *
+ * RENDERER CONTRACT (from GovernmentManagerBootstrap):
+ *   fn(container, context)
+ *   container  HTMLElement  — already emptied by TabManager
+ *   context    { locationId, locationName, governmentState }
+ *
+ * DATA SOURCES:
+ *   - window.getPlaceById(locationId)             deep clone; safe to read
+ *   - window.getCharacterById(charId)
+ *   - GovernmentState.getDepartmentsByLocationId(locationId)  (officials)
+ *   - LocationCommands.assignLeader / endLeaderTerm / persist
  *
  * WRITE PATH:
  *   place.leaderAssignments is Location-owned. The tab reads it via
  *   getPlaceById (deep clone — safe to read) and writes only through
- *   LocationCommands.assignLeader / endLeaderTerm.
+ *   LocationCommands.assignLeader / endLeaderTerm. Each user action
+ *   calls LocationCommands.persist() exactly once, in the modal's
+ *   onConfirm, after the command(s) succeed.
  *
- *   The previous revision of this file mutated the cloned place record
- *   directly and called saveMasterData(). That write never reached
- *   canonical data — the retroactive leader was silently discarded.
+ *   The tab never mutates the cloned place record. The tab never calls
+ *   saveMasterData. Mutating the clone and calling saveMasterData was
+ *   the bug in the prior revision: that write never reached canonical
+ *   data — the retroactive leader was silently discarded.
  *
  * RETROACTIVE LEADERS:
  *   LocationCommands.assignLeader(placeId, charId, startYear, title)
- *   always ends the currently active leader. There is no "record a past
- *   leader without disturbing the current one" command today.
+ *   always ends the currently active leader. There is no "record a
+ *   past leader without disturbing the current one" command today.
  *
- *   This tab handles retroactive entries by:
+ *   This tab handles retroactive entries as:
  *     1. assignLeader(placeId, charId, startYear, title)
  *        — installs the character as the new current leader
  *     2. endLeaderTerm(placeId, charId, endYear)
  *        — immediately ends that assignment at the requested year
  *     3. LocationCommands.persist() — once, at the end
  *
- *   The net data result is a correct past-leader assignment record, but
- *   any leader who was active before step 1 has been ended. The modal
- *   says so.
+ *   The net data result is a correct past-leader record, but any
+ *   leader who was active before step 1 has been ended. The modal copy
+ *   says so. Do not change this without adding a command that records
+ *   a past leader without disturbing the current one.
  *
  * MODAL KEY TRANSLATION:
  *   modals-core.js reads titleHtml / contentHtml. The call sites in
- *   this file pass title / content. The local _openModal helper
- *   translates.
+ *   this file pass title / content. _openModal() forwards title →
+ *   titleHtml and content → contentHtml, only when the *Html variant
+ *   is not already supplied.
  *
- * MODAL INPUT SCOPING:
- *   Every onConfirm / onOpen reads inputs via root.querySelector.
+ * DEPENDENCIES (hard — throw at load if missing):
+ *   - js/core/accessors.js               (getPlaceById, getCharacterById)
+ *   - js/government/government-state.js  (GovernmentState)
+ *   - js/location/location-commands.js   (assignLeader, endLeaderTerm, persist)
+ *   - js/core/formatting.js              (escapeHtml)
+ *   - js/core/icons.js                   (Icons)
+ *   - js/core/modals-core.js             (openModal)
+ *   - js/core/tab-manager.js             (TabManager)
+ *   - js/core/time.js                    (getCurrentYear, calculateAge)
  *
- * INLINE STYLE POLICY:
- *   This revision removes every inline style="" attribute that the
- *   previous revision used for stat-value colours and the collapsed
- *   former-leaders body. The colours now come from
- *   .gh-stat-value.is-active / .is-ended / .is-officials (themes.css
- *   tokens var(--ok) / var(--danger-lt) / var(--accent)). The collapsed
- *   state uses .gh-subsection-body.is-collapsed.
+ * DEPENDENCIES (soft — toast at click if missing):
+ *   - js/core/ui.js                         (showToast)
+ *   - js/selectors/modals-char-selector.js  (openCharacterSelector)
+ *
+ * TIME CONTRACT: uses window.getCurrentYear and window.calculateAge
+ *   (no fallback).
+ * ICON POLICY: glyphs from Icons[name] via _icon; no emojis; no literal
+ *   Unicode glyphs in string output. Arrow separators are the literal
+ *   " → " string — a typographic glyph, not an icon, and permitted.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   - Migrated from renderGovernmentHistoryTab(containerId, locationId)
+ *     to the TabManager renderer contract fn(container, context).
+ *   - Self-registers with TabManager at load.
+ *   - Stale-location bug fixed: click handlers and the past-leaders
+ *     toggle read container.dataset.locationId at click time. The
+ *     original captured currentLocationId in a refresh closure; after
+ *     a sidebar switch the closure re-rendered the old location.
+ *   - Past-leaders collapsed state now uses a class toggle
+ *     (.gh-subsection-body.is-collapsed) with CSS display, rather
+ *     than inline style.display. Keyboard activation added on the
+ *     toggle (role=button + tabindex + Enter/Space).
+ *   - Modal entry points accept (locationId) — no refresh callback
+ *     threaded through a bind-time closure. They call module-level
+ *     _refresh() on success, which calls TM.requestRender(SCOPE, TAB_ID).
+ *   - Removed dead refreshGovernmentHistoryTab(locationId) id-scanning
+ *     helper; TM.requestRender(SCOPE, TAB_ID) is the only supported
+ *     refresh path.
+ *   - _getAllGovernmentOfficials returns Object.values of an object
+ *     keyed by characterId. That order is unspecified in older JS
+ *     engines; the result is now explicitly sorted by display name,
+ *     matching the sort applied to _getAssociatedCharacters.
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 1. LOAD-TIME DEPENDENCY CHECKS
+    // 1. CONSTANTS
     // =========================================================================
 
-    if (!window.LocationCommands) {
+    var TAB_ID = 'history';
+    var SCOPE  = 'government';
+
+    // =========================================================================
+    // 2. LOAD-TIME DEPENDENCY CHECKS
+    // =========================================================================
+
+    if (typeof window.getPlaceById !== 'function') {
         throw new Error(
-            'government-history-tab.js: location-commands.js must load ' +
-            'first (LocationCommands.assignLeader / endLeaderTerm / ' +
-            'persist missing).'
+            'government-history-tab.js: accessors.js (getPlaceById) must load first.'
+        );
+    }
+    if (typeof window.getCharacterById !== 'function') {
+        throw new Error(
+            'government-history-tab.js: accessors.js (getCharacterById) must load first.'
         );
     }
     if (!window.GovernmentState) {
@@ -83,16 +133,18 @@
             'government-history-tab.js: government-state.js must load first.'
         );
     }
-    if (typeof window.openModal !== 'function') {
+    if (!window.LocationCommands
+        || typeof window.LocationCommands.assignLeader !== 'function'
+        || typeof window.LocationCommands.endLeaderTerm !== 'function'
+        || typeof window.LocationCommands.persist !== 'function') {
         throw new Error(
-            'government-history-tab.js: modals-core.js must load first ' +
-            '(openModal missing).'
+            'government-history-tab.js: location-commands.js must load first ' +
+            '(assignLeader / endLeaderTerm / persist must all be present).'
         );
     }
     if (typeof window.escapeHtml !== 'function') {
         throw new Error(
-            'government-history-tab.js: formatting.js (escapeHtml) must ' +
-            'load first.'
+            'government-history-tab.js: formatting.js (escapeHtml) must load first.'
         );
     }
     if (!window.Icons || typeof window.Icons !== 'object') {
@@ -100,25 +152,74 @@
             'government-history-tab.js: icons.js must load first.'
         );
     }
+    if (typeof window.openModal !== 'function') {
+        throw new Error(
+            'government-history-tab.js: modals-core.js (openModal) must load first.'
+        );
+    }
     if (typeof window.getCurrentYear !== 'function') {
         throw new Error(
-            'government-history-tab.js: time.js (getCurrentYear) must load ' +
-            'first.'
+            'government-history-tab.js: time.js (getCurrentYear) must load first.'
         );
     }
     if (typeof window.calculateAge !== 'function') {
         throw new Error(
-            'government-history-tab.js: time.js (calculateAge) must load ' +
-            'first.'
+            'government-history-tab.js: time.js (calculateAge) must load first.'
+        );
+    }
+    if (!window.TabManager || typeof window.TabManager.register !== 'function') {
+        throw new Error(
+            'government-history-tab.js: tab-manager.js must load first.'
         );
     }
 
     var GS = window.GovernmentState;
     var LC = window.LocationCommands;
+    var TM = window.TabManager;
 
     // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
+    // 3. DEPENDENCY WRAPPERS (soft)
     // =========================================================================
+
+    function _esc(v) {
+        if (typeof window.escapeHtml === 'function') {
+            return window.escapeHtml(v);
+        }
+        if (v === null || v === undefined) return '';
+        return String(v)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function _getIcon(name) {
+        if (typeof window.getIcon === 'function') {
+            try {
+                var s = window.getIcon(name);
+                if (typeof s === 'string') return s;
+            } catch (e) { /* fall through */ }
+        }
+        return (window.Icons && typeof window.Icons[name] === 'string')
+            ? window.Icons[name]
+            : '';
+    }
+
+    function _iconSpan(name) {
+        var i = _getIcon(name);
+        return i
+            ? '<span class="gov-tab-icon" aria-hidden="true">' + i + '</span>'
+            : '';
+    }
+
+    function _toast(msg, type) {
+        if (typeof window.showToast === 'function') {
+            window.showToast(msg, type || 'info');
+        } else if (typeof window._showToast === 'function') {
+            window._showToast(msg, type || 'info');
+        }
+    }
 
     function _getPlaceById(id) {
         return typeof window.getPlaceById === 'function'
@@ -132,27 +233,16 @@
             : null;
     }
 
-    function _escapeHtml(str) {
-        return window.escapeHtml(str);
-    }
-
-    function _getIcon(name) {
-        var svg = window.Icons[name];
-        return typeof svg === 'string' ? svg : '';
-    }
-
-    function _showToast(message, type) {
-        if (typeof window.showToast === 'function') {
-            window.showToast(message, type || 'info');
-        }
-    }
-
     function _openCharacterSelector(options) {
         if (typeof window.openCharacterSelector === 'function') {
             return window.openCharacterSelector(options);
         }
-        _showToast('Character selector unavailable', 'error');
+        _toast('Character selector unavailable', 'error');
         return null;
+    }
+
+    function _getCurrentYear() {
+        return window.getCurrentYear();
     }
 
     function _openModal(opts) {
@@ -171,13 +261,13 @@
         return window.openModal(forwarded);
     }
 
-    function _getCurrentYear() {
-        return window.getCurrentYear();
-    }
+    // =========================================================================
+    // 4. DATA HELPERS
+    // =========================================================================
 
     /**
-     * Age of a character. Takes the full character projection so the
-     * deceased flag reaches calculateAge.
+     * Age of a character. Passes the deceased flag so calculateAge
+     * computes age-at-death correctly.
      */
     function _calculateCharacterAge(character, asOfYear) {
         if (!character) return null;
@@ -191,10 +281,6 @@
         );
     }
 
-    // =========================================================================
-    // 3. DATA HELPERS
-    // =========================================================================
-
     function _getAllLeaderAssignments(place) {
         if (!place) return [];
         return Array.isArray(place.leaderAssignments)
@@ -205,18 +291,23 @@
     function _getAssociatedCharacters(place) {
         if (!GS || !place) return [];
 
-        var depts = typeof GS.getDepartmentsByLocationId === 'function'
-            ? (GS.getDepartmentsByLocationId(place.id) || [])
-            : [];
+        var depts;
+        try {
+            depts = (typeof GS.getDepartmentsByLocationId === 'function')
+                ? (GS.getDepartmentsByLocationId(place.id) || [])
+                : [];
+        } catch (e) {
+            depts = [];
+        }
 
-        var associated = {};
+        var associated = Object.create(null);
         for (var i = 0; i < depts.length; i++) {
             var dept = depts[i];
             if (!dept || !Array.isArray(dept.assignments)) continue;
 
             for (var a = 0; a < dept.assignments.length; a++) {
                 var assignment = dept.assignments[a];
-                if (assignment.endYear) continue;
+                if (!assignment || assignment.endYear) continue;
 
                 var charId = assignment.characterId;
                 if (!charId) continue;
@@ -258,7 +349,7 @@
             });
         }
 
-        result.sort(function(a, b) {
+        result.sort(function (a, b) {
             var nameA = (a.character.name || '') +
                 (a.character.surname || '');
             var nameB = (b.character.name || '') +
@@ -269,11 +360,18 @@
         return result;
     }
 
+    /**
+     * Merges leader assignments and department-position holders into a
+     * single officials list keyed by characterId. A leader who is also
+     * a department official appears once, with both roles. Sort order
+     * is by display name (the object is a temporary key map; the
+     * result order is explicitly sorted).
+     */
     function _getAllGovernmentOfficials(place) {
         var leaders = _getAllLeaderAssignments(place);
         var associated = _getAssociatedCharacters(place);
 
-        var officials = {};
+        var officials = Object.create(null);
 
         for (var i = 0; i < leaders.length; i++) {
             var leader = leaders[i];
@@ -310,14 +408,26 @@
             }
         }
 
-        return Object.values(officials);
+        var result = [];
+        for (var cid in officials) {
+            if (!Object.prototype.hasOwnProperty.call(officials, cid)) continue;
+            result.push(officials[cid]);
+        }
+        result.sort(function (a, b) {
+            var nameA = (a.character.name || '') +
+                (a.character.surname || '');
+            var nameB = (b.character.name || '') +
+                (b.character.surname || '');
+            return nameA.localeCompare(nameB);
+        });
+        return result;
     }
 
     // =========================================================================
-    // 4. RENDER FUNCTIONS
+    // 5. RENDER HELPERS
     // =========================================================================
 
-    function _renderLeaderCard(assignment, placeId, index) {
+    function _renderLeaderCard(assignment, index) {
         var char = _getCharacterById(assignment.characterId);
         var charName = char
             ? (char.name + (char.surname ? ' ' + char.surname : ''))
@@ -326,36 +436,34 @@
         var age = char ? _calculateCharacterAge(char) : null;
 
         var html = '<div class="gh-leader-card" ' +
-            'data-leader-id="' + _escapeHtml(assignment.id) + '">';
+            'data-leader-id="' + _esc(assignment.id) + '">';
         html += '<div class="gh-leader-number">#' + (index + 1) + '</div>';
         html += '<div class="gh-leader-info">';
         html += '<div class="gh-leader-name">' +
-            _escapeHtml(charName) + '</div>';
+            _esc(charName) + '</div>';
         if (assignment.title) {
             html += '<div class="gh-leader-title">' +
-                _escapeHtml(assignment.title) + '</div>';
+                _esc(assignment.title) + '</div>';
         }
         html += '<div class="gh-leader-period">';
         html += '<span class="gh-leader-start">' +
             (assignment.startYear || '?') + '</span>';
         if (assignment.endYear) {
-            html += ' <span class="gh-leader-arrow">→</span> ' +
+            html += ' <span class="gh-leader-arrow" aria-hidden="true">→</span> ' +
                 '<span class="gh-leader-end">' +
                 assignment.endYear + '</span>';
         } else {
-            html += ' <span class="gh-leader-arrow">→</span> ' +
+            html += ' <span class="gh-leader-arrow" aria-hidden="true">→</span> ' +
                 '<span class="gh-leader-present">Present</span>';
         }
         if (assignment.endReason) {
             html += ' <span class="gh-leader-reason">(' +
-                _escapeHtml(assignment.endReason) + ')</span>';
+                _esc(assignment.endReason) + ')</span>';
         }
         html += '</div>';
         if (age !== null) {
             html += '<div class="gh-leader-age">Age: ' +
-                (char.isDeceased === true
-                    ? age + ' (at death)'
-                    : age) +
+                (char.isDeceased === true ? age + ' (at death)' : age) +
                 ' years</div>';
         }
         if (char && char.birthYear) {
@@ -373,10 +481,11 @@
 
         html += '<div class="gh-leader-actions">';
         if (isActive) {
-            html += '<button class="gh-btn gh-btn-end" ' +
+            html += '<button type="button" class="gh-btn gh-btn-end" ' +
                 'data-action="end-leader" ' +
-                'data-leader-id="' + _escapeHtml(assignment.id) + '" ' +
-                'data-char-id="' + _escapeHtml(assignment.characterId) + '">' +
+                'data-leader-id="' + _esc(assignment.id) + '" ' +
+                'data-char-id="' + _esc(assignment.characterId) + '" ' +
+                'aria-label="End leadership term">' +
                 _getIcon('X') + ' End Term' +
                 '</button>';
         }
@@ -396,25 +505,23 @@
         var html = '<div class="gh-official-card">';
         html += '<div class="gh-official-info">';
         html += '<div class="gh-official-name">' +
-            _escapeHtml(charName) + '</div>';
+            _esc(charName) + '</div>';
         if (official.positions.length > 0) {
             html += '<div class="gh-official-positions">';
             for (var i = 0; i < official.positions.length; i++) {
                 html += '<span class="gh-official-position">' +
-                    _escapeHtml(official.positions[i]) + '</span>';
+                    _esc(official.positions[i]) + '</span>';
             }
             html += '</div>';
         }
         if (official.departments.length > 0) {
             html += '<div class="gh-official-departments">' +
-                'Department: ' + _escapeHtml(official.departments.join(', ')) +
+                'Department: ' + _esc(official.departments.join(', ')) +
                 '</div>';
         }
         if (age !== null) {
             html += '<div class="gh-official-age">Age: ' +
-                (char.isDeceased === true
-                    ? age + ' (at death)'
-                    : age) +
+                (char.isDeceased === true ? age + ' (at death)' : age) +
                 ' years</div>';
         }
         if (official.isDeceased) {
@@ -430,35 +537,39 @@
     function _renderGovernmentHistory(place) {
         if (!place) {
             return '<div class="gh-details-empty">' +
-                'Select a location to view government history.</div>';
+                'Select a government from the sidebar to view history.' +
+                '</div>';
         }
 
         var leaders = _getAllLeaderAssignments(place);
         var officials = _getAllGovernmentOfficials(place);
 
-        var sortedLeaders = leaders.slice().sort(function(a, b) {
+        var sortedLeaders = leaders.slice().sort(function (a, b) {
             return (a.startYear || 0) - (b.startYear || 0);
         });
 
-        var currentLeaders = sortedLeaders.filter(function(l) {
+        var currentLeaders = sortedLeaders.filter(function (l) {
             return l.isActive === true && !l.endYear;
         });
-        var formerLeaders = sortedLeaders.filter(function(l) {
+        var formerLeaders = sortedLeaders.filter(function (l) {
             return !(l.isActive === true && !l.endYear);
         });
 
-        var html = '<div class="gh-tab-container">';
+        var html = '<div class="gh-tab-container" ' +
+            'data-location-id="' + _esc(place.id || '') + '">';
 
         // Header
         html += '<div class="gh-tab-header">';
         html += '<h3>Government History - ' +
-            _escapeHtml(place.displayName || place.name) + '</h3>';
+            _esc(place.displayName || place.name) + '</h3>';
         html += '<div class="gh-tab-actions">';
-        html += '<button class="gh-btn gh-btn-add" data-action="add-leader">' +
-            _getIcon('PLUS') + ' Add Leader' +
+        html += '<button type="button" class="gh-btn gh-btn-add" ' +
+            'data-action="add-leader">' +
+            _iconSpan('PLUS') + ' Add Leader' +
             '</button>';
-        html += '<button class="gh-btn" data-action="refresh-history">' +
-            _getIcon('REFRESH') + ' Refresh' +
+        html += '<button type="button" class="gh-btn" ' +
+            'data-action="refresh-history">' +
+            _iconSpan('REFRESH') + ' Refresh' +
             '</button>';
         html += '</div>';
         html += '</div>';
@@ -503,34 +614,28 @@
                 html += '<div class="gh-leaders-list">';
                 for (var i = 0; i < currentLeaders.length; i++) {
                     var leaderIdx = sortedLeaders.indexOf(currentLeaders[i]);
-                    html += _renderLeaderCard(
-                        currentLeaders[i], place.id, leaderIdx
-                    );
+                    html += _renderLeaderCard(currentLeaders[i], leaderIdx);
                 }
-                html += '</div>';
-                html += '</div>';
+                html += '</div></div>';
             }
 
             if (formerLeaders.length > 0) {
                 html += '<div class="gh-subsection gh-subsection-ended">';
                 html += '<div class="gh-subsection-toggle" ' +
-                    'data-toggle="former-leaders">';
+                    'data-toggle="former-leaders" ' +
+                    'role="button" tabindex="0" aria-expanded="false">';
                 html += '<span class="gh-subsection-label">' +
                     'Former Leaders (' + formerLeaders.length + ')</span>';
-                html += '<span class="gh-toggle-icon">' +
+                html += '<span class="gh-toggle-icon" aria-hidden="true">' +
                     _getIcon('TRIANGLE_RIGHT') + '</span>';
                 html += '</div>';
                 html += '<div class="gh-subsection-body is-collapsed">';
                 html += '<div class="gh-leaders-list">';
                 for (var f = 0; f < formerLeaders.length; f++) {
                     var formerIdx = sortedLeaders.indexOf(formerLeaders[f]);
-                    html += _renderLeaderCard(
-                        formerLeaders[f], place.id, formerIdx
-                    );
+                    html += _renderLeaderCard(formerLeaders[f], formerIdx);
                 }
-                html += '</div>';
-                html += '</div>';
-                html += '</div>';
+                html += '</div></div></div>';
             }
         }
         html += '</div>';
@@ -556,18 +661,119 @@
         html += '</div>';
 
         html += '</div>';
-
         return html;
     }
 
     // =========================================================================
-    // 5. LEADER ACTIONS (through LocationCommands)
+    // 6. RENDERER (TabManager contract: fn(container, context))
     // =========================================================================
 
-    function _addLeaderToLocation(placeId, onComplete) {
-        var place = _getPlaceById(placeId);
+    function renderGovernmentHistoryTab(container, context) {
+        if (!container) return;
+
+        if (!context || !context.locationId) {
+            container.innerHTML =
+                '<div class="empty-state">' +
+                'Select a government from the sidebar to view history.' +
+                '</div>';
+            return;
+        }
+
+        var locationId = context.locationId;
+        var place = (context.governmentState && context.governmentState.place)
+            ? context.governmentState.place
+            : _getPlaceById(locationId);
+
+        container.innerHTML = _renderGovernmentHistory(place);
+        container.dataset.locationId = locationId;
+
+        _bindActions(container);
+    }
+
+    function _refresh() {
+        if (TM && typeof TM.requestRender === 'function') {
+            TM.requestRender(SCOPE, TAB_ID);
+        }
+    }
+
+    // =========================================================================
+    // 7. ACTION BINDING (delegated, on the tab container)
+    // =========================================================================
+
+    function _bindActions(container) {
+        if (container._ghBound) return;
+        container._ghBound = true;
+
+        container.addEventListener('click', function (event) {
+            var target = event.target.closest('[data-action]');
+            if (!target || !container.contains(target)) return;
+
+            var action = target.getAttribute('data-action');
+            var locationId = container.dataset.locationId;
+            if (!locationId) return;
+
+            if (action === 'add-leader') {
+                event.preventDefault();
+                _addLeaderToLocation(locationId);
+                return;
+            }
+
+            if (action === 'refresh-history') {
+                event.preventDefault();
+                _refresh();
+                _toast('History refreshed', 'info');
+                return;
+            }
+
+            if (action === 'end-leader') {
+                event.preventDefault();
+                var charId = target.getAttribute('data-char-id');
+                if (!charId) return;
+                _endLeaderTerm(locationId, charId);
+                return;
+            }
+        });
+
+        // Former-leaders collapse toggle. Location is not needed here;
+        // the toggle only manipulates local DOM.
+        container.addEventListener('click', function (event) {
+            var toggle = event.target.closest('[data-toggle="former-leaders"]');
+            if (!toggle || !container.contains(toggle)) return;
+            event.preventDefault();
+            _toggleFormerLeaders(toggle);
+        });
+
+        // Keyboard activation for the toggle.
+        container.addEventListener('keydown', function (event) {
+            var toggle = event.target.closest('[data-toggle="former-leaders"]');
+            if (!toggle || !container.contains(toggle)) return;
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            _toggleFormerLeaders(toggle);
+        });
+    }
+
+    function _toggleFormerLeaders(toggle) {
+        var body = toggle.nextElementSibling;
+        if (!body) return;
+        var collapsed = body.classList.toggle('is-collapsed');
+        var icon = toggle.querySelector('.gh-toggle-icon');
+        if (icon) {
+            icon.innerHTML = collapsed
+                ? _getIcon('TRIANGLE_RIGHT')
+                : _getIcon('TRIANGLE_DOWN');
+        }
+        toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }
+
+    // =========================================================================
+    // 8. LEADER ACTIONS (through LocationCommands)
+    // =========================================================================
+
+    function _addLeaderToLocation(locationId) {
+        var place = _getPlaceById(locationId);
         if (!place) {
-            _showToast('Location not found', 'error');
+            _toast('Location not found', 'error');
             return;
         }
 
@@ -575,13 +781,13 @@
             title: 'Add Leader to ' + (place.displayName || place.name),
             preset: 'available',
             filters: {
-                location: placeId,
+                location: locationId,
                 showDeceased: true
             },
-            onSelect: function(characterId) {
+            onSelect: function (characterId) {
                 var char = _getCharacterById(characterId);
                 if (!char) {
-                    _showToast('Character not found', 'error');
+                    _toast('Character not found', 'error');
                     return;
                 }
 
@@ -589,7 +795,7 @@
                     (char.surname ? ' ' + char.surname : '');
 
                 var content = '<div class="gh-leader-form">';
-                content += '<p>Add <strong>' + _escapeHtml(charDisplay) +
+                content += '<p>Add <strong>' + _esc(charDisplay) +
                     '</strong> as a leader.</p>';
                 content += '<div class="form-group">';
                 content += '<label for="gh-leader-title-input">Title</label>';
@@ -639,14 +845,14 @@
                     content: content,
                     confirmText: 'Add Leader',
                     cancelText: 'Cancel',
-                    onMount: function(root) {
+                    onMount: function (root) {
                         var activeCheck = root.querySelector('#gh-leader-is-active');
                         var endYearInput = root.querySelector('#gh-leader-end-year');
                         var reasonInput = root.querySelector('#gh-leader-reason');
                         if (!activeCheck || !endYearInput || !reasonInput) return;
 
-                        activeCheck.addEventListener('change', function() {
-                            if (this.checked) {
+                        function sync() {
+                            if (activeCheck.checked) {
                                 endYearInput.disabled = true;
                                 endYearInput.value = '';
                                 reasonInput.disabled = true;
@@ -655,22 +861,24 @@
                                 endYearInput.disabled = false;
                                 reasonInput.disabled = false;
                             }
-                        });
+                        }
+                        activeCheck.addEventListener('change', sync);
+                        sync();
                     },
-                    onConfirm: function(root) {
+                    onConfirm: function (root) {
                         var titleEl = root.querySelector('#gh-leader-title-input');
                         var startEl = root.querySelector('#gh-leader-start-year');
                         var endEl = root.querySelector('#gh-leader-end-year');
                         var activeEl = root.querySelector('#gh-leader-is-active');
                         if (!titleEl || !startEl || !activeEl) {
-                            _showToast('Form not found in modal', 'error');
+                            _toast('Form not found in modal', 'error');
                             return false;
                         }
 
                         var title = titleEl.value.trim() || 'Leader';
                         var startYear = parseInt(startEl.value, 10);
-                        if (!Number.isFinite(startYear)) {
-                            _showToast('Start year is required', 'error');
+                        if (!isFinite(startYear)) {
+                            _toast('Start year is required', 'error');
                             return false;
                         }
 
@@ -680,15 +888,15 @@
                             endYear = endEl
                                 ? parseInt(endEl.value, 10)
                                 : NaN;
-                            if (!Number.isFinite(endYear)) {
-                                _showToast(
+                            if (!isFinite(endYear)) {
+                                _toast(
                                     'End year is required for ended terms',
                                     'error'
                                 );
                                 return false;
                             }
                             if (endYear <= startYear) {
-                                _showToast(
+                                _toast(
                                     'End year must be after start year',
                                     'error'
                                 );
@@ -696,11 +904,22 @@
                             }
                         }
 
-                        var assignResult = LC.assignLeader(
-                            placeId, characterId, startYear, title
-                        );
+                        var assignResult;
+                        try {
+                            assignResult = LC.assignLeader(
+                                locationId, characterId, startYear, title
+                            );
+                        } catch (err) {
+                            _toast(
+                                'Assign leader failed: ' +
+                                (err && err.message ? err.message : 'threw'),
+                                'error'
+                            );
+                            return false;
+                        }
+
                         if (!assignResult || assignResult.success !== true) {
-                            _showToast(
+                            _toast(
                                 (assignResult && assignResult.reason)
                                     ? assignResult.reason
                                     : 'Failed to assign leader',
@@ -710,40 +929,51 @@
                         }
 
                         if (!isActive) {
-                            var endResult = LC.endLeaderTerm(
-                                placeId, characterId, endYear
-                            );
+                            var endResult;
+                            try {
+                                endResult = LC.endLeaderTerm(
+                                    locationId, characterId, endYear
+                                );
+                            } catch (err) {
+                                endResult = {
+                                    success: false,
+                                    reason: err && err.message
+                                };
+                            }
                             if (!endResult || endResult.success !== true) {
-                                _showToast(
+                                _toast(
                                     'Leader assigned but end-term failed: ' +
                                     (endResult && endResult.reason
                                         ? endResult.reason
                                         : 'unknown'),
                                     'error'
                                 );
-                                LC.persist();
-                                if (typeof onComplete === 'function') onComplete();
+                                // Persist the assignment that did succeed.
+                                try { LC.persist(); } catch (e) { /* logged below via _refresh */ }
+                                _refresh();
                                 return false;
                             }
                         }
 
-                        var persistResult = LC.persist();
+                        var persistResult;
+                        try { persistResult = LC.persist(); }
+                        catch (err) {
+                            persistResult = { success: false, reason: 'persist threw' };
+                        }
                         if (persistResult && persistResult.success !== true) {
-                            _showToast(
+                            _toast(
                                 'Leader added, but save failed: ' +
                                 (persistResult.reason || 'unknown'),
                                 'warning'
                             );
                         } else {
-                            _showToast(
-                                isActive
-                                    ? 'Leader assigned'
-                                    : 'Past leader recorded',
+                            _toast(
+                                isActive ? 'Leader assigned' : 'Past leader recorded',
                                 'success'
                             );
                         }
 
-                        if (typeof onComplete === 'function') onComplete();
+                        _refresh();
                         return true;
                     }
                 });
@@ -751,7 +981,7 @@
         });
     }
 
-    function _endLeaderTerm(placeId, characterId, onComplete) {
+    function _endLeaderTerm(locationId, characterId) {
         var char = _getCharacterById(characterId);
         var charName = char
             ? (char.name + (char.surname ? ' ' + char.surname : ''))
@@ -759,7 +989,7 @@
 
         var content = '<div class="gh-leader-form">';
         content += '<p>End leadership term for <strong>' +
-            _escapeHtml(charName) + '</strong>?</p>';
+            _esc(charName) + '</strong>?</p>';
         content += '<div class="form-group">';
         content += '<label for="gh-end-year-input">End Year</label>';
         content += '<input type="number" id="gh-end-year-input" ' +
@@ -772,21 +1002,32 @@
             content: content,
             confirmText: 'End Term',
             cancelText: 'Cancel',
-            onConfirm: function(root) {
+            onConfirm: function (root) {
                 var yearEl = root.querySelector('#gh-end-year-input');
                 if (!yearEl) {
-                    _showToast('Form not found in modal', 'error');
+                    _toast('Form not found in modal', 'error');
                     return false;
                 }
 
                 var endYear = parseInt(yearEl.value, 10);
-                if (!Number.isFinite(endYear)) {
+                if (!isFinite(endYear)) {
                     endYear = _getCurrentYear();
                 }
 
-                var result = LC.endLeaderTerm(placeId, characterId, endYear);
+                var result;
+                try {
+                    result = LC.endLeaderTerm(locationId, characterId, endYear);
+                } catch (err) {
+                    _toast(
+                        'End leader term failed: ' +
+                        (err && err.message ? err.message : 'threw'),
+                        'error'
+                    );
+                    return false;
+                }
+
                 if (!result || result.success !== true) {
-                    _showToast(
+                    _toast(
                         (result && result.reason)
                             ? result.reason
                             : 'Failed to end leader term',
@@ -795,130 +1036,54 @@
                     return false;
                 }
 
-                var persistResult = LC.persist();
+                var persistResult;
+                try { persistResult = LC.persist(); }
+                catch (err) {
+                    persistResult = { success: false, reason: 'persist threw' };
+                }
                 if (persistResult && persistResult.success !== true) {
-                    _showToast(
+                    _toast(
                         'Term ended, but save failed: ' +
                         (persistResult.reason || 'unknown'),
                         'warning'
                     );
                 } else {
-                    _showToast('Leadership term ended', 'info');
+                    _toast('Leadership term ended', 'info');
                 }
 
-                if (typeof onComplete === 'function') onComplete();
+                _refresh();
                 return true;
             }
         });
     }
 
     // =========================================================================
-    // 6. MAIN RENDER
+    // 9. REGISTRATION (playbook §5)
     // =========================================================================
 
-    function renderGovernmentHistoryTab(containerId, locationId) {
-        var container = document.getElementById(containerId);
-        if (!container) {
-            console.warn(
-                'Government history container not found:', containerId
-            );
-            return;
-        }
-
-        var place = locationId ? _getPlaceById(locationId) : null;
-        container.innerHTML = _renderGovernmentHistory(place);
-        container.dataset.locationId = locationId || '';
-
-        if (!container._ghBound) {
-            container._ghBound = true;
-
-            container.addEventListener('click', function(e) {
-                var target = e.target.closest('[data-action]');
-                if (!target) return;
-
-                var action = target.dataset.action;
-                var currentLocationId = container.dataset.locationId;
-                var refresh = function() {
-                    renderGovernmentHistoryTab(containerId, currentLocationId);
-                };
-
-                switch (action) {
-                    case 'add-leader':
-                        if (currentLocationId) {
-                            _addLeaderToLocation(currentLocationId, refresh);
-                        } else {
-                            _showToast('No location selected', 'warning');
-                        }
-                        break;
-
-                    case 'refresh-history':
-                        if (currentLocationId) {
-                            renderGovernmentHistoryTab(
-                                containerId, currentLocationId
-                            );
-                            _showToast('History refreshed', 'info');
-                        }
-                        break;
-
-                    case 'end-leader':
-                        if (currentLocationId) {
-                            var charId = target.dataset.charId;
-                            if (charId) {
-                                _endLeaderTerm(currentLocationId, charId, refresh);
-                            }
-                        }
-                        break;
-                }
-            });
-
-            container.addEventListener('click', function(e) {
-                var toggle = e.target.closest('[data-toggle="former-leaders"]');
-                if (!toggle) return;
-                var body = toggle.nextElementSibling;
-                if (!body) return;
-                var collapsed = body.classList.toggle('is-collapsed');
-                var icon = toggle.querySelector('.gh-toggle-icon');
-                if (icon) {
-                    icon.innerHTML = collapsed
-                        ? _getIcon('TRIANGLE_RIGHT')
-                        : _getIcon('TRIANGLE_DOWN');
-                }
-            });
-        }
-    }
-
-    function refreshGovernmentHistoryTab(locationId) {
-        var container = document.querySelector('.gh-tab-container');
-        if (!container) {
-            var candidates = document.querySelectorAll(
-                '.gh-tab-container, #government-history-tab'
-            );
-            if (candidates.length > 0) container = candidates[0];
-        }
-        if (container) {
-            renderGovernmentHistoryTab(
-                container.id || 'government-history-tab',
-                locationId
-            );
-        }
-    }
+    TM.register(SCOPE, TAB_ID, renderGovernmentHistoryTab);
 
     // =========================================================================
-    // 7. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.GovernmentHistoryTab = {
+        id: TAB_ID,
         render: renderGovernmentHistoryTab,
-        refresh: refreshGovernmentHistoryTab,
+
+        // Data accessors, exposed for tests and for any future caller
+        // that wants the same projections this tab uses.
         getLeaders: _getAllLeaderAssignments,
         getOfficials: _getAllGovernmentOfficials,
+
+        // Internal helpers, exposed for tests.
         _renderLeaderCard: _renderLeaderCard,
         _renderOfficialCard: _renderOfficialCard,
         _addLeader: _addLeaderToLocation,
         _endLeader: _endLeaderTerm
     };
 
-    window.renderGovernmentHistoryTab = renderGovernmentHistoryTab;
-    window.refreshGovernmentHistoryTab = refreshGovernmentHistoryTab;
-
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.GovernmentHistoryTab;
+    }
 })();
