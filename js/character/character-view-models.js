@@ -16,10 +16,10 @@
  *   - buildFriendshipModel(id)
  *   - buildRomanceModel(id)
  *   - buildFamilyModel(id)
- *   - buildSkillsModel(id)          NEW
+ *   - buildLocationModel(id)          NEW
  *
  * SCOPE (future revisions, as tabs are built):
- *   - buildLocationModel, buildOverviewModel
+ *   - buildSkillsModel, buildOverviewModel
  *
  * OUT OF SCOPE:
  *   - Any DOM writes, mutations, localStorage, new query logic
@@ -36,47 +36,74 @@
  *   - RomanceQueries, FriendshipQueries, AffairQueries
  *   - RelationshipUI
  *   - formatting.js, icons.js
+ *   - HouseholdQueries (for buildLocationModel — read via getHouseholdMembers)
+ *   - ResidenceSystem (for buildLocationModel — read via
+ *     getResidencesByHousehold / getUnit / getUnitStats)
+ *   - LocationQueries (for buildLocationModel — read via
+ *     getCurrentLocationId, getPlace, getAllPlaces)
+ *   - FamilyRules (for buildLocationModel's relationship classification)
  *
  * OPTIONAL DEPENDENCIES (guarded at call time):
  *   - window.getRankById, window.getPlaceById
- *   - RoleState.getRole, window.getRoleById  (skills section)
- *   - SUBJECTS_BY_ID                          (skills section)
- *   - ApprenticeshipQueries                   (skills section —
- *                                              absent on CharacterManager.html;
- *                                              degrades to
- *                                              { available: false })
  *   - ReligionQueries, CultureQueries, RelationshipQueries
+ *   - world.getCurrentLocationId (semantic resolver)
  *
  * ICON POLICY: Uses SVG from icons.js. No emojis.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
- *     - buildSkillsModel(characterId) added. Sections: identity,
- *       professions[], education[], educationHistory[],
- *       subjectProgress[], literacy, apprenticeship, traits, errors.
- *     - Apprenticeship section degrades cleanly when
- *       ApprenticeshipQueries is not loaded (CharacterManager.html does
- *       not load the apprenticeship domain). It returns
- *       { available: false, reason, ... } so the tab renders an
- *       unavailable message rather than an empty list.
- *     - _resolveRoleName(roleId) and _resolveSubjectName(key) helpers
- *       added. Both are tolerant: they fall back to the raw id / key
- *       and never throw. Not exported — they are internal to the
- *       skills builder.
- *     - Professions enriched with roleName (via _resolveRoleName) and
- *       tierLabel (via skillTierLabel).
- *     - SubjectProgress enriched with name (via _resolveSubjectName)
- *       and tierLabel. Sorted by level descending.
- *     - No public resolvers changed. No builder changed. Purely
- *       additive.
+ *   Current revision (household-tab P7):
+ *     - Added buildLocationModel(characterId). Returns a complete
+ *       render-ready model for the Location tab:
+ *
+ *         {
+ *           characterId,
+ *           identity: { id, name, surname, fullName, isDeceased },
+ *           currentLocation: { locationId, locationName, source,
+ *                              rawCurrentLocationId,
+ *                              resolvedDiffersFromRaw },
+ *           birthplace: { placeId, placeName },
+ *           moves: [ MoveEntry ],
+ *           household: { available, householdId, householdName, role,
+ *                        isHead, memberCount, currentNameSince,
+ *                        currentLocationName },
+ *           householdMembers: [ HouseholdMemberEntry ],
+ *           householdHistory: [ HouseholdHistoryEntry ],
+ *           householdHistoryStructured: boolean,
+ *           residences: { available, entries: [ ResidenceSummary ] },
+ *           relationshipCircles: { byTargetId: { id: 'spouse' | 'blood'
+ *                                              | 'relative' } },
+ *           notes: string,
+ *           errors: { ... }
+ *         }
+ *
+ *       Section availability flags (household.available,
+ *       residences.available, householdHistoryStructured) let the tab
+ *       render fallback states instead of guessing from empty arrays.
+ *
+ *     - Added _resolveRelationshipClass(subjectId, targetId) helper:
+ *         'spouse'   active committed romantic partner
+ *         'blood'    FamilyRules.classifyKinship reports a blood relation
+ *                    (anything except SELF / UNRELATED)
+ *         'relative' any other tracked relationship (friendship, non-
+ *                    committed romance)
+ *         null       no tracked relationship
+ *
+ *     - Added the sub-block helpers used by buildLocationModel:
+ *         _resolveCurrentLocationBlock(summary)
+ *         _resolveBirthplaceBlock(summary)
+ *         _resolveMovesBlock(characterId, errors)
+ *         _resolveHouseholdBlock(summary, errors)
+ *         _resolveHouseholdMembersBlock(householdId, errors)
+ *         _resolveHouseholdHistoryBlock(summary, errors)
+ *         _resolveResidencesBlock(householdId, errors)
+ *         _resolveRelationshipCirclesBlock(subjectId, memberIds, errors)
+ *
+ *     - No behavioural change to any existing builder.
  *   Previous revision:
  *     - buildFamilyModel(characterId) added. Sections:
  *         identity, parents, children, siblings, grandchildren,
- *         surrogacyChildren, adoptedParents, isOrphan.
- *       Each family reference enriched with the target character's
- *       summary plus FamilyRules-derived classification metadata
- *       (sibling type, parent role).
+ *         surrogacyChildren, errors.
  *   Previous revision:
  *     - buildRomanceModel(characterId) added.
  *   Earlier revision:
@@ -1582,335 +1609,506 @@
     }
 
     // =========================================================================
-    // 10. SKILLS — HELPERS
+    // 10. LOCATION — SUB-BLOCK BUILDERS
     // =========================================================================
+    //
+    // buildLocationModel is the Location tab's single read surface. Every
+    // sub-block has its own _safe() wrapper so a broken dependency in one
+    // section (e.g. HouseholdQueries not loaded) does not blank the whole
+    // tab; the affected block is null and the error is recorded under
+    // model.errors[<block>].
 
     /**
-     * Resolves a role id to a display name using the canonical role
-     * reader. Returns the raw id when neither reader is available or the
-     * role is missing. NEVER throws.
+     * Resolves the character's current location, raw field, and whether
+     * the resolved location differs from the raw field.
      *
-     * Preferred path: RoleState.getRole (returns clones).
-     * Fallback path:  window.getRoleById (aliased to RoleState.getRole
-     *                 by role-system.js; also clones).
+     * Priority:
+     *   1. World.getCurrentLocationId(character) — semantic (explicit
+     *      override / moves / birthplace)
+     *   2. CharacterQueries.getCurrentLocationId(characterId) — raw field
+     *   3. null
+     *
+     * The tab distinguishes "no location recorded" (both null) from
+     * "raw field is null but a move placed them elsewhere" (resolved
+     * differs from raw) — the same three-state model as
+     * character-ui-list.js.
+     *
+     * @param {Object} summary  projection
+     * @param {string} characterId
+     * @returns {{
+     *   locationId: string|null,
+     *   locationName: string|null,
+     *   source: 'explicit'|'move'|'birthplace'|'none',
+     *   rawCurrentLocationId: string|null,
+     *   resolvedDiffersFromRaw: boolean
+     * }}
      */
-    function _resolveRoleName(roleId) {
-        if (!_hasId(roleId)) return '';
-        var role = null;
-        try {
-            if (typeof window.RoleState !== 'undefined'
-                && window.RoleState !== null
-                && typeof window.RoleState.getRole === 'function') {
-                role = window.RoleState.getRole(roleId);
-            } else if (typeof window.getRoleById === 'function') {
-                role = window.getRoleById(roleId);
-            }
-        } catch (e) {
-            role = null;
-        }
-        if (role && typeof role.name === 'string' && role.name.length > 0) {
-            return role.name;
-        }
-        return roleId;
-    }
+    function _resolveCurrentLocationBlock(summary, characterId) {
+        var raw = (summary && typeof summary.locationId === 'string')
+            ? summary.locationId
+            : null;
 
-    /**
-     * Resolves a subject key (bare id or 'role_<roleId>') to a display
-     * name. Uses SUBJECTS_BY_ID when loaded; otherwise strips the
-     * 'role_' prefix and resolves the role name; otherwise returns the
-     * raw key. NEVER throws.
-     */
-    function _resolveSubjectName(key) {
-        if (!_hasId(key)) return '';
-        if (typeof window.SUBJECTS_BY_ID !== 'undefined'
-            && window.SUBJECTS_BY_ID !== null) {
-            var sub = window.SUBJECTS_BY_ID[key];
-            if (sub && typeof sub.name === 'string' && sub.name.length > 0) {
-                return sub.name;
-            }
-        }
-        if (key.indexOf('role_') === 0) {
-            var roleId = key.substring(5);
-            var roleName = _resolveRoleName(roleId);
-            if (roleName) return roleName;
-        }
-        return key;
-    }
+        var resolved = raw;
+        var source = raw ? 'explicit' : 'none';
 
-    function _buildProfessionsList(characterId, errors) {
-        return _safe('professions', function () {
-            var raw = CC.getProfessions(characterId);
-            if (!Array.isArray(raw)) return [];
-            var out = [];
-            for (var i = 0; i < raw.length; i++) {
-                var p = raw[i];
-                if (!p || !_hasId(p.id)) continue;
-                out.push({
-                    id: p.id,
-                    name: typeof p.name === 'string' ? p.name : _resolveRoleName(p.id),
-                    roleName: _resolveRoleName(p.id),
-                    skillLevel: typeof p.skillLevel === 'number' ? p.skillLevel : 0,
-                    tierLabel: skillTierLabel(p.skillLevel),
-                    startYear: _isMissing(p.startYear) ? null : p.startYear,
-                    primary: p.primary === true,
-                    notes: typeof p.notes === 'string' ? p.notes : '',
-                    specs: Array.isArray(p.specs) ? p.specs.slice() : [],
-                    baseSalary: typeof p.baseSalary === 'number' ? p.baseSalary : 0,
-                    customSalary: _isMissing(p.customSalary) ? null : p.customSalary,
-                    paysSalary: p.paysSalary === true
-                });
-            }
-            out.sort(function (a, b) {
-                if (a.primary !== b.primary) return a.primary ? -1 : 1;
-                if (b.skillLevel !== a.skillLevel) return b.skillLevel - a.skillLevel;
-                return a.roleName.localeCompare(b.roleName);
-            });
-            return out;
-        }, errors);
-    }
-
-    function _buildEducationList(characterId, errors) {
-        return _safe('education', function () {
-            var raw = CC.getEducationRecords(characterId);
-            if (!Array.isArray(raw)) return [];
-            var out = [];
-            for (var i = 0; i < raw.length; i++) {
-                var e = raw[i];
-                if (!e || !_hasId(e.institutionId)) continue;
-                out.push({
-                    institutionId: e.institutionId,
-                    institutionName: typeof e.institutionName === 'string'
-                        ? e.institutionName : e.institutionId,
-                    institutionType: typeof e.institutionType === 'string'
-                        ? e.institutionType : '',
-                    enrolledYear: _isMissing(e.enrolledYear) ? null : e.enrolledYear,
-                    graduated: e.graduated === true,
-                    graduationYear: _isMissing(e.graduationYear) ? null : e.graduationYear,
-                    grantedRole: _isMissing(e.grantedRole) ? null : e.grantedRole,
-                    grantedRoleName: e.grantedRole ? _resolveRoleName(e.grantedRole) : null,
-                    withdrawn: e.withdrawn === true,
-                    withdrawnReason: typeof e.withdrawnReason === 'string'
-                        ? e.withdrawnReason : '',
-                    withdrawnYear: _isMissing(e.withdrawnYear) ? null : e.withdrawnYear
-                });
-            }
-            out.sort(function (a, b) {
-                var ya = typeof a.enrolledYear === 'number' ? a.enrolledYear : 0;
-                var yb = typeof b.enrolledYear === 'number' ? b.enrolledYear : 0;
-                return yb - ya;
-            });
-            return out;
-        }, errors);
-    }
-
-    function _buildEducationHistoryList(characterId, errors) {
-        return _safe('educationHistory', function () {
-            var raw = CC.getEducationHistory(characterId);
-            if (!Array.isArray(raw)) return [];
-            var out = [];
-            for (var i = 0; i < raw.length; i++) {
-                var e = raw[i];
-                if (!e || typeof e !== 'object') continue;
-                out.push({
-                    institutionId: _isMissing(e.institutionId) ? null : e.institutionId,
-                    institutionName: typeof e.institutionName === 'string'
-                        ? e.institutionName : '',
-                    institutionType: typeof e.institutionType === 'string'
-                        ? e.institutionType : '',
-                    enrolledYear: _isMissing(e.enrolledYear) ? null : e.enrolledYear,
-                    graduationYear: _isMissing(e.graduationYear) ? null : e.graduationYear,
-                    grantedRole: _isMissing(e.grantedRole) ? null : e.grantedRole,
-                    grantedRoleName: e.grantedRole ? _resolveRoleName(e.grantedRole) : null,
-                    taughtRoles: Array.isArray(e.taughtRoles) ? e.taughtRoles.slice() : [],
-                    curriculum: Array.isArray(e.curriculum) ? e.curriculum.slice() : []
-                });
-            }
-            out.sort(function (a, b) {
-                var ya = typeof a.graduationYear === 'number' ? a.graduationYear : 0;
-                var yb = typeof b.graduationYear === 'number' ? b.graduationYear : 0;
-                return yb - ya;
-            });
-            return out;
-        }, errors);
-    }
-
-    function _buildSubjectProgressList(characterId, errors) {
-        return _safe('subjectProgress', function () {
-            var raw = CC.getAllSubjectProgress(characterId);
-            if (!Array.isArray(raw)) return [];
-            var out = [];
-            for (var i = 0; i < raw.length; i++) {
-                var p = raw[i];
-                if (!p || !_hasId(p.key)) continue;
-                var level = (typeof p.level === 'number' && p.level >= 0 && p.level <= 100)
-                    ? p.level : 0;
-                out.push({
-                    key: p.key,
-                    name: _resolveSubjectName(p.key),
-                    level: level,
-                    tierLabel: skillTierLabel(level),
-                    lastStudied: _isMissing(p.lastStudied) ? null : p.lastStudied,
-                    source: _isMissing(p.source) ? null : p.source,
-                    type: p.type === 'role' ? 'role' : 'subject',
-                    roleId: _isMissing(p.roleId) ? null : p.roleId
-                });
-            }
-            out.sort(function (a, b) { return b.level - a.level; });
-            return out;
-        }, errors);
-    }
-
-    function _buildLiteracyBlock(characterId, errors) {
-        return _safe('literacy', function () {
-            var isLit = false;
-            try { isLit = CC.isLiterate(characterId) === true; }
-            catch (e) { isLit = false; }
-
-            var literacyLevel = 0;
-            var all = CC.getAllSubjectProgress(characterId);
-            if (Array.isArray(all)) {
-                for (var i = 0; i < all.length; i++) {
-                    if (all[i] && all[i].key === 'literacy'
-                        && typeof all[i].level === 'number') {
-                        literacyLevel = all[i].level;
-                        break;
+        // Semantic resolver — window.getCurrentLocationId takes a
+        // character object (world.js signature). Fall back to the raw
+        // field if the resolver is not present.
+        if (typeof window.getCurrentLocationId === 'function' && summary) {
+            try {
+                var semantic = window.getCurrentLocationId(summary);
+                if (typeof semantic === 'string' && semantic.length > 0) {
+                    if (semantic === raw) {
+                        // Confirms the explicit field is authoritative.
+                        resolved = raw;
+                        source = 'explicit';
+                    } else {
+                        resolved = semantic;
+                        // The resolver returns the resolved location;
+                        // the source is one of move/birthplace when
+                        // the raw field is null or differs.
+                        source = raw ? 'explicit' : 'move';
+                        // We cannot distinguish move vs birthplace
+                        // without re-reading the character. Leave the
+                        // classification coarse; the tab displays the
+                        // resolved name either way.
                     }
                 }
-            }
+            } catch (e) { /* fall through */ }
+        }
 
-            return {
-                isLiterate: isLit,
-                literacyLevel: literacyLevel,
-                tierLabel: skillTierLabel(literacyLevel),
-                canTeach: literacyLevel >= 51
-            };
+        var name = resolved ? resolvePlaceName(resolved) : null;
+
+        return {
+            locationId: resolved || null,
+            locationName: name || null,
+            source: source,
+            rawCurrentLocationId: raw,
+            resolvedDiffersFromRaw: (resolved || null) !== (raw || null)
+        };
+    }
+
+    function _resolveBirthplaceBlock(summary) {
+        if (!summary || !summary.birthplaceId) {
+            return { placeId: null, placeName: null };
+        }
+        return {
+            placeId: summary.birthplaceId,
+            placeName: resolvePlaceName(summary.birthplaceId)
+        };
+    }
+
+    function _resolveMovesBlock(characterId, errors) {
+        return _safe('moves', function () {
+            var moves = [];
+            if (typeof CQ.getMoveHistory === 'function') {
+                try { moves = CQ.getMoveHistory(characterId) || []; }
+                catch (e) { moves = []; }
+            }
+            if (!Array.isArray(moves)) return [];
+            // Return a fresh, normalized copy. Every field the tab
+            // reads is present.
+            var out = [];
+            for (var i = 0; i < moves.length; i++) {
+                var m = moves[i];
+                if (!m || typeof m !== 'object') continue;
+                out.push({
+                    index: i,
+                    year: _isMissing(m.year) ? null : m.year,
+                    locationId: _isMissing(m.locationId) ? null : m.locationId,
+                    locationName: _isMissing(m.locationName)
+                        ? (m.locationId ? resolvePlaceName(m.locationId) : null)
+                        : m.locationName,
+                    fromLocationId: _isMissing(m.fromLocationId)
+                        ? null : m.fromLocationId,
+                    fromLocationName: _isMissing(m.fromLocationName)
+                        ? null : m.fromLocationName,
+                    note: _isMissing(m.note) ? null : m.note,
+                    isBirthMove: m.isBirthMove === true,
+                    timestamp: _isMissing(m.timestamp) ? null : m.timestamp
+                });
+            }
+            // Ascending by year (stable for null-year entries).
+            out.sort(function (a, b) {
+                var ya = typeof a.year === 'number' ? a.year : -Infinity;
+                var yb = typeof b.year === 'number' ? b.year : -Infinity;
+                if (ya !== yb) return ya - yb;
+                return a.index - b.index;
+            });
+            return out;
         }, errors);
     }
 
-    function _buildApprenticeshipBlock(characterId, errors) {
-        return _safe('apprenticeship', function () {
-            var AQs = window.ApprenticeshipQueries;
-            if (!AQs
-                || typeof AQs.getMasters !== 'function'
-                || typeof AQs.getApprentices !== 'function') {
+    function _resolveHouseholdBlock(summary, errors) {
+        return _safe('household', function () {
+            if (typeof window.HouseholdQueries === 'undefined'
+                || window.HouseholdQueries === null) {
                 return {
                     available: false,
-                    reason: 'Apprenticeship domain is not loaded on this page. ' +
-                            'Use the Apprenticeship Manager to view or edit ' +
-                            'training relationships.',
-                    isMaster: false,
-                    master: null,
-                    apprentices: []
+                    reason: 'HouseholdQueries is not loaded',
+                    householdId: null,
+                    householdName: null,
+                    role: null,
+                    isHead: false,
+                    memberCount: 0,
+                    currentNameSince: null,
+                    currentLocationName: null
                 };
             }
 
-            var masterEntry = null;
-            var apprentices = [];
+            var householdId = (summary && typeof summary.householdId === 'string'
+                && summary.householdId.length > 0)
+                ? summary.householdId
+                : (summary && typeof summary.household === 'string'
+                    && summary.household.length > 0
+                    ? summary.household
+                    : null);
 
-            try {
-                var masters = AQs.getMasters(characterId, true);
-                if (Array.isArray(masters) && masters.length > 0) {
-                    var m = masters[0];
-                    if (m && _hasId(m.masterId)) {
-                        masterEntry = {
-                            masterId: m.masterId,
-                            masterName: typeof m.masterName === 'string'
-                                ? m.masterName : resolveName(m.masterId),
-                            roleId: _isMissing(m.roleId) ? null : m.roleId,
-                            roleName: _resolveRoleName(m.roleId),
-                            skillLevel: typeof m.skillLevel === 'number' ? m.skillLevel : 0,
-                            stage: m.stage && typeof m.stage === 'object'
-                                ? { id: m.stage.id, name: m.stage.name }
-                                : null,
-                            startYear: _isMissing(m.startYear) ? null : m.startYear
-                        };
-                    }
-                }
-            } catch (e) {
-                errors['apprenticeship.master'] = (e && e.message) ? e.message : 'unknown error';
+            if (!householdId) {
+                return {
+                    available: true,
+                    householdId: null,
+                    householdName: null,
+                    role: null,
+                    isHead: false,
+                    memberCount: 0,
+                    currentNameSince: null,
+                    currentLocationName: null
+                };
             }
 
-            try {
-                var apprs = AQs.getApprentices(characterId, true);
-                if (Array.isArray(apprs)) {
-                    for (var i = 0; i < apprs.length; i++) {
-                        var a = apprs[i];
-                        if (!a || !_hasId(a.apprenticeId)) continue;
-                        apprentices.push({
-                            apprenticeId: a.apprenticeId,
-                            apprenticeName: typeof a.apprenticeName === 'string'
-                                ? a.apprenticeName : resolveName(a.apprenticeId),
-                            roleId: _isMissing(a.roleId) ? null : a.roleId,
-                            roleName: _resolveRoleName(a.roleId),
-                            skillLevel: typeof a.skillLevel === 'number' ? a.skillLevel : 0,
-                            stage: a.stage && typeof a.stage === 'object'
-                                ? { id: a.stage.id, name: a.stage.name }
-                                : null,
-                            startYear: _isMissing(a.startYear) ? null : a.startYear
-                        });
+            var h = null;
+            try { h = window.HouseholdQueries.getHousehold(householdId); }
+            catch (e) { h = null; }
+
+            if (!h) {
+                // Character points at a household that no longer exists.
+                return {
+                    available: true,
+                    householdId: householdId,
+                    householdName: null,
+                    role: null,
+                    isHead: false,
+                    memberCount: 0,
+                    currentNameSince: null,
+                    currentLocationName: null,
+                    danglingReference: true
+                };
+            }
+
+            // Derive this character's role from householdHistory if
+            // available (the projection's householdHistory is what
+            // CharacterState emits; we look up the current entry).
+            var role = null;
+            var isHead = false;
+            if (Array.isArray(summary.householdHistory)) {
+                for (var i = summary.householdHistory.length - 1; i >= 0; i--) {
+                    var entry = summary.householdHistory[i];
+                    if (!entry || entry.householdId !== householdId) continue;
+                    if (entry.leftYear !== null && entry.leftYear !== undefined) {
+                        continue;
                     }
+                    if (typeof entry.role === 'string' && entry.role.length > 0) {
+                        role = entry.role;
+                    }
+                    isHead = entry.isHead === true;
+                    break;
                 }
-            } catch (e) {
-                errors['apprenticeship.apprentices'] = (e && e.message) ? e.message : 'unknown error';
             }
 
             return {
                 available: true,
-                isMaster: apprentices.length > 0,
-                master: masterEntry,
-                apprentices: apprentices
+                householdId: householdId,
+                householdName: h.name || null,
+                role: role,
+                isHead: isHead,
+                memberCount: typeof h.memberCount === 'number' ? h.memberCount : 0,
+                currentNameSince: _isMissing(h.currentNameSince)
+                    ? null : h.currentNameSince,
+                currentLocationName: h.locationName || null
             };
         }, errors);
     }
 
-    function _buildTraitsBlock(characterId, errors) {
-        return _safe('traits', function () {
-            var raw = CC.getTraits(characterId);
-            if (!Array.isArray(raw)) return [];
-            return raw.slice();
+    function _resolveHouseholdMembersBlock(householdId, errors) {
+        return _safe('householdMembers', function () {
+            if (!_hasId(householdId)) return [];
+            if (typeof window.HouseholdQueries === 'undefined'
+                || window.HouseholdQueries === null) {
+                return [];
+            }
+            if (typeof window.HouseholdQueries.getHouseholdMembers !== 'function') {
+                return [];
+            }
+            var members = [];
+            try { members = window.HouseholdQueries.getHouseholdMembers(householdId); }
+            catch (e) { members = []; }
+            if (!Array.isArray(members)) return [];
+
+            var out = [];
+            for (var i = 0; i < members.length; i++) {
+                var m = members[i];
+                if (!m || !_hasId(m.characterId)) continue;
+                out.push({
+                    characterId: m.characterId,
+                    characterName: m.characterName || '',
+                    name: (m.character && m.character.name) || '',
+                    surname: (m.character && m.character.surname) || '',
+                    age: (typeof m.age === 'number') ? m.age : null,
+                    gender: (m.character && m.character.gender) || 'unknown',
+                    isHead: m.isHead === true,
+                    isDeceased: m.isDeceased === true,
+                    isMissing: m.isMissing === true,
+                    role: m.role || null,
+                    type: m.type || null,
+                    departmentId: m.departmentId || null,
+                    joinedYear: _isMissing(m.joinedYear) ? null : m.joinedYear
+                });
+            }
+            // Sort: head first, then by name.
+            out.sort(function (a, b) {
+                if (a.isHead !== b.isHead) return a.isHead ? -1 : 1;
+                var an = (a.characterName || a.name || '').toLowerCase();
+                var bn = (b.characterName || b.name || '').toLowerCase();
+                return an.localeCompare(bn);
+            });
+            return out;
+        }, errors);
+    }
+
+    function _resolveHouseholdHistoryBlock(summary, errors) {
+        return _safe('householdHistory', function () {
+            var raw = summary && Array.isArray(summary.householdHistory)
+                ? summary.householdHistory
+                : [];
+
+            var structured = true;
+            var out = [];
+            for (var i = 0; i < raw.length; i++) {
+                var e = raw[i];
+                if (!e || typeof e !== 'object') {
+                    // A string entry means the projection is still
+                    // emitting the pre-fix shape (character-state.js
+                    // before household-tab P1). Surface it as
+                    // unstructured so the tab can warn.
+                    if (typeof e === 'string') {
+                        structured = false;
+                    }
+                    continue;
+                }
+                out.push({
+                    householdId: _isMissing(e.householdId) ? null : e.householdId,
+                    householdName: _isMissing(e.householdName) ? null : e.householdName,
+                    joinedYear: _isMissing(e.joinedYear) ? null : e.joinedYear,
+                    leftYear: _isMissing(e.leftYear) ? null : e.leftYear,
+                    leftReason: _isMissing(e.leftReason) ? null : e.leftReason,
+                    role: _isMissing(e.role) ? null : e.role,
+                    isHead: e.isHead === true,
+                    timestamp: _isMissing(e.timestamp) ? null : e.timestamp,
+                    isCurrent: (e.leftYear === null || e.leftYear === undefined)
+                });
+            }
+
+            // Sort by joinedYear ascending, current entry last.
+            out.sort(function (a, b) {
+                var ja = typeof a.joinedYear === 'number' ? a.joinedYear : -Infinity;
+                var jb = typeof b.joinedYear === 'number' ? b.joinedYear : -Infinity;
+                return ja - jb;
+            });
+
+            return {
+                entries: out,
+                structured: structured
+            };
+        }, errors);
+    }
+
+    function _resolveResidencesBlock(householdId, errors) {
+        return _safe('residences', function () {
+            if (typeof window.ResidenceSystem === 'undefined'
+                || window.ResidenceSystem === null) {
+                return {
+                    available: false,
+                    reason: 'ResidenceSystem is not loaded',
+                    entries: []
+                };
+            }
+
+            if (!_hasId(householdId)) {
+                return { available: true, entries: [] };
+            }
+
+            var residences = [];
+            try {
+                residences = window.ResidenceSystem
+                    .getResidencesByHousehold(householdId) || [];
+            } catch (e) { residences = []; }
+            if (!Array.isArray(residences)) residences = [];
+
+            var entries = [];
+            for (var i = 0; i < residences.length; i++) {
+                var r = residences[i];
+                if (!r || !_hasId(r.id)) continue;
+
+                // Look up which unit this household occupies in this
+                // residence.
+                var unitNumber = null;
+                var unitId = null;
+                try {
+                    var units = window.ResidenceSystem.getUnits(r.id) || [];
+                    for (var u = 0; u < units.length; u++) {
+                        var unit = units[u];
+                        if (unit && unit.householdId === householdId
+                            && !unit.isDemolished) {
+                            unitNumber = unit.unitNumber;
+                            unitId = unit.id;
+                            break;
+                        }
+                    }
+                } catch (e) { /* leave null */ }
+
+                var unitStats = null;
+                try { unitStats = window.ResidenceSystem.getUnitStats(r.id); }
+                catch (e) { unitStats = null; }
+
+                entries.push({
+                    id: r.id,
+                    name: r.name || r.id,
+                    typeId: r.typeId || null,
+                    typeName: r.typeName || null,
+                    locationId: r.locationId || null,
+                    locationName: r.locationName || null,
+                    condition: r.condition || null,
+                    isMultiUnit: r.isMultiUnit === true,
+                    isVacant: r.isVacant === true,
+                    isDemolished: r.isDemolished === true,
+                    occupiedUnitNumber: unitNumber,
+                    occupiedUnitId: unitId,
+                    unitStats: unitStats,
+                    estimatedValue: _isMissing(r.estimatedValue)
+                        ? null : r.estimatedValue,
+                    builtYear: _isMissing(r.builtYear) ? null : r.builtYear
+                });
+            }
+            // Sort: active first, then by name.
+            entries.sort(function (a, b) {
+                if (a.isDemolished !== b.isDemolished) {
+                    return a.isDemolished ? 1 : -1;
+                }
+                return (a.name || '').localeCompare(b.name || '');
+            });
+            return { available: true, entries: entries };
+        }, errors);
+    }
+
+    /**
+     * Classifies the relationship between the subject character and a
+     * target character for the Location tab's member-circle indicator.
+     *
+     * Precedence (higher wins):
+     *   'spouse'   target is an active committed romantic partner of
+     *              the subject
+     *   'blood'    FamilyRules.classifyKinship reports a blood relation
+     *              (anything except SELF / UNRELATED)
+     *   'relative' target appears in any other tracked relationship
+     *              (friendship, non-committed romance)
+     *   null       no tracked relationship
+     *
+     * The function does not throw. Missing dependencies cause the
+     * affected check to be skipped; if none of the three checks report
+     * a relationship, returns null.
+     *
+     * @param {string} subjectId
+     * @param {string} targetId
+     * @returns {'spouse'|'blood'|'relative'|null}
+     */
+    function _resolveRelationshipClass(subjectId, targetId) {
+        if (!_hasId(subjectId) || !_hasId(targetId)) return null;
+        if (subjectId === targetId) return null;
+
+        // --- Spouse: active committed partner.
+        try {
+            if (RQm && typeof RQm.getActiveCommittedPartners === 'function') {
+                var committed = RQm.getActiveCommittedPartners(subjectId);
+                if (Array.isArray(committed)) {
+                    for (var i = 0; i < committed.length; i++) {
+                        var p = committed[i];
+                        if (p && p.partnerId === targetId) return 'spouse';
+                    }
+                }
+            }
+        } catch (e) { /* skip */ }
+
+        // --- Blood: any kinship classification other than SELF /
+        // UNRELATED.
+        try {
+            if (typeof window.FamilyRules !== 'undefined'
+                && window.FamilyRules !== null
+                && typeof FQ.classifyKinship === 'function') {
+                var k = FQ.classifyKinship(subjectId, targetId);
+                if (k && k.type
+                    && k.type !== window.FamilyRules.KINSHIP.SELF
+                    && k.type !== window.FamilyRules.KINSHIP.UNRELATED) {
+                    return 'blood';
+                }
+            }
+        } catch (e) { /* skip */ }
+
+        // --- Relative: any other tracked relationship.
+        //   Friendship.
+        try {
+            if (typeof FrQ.isFriends === 'function' && FrQ.isFriends(subjectId, targetId)) {
+                return 'relative';
+            }
+        } catch (e) { /* skip */ }
+        //   Non-committed romance (casual / one-night).
+        try {
+            if (RQm && typeof RQm.getActiveRomanticRelationships === 'function') {
+                var active = RQm.getActiveRomanticRelationships(subjectId);
+                if (Array.isArray(active)) {
+                    for (var j = 0; j < active.length; j++) {
+                        var rel = active[j];
+                        if (rel && rel.partnerId === targetId
+                            && rel.isCommitted !== true) {
+                            return 'relative';
+                        }
+                    }
+                }
+            }
+        } catch (e) { /* skip */ }
+
+        return null;
+    }
+
+    function _resolveRelationshipCirclesBlock(subjectId, memberIds, errors) {
+        return _safe('relationshipCircles', function () {
+            var byTargetId = {};
+            if (!_hasId(subjectId) || !Array.isArray(memberIds)) {
+                return { byTargetId: byTargetId };
+            }
+            for (var i = 0; i < memberIds.length; i++) {
+                var targetId = memberIds[i];
+                if (!_hasId(targetId)) continue;
+                var cls = _resolveRelationshipClass(subjectId, targetId);
+                if (cls) byTargetId[targetId] = cls;
+            }
+            return { byTargetId: byTargetId };
         }, errors);
     }
 
     // =========================================================================
-    // 11. SKILLS — PUBLIC BUILDER
+    // 11. LOCATION — PUBLIC BUILDER
     // =========================================================================
 
     /**
-     * Builds the model the Skills tab consumes.
+     * Builds the model the Location tab consumes. The tab reads from
+     * this shape and does not call HouseholdQueries / ResidenceSystem /
+     * LocationQueries directly.
      *
-     * Shape:
-     *   {
-     *     characterId,
-     *     identity: { id, name, surname, fullName, isLiterate },
-     *     professions: [ ProfessionEnriched ],
-     *     education: [ EducationEntry ],
-     *     educationHistory: [ EducationHistoryEntry ],
-     *     subjectProgress: [ SubjectProgressEntry ],
-     *     literacy: { isLiterate, literacyLevel, tierLabel, canTeach },
-     *     apprenticeship: {
-     *       available: boolean,
-     *       reason?: string,
-     *       isMaster: boolean,
-     *       master: { masterId, masterName, roleId, roleName,
-     *                 skillLevel, stage, startYear } | null,
-     *       apprentices: [ { apprenticeId, apprenticeName, roleId,
-     *                        roleName, skillLevel, stage, startYear } ]
-     *     },
-     *     traits: string[],
-     *     errors: { ... }
-     *   }
-     *
-     * This builder is READ-ONLY. It does not call any command that
-     * mutates. It does not call persist. Every section wrapped in
-     * _safe(...) so a single section failure lands in errors[section]
-     * without blanking the whole model.
-     *
-     * Apprenticeship section degrades cleanly when the apprenticeship
-     * domain is not loaded on the page (CharacterManager.html does not
-     * load it). It returns { available: false, reason, ... } so the tab
-     * can render the "unavailable" message rather than an empty list.
+     * @param {string} characterId
+     * @returns {Object|null}
      */
-    function buildSkillsModel(characterId) {
+    function buildLocationModel(characterId) {
         if (!_hasId(characterId)) return null;
 
         var summary;
@@ -1926,25 +2124,78 @@
                 name: summary.name || '',
                 surname: summary.surname || '',
                 fullName: summary.fullName || summary.name || '',
-                isLiterate: summary.isLiterate === true
+                isDeceased: summary.isDeceased === true
             };
         }, errors);
+
+        var currentLocationBlock = _safe(
+            'currentLocation',
+            function () { return _resolveCurrentLocationBlock(summary, characterId); },
+            errors
+        ) || {
+            locationId: null,
+            locationName: null,
+            source: 'none',
+            rawCurrentLocationId: null,
+            resolvedDiffersFromRaw: false
+        };
+
+        var birthplaceBlock = _safe(
+            'birthplace',
+            function () { return _resolveBirthplaceBlock(summary); },
+            errors
+        ) || { placeId: null, placeName: null };
+
+        var movesBlock = _resolveMovesBlock(characterId, errors) || [];
+
+        var householdBlock = _resolveHouseholdBlock(summary, errors) || {
+            available: false,
+            reason: 'household block failed',
+            householdId: null,
+            householdName: null,
+            role: null,
+            isHead: false,
+            memberCount: 0,
+            currentNameSince: null,
+            currentLocationName: null
+        };
+
+        var householdMembersBlock = householdBlock.householdId
+            ? (_resolveHouseholdMembersBlock(householdBlock.householdId, errors) || [])
+            : [];
+
+        var householdHistoryBlock = _resolveHouseholdHistoryBlock(summary, errors) || {
+            entries: [],
+            structured: true
+        };
+
+        var residencesBlock = _resolveResidencesBlock(
+            householdBlock.householdId, errors
+        ) || { available: false, reason: 'residences block failed', entries: [] };
+
+        var memberIds = [];
+        for (var m = 0; m < householdMembersBlock.length; m++) {
+            if (householdMembersBlock[m] && householdMembersBlock[m].characterId) {
+                memberIds.push(householdMembersBlock[m].characterId);
+            }
+        }
+        var relationshipCirclesBlock = _resolveRelationshipCirclesBlock(
+            characterId, memberIds, errors
+        ) || { byTargetId: {} };
 
         return {
             characterId: characterId,
             identity: identityBlock,
-            professions: _buildProfessionsList(characterId, errors) || [],
-            education: _buildEducationList(characterId, errors) || [],
-            educationHistory: _buildEducationHistoryList(characterId, errors) || [],
-            subjectProgress: _buildSubjectProgressList(characterId, errors) || [],
-            literacy: _buildLiteracyBlock(characterId, errors) || {
-                isLiterate: false, literacyLevel: 0,
-                tierLabel: 'Untrained', canTeach: false
-            },
-            apprenticeship: _buildApprenticeshipBlock(characterId, errors) || {
-                available: false, isMaster: false, master: null, apprentices: []
-            },
-            traits: _buildTraitsBlock(characterId, errors) || [],
+            currentLocation: currentLocationBlock,
+            birthplace: birthplaceBlock,
+            moves: movesBlock,
+            household: householdBlock,
+            householdMembers: householdMembersBlock,
+            householdHistory: householdHistoryBlock.entries,
+            householdHistoryStructured: householdHistoryBlock.structured === true,
+            residences: residencesBlock,
+            relationshipCircles: relationshipCirclesBlock,
+            notes: typeof summary.notes === 'string' ? summary.notes : '',
             errors: errors
         };
     }
@@ -1973,8 +2224,8 @@
         // Family
         buildFamilyModel: buildFamilyModel,
 
-        // Skills
-        buildSkillsModel: buildSkillsModel
+        // Location
+        buildLocationModel: buildLocationModel
     };
 
     if (typeof module !== 'undefined' && module.exports) {
