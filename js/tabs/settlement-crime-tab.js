@@ -26,8 +26,7 @@
  *
  * SCOPE OF THE INCIDENT LIST:
  *   Own location only (CrimeQueries.getCrimesByLocation), not the subtree.
- *   See the header of the current crime tab for the rationale — this is
- *   a deliberate choice, not a bug.
+ *   This is a deliberate choice, not a bug.
  *
  * SCOPE OF THE VENDETTA LIST:
  *   Union of every settlement household's vendettas, de-duped. Shows
@@ -35,13 +34,9 @@
  *   outside household. The create path is restricted to internal feuds.
  *
  * AUTO-REFRESH ON SETTLEMENT MUTATION:
- *   The prior implementation subscribed to SettlementState at module
- *   load and re-rendered the crime tab on every settlement event. That
- *   subscription was page-lifetime and never torn down. The TabManager
- *   paradigm doesn't need it — the modals that mutate settlement state
- *   call SettlementTabs.requestRender-equivalent (TabManager.requestRender)
- *   themselves. If a command publishes a settlement event outside a
- *   modal path, the user clicks Refresh.
+ *   Modals that mutate settlement state call TabManager.requestRender
+ *   themselves after a successful command. This tab does not subscribe
+ *   to SettlementState; the modals own the refresh.
  *
  * NO CSS. Class-only rendering.
  * =============================================================================
@@ -417,21 +412,18 @@
 
         function modRow(label, v) {
             if (typeof v !== 'number') return '';
-            var display = (v > 0 ? '+' : '') +
-                _roundOneDecimal(v * 1000 / 1000 * 100) / 100;
-            // Simpler: value is a fraction; display as percent with sign.
             var pct = Math.round(v * 1000) / 10;
             var sign = pct > 0 ? '+' : '';
-            var cls = pct > 0
-                ? 'st-inline__value'
-                : (pct < 0 ? 'st-inline__value' : 'st-inline__value');
             var colorCls = pct > 0
                 ? 'st-stat__value--neg'
                 : (pct < 0 ? 'st-stat__value--pos' : '');
+            var inner = sign + pct + '%';
+            if (colorCls) {
+                inner = '<span class="' + colorCls + '">' + inner + '</span>';
+            }
             return '<div class="st-inline">' +
                 '<span class="st-inline__label">' + esc(label) + '</span>' +
-                '<span class="' + colorCls + '">' +
-                sign + pct + '%</span>' +
+                '<span class="st-inline__value">' + inner + '</span>' +
                 '</div>';
         }
 
