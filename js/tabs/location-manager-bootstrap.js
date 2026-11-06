@@ -17,21 +17,25 @@
  * RENDERER CONTRACT (per tab):
  *   fn(container, context) where context = { locationId, locationName }
  *
- * NON-OBVIOUS DECISIONS (per playbook §4):
+ * NON-OBVIOUS DECISIONS:
  *   1. containerRoot must contain both the tab strip and the pane container.
- *      See _ensureStripAndPanes / init.
+ *      TabManager's click router walks up from the click target and asks
+ *      each scope's containerRoot.contains(button). If containerRoot were
+ *      only #panelContent (a sibling of the strip), clicks on the strip
+ *      would fail to route. We use strip.parentNode (.main-panel).
  *   2. TabManager does NOT toggle .active on panes. _syncTabStrip must.
  *   3. init() is idempotent.
  *   4. Hydrate LocationState before TabManager.configure.
- *   5. TabManager.requestRender REQUIRES (scope, tabId). Never call it with
- *      only (scope). Use _activeTabId() at every call site.
+ *   5. TabManager.requestRender REQUIRES (scope, tabId). Never call it
+ *      with only (scope). Use _requestRender() at every call site.
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   - Extracted from the inline MANAGER INIT + SUBTAB HOST scripts.
  *   - Fix: every requestRender() call now passes (SCOPE, _activeTabId()).
- *     The prior revision called requestRender(SCOPE) with no tabId, which
- *     throws "TabManager: tabId must be a non-empty string".
+ *   - Fix: tab registration is now driven entirely by the tab files
+ *     themselves; this bootstrap only calls configure + init. The five
+ *     tab files are KNOWN_TAB_IDS and self-register at load.
  * =============================================================================
  */
 
