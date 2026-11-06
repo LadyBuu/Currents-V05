@@ -613,6 +613,10 @@
         .character-tab-btn-small.danger:hover {
             background: var(--danger-soft);
         }
+        .character-tab-btn-small:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
         .character-tab-actions {
             display: flex;
             gap: 0.375rem;
@@ -1639,6 +1643,72 @@
 <script src="js/character/character-system.js"></script>
 
 <!-- ================================================================
+     HOUSEHOLD + RESIDENCE SUBSYSTEM (for the Location tab)
+     ================================================================
+     These modules support the Location tab's Household and Residences
+     sections. They are loaded here (before the CHARACTER MANAGER
+     MODULES block) so that when character-view-models.js calls
+     buildLocationModel on the first render, HouseholdQueries and
+     ResidenceSystem are already installed.
+
+     Load order within this block matters:
+       household-constants
+         → household-rules
+         → household-view-models
+         → household-orchestration
+         → household-state
+         → household-queries
+         → household-commands
+         → household-economy, household-assignment, household-servant
+         → residence-system
+         → household-bootstrap
+         → modals-helper
+         → modals-household, modals-residence
+     ================================================================ -->
+
+<!-- ---- Household foundation ---- -->
+<script src="js/households/household-constants.js"></script>
+<script src="js/households/household-rules.js"></script>
+<script src="js/households/household-view-models.js"></script>
+<script src="js/households/household-orchestration.js"></script>
+
+<!-- ---- Household state / queries / commands ---- -->
+<script src="js/households/household-state.js"></script>
+<script src="js/households/household-queries.js"></script>
+<script src="js/households/household-commands.js"></script>
+
+<!-- ---- Household economy / assignment / servant ---- -->
+<script src="js/households/household-economy.js"></script>
+<script src="js/households/household-assignment.js"></script>
+<script src="js/households/household-servant.js"></script>
+
+<!-- ---- Residence system ---- -->
+<script src="js/households/residence-system.js"></script>
+
+<!-- ---- Household bootstrap (hydrates state, exposes window.Household) ---- -->
+<script src="js/households/household-bootstrap.js"></script>
+
+<!-- ---- Household modal helper ---- -->
+<script src="js/households/modals-helper.js"></script>
+
+<!-- ---- Household modals ---- -->
+<script src="js/households/modals-household.js"></script>
+<script src="js/households/modals-household-economy.js"></script>
+<script src="js/households/modals-household-snapshot.js"></script>
+<script src="js/households/modals-household-staff.js"></script>
+<script src="js/households/modals-residence.js"></script>
+<script src="js/households/modals-residence-owner.js"></script>
+<script src="js/households/modals-residence-rental.js"></script>
+<script src="js/households/modals-residence-staff.js"></script>
+
+<!-- ---- Household compatibility shims (safe to remove once external
+        callers are audited; kept to preserve existing load order) ---- -->
+<script src="js/households/modals-assign-staff.js"></script>
+<script src="js/households/modals-residence-history.js"></script>
+<script src="js/households/modals-residence-vacancy.js"></script>
+<script src="js/households/modals-residence-snapshot.js"></script>
+
+<!-- ================================================================
      RELATIONSHIP DOMAIN
      ================================================================ -->
 <script src="js/social/relationship-types.js"></script>
@@ -1692,6 +1762,7 @@
 <script src="js/tabs/character-friendship-tab.js"></script>
 <script src="js/tabs/character-romance-tab.js"></script>
 <script src="js/tabs/character-family-tab.js"></script>
+<script src="js/tabs/character-location-tab.js"></script>
 
 <!-- Tabs not yet built. Loaded conditionally so a missing file does
      not break the page. The bootstrap renders the "no-renderer" empty
@@ -1700,7 +1771,6 @@
      the real one. To "add a tab", only that <script> tag needs to be
      added; nothing else in the shell changes. -->
 
-<!-- <script src="js/tabs/character-location-tab.js"></script> -->
 <!-- <script src="js/tabs/character-skills-tab.js"></script> -->
 <!-- <script src="js/tabs/character-overview-tab.js"></script> -->
 
