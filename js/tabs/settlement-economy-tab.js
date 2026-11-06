@@ -1,290 +1,57 @@
 /**
  * =============================================================================
- * STILL WATERS - SETTLEMENT ECONOMY TAB
+ * SETTLEMENT ECONOMY TAB
  * js/tabs/settlement-economy-tab.js
  * =============================================================================
  *
- * ECONOMY TAB RENDERER.
- *
- * Renders the settlement's fiscal snapshot (wealth, debt, tax rates,
- * budgets, income, expenses, surplus, employment) and hosts the actions
+ * Renders the settlement fiscal snapshot (wealth, debt, tax rates,
+ * budgets, income, expenses, surplus, employment) and hosts actions
  * that open the economy modals for detailed editing.
  *
- * It is a UI module. It:
- *   - reads through SettlementViewModels and SettlementQueries
- *   - mutates through SettlementFiscalCommands and
- *     SettlementGovernmentCommands
- *   - opens the economy modals via SettlementEconomyModals and core
- *     modals via SettlementModals
- *   - does not read canonical settlement data directly
- *   - does not compute domain values
- *   - does not create settlement records
- *   - does not persist
- *   - does not fabricate missing domain values
- *   - does not render raw null/undefined as "null" or "undefined"
- *   - does not use a recursion guard
- *   - does not use setTimeout to guess when the DOM is ready
+ * RENDERER CONTRACT:
+ *   fn(container, context) with context = { locationId, data, viewModel }
  *
- * Contract reference: Settlement Architecture Contracts §12 (Command
- * Contract), §15 (ViewModel Contract), §16 (UI Contract), §21 (Fiscal
- * Contract), §32 (Completion Standard).
+ * DATA SOURCES:
+ *   - context.viewModel (SettlementViewModels.buildSettlementSummary)
+ *   - SettlementEconomyQueries.getBudgetSummary
+ *   - SettlementEconomyQueries.getDebtRatio
+ *   - SettlementEmploymentQueries.getEmployment
  *
- * RENDERER CONTRACT
- * -----------------
- *   Registered via SettlementTabs.registerTabRenderer('economy', fn).
- *   SettlementTabs invokes fn(container, context):
- *
- *     container  HTMLElement       already emptied by SettlementTabs
- *     context    {
- *       locationId  string|null    selected settlement id
- *       data        Object|null    canonical settlement record
- *       viewModel   Object|null    buildSettlementSummary result
- *     }
- *
- *   SettlementTabs has already validated locationId and data before
- *   calling the renderer.
- *
- * FISCAL SEMANTICS
- * ----------------
+ * FISCAL SEMANTICS:
  *   Tax rate, trade tariff, and industry tax rate are canonical policy
- *   fields owned by the settlement record. They are edited through
- *   SettlementFiscalCommands.updateFiscalPolicy, which validates every
- *   field in one transaction via SettlementFiscalRules.
-
- *   Budget allocations (educationBudget, governmentSalaryBudget,
- *   infrastructureBudget, militaryBudget) are policy fields distinct
- *   from actual spending. They are edited through
- *   SettlementFiscalCommands.setBudgetAllocation.
-
- *   Actual spending (militarySpending, infrastructureSpending,
- *   educationSpending) is written by the annual budget-decision flow
- *   and is NOT editable from this tab. It is displayed read-only.
-
- *   Debt and wealth are independent canonical balances (§18). Repayment
- *   and borrowing go through SettlementDebtCommands, reached via the
- *   debt management modal. The tab does not call debt commands
- *   directly — the modal is the only entry point.
+ *   fields edited via SettlementFiscalCommands.updateFiscalPolicy (called
+ *   by the tax modal). Budgets are policy fields edited via
+ *   SettlementFiscalCommands.setBudgetAllocation. Spending is written by
+ *   the annual budget-decision flow — this tab displays it read-only.
+ *   Debt and wealth are independent balances (§18); repayment goes
+ *   through the debt modal only.
  *
- *   Fiscal limits (TAX_RATE.max = 50 etc.) come from
- *   SettlementFiscalDefinitions, read via SettlementFiscalRules'
- *   validator return. The tab does not hardcode 0–50 / 0–30 / 0–30.
+ * ACTION DELEGATION:
+ *   Every mutating button opens a modal. No action on this tab calls a
+ *   command directly.
  *
- *   The old economy tab had its own <input type="number" min="0" max="50">
- *   bounds hardcoded in the markup, and its save path called
- *   SettlementCommands.updateTaxRate / updateTradeTariff / etc. (none
- *   of which exist on the new surface). The tab also tried to edit
- *   spending through SettlementCommands.updateMilitarySpending (also
- *   gone). All three paths are gone; the tab now delegates every
- *   mutation to the appropriate modal, which calls the correct
- *   command, and only renders read-only values itself.
- *
- * WHY THE TAB DELEGATES EDITING TO MODALS
- * ---------------------------------------
- *   Inline number inputs with "save" buttons next to them invite a
- *   class of problems the modals solve cleanly:
-
- *     - partial-commit on save (one field updates, another fails
- *       validation, the UI shows "saved" anyway)
- *     - stale reads (the tab captures a summary at render time, the
- *       user edits two fields, the second save is computed against
- *       the first save's pre-state)
- *     - validation divergence (the tab hardcodes max=50, the rules
- *       layer says the limit is 50 today but could change)
- *     - no atomic multi-field transaction (the user is editing tax,
- *       tariff, and industry tax in one visual block; a save that
- *       succeeds for tax but fails for tariff leaves the UI in a
- *       state that does not match the world)
-
- *   SettlementEconomyModals.openTaxRateModal uses
- *   SettlementFiscalCommands.updateFiscalPolicy — one call, one
- *   validation pass, one commit, one re-render. The tab's job is to
- *   show the current state and route the user to the modal.
-
- * ACTION DELEGATION
- * -----------------
- *   Every mutating button on the economy tab opens a modal:
-
- *     Tax Rates    → SettlementEconomyModals.openTaxRateModal
- *     Spending     → SettlementEconomyModals.openSpendingModal (read-only)
- *     Budget       → SettlementModals.openBudgetModal
- *     Justice      → SettlementEconomyModals.openJusticeModal
- *     Debt         → SettlementEconomyModals.openDebtManagementModal
- *     Report       → SettlementEconomyModals.openFinancialReportModal
- *     Efficiency   → SettlementEconomyModals.openEfficiencyModal
- *     Employment   → SettlementModals.openEmploymentModal
- *     State Ent.   → SettlementModals.openStateEnterpriseModal
-
- *   No action on this tab calls a command directly. Every mutation
- *   runs through a modal that owns the confirmation, the validation,
- *   and the post-command refresh. This matches the §16 UI Contract:
- *   the tab renders, the modal mutates.
-
- * POST-COMMAND REFRESH
- * --------------------
- *   The modals call SettlementTabs.requestRender('economy') on success.
- *   The tab itself does not wire that refresh — the modal does — because
- *   the modal is the caller that knows the command succeeded. A tab-side
- *   re-render after closing the modal would be a second render of the
- *   same state.
-
- *   The Refresh button on the tab calls requestRender('economy')
- *   directly, which is a user-initiated re-read of the current world.
-
- * ICON POLICY
- * -----------
- *   No emojis. No inline SVG. Chrome icons come from window.getIcon if
- *   it is loaded; when icons.js is not on the page, the renderer falls
- *   back to plain text labels.
- *
- * =============================================================================
- * REFACTOR HISTORY:
- *   Current revision:
- *     - Rewritten against the new settlement module set.
- *     - Signature changed from (containerId, locationId, summary) to
- *       (container, context), matching settlement-tabs.js.
- *     - Recursion guard (_rendering) and the modal-open flag removed
- *       (§20 prohibits recursion guards; §16 prohibits modal-locking
- *       flags on a read-only renderer).
- *     - All inline number inputs and save buttons removed. Editing is
- *       delegated to the economy modals, which call
- *       SettlementFiscalCommands / SettlementGovernmentCommands /
- *       SettlementDebtCommands with the correct contracts.
- *     - SettlementState.getSettlementBudget / getSettlementSummary /
- *       getSettlementEmployment reads replaced by
- *       SettlementEconomyQueries.getBudgetSummary /
- *       SettlementEmploymentQueries.getEmployment / buildSettlementSummary.
- *     - SettlementEconomy.* reads (calculateSurplus, getDebtRatio,
- *       getEfficiencyScore, getFinancialReport) replaced by their
- *       SettlementEconomyQueries equivalents. getFinancialReport had
- *       no direct equivalent — the tab opens the financial report
- *       modal, which builds the report from buildFinancialReportView.
- *     - Spending inputs removed. The tab displays the three spending
- *       fields read-only; the spending modal is opened for detail.
- *     - The debt repayment mini-form (repay-all button, then manual
- *       onclick hijack on the modal's confirm button) is gone. Debt
- *       repayment goes through
- *       SettlementEconomyModals.openDebtManagementModal, which uses
- *       SettlementDebtCommands.repayDebt (atomic, one candidate, one
- *       commit). The prior implementation called updateWealth and
- *       updateDebt as two separate commands — a §18 violation that
- *       could leave wealth debited but debt unreduced if the second
- *       command failed.
- *     - window.getCurrentYearSafe is not referenced. window.getCurrentYear
- *       is not called — the tab does not display a year.
- *   Previous revisions:
- *     - Pre-refactor implementation against SettlementState /
- *       SettlementCommands / SettlementCrud / SettlementEconomy, all
- *       of which no longer exist.
+ * NO CSS. Class-only rendering.
  * =============================================================================
  */
 
 (function () {
     'use strict';
 
-    // =========================================================================
-    // 1. DEPENDENCY ACCESS
-    // =========================================================================
+    var TAB_ID = 'economy';
+    var SCOPE  = 'settlement';
 
-    function _getSummaryModel() {
-        var VMs = window.SettlementViewModels;
-        if (!VMs || typeof VMs.buildSettlementSummary !== 'function') {
-            throw new Error(
-                'settlement-economy-tab: SettlementViewModels.' +
-                'buildSettlementSummary is missing.'
-            );
-        }
-        return VMs;
-    }
+    function H() { return window.SettlementTabHelpers; }
+    function esc(v)        { return H().esc(v); }
+    function icon(n)       { return H().icon(n); }
+    function fmtNum(v)     { return H().fmtNumber(v); }
+    function fmtGold(v)    { return H().fmtGold(v); }
+    function fmtPercent(v) { return H().fmtPercent(v); }
+    function unknown()     { return H().unknown(); }
+    function refresh()     { H().requestRefresh(SCOPE, TAB_ID); }
 
-    function _getEconomyQueries() {
-        var Q = window.SettlementEconomyQueries;
-        if (!Q || typeof Q.getBudgetSummary !== 'function') {
-            throw new Error(
-                'settlement-economy-tab: SettlementEconomyQueries is ' +
-                'missing. Load settlement-economy-queries.js before this tab.'
-            );
-        }
-        return Q;
-    }
-
-    function _getEmploymentQueries() {
-        return window.SettlementEmploymentQueries || null;
-    }
-
-    function _getPlaceQueries() {
-        return window.PlaceQueries || null;
-    }
-
-    function _getTabs() {
-        return window.SettlementTabs || null;
-    }
-
-    function _openCoreModal(name, args) {
-        var bundle = window.SettlementModals;
-        if (!bundle || typeof bundle[name] !== 'function') {
-            throw new Error(
-                'settlement-economy-tab: SettlementModals.' + name + ' is missing.'
-            );
-        }
-        return bundle[name].apply(bundle, args || []);
-    }
-
-    function _openEconomyModal(name, args) {
-        var bundle = window.SettlementEconomyModals;
-        if (!bundle || typeof bundle[name] !== 'function') {
-            throw new Error(
-                'settlement-economy-tab: SettlementEconomyModals.' + name +
-                ' is missing. Load modals-settlement-economy.js before this tab.'
-            );
-        }
-        return bundle[name].apply(bundle, args || []);
-    }
-
-    // =========================================================================
-    // 2. HELPERS
-    // =========================================================================
-
-    function _escapeHtml(str) {
-        if (str === null || str === undefined) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function _unknown() {
-        return '<span class="value-unknown">—</span>';
-    }
-
-    function _fmtNumber(value) {
-        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
-        return _escapeHtml(value.toLocaleString());
-    }
-
-    function _fmtGold(value) {
-        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
-        return _escapeHtml(value.toLocaleString()) + 'g';
-    }
-
-    function _fmtPercent(value, opts) {
-        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
-        var s = _escapeHtml(value.toLocaleString());
-        return s + '%';
-    }
-
-    function _getIcon(name) {
-        if (typeof window.getIcon === 'function') {
-            try {
-                var icon = window.getIcon(name);
-                if (typeof icon === 'string') return icon;
-            } catch (e) {
-                // getIcon exists but threw; fall through to ''.
-            }
-        }
-        return '';
-    }
+    function _getEconomyQueries()    { return window.SettlementEconomyQueries; }
+    function _getEmploymentQueries() { return window.SettlementEmploymentQueries; }
+    function _getPlaceQueries()      { return window.PlaceQueries; }
 
     function _placeName(locationId) {
         var pq = _getPlaceQueries();
@@ -293,280 +60,180 @@
         return place ? (place.displayName || place.name || null) : null;
     }
 
-    function _toast(message, type) {
-        if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
+    function _openCoreModal(name, args) {
+        var bundle = window.SettlementModals;
+        if (!bundle || typeof bundle[name] !== 'function') {
+            H().toast('Modal "' + name + '" is not available.', 'error');
+            return;
         }
-    }
-
-    function _requestRefresh() {
-        var tabs = _getTabs();
-        if (tabs && typeof tabs.requestRender === 'function') {
-            tabs.requestRender('economy');
-        }
-    }
-
-    function _safeModalOpen(fn) {
-        // Wrap the modal call so a missing dependency produces a toast,
-        // not an uncaught exception in an event handler (which would
-        // abort other listeners on the same click).
-        try {
-            fn();
-        } catch (err) {
+        try { bundle[name].apply(bundle, args || []); }
+        catch (e) {
             if (typeof console !== 'undefined' && console.error) {
-                console.error('settlement-economy-tab: modal open failed:', err);
+                console.error('settlement-economy-tab: modal threw:', e);
             }
-            _toast(
-                'Could not open modal: ' +
-                (err && err.message ? err.message : 'unknown error'),
-                'error'
-            );
+            H().toast('Could not open modal.', 'error');
         }
     }
 
-    // =========================================================================
-    // 3. ACTION HANDLERS
-    // =========================================================================
-
-    function _handleAction(action, locationId) {
-        switch (action) {
-            case 'tax-rates':
-                _safeModalOpen(function () {
-                    _openEconomyModal('openTaxRateModal', [locationId]);
-                });
-                return;
-            case 'spending':
-                _safeModalOpen(function () {
-                    _openEconomyModal('openSpendingModal', [locationId]);
-                });
-                return;
-            case 'budget':
-                _safeModalOpen(function () {
-                    _openCoreModal('openBudgetModal', [locationId]);
-                });
-                return;
-            case 'justice':
-                _safeModalOpen(function () {
-                    _openEconomyModal('openJusticeModal', [locationId]);
-                });
-                return;
-            case 'debt':
-                _safeModalOpen(function () {
-                    _openEconomyModal('openDebtManagementModal', [locationId]);
-                });
-                return;
-            case 'report':
-                _safeModalOpen(function () {
-                    _openEconomyModal('openFinancialReportModal', [locationId]);
-                });
-                return;
-            case 'efficiency':
-                _safeModalOpen(function () {
-                    _openEconomyModal('openEfficiencyModal', [locationId]);
-                });
-                return;
-            case 'employment':
-                _safeModalOpen(function () {
-                    _openCoreModal('openEmploymentModal', [locationId]);
-                });
-                return;
-            case 'state-enterprises':
-                _safeModalOpen(function () {
-                    _openCoreModal('openStateEnterpriseModal', [locationId]);
-                });
-                return;
-            case 'refresh':
-                _requestRefresh();
-                return;
-            default:
-                // Unknown action: no-op, do not throw. A stale button
-                // in cached HTML should not break the tab.
-                return;
+    function _openEconomyModal(name, args) {
+        var bundle = window.SettlementEconomyModals;
+        if (!bundle || typeof bundle[name] !== 'function') {
+            H().toast('Modal "' + name + '" is not available.', 'error');
+            return;
+        }
+        try { bundle[name].apply(bundle, args || []); }
+        catch (e) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('settlement-economy-tab: modal threw:', e);
+            }
+            H().toast('Could not open modal.', 'error');
         }
     }
 
-    function _wireActions(container, locationId) {
-        container.addEventListener('click', function (event) {
-            var target = event.target;
-            if (!target || typeof target.closest !== 'function') return;
-            var btn = target.closest('[data-action]');
-            if (!btn) return;
-            if (!container.contains(btn)) return;
-            event.preventDefault();
-            var action = btn.dataset.action;
-            var loc = btn.dataset.location || locationId;
-            _handleAction(action, loc);
-        });
-    }
-
-    // =========================================================================
-    // 4. SECTION BUILDERS
-    // =========================================================================
+    // -------------------------------------------------------------------
+    // Header
+    // -------------------------------------------------------------------
 
     function _buildHeader(context) {
-        var locationId = context.locationId;
-        var summary = context.viewModel || {};
-        var name = summary.name
-            ? summary.name
-            : (_placeName(locationId) || '(unnamed location)');
-
-        var rankName = summary.rank ? summary.rank.name : null;
-        var prosperity = summary.prosperity;
+        var s = context.viewModel || {};
+        var name = s.name ? s.name : (_placeName(context.locationId) || '(unnamed location)');
+        var rankName = s.rank ? s.rank.name : null;
+        var prosperity = s.prosperity;
         var prosperityValue = (prosperity && typeof prosperity.value === 'number')
-            ? prosperity.value
-            : null;
+            ? prosperity.value : null;
         var prosperityBand = prosperity ? prosperity.band : null;
         var prosperityBandName = prosperityBand ? prosperityBand.name : null;
 
-        var prosperityColor = 'var(--dim)';
+        var prosperityClass = 'st-stat__value';
         if (prosperityBand && prosperityBand.id) {
-            switch (prosperityBand.id) {
-                case 'thriving':   prosperityColor = 'var(--success)'; break;
-                case 'stable':     prosperityColor = 'var(--accent)'; break;
-                case 'struggling': prosperityColor = 'var(--danger)'; break;
-            }
+            if (prosperityBand.id === 'thriving') prosperityClass += ' st-stat__value--pos';
+            else if (prosperityBand.id === 'struggling') prosperityClass += ' st-stat__value--neg';
+            else prosperityClass += ' st-stat__value--accent';
         }
 
-        var refreshBtn = '<button type="button" data-action="refresh" ' +
-            'data-location="' + _escapeHtml(locationId) + '" ' +
-            'style="font-size:0.6rem;padding:4px 12px;background:var(--bg3);' +
-            'border:1px solid var(--accent);border-radius:4px;cursor:pointer;' +
-            'color:var(--accent-light);">' +
-            _getIcon('REFRESH') + ' Refresh</button>';
-
-        return '<div style="background:var(--bg2);padding:12px 16px;' +
-            'border-radius:8px;margin-bottom:16px;display:flex;' +
-            'justify-content:space-between;align-items:center;flex-wrap:wrap;' +
-            'gap:8px;border:1px solid var(--border);">' +
+        return '<div class="st-header">' +
             '<div>' +
-            '<div style="font-size:0.8rem;font-weight:bold;color:var(--accent-light);">' +
-            _getIcon('LOCATION') + ' ' + _escapeHtml(name) + '</div>' +
-            '<div style="font-size:0.6rem;color:var(--dim);">' +
-            'Rank: ' + (rankName ? _escapeHtml(rankName) : _unknown()) +
+            '<div class="st-header__title">' + icon('LOCATION') + ' ' + esc(name) + '</div>' +
+            '<div class="st-header__subtitle">Rank: ' +
+                (rankName ? esc(rankName) : unknown()) + '</div>' +
             '</div>' +
+            '<div>' +
+            '<div class="st-inline">' +
+                '<span class="st-inline__label">Prosperity</span>' +
+                '<span class="' + prosperityClass + '">' +
+                (prosperityValue === null
+                    ? unknown()
+                    : esc(String(prosperityValue)) + '%') +
+                '</span>' +
             '</div>' +
-            '<div style="text-align:right;">' +
-            '<div style="font-size:0.7rem;color:var(--text);">Prosperity: ' +
-            '<span style="color:' + prosperityColor + ';font-weight:bold;">' +
-            (prosperityValue === null
-                ? _unknown()
-                : _escapeHtml(String(prosperityValue)) + '%') +
-            '</span></div>' +
-            '<div style="font-size:0.55rem;color:var(--dim);">' +
-            (prosperityBandName ? _escapeHtml(prosperityBandName) : '') +
+            (prosperityBandName
+                ? '<div class="st-header__subtitle">' +
+                  esc(prosperityBandName) + '</div>'
+                : '') +
             '</div>' +
-            '</div>' +
-            '</div>' +
-            '<div style="display:flex;justify-content:flex-end;' +
-            'margin-bottom:16px;">' + refreshBtn + '</div>';
-    }
-
-    function _buildWealthDebtRow(context, debtRatio) {
-        var summary = context.viewModel || {};
-        var wealth = typeof summary.wealth === 'number' ? summary.wealth : null;
-        var debt = typeof summary.totalDebt === 'number' ? summary.totalDebt : null;
-        var netWorth = (wealth !== null && debt !== null)
-            ? wealth - debt
-            : null;
-
-        function cell(label, valueHtml, color, iconName) {
-            return '<div style="background:var(--bg2);padding:12px;' +
-                'border-radius:8px;text-align:center;border:1px solid var(--border);">' +
-                '<div style="font-size:0.55rem;color:var(--dim);">' +
-                (iconName ? _getIcon(iconName) + ' ' : '') +
-                _escapeHtml(label) + '</div>' +
-                '<div style="font-size:1.1rem;font-weight:bold;color:' + color + ';">' +
-                valueHtml + '</div>' +
-                '</div>';
-        }
-
-        var wealthColor = (wealth !== null && wealth >= 0)
-            ? 'var(--success)' : 'var(--danger)';
-        var debtColor = (debt !== null && debt > 0)
-            ? 'var(--danger-lt)' : 'var(--success)';
-        var netColor = (netWorth !== null && netWorth >= 0)
-            ? 'var(--success)' : 'var(--danger)';
-
-        var ratioColor = 'var(--text)';
-        if (typeof debtRatio === 'number') {
-            if (debtRatio > 50) ratioColor = 'var(--danger)';
-            else if (debtRatio > 25) ratioColor = 'var(--warn)';
-            else ratioColor = 'var(--success)';
-        }
-
-        return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;' +
-            'gap:12px;margin-bottom:16px;">' +
-            cell('Wealth', _fmtGold(wealth), wealthColor, 'COIN') +
-            cell('Debt', _fmtGold(debt), debtColor, null) +
-            cell('Debt Ratio', _fmtPercent(debtRatio), ratioColor, null) +
-            cell('Net Worth', _fmtGold(netWorth), netColor, null) +
             '</div>';
     }
 
+    // -------------------------------------------------------------------
+    // Wealth / debt / net worth / debt ratio
+    // -------------------------------------------------------------------
+
+    function _buildWealthDebtRow(context, debtRatio) {
+        var s = context.viewModel || {};
+        var wealth = typeof s.wealth === 'number' ? s.wealth : null;
+        var debt = typeof s.totalDebt === 'number' ? s.totalDebt : null;
+        var netWorth = (wealth !== null && debt !== null) ? wealth - debt : null;
+
+        var wealthClass = 'st-stat__value';
+        if (wealth !== null) {
+            wealthClass += wealth >= 0 ? ' st-stat__value--pos' : ' st-stat__value--neg';
+        }
+        var debtClass = 'st-stat__value';
+        if (debt !== null) {
+            debtClass += debt > 0 ? ' st-stat__value--neg' : ' st-stat__value--pos';
+        }
+        var netClass = 'st-stat__value';
+        if (netWorth !== null) {
+            netClass += netWorth >= 0 ? ' st-stat__value--pos' : ' st-stat__value--neg';
+        }
+        var ratioClass = 'st-stat__value';
+        if (typeof debtRatio === 'number') {
+            if (debtRatio > 50) ratioClass += ' st-stat__value--neg';
+            else if (debtRatio > 25) ratioClass += ' st-stat__value--warn';
+            else ratioClass += ' st-stat__value--pos';
+        }
+
+        function cell(label, valueHtml, cls, ic) {
+            return '<div class="st-stat">' +
+                '<div class="st-stat__label">' +
+                (ic ? icon(ic) + ' ' : '') + esc(label) + '</div>' +
+                '<div class="' + cls + '">' + valueHtml + '</div>' +
+                '</div>';
+        }
+
+        return '<div class="st-stats">' +
+            cell('Wealth', fmtGold(wealth), wealthClass, 'COIN') +
+            cell('Debt', fmtGold(debt), debtClass, null) +
+            cell('Debt Ratio', fmtPercent(debtRatio), ratioClass, null) +
+            cell('Net Worth', fmtGold(netWorth), netClass, null) +
+            '</div>';
+    }
+
+    // -------------------------------------------------------------------
+    // Fiscal policy (read-only; edit via modal)
+    // -------------------------------------------------------------------
+
     function _buildFiscalPolicySection(context) {
-        var summary = context.viewModel || {};
+        var s = context.viewModel || {};
         var locationId = context.locationId;
 
         function row(label, valueHtml, hint) {
-            return '<div style="display:flex;justify-content:space-between;' +
-                'padding:6px 0;border-bottom:1px solid var(--border-light);' +
-                'align-items:center;">' +
+            return '<div class="st-inline">' +
                 '<div>' +
-                '<div style="font-size:0.65rem;color:var(--text);">' +
-                _escapeHtml(label) + '</div>' +
+                '<div class="st-inline__label">' + esc(label) + '</div>' +
                 (hint
-                    ? '<div style="font-size:0.5rem;color:var(--dim);">' +
-                      _escapeHtml(hint) + '</div>'
+                    ? '<div class="st-row__meta">' + esc(hint) + '</div>'
                     : '') +
                 '</div>' +
-                '<div style="font-size:0.75rem;font-weight:bold;color:var(--text);">' +
-                valueHtml + '</div>' +
+                '<div class="st-inline__value">' + valueHtml + '</div>' +
                 '</div>';
         }
 
-        var editBtn = '<button type="button" data-action="tax-rates" ' +
-            'data-location="' + _escapeHtml(locationId) + '" ' +
-            'style="font-size:0.55rem;padding:3px 10px;background:var(--bg3);' +
-            'border:1px solid var(--accent);border-radius:4px;cursor:pointer;' +
-            'color:var(--accent-light);">' +
-            _getIcon('EDIT') + ' Edit</button>';
+        var editBtn = '<button type="button" class="st-btn st-btn--accent" ' +
+            'data-action="tax-rates">' +
+            icon('EDIT') + ' Edit</button>';
 
-        return '<div style="background:var(--bg2);padding:12px 16px;' +
-            'border-radius:8px;margin-bottom:16px;border:1px solid var(--border);">' +
-            '<div style="display:flex;justify-content:space-between;' +
-            'align-items:center;margin-bottom:8px;">' +
-            '<div style="font-size:0.65rem;color:var(--accent-light);' +
-            'font-weight:bold;">' +
-            _getIcon('GEAR') + ' Fiscal Policy</div>' +
-            editBtn +
+        return '<div class="st-section">' +
+            '<div class="st-section__title">' +
+            icon('GEAR') + ' Fiscal Policy' +
+            '<span style="flex:1;"></span>' + editBtn +
             '</div>' +
-            row('Tax Rate', _fmtPercent(summary.taxRate),
+            '<div class="st-section__body">' +
+            row('Tax Rate', fmtPercent(s.taxRate),
                 'Percent of base tax collected from residents') +
-            row('Trade Tariff', _fmtPercent(summary.tradeTariff),
+            row('Trade Tariff', fmtPercent(s.tradeTariff),
                 'Percent added to trade income') +
-            row('Industry Tax', _fmtPercent(summary.industryTaxRate),
+            row('Industry Tax', fmtPercent(s.industryTaxRate),
                 'Percent of enterprise profit collected') +
+            '</div>' +
             '</div>';
     }
 
+    // -------------------------------------------------------------------
+    // Budget summary
+    // -------------------------------------------------------------------
+
     function _buildBudgetSection(context) {
         var locationId = context.locationId;
-
         var budget;
-        try {
-            budget = _getEconomyQueries().getBudgetSummary(locationId);
-        } catch (err) {
-            budget = null;
-        }
+        try { budget = _getEconomyQueries().getBudgetSummary(locationId); }
+        catch (e) { budget = null; }
 
         if (!budget) {
-            return '<div style="background:var(--bg2);padding:12px 16px;' +
-                'border-radius:8px;margin-bottom:16px;border:1px solid var(--border);">' +
-                '<div style="font-size:0.65rem;color:var(--accent-light);' +
-                'font-weight:bold;margin-bottom:6px;">' +
-                _getIcon('COIN') + ' Annual Budget</div>' +
-                '<div style="font-size:0.6rem;color:var(--dim);text-align:center;' +
-                'padding:8px 0;">Budget data unavailable.</div>' +
+            return '<div class="st-section">' +
+                '<div class="st-section__title">' +
+                icon('COIN') + ' Annual Budget</div>' +
+                '<div class="st-section__empty">Budget data unavailable.</div>' +
                 '</div>';
         }
 
@@ -575,45 +242,39 @@
         var totalExpenses = budget.expenses && typeof budget.expenses.total === 'number'
             ? budget.expenses.total : null;
         var surplus = typeof budget.surplus === 'number' ? budget.surplus : null;
-        var surplusColor = (surplus !== null && surplus >= 0)
-            ? 'var(--success)' : 'var(--danger)';
+
+        var surplusClass = 'st-stat__value';
+        if (surplus !== null) {
+            surplusClass += surplus >= 0
+                ? ' st-stat__value--pos'
+                : ' st-stat__value--neg';
+        }
         var surplusSign = (surplus !== null && surplus > 0) ? '+' : '';
 
-        var openBtn = '<button type="button" data-action="budget" ' +
-            'data-location="' + _escapeHtml(locationId) + '" ' +
-            'style="font-size:0.55rem;padding:3px 10px;background:var(--bg3);' +
-            'border:1px solid var(--border);border-radius:4px;cursor:pointer;' +
-            'color:var(--text);">' +
-            _getIcon('COIN') + ' Open</button>';
+        var openBtn = '<button type="button" class="st-btn" ' +
+            'data-action="budget">' +
+            icon('COIN') + ' Open</button>';
 
-        function stat(label, valueHtml, color) {
-            return '<div style="background:var(--bg);padding:8px;' +
-                'border-radius:6px;text-align:center;' +
-                'border:1px solid var(--border-light);">' +
-                '<div style="font-size:0.5rem;color:var(--dim);">' +
-                _escapeHtml(label) + '</div>' +
-                '<div style="font-size:0.9rem;font-weight:bold;color:' +
-                (color || 'var(--text)') + ';">' +
-                valueHtml + '</div>' +
+        function stat(label, valueHtml, cls) {
+            return '<div class="st-stat">' +
+                '<div class="st-stat__label">' + esc(label) + '</div>' +
+                '<div class="' + cls + '">' + valueHtml + '</div>' +
                 '</div>';
         }
 
-        return '<div style="background:var(--bg2);padding:12px 16px;' +
-            'border-radius:8px;margin-bottom:16px;border:1px solid var(--border);">' +
-            '<div style="display:flex;justify-content:space-between;' +
-            'align-items:center;margin-bottom:8px;">' +
-            '<div style="font-size:0.65rem;color:var(--accent-light);' +
-            'font-weight:bold;">' +
-            _getIcon('COIN') + ' Annual Budget</div>' +
-            openBtn +
+        var breakdown = _buildBudgetBreakdown(budget);
+
+        return '<div class="st-section">' +
+            '<div class="st-section__title">' +
+            icon('COIN') + ' Annual Budget' +
+            '<span style="flex:1;"></span>' + openBtn +
             '</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;' +
-            'gap:12px;margin-bottom:10px;">' +
-            stat('Total Income', _fmtGold(totalIncome), 'var(--success)') +
-            stat('Total Expenses', _fmtGold(totalExpenses), 'var(--danger)') +
-            stat('Surplus', surplusSign + _fmtGold(surplus), surplusColor) +
+            '<div class="st-stats st-stats--3">' +
+            stat('Total Income', fmtGold(totalIncome), 'st-stat__value st-stat__value--pos') +
+            stat('Total Expenses', fmtGold(totalExpenses), 'st-stat__value st-stat__value--neg') +
+            stat('Surplus', surplusSign + fmtGold(surplus), surplusClass) +
             '</div>' +
-            _buildBudgetBreakdown(budget) +
+            '<div class="st-section__body">' + breakdown + '</div>' +
             '</div>';
     }
 
@@ -636,39 +297,35 @@
             { key: 'governmentSalaries',  label: 'Gov Salaries' }
         ];
 
-        function list(items, source, accent) {
-            var html = '<div style="background:var(--bg);padding:8px;' +
-                'border-radius:4px;border:1px solid var(--border-light);">' +
-                '<div style="color:' + accent + ';font-weight:bold;' +
-                'margin-bottom:4px;font-size:0.55rem;">' +
-                _escapeHtml(source === 'income' ? 'Income' : 'Expenses') +
+        function list(items, source) {
+            var html = '<div class="st-row">' +
+                '<div class="st-row__body">' +
+                '<div class="st-row__title">' +
+                esc(source === 'income' ? 'Income' : 'Expenses') +
                 '</div>';
-
             for (var i = 0; i < items.length; i++) {
                 var item = items[i];
                 var value = source === 'income'
                     ? budget.income[item.key]
                     : budget.expenses[item.key];
-                html += '<div style="display:flex;justify-content:space-between;' +
-                    'padding:2px 0;border-bottom:1px solid var(--border-light);' +
-                    'font-size:0.55rem;">' +
-                    '<span style="color:var(--dim);">' +
-                    _escapeHtml(item.label) + '</span>' +
-                    '<span style="color:var(--text);">' +
-                    _fmtGold(value) + '</span>' +
+                html += '<div class="st-inline">' +
+                    '<span class="st-inline__label">' + esc(item.label) + '</span>' +
+                    '<span class="st-inline__value">' + fmtGold(value) + '</span>' +
                     '</div>';
             }
-
-            html += '</div>';
+            html += '</div></div>';
             return html;
         }
 
-        return '<div style="display:grid;grid-template-columns:1fr 1fr;' +
-            'gap:12px;font-size:0.55rem;">' +
-            list(incomeItems, 'income', 'var(--success)') +
-            list(expenseItems, 'expenses', 'var(--danger)') +
+        return '<div class="st-stats st-stats--2">' +
+            list(incomeItems, 'income') +
+            list(expenseItems, 'expenses') +
             '</div>';
     }
+
+    // -------------------------------------------------------------------
+    // Employment
+    // -------------------------------------------------------------------
 
     function _buildEmploymentSection(context) {
         var locationId = context.locationId;
@@ -676,75 +333,59 @@
         if (!EQ || typeof EQ.getEmployment !== 'function') return '';
 
         var employment;
-        try {
-            employment = EQ.getEmployment(locationId);
-        } catch (err) {
-            return '';
-        }
+        try { employment = EQ.getEmployment(locationId); }
+        catch (e) { return ''; }
         if (!employment) return '';
 
-        var openBtn = '<button type="button" data-action="employment" ' +
-            'data-location="' + _escapeHtml(locationId) + '" ' +
-            'style="font-size:0.55rem;padding:3px 10px;background:var(--bg3);' +
-            'border:1px solid var(--border);border-radius:4px;cursor:pointer;' +
-            'color:var(--text);">' +
-            _getIcon('PERSON') + ' Details</button>';
+        var detailsBtn = '<button type="button" class="st-btn" ' +
+            'data-action="employment">' +
+            icon('PERSON') + ' Details</button>';
 
-        var rateColor = 'var(--danger)';
+        var rateClass = 'st-stat__value';
         if (typeof employment.employmentRate === 'number') {
-            if (employment.employmentRate >= 70) rateColor = 'var(--success)';
-            else if (employment.employmentRate >= 40) rateColor = 'var(--warn)';
+            if (employment.employmentRate >= 70) rateClass += ' st-stat__value--pos';
+            else if (employment.employmentRate >= 40) rateClass += ' st-stat__value--warn';
+            else rateClass += ' st-stat__value--neg';
         }
 
-        function stat(label, valueHtml, color) {
-            return '<div style="background:var(--bg);padding:6px;' +
-                'border-radius:4px;text-align:center;' +
-                'border:1px solid var(--border-light);">' +
-                '<div style="font-size:0.45rem;color:var(--dim);">' +
-                _escapeHtml(label) + '</div>' +
-                '<div style="font-size:0.8rem;font-weight:bold;color:' +
-                (color || 'var(--text)') + ';">' +
-                valueHtml + '</div>' +
+        var unempClass = 'st-stat__value' +
+            (employment.unemployed > 0 ? ' st-stat__value--neg' : ' st-stat__value--pos');
+
+        function stat(label, valueHtml, cls) {
+            return '<div class="st-stat">' +
+                '<div class="st-stat__label">' + esc(label) + '</div>' +
+                '<div class="' + cls + '">' + valueHtml + '</div>' +
                 '</div>';
         }
 
-        return '<div style="background:var(--bg2);padding:12px 16px;' +
-            'border-radius:8px;margin-bottom:16px;border:1px solid var(--border);">' +
-            '<div style="display:flex;justify-content:space-between;' +
-            'align-items:center;margin-bottom:6px;">' +
-            '<div style="font-size:0.65rem;color:var(--accent-light);' +
-            'font-weight:bold;">' +
-            _getIcon('PERSON') + ' Employment</div>' +
-            openBtn +
+        return '<div class="st-section">' +
+            '<div class="st-section__title">' +
+            icon('PERSON') + ' Employment' +
+            '<span style="flex:1;"></span>' + detailsBtn +
             '</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;' +
-            'gap:8px;">' +
-            stat('Workers', _fmtNumber(employment.totalEmployed)) +
-            stat('Unemployed', _fmtNumber(employment.unemployed),
-                employment.unemployed > 0 ? 'var(--danger-lt)' : 'var(--success)') +
-            stat('Rate', _fmtPercent(employment.employmentRate), rateColor) +
-            stat('Avg Wage', _fmtGold(employment.averageWage)) +
+            '<div class="st-stats">' +
+            stat('Workers', fmtNum(employment.totalEmployed), 'st-stat__value') +
+            stat('Unemployed', fmtNum(employment.unemployed), unempClass) +
+            stat('Rate', fmtPercent(employment.employmentRate), rateClass) +
+            stat('Avg Wage', fmtGold(employment.averageWage), 'st-stat__value') +
             '</div>' +
             '</div>';
     }
 
-    function _buildActionButtons(locationId) {
-        function btn(action, label, iconName, opts) {
-            opts = opts || {};
-            var style = 'font-size:0.6rem;padding:4px 12px;' +
-                'background:var(--bg3);border:1px solid ' +
-                (opts.accent ? 'var(--accent)' : 'var(--border)') + ';' +
-                'border-radius:4px;cursor:pointer;color:' +
-                (opts.accent ? 'var(--accent-light)' : 'var(--text)') + ';';
-            return '<button type="button" data-action="' + _escapeHtml(action) + '" ' +
-                'data-location="' + _escapeHtml(locationId) + '" ' +
-                'style="' + style + '">' +
-                (iconName ? _getIcon(iconName) + ' ' : '') +
-                _escapeHtml(label) + '</button>';
-        }
+    // -------------------------------------------------------------------
+    // Actions
+    // -------------------------------------------------------------------
 
-        return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;">' +
-            btn('tax-rates', 'Fiscal Policy', 'GEAR') +
+    function _buildActionButtons() {
+        function btn(action, label, iconName, accent) {
+            return '<button type="button" class="st-btn' +
+                (accent ? ' st-btn--accent' : '') + '" data-action="' +
+                esc(action) + '">' +
+                (iconName ? icon(iconName) + ' ' : '') +
+                esc(label) + '</button>';
+        }
+        return '<div class="st-header__actions">' +
+            btn('tax-rates', 'Fiscal Policy', 'GEAR', true) +
             btn('spending', 'Spending', 'COIN') +
             btn('budget', 'Budget', 'COIN') +
             btn('justice', 'Justice', 'SHIELD') +
@@ -757,57 +398,89 @@
     }
 
     function _buildFooter() {
-        return '<div style="padding:8px;background:var(--bg3);border-radius:6px;' +
-            'font-size:0.55rem;color:var(--dim);">' +
-            _getIcon('CIRCLE_DOT') + ' ' +
-            'Fiscal policy and budgets are edited through the modals. ' +
-            'Spending is set by the annual budget flow and is not editable here. ' +
-            'Debt repayment goes through the debt modal, which uses one atomic ' +
-            'transaction for wealth and debt.</div>';
+        return '<div class="st-footer">' + icon('CIRCLE_DOT') +
+            ' <span>Fiscal policy and budgets are edited through the modals. ' +
+            'Spending is set by the annual budget flow and is not editable ' +
+            'here. Debt repayment goes through the debt modal, which uses ' +
+            'one atomic transaction for wealth and debt.</span></div>';
     }
 
-    // =========================================================================
-    // 5. RENDER
-    // =========================================================================
+    // -------------------------------------------------------------------
+    // Action handlers
+    // -------------------------------------------------------------------
 
-    /**
-     * Renders the economy tab into the container.
-     *
-     * @param {HTMLElement} container
-     * @param {Object} context  { locationId, data, viewModel }
-     */
-    function renderSettlementEconomy(container, context) {
-        if (!container) {
-            throw new Error(
-                'settlement-economy-tab: container is required'
-            );
+    function _handleAction(action, locationId) {
+        switch (action) {
+            case 'refresh':
+                refresh();
+                return;
+            case 'tax-rates':
+                _openEconomyModal('openTaxRateModal', [locationId]);
+                return;
+            case 'spending':
+                _openEconomyModal('openSpendingModal', [locationId]);
+                return;
+            case 'budget':
+                _openCoreModal('openBudgetModal', [locationId]);
+                return;
+            case 'justice':
+                _openEconomyModal('openJusticeModal', [locationId]);
+                return;
+            case 'debt':
+                _openEconomyModal('openDebtManagementModal', [locationId]);
+                return;
+            case 'report':
+                _openEconomyModal('openFinancialReportModal', [locationId]);
+                return;
+            case 'efficiency':
+                _openEconomyModal('openEfficiencyModal', [locationId]);
+                return;
+            case 'employment':
+                _openCoreModal('openEmploymentModal', [locationId]);
+                return;
+            case 'state-enterprises':
+                _openCoreModal('openStateEnterpriseModal', [locationId]);
+                return;
+            default:
+                return;
         }
+    }
+
+    function _wireActions(container, locationId) {
+        if (container.__stEconomyWired) return;
+        container.__stEconomyWired = true;
+        container.addEventListener('click', function (event) {
+            var btn = event.target.closest('[data-action]');
+            if (!btn || !container.contains(btn)) return;
+            event.preventDefault();
+            _handleAction(btn.dataset.action, locationId);
+        });
+    }
+
+    // -------------------------------------------------------------------
+    // Renderer
+    // -------------------------------------------------------------------
+
+    function renderSettlementEconomy(container, context) {
+        if (!container) return;
         if (!context || !context.locationId) {
-            throw new Error(
-                'settlement-economy-tab: context.locationId is required'
-            );
+            container.innerHTML = H().emptyState('no-context');
+            return;
         }
 
         var locationId = context.locationId;
 
-        // debtRatio is derived from the two canonical balances via
-        // the economy query. It may be null (settlement missing, or one
-        // of the two balances non-finite); the renderer treats null as
-        // "unknown" and does not guess.
         var debtRatio;
-        try {
-            debtRatio = _getEconomyQueries().getDebtRatio(locationId);
-        } catch (err) {
-            debtRatio = null;
-        }
+        try { debtRatio = _getEconomyQueries().getDebtRatio(locationId); }
+        catch (e) { debtRatio = null; }
 
-        var html = '<div style="padding:4px;">' +
+        var html = '<div class="st-tab">' +
             _buildHeader(context) +
             _buildWealthDebtRow(context, debtRatio) +
             _buildFiscalPolicySection(context) +
             _buildBudgetSection(context) +
             _buildEmploymentSection(context) +
-            _buildActionButtons(locationId) +
+            _buildActionButtons() +
             _buildFooter() +
             '</div>';
 
@@ -815,28 +488,19 @@
         _wireActions(container, locationId);
     }
 
-    // =========================================================================
-    // 6. REGISTRATION
-    // =========================================================================
+    // -------------------------------------------------------------------
+    // Registration
+    // -------------------------------------------------------------------
 
-    function _register() {
-        var tabs = _getTabs();
-        if (!tabs || typeof tabs.registerTabRenderer !== 'function') {
-            throw new Error(
-                'settlement-economy-tab: SettlementTabs is missing. ' +
-                'Load settlement-tabs.js before this tab.'
-            );
-        }
-        tabs.registerTabRenderer('economy', renderSettlementEconomy);
+    if (window.TabManager && typeof window.TabManager.register === 'function') {
+        window.TabManager.register(SCOPE, TAB_ID, renderSettlementEconomy);
+    } else if (typeof console !== 'undefined' && console.warn) {
+        console.warn(
+            'settlement-economy-tab: TabManager is not available at load ' +
+            'time; the tab was not registered.'
+        );
     }
 
-    _register();
-
-    // =========================================================================
-    // 7. EXPORTS
-    // =========================================================================
-
     window.renderSettlementEconomy = renderSettlementEconomy;
-    window._renderSettlementEconomy = renderSettlementEconomy;
 
 })();
