@@ -113,7 +113,9 @@
  *     birthplaceId, currentLocationId, moves
  *
  *   Household:
- *     household, householdId, householdHistory
+ *     household, householdId, householdHistory (structured membership
+ *     timeline: array of entries with householdId, householdName,
+ *     joinedYear, leftYear, leftReason, role, isHead, timestamp)
  *
  *   Religion and culture:
  *     religionId, religionHistory (structured conversion events),
@@ -198,6 +200,8 @@
  *       is a fresh object (safe to mutate).
  *     - `projection.moves[i]` is a fresh object (safe to mutate).
  *     - `projection.religionHistory[i]` is a fresh object (safe to
+ *       mutate) with primitive fields.
+ *     - `projection.householdHistory[i]` is a fresh object (safe to
  *       mutate) with primitive fields.
  *
  *   `projection.professions` is NOT on the projection any more (see
@@ -306,7 +310,30 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
+ *   Current revision (household-tab P1):
+ *     - _project now emits householdHistory via _cloneHouseholdHistory,
+ *       matching the shape CharacterCommands writes (structured
+ *       membership entries with householdId, householdName, joinedYear,
+ *       leftYear, leftReason, role, isHead, timestamp). Prior revisions
+ *       cloned it with _cloneStringArray, which dropped every object
+ *       entry and returned [] for every character.
+ *
+ *       Consumers affected: household-queries.getHouseholdSnapshot
+ *       and household-queries.getCharacterHouseholdSnapshot both read
+ *       character.householdHistory through the projection (via
+ *       _lookupCharacter → window.getCharacterById). Before this fix,
+ *       both saw an empty array for every character, which broke
+ *       "Previous Households" and "View at Join" (they always
+ *       resolved to null).
+ *
+ *       This is the same class of bug _cloneReligionHistory fixed
+ *       earlier: projection helpers that normalize structured arrays
+ *       to string arrays silently discard the structure. See PROJECTION
+ *       CONTENTS in the header for the authoritative field list.
+ *
+ *     - No behavioural change to any other field. _cloneHouseholdHistory
+ *       is additive; every existing projection field keeps its shape.
+ *   Previous revision:
  *     - _project now emits `religionHistory` as structured conversion
  *       events via the new _cloneReligionHistory helper, matching the
  *       shape CharacterCommands.setReligion writes. Prior revisions
@@ -925,9 +952,8 @@
 
     /**
      * Clones an array whose entries are all strings (or expected to be).
-     * Used for `apprentices` (ids) and `householdHistory` (string keys).
-     * Filtering to strings keeps the projection honest about what a
-     * consumer can rely on.
+     * Used for `apprentices` (ids). Filtering to strings keeps the
+     * projection honest about what a consumer can rely on.
      */
     function _cloneStringArray(arr) {
         if (!Array.isArray(arr)) return [];
@@ -1040,6 +1066,49 @@
         return out;
     }
 
+    /**
+     * Clones a household-history array.
+     *
+     * The canonical householdHistory is an array of STRUCTURED membership
+     * entries written by HouseholdCommands (_writeCharacterMembership /
+     * _clearCharacterMembership / _updateCharacterMembershipRole):
+     *
+     *   {
+     *     householdId, householdName,
+     *     joinedYear, leftYear, leftReason,
+     *     role, isHead,
+     *     timestamp
+     *   }
+     *
+     * Prior revisions cloned it with _cloneStringArray, which returned
+     * [] for every character because the entries are objects, not
+     * strings. Consumers that read the history (household-queries.
+     * getHouseholdSnapshot, getCharacterHouseholdSnapshot) therefore
+     * saw no prior memberships.
+     *
+     * Every field is a primitive or null, so a record-level shallow
+     * clone is deep enough.
+     */
+    function _cloneHouseholdHistory(history) {
+        if (!Array.isArray(history)) return [];
+        var out = [];
+        for (var i = 0; i < history.length; i++) {
+            var e = history[i];
+            if (!e || typeof e !== 'object') continue;
+            out.push({
+                householdId: _isMissing(e.householdId) ? null : e.householdId,
+                householdName: _isMissing(e.householdName) ? null : e.householdName,
+                joinedYear: _isMissing(e.joinedYear) ? null : e.joinedYear,
+                leftYear: _isMissing(e.leftYear) ? null : e.leftYear,
+                leftReason: _isMissing(e.leftReason) ? null : e.leftReason,
+                role: _isMissing(e.role) ? null : e.role,
+                isHead: e.isHead === true,
+                timestamp: _isMissing(e.timestamp) ? null : e.timestamp
+            });
+        }
+        return out;
+    }
+
     function _project(c) {
         if (!c || !_hasId(c.id)) return null;
         return {
@@ -1078,9 +1147,9 @@
             moves: _cloneMoves(c.moves),
 
             // Household history. Character-owned; projected as fresh
-            // arrays so consumers can inspect without touching canonical
-            // state.
-            householdHistory: _cloneStringArray(c.householdHistory),
+            // structured entries so consumers can inspect without
+            // touching canonical state. See _cloneHouseholdHistory.
+            householdHistory: _cloneHouseholdHistory(c.householdHistory),
 
             // Religion history. Structured conversion events written by
             // CharacterCommands.setReligion. Cloned record-by-record via
