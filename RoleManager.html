@@ -465,15 +465,11 @@
 
      Religion is loaded on this page despite no role tab reading it
      directly, because culture-queries.js has a LOAD-TIME dependency
-     on ReligionQueries (verified by the error:
-
-       "culture-queries.js loaded but window.ReligionQueries is
-        missing. Check script tag order."
-
-     ). Culture in turn is a load-time dependency of name-queries.js
-     (via CultureQueries.getCultureForCharacter), which is a load-time
-     dependency of character-factory.js. The whole chain must be
-     present.
+     on ReligionQueries (verified by its own _verifyLoadTimeDependencies
+     check). Culture in turn is a load-time dependency of
+     name-queries.js (via CultureQueries.getCultureForCharacter),
+     which is a load-time dependency of character-factory.js. The
+     whole chain must be present.
 
      Education and household are NOT loaded — nothing in the role
      tab dependency tree touches them.
@@ -637,15 +633,8 @@
 <!--                                                                -->
 <!-- Culture-queries.js has a LOAD-TIME dependency on               -->
 <!-- ReligionQueries (verified by its own _verifyLoadTimeDependencies -->
-<!-- check at line 861). This is the only reason religion is loaded -->
-<!-- on the Role Manager page — no role tab reads it directly.       -->
-<!--                                                                -->
-<!-- Dropping this block causes culture-queries.js to throw, which  -->
-<!-- cascades through culture-generation / culture-view-models /    -->
-<!-- culture-ui-list / modals-culture / culture-bootstrap /         -->
-<!-- name-queries / name-rules / names-state / name-commands /      -->
-<!-- name-system / modals-name / character-factory — every one of   -->
-<!-- which has a load-time guard on the previous module's output.   -->
+<!-- check). This is the only reason religion is loaded on the Role -->
+<!-- Manager page — no role tab reads it directly.                  -->
 <!-- ============================================================ -->
 <script src="js/religion/religion-constants.js"></script>
 <script src="js/religion/religion-format.js"></script>
@@ -717,17 +706,31 @@
 <script src="js/apprenticeship/modals-apprenticeship.js"></script>
 
 <!-- ============================================================ -->
-<!-- TABMANAGER SCOPE (before the role tab files register)         -->
+<!-- ROLE TAB CONTEXT (no TabManager.configure)                    -->
+<!--                                                                -->
+<!-- The deployed js/core/tab-manager.js requires SIX functions on -->
+<!-- configure — containerRoot, resolveContainer, buildContext,    -->
+<!-- getActiveTabId, setActiveTabId, buildEmptyState — and keeps  -->
+<!-- its own private _activeTabIdByScope map that renderActive    -->
+<!-- reads. Priming that map programmatically is not exposed      -->
+<!-- through the public API, and its click router writes the map  -->
+<!-- only after a real [data-tab] click.                          -->
+<!--                                                                -->
+<!-- Rather than fight that, the Role Manager orchestrator wires  -->
+<!-- its own click handler (#panelSubtabs) and dispatches to each -->
+<!-- tab file's exported `render(container, role, options)`       -->
+<!-- function directly. TabManager.register is still called by    -->
+<!-- each tab file at load time (idempotent, harmless), but       -->
+<!-- nothing in the orchestrator reads from TabManager.           -->
 <!-- ============================================================ -->
 <script>
 (function () {
     'use strict';
 
-    if (typeof window.TabManager === 'undefined' || !window.TabManager) {
-        return;
-    }
-
-    var context = {
+    // The context object every tab file reads.
+    //   role        canonical RoleState.getRole clone (or null)
+    //   onRerender  the tab files call this after a successful mutation
+    window.RoleTabContext = {
         role: null,
         onRerender: function () {
             if (typeof window.__roleManagerRerenderActiveTab === 'function') {
@@ -735,32 +738,6 @@
             }
         }
     };
-    window.RoleTabContext = context;
-
-    window.TabManager.configure('role', {
-        containerRoot: function () {
-            return document.getElementById('tabContent');
-        },
-        buildContext: function () {
-            if (!context.role) return null;
-            return {
-                role: context.role,
-                onRerender: context.onRerender
-            };
-        },
-        buildEmptyState: function (tabId, reason) {
-            if (reason === 'no-renderer') {
-                return 'The "' + tabId + '" tab is not available.';
-            }
-            if (reason === 'no-context') {
-                return 'Select a role from the sidebar to view this tab.';
-            }
-            if (reason === 'no-container') {
-                return '';
-            }
-            return '';
-        }
-    });
 })();
 </script>
 
@@ -1002,11 +979,6 @@
         if (window.ReligionBootstrap && typeof window.ReligionBootstrap.init === 'function') {
             try { window.ReligionBootstrap.init(); } catch (e) { console.error(e); }
         }
-        if (window.TabManager && typeof window.TabManager.init === 'function') {
-            try { window.TabManager.init(); } catch (e) {
-                console.error('[role-manager] TabManager.init failed:', e);
-            }
-        }
 
         // Sidebar refresh hook — tab files call this after mutations.
         window.renderRoleList = renderRoleList;
@@ -1200,28 +1172,91 @@
         })(tabButtons[i]);
     }
 
+    /**
+     * Renders the currently-active tab.
+     *
+     * Direct dispatch — NOT via TabManager.renderActive(). The deployed
+     * js/core/tab-manager.js requires six config hooks and keeps a
+     * private _activeTabIdByScope map that only the [data-tab] click
+     * router writes. Priming it programmatically (which is what every
+     * programmatic render path here needs) requires either a public
+     * setter (not in the API) or synthetic clicks. Both are worse than
+     * just calling each tab file's exported render() function directly.
+     *
+     * Each tab file exports:
+     *   window.RoleDetailsTab.render(container, role, options)
+     *   window.RoleCharactersTab.render(container, role, options)
+     *   window.RoleApprenticeshipsTab.render(container, role, options)
+     *   window.RoleAnalyticsTab.render(container, role, options)
+     *   window.RoleAssignmentsTab.render(container, role, options)
+     *   window.CategoryManager.render(container)         // shared, no role
+     *
+     * options.onRerender is what the tab calls after a successful
+     * mutation to ask the orchestrator to re-render.
+     */
     function renderActiveTab() {
-        if (window.TabManager && typeof window.TabManager.has === 'function') {
-            try {
-                if (window.TabManager.has('role', activeTabId)) {
-                    window.TabManager.activate('role', activeTabId);
-                    return;
-                }
-                window.TabManager.render('role', activeTabId);
-                return;
-            } catch (e) {
-                console.error(
-                    '[role-manager] TabManager activate/render failed for "' +
-                    activeTabId + '":', e
-                );
-            }
-        }
-
         var container = document.getElementById('tab-' + activeTabId);
         if (!container) return;
-        container.innerHTML =
-            '<div class="ct-empty">Tab system not available. ' +
-            'Load js/core/tab-manager.js.</div>';
+
+        var role = window.RoleTabContext ? window.RoleTabContext.role : null;
+        var opts = {
+            onRerender: function () {
+                renderActiveTab();
+            }
+        };
+
+        // Categories tab works without a selected role.
+        if (activeTabId === 'categories') {
+            if (window.CategoryManager && typeof window.CategoryManager.render === 'function') {
+                container.innerHTML = '';
+                try { window.CategoryManager.render(container); }
+                catch (e) {
+                    container.innerHTML =
+                        '<div class="rt-unavailable">Category manager error: ' +
+                        escapeHtml(e.message || 'unknown') + '</div>';
+                    console.error('[role-manager] CategoryManager.render threw:', e);
+                }
+                return;
+            }
+            container.innerHTML =
+                '<div class="ct-empty">Categories tab module not loaded.</div>';
+            return;
+        }
+
+        // Every other tab needs a selected role.
+        if (!role) {
+            container.innerHTML =
+                '<div class="ct-empty">Select a role from the sidebar to view this tab.</div>';
+            return;
+        }
+
+        var tab = _getTabModule(activeTabId);
+        if (!tab || typeof tab.render !== 'function') {
+            container.innerHTML =
+                '<div class="ct-empty">The "' + activeTabId + '" tab is not available.</div>';
+            return;
+        }
+
+        container.innerHTML = '';
+        try {
+            tab.render(container, role, opts);
+        } catch (e) {
+            container.innerHTML =
+                '<div class="rt-unavailable">Tab render error: ' +
+                escapeHtml(e.message || 'unknown') + '</div>';
+            console.error('[role-manager] tab "' + activeTabId + '" render threw:', e);
+        }
+    }
+
+    function _getTabModule(tabId) {
+        switch (tabId) {
+            case 'details':         return window.RoleDetailsTab;
+            case 'characters':      return window.RoleCharactersTab;
+            case 'apprenticeships': return window.RoleApprenticeshipsTab;
+            case 'analytics':       return window.RoleAnalyticsTab;
+            case 'assignments':     return window.RoleAssignmentsTab;
+            default:                return null;
+        }
     }
 
     function escapeHtml(value) {
