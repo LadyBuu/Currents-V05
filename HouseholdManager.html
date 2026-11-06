@@ -5,18 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Household Manager — Still Waters</title>
 
-    <!-- ============================================================= -->
-    <!-- External stylesheets — ONLY these two.                         -->
-    <!-- The tree has css/themes.css (plural), not css/theme.css.        -->
-    <!-- ============================================================= -->
     <link rel="stylesheet" href="css/themes.css">
     <link rel="stylesheet" href="css/common.css">
 
-    <!-- ============================================================= -->
-    <!-- Inline styles — manager layout + household-tab classes.         -->
-    <!-- All colors reference theme tokens. No hardcoded hex. No font    -->
-    <!-- stacks. No emoji.                                              -->
-    <!-- ============================================================= -->
     <style>
         /* ============================================================ */
         /* 1. MANAGER SHELL LAYOUT                                       */
@@ -151,6 +142,19 @@
             padding: 16px;
         }
         .tab-pane.active { display: block; }
+
+        /* Bootstrap error slot — visible only when it has content */
+        #bootstrapError {
+            display: none;
+            padding: 12px;
+            margin: 8px 16px;
+            background: var(--bg2);
+            border-left: 3px solid var(--danger);
+            border-radius: 4px;
+            color: var(--danger);
+            font-size: 0.65rem;
+        }
+        #bootstrapError.show { display: block; }
 
         /* ============================================================ */
         /* 2. CELLS / KV / SECTIONS                                      */
@@ -898,9 +902,6 @@
 </head>
 <body>
 
-<!-- ================================================================ -->
-<!-- TOPBAR                                                           -->
-<!-- ================================================================ -->
 <div class="topbar">
     <div class="title" id="householdManagerTitle">Household Manager</div>
     <div class="spacer"></div>
@@ -915,9 +916,6 @@
     <input type="file" id="fileInput" accept=".json" style="display:none;">
 </div>
 
-<!-- ================================================================ -->
-<!-- LAYOUT                                                           -->
-<!-- ================================================================ -->
 <div class="app-layout">
     <div class="sidebar" id="householdSidebar">
         <div class="sidebar-header">
@@ -929,7 +927,7 @@
     </div>
 
     <div class="main-panel">
-        <div id="emptyStateText" style="padding: 12px;"></div>
+        <div id="bootstrapError"></div>
 
         <div class="manager-subtabs" id="householdsTabStrip" role="tablist">
             <button type="button" class="manager-subtab" data-tab="details"   role="tab" aria-selected="true">Overview</button>
@@ -950,10 +948,6 @@
         </div>
     </div>
 </div>
-
-<!-- ================================================================ -->
-<!-- SCRIPTS                                                          -->
-<!-- ================================================================ -->
 
 <!-- 1. Theme boot -->
 <script src="js/core/theme-boot.js"></script>
@@ -995,7 +989,7 @@
 <script src="js/core/exportUtils.js"></script>
 <script src="js/core/tab-manager.js"></script>
 
-<!-- 8. Character policy — family-state.js is REQUIRED before family-queries.js -->
+<!-- 8. Character policy -->
 <script src="js/character/family-rules.js"></script>
 <script src="js/character/family-state.js"></script>
 <script src="js/character/character-state.js"></script>
@@ -1004,8 +998,9 @@
 <script src="js/character/family-queries.js"></script>
 <script src="js/character/family-commands.js"></script>
 
-<!-- 8b. Relationship policy — REQUIRED by household-bootstrap and household-servant -->
+<!-- 8b. Relationship policy — types → utils → state → queries → commands -->
 <script src="js/relationships/relationship-types.js"></script>
+<script src="js/relationships/relationship-utils.js"></script>
 <script src="js/relationships/relationship-state.js"></script>
 <script src="js/relationships/relationship-queries.js"></script>
 <script src="js/relationships/relationship-commands.js"></script>
