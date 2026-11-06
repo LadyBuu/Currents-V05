@@ -143,7 +143,6 @@
         }
         .tab-pane.active { display: block; }
 
-        /* Bootstrap error slot — visible only when it has content */
         #bootstrapError {
             display: none;
             padding: 12px;
@@ -1004,6 +1003,37 @@
 <script src="js/relationships/relationship-state.js"></script>
 <script src="js/relationships/relationship-queries.js"></script>
 <script src="js/relationships/relationship-commands.js"></script>
+
+<!-- 8c. Flat-global shim — exposes the six relationship functions that
+         household-bootstrap.js and household-servant.js require on
+         window. Points at the SAME functions as the namespaced exports
+         (no duplication). Safe to remove once household-bootstrap.js
+         and household-servant.js are migrated to the namespaced API. -->
+<script>
+    (function () {
+        'use strict';
+        var RC = window.RelationshipCommands;
+        var RQ = window.RelationshipQueries;
+        if (!RC && !RQ) return;
+
+        var flat = [
+            ['createRelationship',           RC],
+            ['endRelationship',              RC],
+            ['updateRelationship',           RC],
+            ['getRelationshipBetween',       RQ],
+            ['getRelationshipsForCharacter', RQ],
+            ['getRelationshipById',          RQ]
+        ];
+        for (var i = 0; i < flat.length; i++) {
+            var name = flat[i][0];
+            var source = flat[i][1];
+            if (typeof window[name] !== 'function'
+                && source && typeof source[name] === 'function') {
+                window[name] = source[name].bind(source);
+            }
+        }
+    })();
+</script>
 
 <!-- 9. Household domain -->
 <script src="js/households/household-constants.js"></script>
