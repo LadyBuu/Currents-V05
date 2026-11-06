@@ -931,10 +931,7 @@
        - loadMasterData() runs in bootstrap(), then religions array is
          repaired, THEN domain bootstraps run.
        - skill-utils.js loads BEFORE role-constants.js.
-       - NO household modules. Nothing on this page uses them, and
-         they carry chains of required modules that aren't in this
-         tree. If a future feature needs a household selector, load
-         the household block explicitly at that point.
+       - NO household modules. Nothing on this page uses them.
      ================================================================ -->
 
 <!-- Core constants -->
@@ -1159,16 +1156,23 @@
 <!-- ============================================================ -->
 <!-- TABMANAGER SCOPE (before the religion tab files register)    -->
 <!--                                                              -->
-<!-- This block MUST run before religion-*-tab.js so that the     -->
-<!-- scope is configured by the time each tab calls              -->
-<!-- TabManager.register. It configures the scope only; it does   -->
-<!-- NOT call TabManager.init() — that happens in bootstrap().    -->
+<!-- This block configures the 'religion' scope. It MUST run      -->
+<!-- before religion-*-tab.js so the scope exists when each tab   -->
+<!-- calls TabManager.register. It does NOT call TabManager.init; -->
+<!-- that happens in bootstrap() so the click router is wired     -->
+<!-- only after the DOM and the tab renderers are both ready.     -->
 <!-- ============================================================ -->
 <script>
 (function () {
     'use strict';
 
     if (typeof window.TabManager === 'undefined' || !window.TabManager) {
+        console.error(
+            '[religion-scope-config] TabManager is not loaded. The ' +
+            '<script src="js/core/tab-manager.js"> tag must appear ' +
+            'above this block. Religion tabs will not register and ' +
+            'the manager will not render any tab content.'
+        );
         return;
     }
 
@@ -1244,9 +1248,17 @@
         }
     });
 
-    // Exposed so the orchestrator can sync the strip after bootstrap()
-    // without duplicating _syncTabStrip. Kept under one name to make
-    // the cross-file contract obvious.
+    // Exposed so the orchestrator can sync the strip + persisted active
+    // tab when it activates a tab programmatically (not via a click).
+    // TabManager's router calls setActiveTabId for click-driven
+    // activation; the orchestrator has to call this manually for
+    // selectReligion / refresh / masterDataUpdated paths.
+    window.__religionSyncTab = function (tabId) {
+        window.__religionActiveTabId = tabId;
+        _syncTabStrip(tabId);
+    };
+
+    // Exposed for diagnostic reporting.
     window.ReligionTabSync = {
         syncStrip: _syncTabStrip,
         knownTabIds: KNOWN_TAB_IDS.slice()
@@ -1262,23 +1274,108 @@
 <script src="js/tabs/religion-followers-tab.js"></script>
 
 <!-- ============================================================ -->
+<!-- TABMANAGER LOAD-TIME PROBE                                   -->
+<!--                                                              -->
+<!-- Runs after all tab files have had a chance to load and      -->
+<!-- self-register. Verifies that TabManager actually exists and  -->
+<!-- that at least one religion tab registered. Surfaces the      -->
+<!-- three distinct failure modes for "tabs don't render":        -->
+<!--   (a) tab-manager.js did not load at all                     -->
+<!--   (b) tab-manager.js loaded but did not export TabManager    -->
+<!--   (c) TabManager loaded but a tab file failed to register    -->
+<!-- ============================================================ -->
+<script>
+(function () {
+    'use strict';
+
+    var KNOWN_TAB_IDS = ['details', 'gods', 'laws', 'places', 'followers'];
+
+    var TM = window.TabManager;
+    var tagPresent = !!document.querySelector('script[src*="tab-manager"]');
+
+    console.group('[religion-tab-probe] TabManager load check');
+    console.log('script tag for tab-manager.js present in DOM:', tagPresent);
+    console.log('typeof window.TabManager:', typeof TM);
+
+    if (typeof TM === 'undefined' || TM === null) {
+        console.error(
+            'window.TabManager is ' + typeof TM + '. The religion tabs ' +
+            'and the orchestrator will all fail because they all call ' +
+            'TabManager.register / .configure / .renderActive. Likely ' +
+            'cause: ' +
+            (!tagPresent
+                ? 'there is NO <script src="js/core/tab-manager.js"> tag ' +
+                  'in ReligionManager.html. Add it, after responsive.js and ' +
+                  'collapsible.js, before exportUtils.js.'
+                : 'the tag IS present but the script did not export ' +
+                  'window.TabManager. Check DevTools -> Network for a 404 ' +
+                  'on tab-manager.js, or check that the deployed file ends ' +
+                  'with `window.TabManager = { ... };`.')
+        );
+        console.groupEnd();
+        return;
+    }
+
+    if (typeof TM.configure !== 'function'
+        || typeof TM.register !== 'function'
+        || typeof TM.init !== 'function'
+        || typeof TM.renderActive !== 'function') {
+        console.error(
+            'window.TabManager exists but is missing required methods. ' +
+            'configure:', typeof TM.configure,
+            ' register:', typeof TM.register,
+            ' init:', typeof TM.init,
+            ' renderActive:', typeof TM.renderActive,
+            '. This is a stale or truncated tab-manager.js.'
+        );
+        console.groupEnd();
+        return;
+    }
+
+    console.log('TabManager API present: configure, register, init, renderActive.');
+
+    var registered = (typeof TM.listTabs === 'function'
+        ? TM.listTabs('religion')
+        : null) || [];
+    console.log('Registered religion tabs:', registered);
+
+    var missing = [];
+    for (var i = 0; i < KNOWN_TAB_IDS.length; i++) {
+        if (registered.indexOf(KNOWN_TAB_IDS[i]) === -1) {
+            missing.push(KNOWN_TAB_IDS[i]);
+        }
+    }
+    if (missing.length > 0) {
+        console.error(
+            'Missing religion tab registrations: ' + missing.join(', ') +
+            '. These tab files either failed to load (check the Network ' +
+            'tab for 404s on js/tabs/religion-<id>-tab.js) or threw ' +
+            'during parse. The <script> tags exist in the shell but the ' +
+            'files did not self-register.'
+        );
+    } else {
+        console.log('All 5 religion tabs registered OK.');
+    }
+
+    console.groupEnd();
+})();
+</script>
+
+<!-- ============================================================ -->
 <!-- DIAGNOSTIC HOOK — paste this AFTER all scripts and BEFORE    -->
 <!-- the orchestrator. Runs at DOMContentLoaded (after a          -->
 <!-- microtask) so the bootstrap's synchronous work finishes      -->
-<!-- first. NO setTimeout — that was Rule-10 debt. Safe:          -->
-<!-- read-only.                                                   -->
+<!-- first. NO setTimeout. Safe: read-only.                       -->
 <!-- ============================================================ -->
 <script>
 (function () {
     'use strict';
 
     window.__religionDiag = {
-        // Snapshot the state. Call at any time from the console.
         snapshot: function (label) {
             label = label || 'snapshot';
             console.group('[religion-diag] ' + label);
 
-            // 1. What masterData looks like in memory right now.
             var md = window.masterData;
             console.log('masterData present:', !!md);
             console.log('masterData.data present:', !!(md && md.data));
@@ -1294,7 +1391,6 @@
                     }));
             }
 
-            // 2. What's actually in localStorage right now.
             var keys = Object.keys(localStorage);
             console.log('localStorage keys:', keys);
             var storageKey = null;
@@ -1329,7 +1425,6 @@
                     'Nothing has been persisted under a recognizable schema.');
             }
 
-            // 3. Compare.
             if (storageKey && Array.isArray(inMemoryReligions)) {
                 var parsed2 = JSON.parse(localStorage.getItem(storageKey));
                 var storageReligions2 = parsed2 && parsed2.data && parsed2.data.religions;
@@ -1345,8 +1440,6 @@
             return { storageKey: storageKey };
         },
 
-        // Force a save and immediately check what landed. Call this
-        // right after creating a religion, before reload.
         saveAndInspect: function () {
             console.group('[religion-diag] saveAndInspect');
 
@@ -1398,7 +1491,6 @@
             return -1;
         },
 
-        // Print storage keys + which one looks like the save.
         keys: function () {
             var keys = Object.keys(localStorage);
             console.table(keys.map(function (k) {
@@ -1412,9 +1504,6 @@
         }
     };
 
-    // Log the load-time state after DOMContentLoaded + one microtask.
-    // This replaces the prior setTimeout(fn, 500) which was racing the
-    // orchestrator's DOMContentLoaded bootstrap.
     function _runInitialSnapshot() {
         console.log('[religion-diag] Diagnostic hook installed. ' +
             'Run one of these in the console:\n' +
@@ -1432,10 +1521,6 @@
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function () {
-            // Promise.resolve().then schedules after the current
-            // synchronous DOMContentLoaded listener chain has run
-            // (which includes the orchestrator's bootstrap), but
-            // before the next macrotask.
             Promise.resolve().then(_runInitialSnapshot);
         });
     } else {
@@ -1469,11 +1554,12 @@
     var activeTabId        = 'details';
     var isInitialized      = false;
 
-    // The tab strip buttons are NOT bound here. TabManager owns click
-    // routing for [data-tab] buttons inside containerRoot (the
-    // .main-panel[data-religion-editor]). The orchestrator only calls
-    // TabManager.activate() from code paths (sidebar select, refresh,
-    // masterDataUpdated).
+    // NOTE: The tab strip buttons are NOT bound here. TabManager's click
+    // router owns strip clicks (it walks from the click target to a
+    // [data-tab] button and asks each configured scope's containerRoot
+    // whether it contains the button). The orchestrator only calls
+    // TabManager.renderActive / .requestRender from programmatic paths
+    // (selectReligion, refresh, masterDataUpdated).
 
     function bootstrap() {
         if (isInitialized) return;
@@ -1515,16 +1601,13 @@
         renderReligionList();
         pickInitialSelection();
 
-        // Sync the strip using the shared helper exposed by the
-        // TabManager scope block above. Previously this called a
-        // local syncTabButtons(); that function is now deleted so the
-        // strip state is owned in exactly one place.
-        if (window.ReligionTabSync && typeof window.ReligionTabSync.syncStrip === 'function') {
-            window.ReligionTabSync.syncStrip(activeTabId);
+        // Sync the strip using the shared helper. The active tab id
+        // is 'details' at boot; syncTabStrip updates the strip and
+        // panes.
+        if (typeof window.__religionSyncTab === 'function') {
+            window.__religionSyncTab(activeTabId);
         }
 
-        // Expose a manual refresh so diagnostics can trigger a
-        // re-render after a forced save.
         window.__religionManagerRefresh = function () {
             renderReligionList();
             if (selectedReligionId) renderActiveTab();
@@ -1660,47 +1743,59 @@
         if (window.innerWidth <= 768) closeSidebar();
     }
 
+    // Programmatic tab activation. Used when the orchestrator wants to
+    // change tabs without a click (currently none — strip clicks are
+    // owned by TabManager). Kept for future use and for the sync +
+    // render ordering to be explicit.
     function activateTab(tabId) {
         if (!tabId) return;
         activeTabId = tabId;
 
         var TM = window.TabManager;
-        if (!TM || typeof TM.activate !== 'function') {
-            var container = document.getElementById('tab-' + tabId);
-            if (container) {
-                container.innerHTML =
-                    '<div class="rt-unavailable">TabManager is not available. ' +
-                    'Check the script load order.</div>';
-            }
+        if (!TM || typeof TM.requestRender !== 'function') {
+            renderTabError(tabId, 'TabManager is not available.');
             return;
         }
 
+        // Sync the strip + persisted active tab, then force-render
+        // the given tab. TabManager's click router does this in one
+        // step for clicks; programmatic activation has to do both.
+        if (typeof window.__religionSyncTab === 'function') {
+            window.__religionSyncTab(tabId);
+        }
         try {
-            TM.activate('religion', tabId);
+            TM.requestRender('religion', tabId);
         } catch (e) {
             console.error(
-                '[religion-manager] TabManager.activate failed for tab "' +
+                '[religion-manager] requestRender failed for tab "' +
                 tabId + '":', e
             );
-            var c = document.getElementById('tab-' + tabId);
-            if (c) {
-                c.innerHTML =
-                    '<div class="rt-unavailable">Error rendering tab: ' +
-                    escapeHtml(e.message || 'unknown') + '</div>';
-            }
+            renderTabError(tabId, e.message || 'unknown');
         }
     }
 
     function renderActiveTab() {
         var TM = window.TabManager;
 
-        if (!TM || typeof TM.activate !== 'function') {
-            var container = document.getElementById('tab-' + activeTabId);
-            if (container) {
-                container.innerHTML =
-                    '<div class="rt-unavailable">TabManager is not available. ' +
-                    'Check the script load order.</div>';
+        if (!TM || typeof TM.renderActive !== 'function') {
+            var msg;
+            if (!TM) {
+                msg = 'TabManager is not loaded. Open the console — the ' +
+                      '[religion-tab-probe] block above says why. Most ' +
+                      'likely the <script src="js/core/tab-manager.js"> ' +
+                      'tag is missing or the file is 404.';
+            } else if (typeof TM.listTabs !== 'function') {
+                msg = 'window.TabManager exists but has no listTabs(). ' +
+                      'The deployed tab-manager.js is stale or truncated.';
+            } else {
+                var reg = TM.listTabs('religion') || [];
+                msg = 'TabManager is loaded and has ' + reg.length +
+                      ' religion tab(s) registered: ' +
+                      (reg.length > 0 ? reg.join(', ') : '(none)') +
+                      '. Missing registrations = the corresponding ' +
+                      'js/tabs/religion-<id>-tab.js file failed to load.';
             }
+            renderTabError(activeTabId, msg);
             return;
         }
 
@@ -1714,23 +1809,29 @@
         }
 
         try {
-            TM.activate('religion', activeTabId);
+            // renderActive() reads the active tab id via
+            // getActiveTabId('religion'), which prefers the in-memory
+            // value set by TabManager's click router and falls back to
+            // the scope config's getActiveTabId (which returns
+            // window.__religionActiveTabId || 'details'). So after
+            // __religionSyncTab(activeTabId) has run, renderActive
+            // renders the tab we want.
+            TM.renderActive('religion');
         } catch (e) {
             console.error(
-                '[religion-manager] TabManager.activate failed for tab "' +
-                activeTabId + '":', e
+                '[religion-manager] TabManager.renderActive failed for ' +
+                'tab "' + activeTabId + '":', e
             );
-            var c3 = document.getElementById('tab-' + activeTabId);
-            if (c3) {
-                c3.innerHTML =
-                    '<div class="rt-unavailable">Error rendering tab: ' +
-                    escapeHtml(e.message || 'unknown') + '</div>';
-            }
+            renderTabError(activeTabId, e.message || 'unknown');
         }
     }
 
-    function setEmptyState(container, message) {
-        container.innerHTML = '<div class="ct-empty">' + escapeHtml(message) + '</div>';
+    function renderTabError(tabId, message) {
+        var c = document.getElementById('tab-' + tabId);
+        if (c) {
+            c.innerHTML =
+                '<div class="rt-unavailable">' + escapeHtml(message) + '</div>';
+        }
     }
 
     function escapeHtml(value) {
@@ -1857,10 +1958,7 @@
             if (window.ReligionBootstrap) window.ReligionBootstrap.init();
             renderReligionList();
 
-            // Reconcile selection against the reloaded data. If the
-            // selected religion no longer exists (e.g. it was removed
-            // by a manual localStorage edit), clear the topbar and
-            // re-pick an initial selection.
+            // Reconcile selection against the reloaded data.
             var Q = window.ReligionQueries;
             if (Q && selectedReligionId) {
                 var still = null;
@@ -1948,11 +2046,6 @@
         if (selectedReligionId) openDeleteReligion(selectedReligionId);
     });
 
-    // masterDataUpdated: reconcile selection against the new state.
-    // If the currently-selected religion was deleted elsewhere, the
-    // sidebar should update, the topbar buttons should disable, and
-    // the tab panes should either show the empty state or a different
-    // religion — NOT stay stuck on the deleted record.
     window.addEventListener('masterDataUpdated', function () {
         renderReligionList();
 
@@ -1982,7 +2075,6 @@
         pickInitialSelection();
         if (selectedReligionId) renderActiveTab();
         else {
-            // No religions left. Show the empty state in the active pane.
             var c = document.getElementById('tab-' + activeTabId);
             if (c) {
                 c.innerHTML =
