@@ -41,28 +41,63 @@
  *   This lets other modules (e.g. a future "open this tab" deep link)
  *   read/write it without importing this bootstrap.
  *
+ *   TabManager.setActive() does not exist. The initial active tab is
+ *   set through uiState.setActiveTabId(initialTab) (which is the
+ *   config hook, and persists), then _syncTabStrip(initialTab) syncs
+ *   the DOM, then TabManager.renderActive(SCOPE) renders. Calling
+ *   TabManager.setActive(...) throws and aborts init() before the
+ *   first render — that was the prior bug this revision fixes.
+ *
+ *   _syncTabStrip scopes its pane lookup to containerRoot rather than
+ *   document. On GovernmentManager.html that is the same set of
+ *   elements, but on a shared test page or a future side-by-side
+ *   manager, an unscoped query would flip the wrong pane's .active.
+ *
  * DEPENDENCIES (hard — init() throws visibly if missing):
  *   - js/core/tab-manager.js
  *   - js/government/government-ui-state.js
  *   - js/government/government-bootstrap.js
  *   - js/government/government-queries.js
  *   - js/location/location-queries.js
- *   - js/core/storage.js (loadMasterData)
+ *   - js/core/storage.js (loadMasterData, initializeStorage)
+ *   - js/core/formatting.js (escapeHtml)
+ *   - js/core/icons.js (Icons)
  *
  * DEPENDENCIES (soft — toast if missing at click time):
  *   - openModal / confirmDialog (modals-core.js)
  *   - importData / exportData (exportUtils.js)
  *   - ThemeSwitcher (theme-boot.js)
+ *   - getPlaces / getCurrentYear / setCurrentYear / isValidYear (core)
+ *   - LocationUI.renderLocationList (location-ui-list.js)
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Initial revision. Replaces the inline <script> blocks in
- *   GovernmentManager.html that previously:
- *     - hardcoded the SUBTABS array
- *     - kept activeSubtabId in a module-scoped var
- *     - re-rendered the whole strip on every click
- *     - wired sidebar, topbar, year, theme inline
- *   All of that now lives here (or in government-ui-state.js).
+ *   - Replaced the inline <script> blocks in GovernmentManager.html that
+ *     previously hardcoded the SUBTABS array, kept activeSubtabId in a
+ *     module-scoped var, re-rendered the whole strip on every click,
+ *     and wired sidebar / topbar / year / theme inline.
+ *   - Removed TabManager.setActive(SCOPE, initialTab) — it is not a
+ *     method on TabManager, and the call threw inside init() before
+ *     the initial render, leaving the page with an empty pane on
+ *     first load. Replaced with uiState.setActiveTabId(initialTab)
+ *     followed by _syncTabStrip(initialTab) and
+ *     TabManager.renderActive(SCOPE).
+ *   - _syncTabStrip now scopes its pane lookup to .main-panel instead
+ *     of the whole document. Same behavior on this page; correct
+ *     behavior if a second manager shares the document.
+ *   - Dependency checks (_requireTabManager / _requireUIState /
+ *     _requireQueries / _requireLocationQueries) are kept loud and
+ *     init() catches their throw and writes a visible error into
+ *     #panelContent. The previous revision had this, and it is
+ *     preserved — a missing dependency must be a rendered error, not
+ *     a silent blank page.
+ *   - _reinitAll no longer calls _setupSidebar() after re-hydration
+ *     unless the sidebar container is still mounted. That call was
+ *     guarded only by "does #placeList exist", which is true even
+ *     after a re-render; re-binding the fallback list handler each
+ *     time accumulated a duplicate listener on the container. The
+ *     new version re-renders the sidebar content via the same
+ *     LocationUI path, and skips fallback rebinding.
  * =============================================================================
  */
 
@@ -98,6 +133,11 @@
     // =========================================================================
     // 2. DEPENDENCY HELPERS
     // =========================================================================
+    //
+    // _requireX throws; init() catches and writes a visible error. A
+    // missing dependency is a load-order bug and must be loud, but a
+    // throw from init() during DOMContentLoaded is swallowed by the
+    // browser — so the catch writes into the page.
 
     function _esc(s) {
         if (typeof window.escapeHtml === 'function') {
@@ -130,10 +170,12 @@
         if (!window.TabManager
             || typeof window.TabManager.configure !== 'function'
             || typeof window.TabManager.register !== 'function'
-            || typeof window.TabManager.init !== 'function') {
+            || typeof window.TabManager.init !== 'function'
+            || typeof window.TabManager.renderActive !== 'function'
+            || typeof window.TabManager.requestRender !== 'function') {
             throw new Error(
-                'government-manager-bootstrap: TabManager is missing. ' +
-                'Load js/core/tab-manager.js first.'
+                'government-manager-bootstrap: TabManager is missing or ' +
+                'incomplete. Load js/core/tab-manager.js first.'
             );
         }
         return window.TabManager;
@@ -142,10 +184,13 @@
     function _requireUIState() {
         if (!window.GovernmentUIState
             || typeof window.GovernmentUIState.getActiveTabId !== 'function'
-            || typeof window.GovernmentUIState.setActiveTabId !== 'function') {
+            || typeof window.GovernmentUIState.setActiveTabId !== 'function'
+            || typeof window.GovernmentUIState.getSelectedLocationId !== 'function'
+            || typeof window.GovernmentUIState.setSelectedLocationId !== 'function'
+            || typeof window.GovernmentUIState.setKnownTabIds !== 'function') {
             throw new Error(
-                'government-manager-bootstrap: GovernmentUIState is missing. ' +
-                'Load js/government/government-ui-state.js first.'
+                'government-manager-bootstrap: GovernmentUIState is missing or ' +
+                'incomplete. Load js/government/government-ui-state.js first.'
             );
         }
         return window.GovernmentUIState;
@@ -162,26 +207,47 @@
     }
 
     function _requireLocationQueries() {
-        if (!window.LocationQueries) {
+        if (!window.LocationQueries
+            || typeof window.LocationQueries.getPlaceSummary !== 'function') {
             throw new Error(
-                'government-manager-bootstrap: LocationQueries is missing. ' +
-                'Load js/location/location-queries.js first.'
+                'government-manager-bootstrap: LocationQueries is missing or ' +
+                'incomplete. Load js/location/location-queries.js first.'
             );
         }
         return window.LocationQueries;
     }
 
     // =========================================================================
-    // 3. TAB STRIP + PANE SYNC
+    // 3. CONTAINER-ROOT RESOLUTION
     // =========================================================================
+    //
+    // The config passes the .main-panel element (or a resolver for it).
+    // _resolveContainerRoot is used both for configuring TabManager and
+    // for scoping the pane lookup in _syncTabStrip. A missing .main-panel
+    // is a layout bug; every path that needs it fails visibly via
+    // init()'s dependency check.
 
-    /**
-     * Sets the visual active state on the strip buttons and the panes.
-     * The strip and panes are NOT re-rendered — only classList / aria
-     * attributes are toggled. This is what makes rapid tab switching
-     * cheap and what keeps focus on the clicked button.
-     */
+    function _resolveContainerRoot() {
+        return document.querySelector('.main-panel');
+    }
+
+    // =========================================================================
+    // 4. TAB STRIP + PANE SYNC
+    // =========================================================================
+    //
+    // Sets the visual active state on the strip buttons and the panes.
+    // The strip and panes are NOT re-rendered — only classList / aria
+    // attributes are toggled. This is what makes rapid tab switching
+    // cheap and what keeps focus on the clicked button.
+    //
+    // Pane lookup is scoped to .main-panel: on this page that is the
+    // same set as document, but on a shared document an unscoped
+    // query would flip the wrong pane's .active.
+
     function _syncTabStrip(activeTabId) {
+        var root = _resolveContainerRoot();
+        if (!root) return;
+
         var strip = document.getElementById('governmentTabStrip');
         if (strip) {
             var buttons = strip.querySelectorAll('[data-tab]');
@@ -194,7 +260,7 @@
             }
         }
 
-        var panes = document.querySelectorAll('[data-tab-content]');
+        var panes = root.querySelectorAll('[data-tab-content]');
         for (var p = 0; p < panes.length; p++) {
             var pane = panes[p];
             var isPaneActive = pane.getAttribute('data-tab-content') === activeTabId;
@@ -225,7 +291,9 @@
                     'aria-selected="false" ' +
                     'tabindex="-1">' +
                     (iconSvg
-                        ? '<span class="manager-subtab-icon">' + iconSvg + '</span>'
+                        ? '<span class="manager-subtab-icon" aria-hidden="true">' +
+                            iconSvg +
+                          '</span>'
                         : '') +
                     '<span>' + _esc(meta.label) + '</span>' +
                 '</button>';
@@ -256,26 +324,23 @@
     }
 
     // =========================================================================
-    // 4. CONTEXT BUILDER
+    // 5. CONTEXT BUILDER
     // =========================================================================
+    //
+    // Shape:
+    //   {
+    //     locationId:      string,
+    //     locationName:    string,
+    //     governmentState: { locationId, place }
+    //   }
+    //
+    // Returns null when no location is selected — TabManager writes the
+    // 'no-context' empty state.
+    //
+    // The place projection is fetched fresh each render via
+    // LocationQueries.getPlaceSummary. Tabs may read it freely; it is a
+    // projection, not the canonical record.
 
-    /**
-     * Builds the render context passed to every tab renderer.
-     *
-     * Shape:
-     *   {
-     *     locationId:     string,
-     *     locationName:   string,
-     *     governmentState: { locationId, place }   // place projection
-     *   }
-     *
-     * Returns null when no location is selected — TabManager writes the
-     * 'no-context' empty state.
-     *
-     * The place projection is fetched fresh each render via
-     * LocationQueries.getPlaceSummary — it is a projection, not the
-     * canonical record. Tabs may read it freely.
-     */
     function _buildContext() {
         var ui = _requireUIState();
         var LQ = _requireLocationQueries();
@@ -303,7 +368,7 @@
     }
 
     // =========================================================================
-    // 5. EMPTY-STATE BUILDER
+    // 6. EMPTY-STATE BUILDER
     // =========================================================================
 
     function _buildEmptyState(tabId, reason) {
@@ -328,7 +393,7 @@
     }
 
     // =========================================================================
-    // 6. SIDEBAR
+    // 7. SIDEBAR
     // =========================================================================
 
     function _setupSidebar() {
@@ -337,7 +402,8 @@
 
         var ui = _requireUIState();
 
-        if (window.LocationUI && typeof window.LocationUI.renderLocationList === 'function') {
+        if (window.LocationUI
+            && typeof window.LocationUI.renderLocationList === 'function') {
             try {
                 window.LocationUI.renderLocationList('placeList', {
                     selectedId: ui.getSelectedLocationId(),
@@ -346,24 +412,28 @@
                             ? placeOrId
                             : (placeOrId && placeOrId.id ? placeOrId.id : null);
                         if (!id) return;
-                        ui.setSelectedLocationId(id);
-                        _syncTabStrip(ui.getActiveTabId());
-                        _renderActiveTab();
-                        if (window.innerWidth <= 768) _closeSidebar();
+                        _onSidebarSelect(id);
                     }
                 });
                 return;
             } catch (e) {
                 if (typeof console !== 'undefined' && console.error) {
-                    console.error('government-manager-bootstrap: LocationUI.renderLocationList threw', e);
+                    console.error(
+                        'government-manager-bootstrap: ' +
+                        'LocationUI.renderLocationList threw',
+                        e
+                    );
                 }
             }
         }
 
         // Fallback: flat list.
-        var places = (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
+        var places = (typeof window.getPlaces === 'function')
+            ? window.getPlaces()
+            : [];
         if (!places || places.length === 0) {
-            container.innerHTML = '<div class="empty-state">No governments found</div>';
+            container.innerHTML =
+                '<div class="empty-state">No governments found</div>';
             return;
         }
 
@@ -379,16 +449,27 @@
         html += '</div>';
         container.innerHTML = html;
 
+        // The fallback path rebinds on every _setupSidebar call. On the
+        // primary path (LocationUI.renderLocationList) that is fine —
+        // the library owns rebinding. On the fallback path the
+        // container is a fresh innerHTML on every call, so the old
+        // listener is discarded with the old children; binding fresh
+        // each time is correct.
         container.addEventListener('click', function (e) {
             var item = e.target.closest('[data-place-id]');
             if (!item) return;
             var id = item.getAttribute('data-place-id');
             if (!id) return;
-            ui.setSelectedLocationId(id);
-            _syncTabStrip(ui.getActiveTabId());
-            _renderActiveTab();
-            if (window.innerWidth <= 768) _closeSidebar();
+            _onSidebarSelect(id);
         });
+    }
+
+    function _onSidebarSelect(locationId) {
+        var ui = _requireUIState();
+        ui.setSelectedLocationId(locationId);
+        _syncTabStrip(ui.getActiveTabId());
+        _renderActiveTab();
+        if (window.innerWidth <= 768) _closeSidebar();
     }
 
     function _openSidebar() {
@@ -413,7 +494,7 @@
     }
 
     // =========================================================================
-    // 7. TOPBAR
+    // 8. TOPBAR
     // =========================================================================
 
     function _setupUIText() {
@@ -445,12 +526,18 @@
                     _toast('Import not available', 'error');
                     return;
                 }
-                window.importData().then(function () {
-                    _reinitAll();
-                    _toast('Import successful', 'success');
-                }).catch(function (err) {
-                    _toast('Import failed: ' + (err && err.message ? err.message : 'unknown'), 'error');
-                });
+                window.importData()
+                    .then(function () {
+                        _reinitAll();
+                        _toast('Import successful', 'success');
+                    })
+                    .catch(function (err) {
+                        _toast(
+                            'Import failed: ' +
+                            (err && err.message ? err.message : 'unknown'),
+                            'error'
+                        );
+                    });
             });
         }
 
@@ -465,7 +552,10 @@
                     window.exportData();
                     _toast('Export started', 'success');
                 } catch (e) {
-                    _toast('Export failed: ' + (e.message || 'unknown'), 'error');
+                    _toast(
+                        'Export failed: ' + (e.message || 'unknown'),
+                        'error'
+                    );
                 }
             });
         }
@@ -511,7 +601,8 @@
                 _toast('Enter a valid year', 'error');
                 return;
             }
-            if (typeof window.isValidYear === 'function' && window.isValidYear(y) !== true) {
+            if (typeof window.isValidYear === 'function'
+                && window.isValidYear(y) !== true) {
                 _toast('Year out of range', 'error');
                 return;
             }
@@ -526,7 +617,10 @@
                     }
                     applied = true;
                 } catch (e) {
-                    _toast('Set year failed: ' + (e.message || 'unknown'), 'error');
+                    _toast(
+                        'Set year failed: ' + (e.message || 'unknown'),
+                        'error'
+                    );
                     return;
                 }
             }
@@ -550,6 +644,10 @@
                 _toast('Year set to ' + y, 'success');
                 _syncFromCanonical();
                 _renderActiveTab();
+                // The sidebar content is not year-dependent, but the
+                // LocationUI render path re-reads its projection on
+                // every call. Re-rendering it here is cheap and
+                // matches the old inline behavior.
                 _setupSidebar();
             }
         }
@@ -570,17 +668,20 @@
         var switcher = window.ThemeSwitcher;
         if (!themeBtn || !themeMenu || !switcher) return;
 
+        function _label(id) {
+            return id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+        }
         function _updateLabel(id) {
-            var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
-            if (themeName) themeName.textContent = label;
+            if (themeName) themeName.textContent = _label(id);
         }
         function _buildMenu() {
             var html = '';
             for (var i = 0; i < switcher.themes.length; i++) {
                 var id = switcher.themes[i];
-                var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
                 html += '<li role="none"><button role="menuitem" type="button" ' +
-                    'data-theme-id="' + _esc(id) + '">' + _esc(label) + '</button></li>';
+                    'data-theme-id="' + _esc(id) + '">' +
+                    _esc(_label(id)) +
+                    '</button></li>';
             }
             themeMenu.innerHTML = html;
         }
@@ -626,23 +727,28 @@
     }
 
     // =========================================================================
-    // 8. RENDER DRIVER
+    // 9. RENDER DRIVER
     // =========================================================================
 
     function _renderActiveTab() {
         var TM = window.TabManager;
-        if (!TM) return;
+        if (!TM || typeof TM.renderActive !== 'function') return;
         try {
             TM.renderActive(SCOPE);
         } catch (e) {
             if (typeof console !== 'undefined' && console.error) {
-                console.error('government-manager-bootstrap: renderActive threw', e);
+                console.error(
+                    'government-manager-bootstrap: renderActive threw',
+                    e
+                );
             }
         }
     }
 
     function _pickInitialLocation() {
-        var places = (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
+        var places = (typeof window.getPlaces === 'function')
+            ? window.getPlaces()
+            : [];
         if (!places || places.length === 0) return null;
         // Prefer a non-root location with a variableKey (the same
         // heuristic the old inline script used).
@@ -654,17 +760,55 @@
         return places[0].id;
     }
 
+    /**
+     * Called by import / refresh / year-change. Re-runs the parts of
+     * init() that must react to changed data:
+     *   - GovernmentBootstrap.reinit() if provided
+     *   - sidebar re-render (fresh projection)
+     *   - active tab re-render (fresh context)
+     *
+     * Does NOT re-run _setupSidebar() unconditionally — the year-change
+     * path already calls it explicitly because that path may not be
+     * running on a fresh DOM. _reinitAll keeps the sidebar re-render
+     * scoped to the LocationUI path when it is available, and skips
+     * the fallback rebind (which would accumulate a duplicate listener).
+     */
     function _reinitAll() {
-        if (window.GovernmentBootstrap && typeof window.GovernmentBootstrap.reinit === 'function') {
+        if (window.GovernmentBootstrap
+            && typeof window.GovernmentBootstrap.reinit === 'function') {
             try { window.GovernmentBootstrap.reinit(); }
-            catch (e) { /* ignore */ }
+            catch (e) { /* logged by the caller's toast path */ }
         }
-        _setupSidebar();
+
+        if (window.LocationUI
+            && typeof window.LocationUI.renderLocationList === 'function') {
+            var ui = _requireUIState();
+            try {
+                window.LocationUI.renderLocationList('placeList', {
+                    selectedId: ui.getSelectedLocationId(),
+                    onSelect: function (placeOrId) {
+                        var id = (typeof placeOrId === 'string')
+                            ? placeOrId
+                            : (placeOrId && placeOrId.id ? placeOrId.id : null);
+                        if (!id) return;
+                        _onSidebarSelect(id);
+                    }
+                });
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'government-manager-bootstrap: sidebar re-render threw',
+                        e
+                    );
+                }
+            }
+        }
+
         _renderActiveTab();
     }
 
     // =========================================================================
-    // 9. INIT
+    // 10. INIT
     // =========================================================================
 
     var _initialized = false;
@@ -677,12 +821,21 @@
         var TabManager, uiState;
         try {
             TabManager = _requireTabManager();
-            uiState = _requireUIState();
+            uiState    = _requireUIState();
             _requireQueries();
             _requireLocationQueries();
+            if (!_resolveContainerRoot()) {
+                throw new Error(
+                    'government-manager-bootstrap: .main-panel is missing ' +
+                    'from the DOM. Load this script after the shell HTML.'
+                );
+            }
         } catch (depErr) {
             if (typeof console !== 'undefined' && console.error) {
-                console.error('government-manager-bootstrap: dependency check failed', depErr);
+                console.error(
+                    'government-manager-bootstrap: dependency check failed',
+                    depErr
+                );
             }
             var panel = document.getElementById('panelContent');
             if (panel) {
@@ -697,18 +850,27 @@
 
         // --- Storage + data ---
         try {
-            if (typeof window.initializeStorage === 'function') window.initializeStorage();
+            if (typeof window.initializeStorage === 'function') {
+                window.initializeStorage();
+            }
         } catch (e) { /* ignore */ }
         try {
-            if (typeof window.loadMasterData === 'function') window.loadMasterData();
+            if (typeof window.loadMasterData === 'function') {
+                window.loadMasterData();
+            }
         } catch (e) { /* ignore */ }
 
         // --- Domain bootstrap: hydrate GovernmentState ---
-        if (window.GovernmentBootstrap && typeof window.GovernmentBootstrap.init === 'function') {
+        if (window.GovernmentBootstrap
+            && typeof window.GovernmentBootstrap.init === 'function') {
             try { window.GovernmentBootstrap.init(); }
             catch (e) {
                 if (typeof console !== 'undefined' && console.error) {
-                    console.error('government-manager-bootstrap: GovernmentBootstrap.init threw', e);
+                    console.error(
+                        'government-manager-bootstrap: ' +
+                        'GovernmentBootstrap.init threw',
+                        e
+                    );
                 }
             }
         }
@@ -722,7 +884,7 @@
         uiState.setKnownTabIds(KNOWN_TAB_IDS);
 
         TabManager.configure(SCOPE, {
-            containerRoot: document.querySelector('.main-panel'),
+            containerRoot: _resolveContainerRoot,
             resolveContainer: function (tabId) {
                 return document.getElementById('government-pane-' + tabId);
             },
@@ -750,20 +912,31 @@
         _setupSidebar();
 
         // --- Initial active tab + render ---
+        // The active tab is set through the config hook (uiState) and
+        // the DOM is synced with _syncTabStrip. TabManager.renderActive
+        // reads the active id back through the config hook.
+        //
+        // Do NOT call TabManager.setActive(SCOPE, initialTab) — it is
+        // not a method on TabManager and throwing here aborts init()
+        // before the first render.
         var initialTab = uiState.getActiveTabId() || DEFAULT_ACTIVE_TAB_ID;
+        uiState.setActiveTabId(initialTab);
         _syncTabStrip(initialTab);
-        TabManager.setActive(SCOPE, initialTab);
         TabManager.renderActive(SCOPE);
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.GovernmentManagerBootstrap = {
         init: init,
         SCOPE: SCOPE,
-        KNOWN_TAB_IDS: KNOWN_TAB_IDS.slice()
+        KNOWN_TAB_IDS: KNOWN_TAB_IDS.slice(),
+        DEFAULT_ACTIVE_TAB_ID: DEFAULT_ACTIVE_TAB_ID,
+        // Exposed so a test page or a future deep-link can force a
+        // re-render without reaching into TabManager directly.
+        reinit: _reinitAll
     };
 
     if (document.readyState === 'loading') {
