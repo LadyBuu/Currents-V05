@@ -16,14 +16,15 @@
  *   - skillTierLabel(level)          5-band skill ladder label
  *   - compactRow(targetId, detail)   one-line character reference HTML
  *   - buildIdentityModel(id)         model for the Identity tab
+ *   - buildFriendshipModel(id)       model for the Friendship tab
  *
  * SCOPE (future revisions, as tabs are built):
  *   - buildLocationModel, buildFamilyModel, buildRomanceModel,
- *     buildFriendshipModel, buildSkillsModel, buildOverviewModel
+ *     buildSkillsModel, buildOverviewModel
  *
  * OUT OF SCOPE:
  *   - Any DOM writes                    -> tab files
- *   - Any mutation                      -> CharacterCommands / FamilyCommands
+ *   - Any mutation                      -> CharacterCommands / RelationshipCommands
  *   - Any localStorage                  -> CharacterUIState
  *   - Any new query logic               -> existing query modules
  *
@@ -41,6 +42,8 @@
  * REQUIRED DEPENDENCIES (load-time):
  *   - CharacterState, CharacterQueries, CharacterCommands
  *   - FamilyQueries, ChildrenQueries, MortalityQueries
+ *   - RomanceQueries, FriendshipQueries  (relationship domain)
+ *   - RelationshipUI                     (relationship display metadata)
  *   - formatting.js (escapeHtml, formatAge, formatYear, formatYearRange,
  *                    formatDuration, formatCount, getGenderLabel)
  *   - icons.js (Icons)
@@ -50,22 +53,27 @@
  *   - window.getPlaceById        for place display resolution
  *   - ReligionQueries            for religion name resolution
  *   - CultureQueries             for culture name resolution
+ *   - RelationshipQueries        for friendship event history lookup
  *
  * ICON POLICY: Uses SVG from icons.js. No emojis.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Initial revision.
- *     - Shared resolvers: resolveName, resolvePlaceName, resolveRankDisplay,
- *       skillTierLabel, compactRow.
- *     - buildIdentityModel with seven sections: identity, surnameHistory,
- *       religionHistory, birth, death, ranks, appearance, plus notes.
- *     - Per-section error capture via _safe() so a single broken read
- *       never blanks the tab.
- *     - religionHistory returns { available: false, reason } when the
- *       projection is pre-amendment (strings instead of structured
- *       events). Post-amendment (character-state.js::_project emits
- *       _cloneReligionHistory), returns { available: true, entries[] }.
+ *   Current revision:
+ *     - buildFriendshipModel(characterId) added. Sections:
+ *         identity, best, active[], former[], stats, errors.
+ *       Each friend entry carries the friendship projection plus
+ *       RelationshipUI-derived display metadata (archetypeName / icon /
+ *       color) and a mutual-friend count. Former friendships are
+ *       included read-only (ended status).
+ *     - RelationshipUI + FriendshipQueries + RelationshipQueries are
+ *       new required-at-load dependencies. The whole module already
+ *       required the character subsystem; the relationship domain is
+ *       loaded before the manager modules in CharacterManager.html, so
+ *       the relationship domain is available at load.
+ *     - No behavioural change to buildIdentityModel or to any resolver.
+ *   Previous revision:
+ *     - Initial revision. Shared resolvers + buildIdentityModel only.
  * =============================================================================
  */
 
@@ -84,6 +92,9 @@
             'FamilyQueries',
             'ChildrenQueries',
             'MortalityQueries',
+            'RomanceQueries',
+            'FriendshipQueries',
+            'RelationshipUI',
             'escapeHtml',
             'Icons'
         ];
@@ -105,6 +116,8 @@
     var CQ  = window.CharacterQueries;
     var CC  = window.CharacterCommands;
     var MQ  = window.MortalityQueries;
+    var FQ  = window.FriendshipQueries;
+    var RUI = window.RelationshipUI;
 
     // =========================================================================
     // 1. SMALL HELPERS
@@ -136,13 +149,10 @@
         return _icon('GENDER_NEUTRAL');
     }
 
-    function _sortedKeys(obj) {
-        var out = [];
-        for (var k in obj) {
-            if (Object.prototype.hasOwnProperty.call(obj, k)) out.push(k);
-        }
-        out.sort();
-        return out;
+    function _sortByStartDesc(a, b) {
+        var ay = typeof a.startYear === 'number' ? a.startYear : -Infinity;
+        var by = typeof b.startYear === 'number' ? b.startYear : -Infinity;
+        return by - ay;
     }
 
     // =========================================================================
@@ -153,11 +163,6 @@
     // can prove, and falls back to the raw id (or null) when the
     // relevant optional domain is absent.
 
-    /**
-     * Resolves a character id to a display name. Returns the raw id if
-     * the character cannot be found (which the caller can distinguish
-     * from a resolved name by comparing to the original id).
-     */
     function resolveName(id) {
         if (!_hasId(id)) return '';
         var summary = CQ.getCharacterSummary(id);
@@ -168,11 +173,6 @@
         return summary.name || id;
     }
 
-    /**
-     * Resolves a place id to its display name. Returns the raw id if
-     * the place cannot be resolved (world.js not loaded, or the place
-     * does not exist).
-     */
     function resolvePlaceName(placeId) {
         if (!_hasId(placeId)) return '';
         if (typeof window.getPlaceById === 'function') {
@@ -195,12 +195,6 @@
      * Resolves a rank id to a normalized display record. Returns null
      * when the rank domain (`window.getRankById`) is not available, or
      * the rank record does not exist.
-     *
-     * Shape:
-     *   {
-     *     rankId, name, symbol, priority,
-     *     numbered, numberingType, numberingGroup
-     *   }
      */
     function resolveRankDisplay(rankId) {
         if (!_hasId(rankId)) return null;
@@ -240,13 +234,6 @@
      * 5-band skill tier label. The current tree has no canonical skill-
      * tier vocabulary (the old apprenticeship/skill systems are not in
      * the tree). Defined here once so Identity and Skills tabs agree.
-     *
-     *   0        Untrained
-     *   1..25    Novice
-     *   26..50   Apprentice
-     *   51..75   Journeyman
-     *   76..90   Expert
-     *   91..100  Master
      */
     function skillTierLabel(level) {
         if (typeof level !== 'number' || !Number.isFinite(level)) return 'Unknown';
@@ -264,13 +251,6 @@
     //
     // One-line character reference: rank glyph, gender glyph, clickable
     // name, age, location, relationship detail, deceased marker.
-    //
-    // The clickable name carries data-character-id so a tab's delegated
-    // click handler can re-select the target. No inline style, no per-row
-    // listener. The caller decides the handler.
-    //
-    // The output is a single <div class="character-row"> with stable
-    // child classes. css/character-tabs.css owns all styling.
 
     function compactRow(targetId, detailText) {
         if (!_hasId(targetId)) return '';
@@ -336,13 +316,8 @@
     }
 
     // =========================================================================
-    // 4. SECTION-WRAPPED BUILDER HELPERS
+    // 4. SECTION-WRAPPED BUILDER HELPER
     // =========================================================================
-    //
-    // Every section is built inside _safe(). A section that throws has
-    // its error recorded under errors[sectionKey] and the section value
-    // becomes null. Tabs render an "unavailable" note for null sections
-    // and proceed to the next.
 
     function _safe(label, fn, errors) {
         try {
@@ -453,11 +428,6 @@
                 return { available: true, entries: [] };
             }
 
-            // Post-amendment shape: structured events.
-            // Pre-amendment shape: strings (from _cloneStringArray).
-            // Distinguish by checking the first entry. If strings, the
-            // projection is pre-amendment and the tab must say so
-            // honestly rather than render nonsense.
             if (typeof h[0] === 'string') {
                 return {
                     available: false,
@@ -542,15 +512,10 @@
                 };
             }
 
-            // Pull the full death record from MortalityQueries, which
-            // projects from the canonical character record. This gives
-            // the murder/execution detail the summary omits.
             var rec = null;
             try { rec = MQ.getDeathRecord(characterId); }
             catch (e) { rec = null; }
 
-            // Even when MortalityQueries fails, the summary carries
-            // the basic death fields. Fall back to those.
             var killerName = null;
             if (rec && _hasId(rec.killerId)) {
                 killerName = resolveName(rec.killerId);
@@ -613,13 +578,10 @@
                 else current.push(shaped);
             }
 
-            // Current ranks: ascending by `order` (lower = higher priority).
             current.sort(function (x, y) {
                 return x.order - y.order;
             });
 
-            // Former ranks: descending by assignedYear (most recently
-            // lost first).
             former.sort(function (x, y) {
                 return (y.assignedYear || 0) - (x.assignedYear || 0);
             });
@@ -660,35 +622,6 @@
     // 6. IDENTITY — PUBLIC BUILDER
     // =========================================================================
 
-    /**
-     * Builds the model the Identity tab consumes.
-     *
-     * Returns null if the character does not exist or the summary cannot
-     * be read. Otherwise returns:
-     *
-     *   {
-     *     characterId,
-     *     identity:        { id, firstName, surname, fullName, surnameSource,
-     *                        epithet, gender, genderLabel, traits[],
-     *                        religionId, religionName, cultureId, cultureName },
-     *     surnameHistory:  { birthSurname, entries[], lastUpdated },
-     *     religionHistory: { available, entries[], reason? },
-     *     birth:           { year, placeId, placeName },
-     *     death:           { isDeceased, year, cause, causeDetail, notes,
-     *                        isMurder, killerId, killerName, murderMotive,
-     *                        murderMethod, isExecution, executionReason,
-     *                        executionMethod, executionLocation },
-     *     ranks:           { active, current[], former[] },
-     *     appearance:      { hairColor, eyeColor, skinTone, build, height,
-     *                        distinguishingFeatures, tattoos },
-     *     notes:           string,
-     *     errors:          { <sectionKey>: <message> }
-     *   }
-     *
-     * Any section whose builder throws has `null` for that section and
-     * an entry in `errors`. The tab renders an "unavailable" note for
-     * that section and proceeds.
-     */
     function buildIdentityModel(characterId) {
         if (!_hasId(characterId)) return null;
 
@@ -714,7 +647,282 @@
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 7. FRIENDSHIP — SECTION BUILDERS
+    // =========================================================================
+    //
+    // One friendship projection looks like this (from
+    // friendship-queries.js::_project):
+    //
+    //   {
+    //     relationshipId, participantA, participantB, friendId,
+    //     startYear, endYear, status, strength, tier, notes, eventCount
+    //   }
+    //
+    // We enrich it with:
+    //   - display metadata from RelationshipUI (name, icon, color)
+    //   - the friend's character summary (name, age, location, etc.)
+    //   - a mutual-friend count via FriendshipQueries.getMutualFriends
+    //
+    // The tab reads ONLY the model. It does not call FriendshipQueries
+    // directly for the list. This is the same discipline as Identity.
+
+    /**
+     * Enriches a raw friendship projection with display data.
+     * Returns null if the projection is invalid or the friend is
+     * missing (a dangling reference is not rendered).
+     */
+    function _enrichFriend(friendProjection, subjectId, currentYear) {
+        if (!friendProjection || !_hasId(friendProjection.friendId)) return null;
+
+        var friendSummary = null;
+        try { friendSummary = CQ.getCharacterSummary(friendProjection.friendId); }
+        catch (e) { friendSummary = null; }
+        if (!friendSummary) return null;
+
+        var friendName = (typeof friendSummary.fullName === 'string'
+            && friendSummary.fullName.length > 0)
+            ? friendSummary.fullName
+            : (friendSummary.name || friendProjection.friendId);
+
+        // RelationshipUI metadata. If the UI metadata module ever
+        // returns null for friendship (it shouldn't — the load-time
+        // assertion in relationship-ui-metadata.js guarantees a name
+        // exists for every archetype), we fall back to a minimal
+        // set with no icon and no color. That keeps the tab
+        // renderable in a broken build; the module load guard catches
+        // the real bug elsewhere.
+        var typeName = RUI.archetypeName('friendship') || 'Friendship';
+        var typeIcon = RUI.archetypeIcon('friendship') || null;
+        var typeColor = RUI.archetypeColor('friendship') || null;
+
+        var durationYears = 0;
+        if (typeof friendProjection.startYear === 'number') {
+            var endYear = (typeof friendProjection.endYear === 'number')
+                ? friendProjection.endYear
+                : currentYear;
+            durationYears = Math.max(0, endYear - friendProjection.startYear);
+        }
+
+        var mutualCount = 0;
+        try {
+            var mutual = FQ.getMutualFriends(subjectId, friendProjection.friendId);
+            if (Array.isArray(mutual)) mutualCount = mutual.length;
+        } catch (e) {
+            mutualCount = 0;
+        }
+
+        var tier = typeof friendProjection.tier === 'string'
+            ? friendProjection.tier
+            : null;
+        var tierLabel = null;
+        if (tier === 'best_friend') tierLabel = 'Best Friend';
+        else if (tier === 'close_friend') tierLabel = 'Close Friend';
+        else if (tier === 'friend') tierLabel = 'Friend';
+        else if (tier === 'acquaintance') tierLabel = 'Acquaintance';
+        else if (tier === 'ended') tierLabel = 'Ended';
+
+        return {
+            relationshipId: friendProjection.relationshipId,
+            friendId: friendProjection.friendId,
+            friendName: friendName,
+            friendSurname: friendSummary.surname || '',
+            friendGender: friendSummary.gender || 'unknown',
+            friendAge: (typeof friendSummary.age === 'number') ? friendSummary.age : null,
+            friendIsDeceased: friendSummary.isDeceased === true,
+            friendLocationId: friendSummary.locationId || null,
+            friendRankId: friendSummary.rankId || null,
+            startYear: _isMissing(friendProjection.startYear)
+                ? null
+                : friendProjection.startYear,
+            endYear: _isMissing(friendProjection.endYear)
+                ? null
+                : friendProjection.endYear,
+            status: friendProjection.status || null,
+            strength: (typeof friendProjection.strength === 'number')
+                ? friendProjection.strength
+                : null,
+            tier: tier,
+            tierLabel: tierLabel,
+            durationYears: durationYears,
+            notes: friendProjection.notes || '',
+            eventCount: (typeof friendProjection.eventCount === 'number')
+                ? friendProjection.eventCount
+                : 0,
+            mutualFriendCount: mutualCount,
+            typeName: typeName,
+            typeIcon: typeIcon,
+            typeColor: typeColor
+        };
+    }
+
+    function _buildFriendshipListBlock(subjectId, currentYear, includeEnded, errors) {
+        var label = includeEnded ? 'former' : 'active';
+        return _safe(label, function () {
+            var list = includeEnded
+                ? FQ.getFriendshipsForCharacter(subjectId, { includeEnded: true })
+                : FQ.getFriendshipsForCharacter(subjectId);
+
+            var enriched = [];
+            for (var i = 0; i < list.length; i++) {
+                var raw = list[i];
+                if (!raw) continue;
+                // Filter: active list keeps only status === 'ongoing';
+                // former list keeps only non-ongoing.
+                if (!includeEnded) {
+                    if (raw.status !== 'ongoing') continue;
+                } else {
+                    if (raw.status === 'ongoing') continue;
+                }
+                var entry = _enrichFriend(raw, subjectId, currentYear);
+                if (entry) enriched.push(entry);
+            }
+
+            // Sort by strength descending (highest first); entries
+            // without a numeric strength fall to the end, sorted by
+            // start year (newest first). Former list sorts by end year
+            // descending (most recently ended first).
+            if (!includeEnded) {
+                enriched.sort(function (a, b) {
+                    var sa = (typeof a.strength === 'number') ? a.strength : -1;
+                    var sb = (typeof b.strength === 'number') ? b.strength : -1;
+                    if (sa !== sb) return sb - sa;
+                    return _sortByStartDesc(a, b);
+                });
+            } else {
+                enriched.sort(function (a, b) {
+                    var ea = (typeof a.endYear === 'number') ? a.endYear : -1;
+                    var eb = (typeof b.endYear === 'number') ? b.endYear : -1;
+                    return eb - ea;
+                });
+            }
+
+            return enriched;
+        }, errors);
+    }
+
+    function _buildBestFriendBlock(subjectId, currentYear, errors) {
+        return _safe('best', function () {
+            var best = FQ.getBestFriend(subjectId);
+            if (!best) return null;
+            return _enrichFriend(best, subjectId, currentYear);
+        }, errors);
+    }
+
+    function _buildFriendshipStatsBlock(subjectId, errors) {
+        return _safe('stats', function () {
+            var raw = FQ.getFriendshipStats(subjectId);
+            if (!raw || typeof raw !== 'object') {
+                return {
+                    totalFriends: 0,
+                    averageStrength: null,
+                    earliestStartYear: null,
+                    strongestFriendId: null,
+                    strongestStrength: null,
+                    tierBreakdown: {
+                        acquaintance: 0,
+                        friend: 0,
+                        close_friend: 0,
+                        best_friend: 0,
+                        unknown: 0
+                    }
+                };
+            }
+            return {
+                totalFriends: (typeof raw.totalFriends === 'number')
+                    ? raw.totalFriends
+                    : 0,
+                averageStrength: (typeof raw.averageStrength === 'number')
+                    ? raw.averageStrength
+                    : null,
+                earliestStartYear: _isMissing(raw.earliestStartYear)
+                    ? null
+                    : raw.earliestStartYear,
+                strongestFriendId: raw.strongestFriendId || null,
+                strongestStrength: (typeof raw.strongestStrength === 'number')
+                    ? raw.strongestStrength
+                    : null,
+                tierBreakdown: raw.tierBreakdown && typeof raw.tierBreakdown === 'object'
+                    ? {
+                        acquaintance: raw.tierBreakdown.acquaintance || 0,
+                        friend: raw.tierBreakdown.friend || 0,
+                        close_friend: raw.tierBreakdown.close_friend || 0,
+                        best_friend: raw.tierBreakdown.best_friend || 0,
+                        unknown: raw.tierBreakdown.unknown || 0
+                    }
+                    : {
+                        acquaintance: 0,
+                        friend: 0,
+                        close_friend: 0,
+                        best_friend: 0,
+                        unknown: 0
+                    }
+            };
+        }, errors);
+    }
+
+    // =========================================================================
+    // 8. FRIENDSHIP — PUBLIC BUILDER
+    // =========================================================================
+
+    /**
+     * Builds the model the Friendship tab consumes.
+     *
+     * Shape:
+     *   {
+     *     characterId,
+     *     identity:  { id, fullName, name, surname },     -- header for the tab
+     *     best:      <enriched friend> | null,
+     *     active:    [<enriched friend>, ...],
+     *     former:    [<enriched friend>, ...],
+     *     stats:     { totalFriends, averageStrength, earliestStartYear,
+     *                  strongestFriendId, strongestStrength, tierBreakdown },
+     *     errors:    { <sectionKey>: <message> }
+     *   }
+     *
+     * Each enriched friend is the raw friendship projection plus:
+     *   - friendName / friendSurname / friendGender / friendAge /
+     *     friendIsDeceased / friendLocationId / friendRankId
+     *   - typeName / typeIcon / typeColor        (from RelationshipUI)
+     *   - tierLabel                              (human label from tier)
+     *   - durationYears
+     *   - mutualFriendCount
+     */
+    function buildFriendshipModel(characterId) {
+        if (!_hasId(characterId)) return null;
+
+        var summary;
+        try { summary = CQ.getCharacterSummary(characterId); }
+        catch (e) { return null; }
+        if (!summary) return null;
+
+        var currentYear = 0;
+        if (typeof window.getCurrentYear === 'function') {
+            try { currentYear = window.getCurrentYear(); }
+            catch (e) { currentYear = 0; }
+        }
+
+        var errors = {};
+
+        return {
+            characterId: characterId,
+            identity: _safe('identity', function () {
+                return {
+                    id: summary.id,
+                    name: summary.name || '',
+                    surname: summary.surname || '',
+                    fullName: summary.fullName || summary.name || ''
+                };
+            }, errors),
+            best:   _buildBestFriendBlock(characterId, currentYear, errors),
+            active: _buildFriendshipListBlock(characterId, currentYear, false, errors) || [],
+            former: _buildFriendshipListBlock(characterId, currentYear, true, errors) || [],
+            stats:  _buildFriendshipStatsBlock(characterId, errors),
+            errors: errors
+        };
+    }
+
+    // =========================================================================
+    // 9. EXPORTS
     // =========================================================================
 
     window.CharacterViewModels = {
@@ -726,7 +934,10 @@
         compactRow: compactRow,
 
         // Identity
-        buildIdentityModel: buildIdentityModel
+        buildIdentityModel: buildIdentityModel,
+
+        // Friendship
+        buildFriendshipModel: buildFriendshipModel
     };
 
     if (typeof module !== 'undefined' && module.exports) {
