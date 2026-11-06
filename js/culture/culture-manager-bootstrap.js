@@ -13,68 +13,79 @@
  *   - topbar wiring (create / edit / delete / import / export / refresh /
  *     year / theme)
  *   - sub-tab strip + pane visual sync
- *   - the details pane fallback (the editor modal owns the other four
- *     panes; details is not a CultureEditorTabs tab — it opens the
- *     standard culture modal)
- *   - CultureEditorTabs.openEditor delegation
+ *   - INLINE pane rendering for all five tabs. Clicking a strip tab
+ *     renders that tab's content into its pane. The editor modal is a
+ *     separate surface, opened explicitly via the topbar Edit button.
+ *   - theme dropdown menu (built from window.ThemeSwitcher, which is
+ *     installed by js/core/theme-boot.js)
  *   - mobile sidebar open/close + Escape-to-close
  *
- * The shell (CultureManager.html) emits no tab-specific markup. All
- * culture content is rendered by one of:
- *   - CultureEditorTabs.openEditor(id)   (appearance, mythology,
- *                                          characters, names)
- *   - openEditCultureModal(id)            (details — the standard culture
- *                                          modal, not the editor)
- *   - the details pane built by this file (read-only, with an "Edit
- *     Details" button that opens the standard modal)
+ * INLINE PANE COMMIT MODEL
+ * ------------------------
+ * Each of the four content tabs is rendered against a throwaway clone of
+ * the canonical culture. The pane carries its own Save button at the
+ * bottom. Clicking Save:
+ *   1. calls the tab's save(working) to obtain a partial culture
+ *   2. merges the partial into a candidate clone
+ *   3. calls the tab's validate(candidate)
+ *   4. on success, calls CultureCommands.updateCulture + persist once
+ *   5. re-renders the pane against the updated canonical record
  *
- * NON-OBVIOUS DECISION: the "details" pane is not a CultureEditorTabs
- * tab. Details are edited through modals-culture.js::openEditCultureModal.
- * The editor modal is for the domain-specific content (appearance,
- * mythology, characters, names). See culture-editor-tab.js's header for
- * the same reasoning.
+ * The Characters and Names tabs do NOT participate in the composite save
+ * (their save() returns {}); their changes commit immediately through
+ * CharacterCommands / NameCommands, and the pane's Save button is omitted
+ * for those tabs. See each tab file's header for the contract.
  *
- * NON-OBVIOUS DECISION: containerRoot for the sub-tab strip must contain
- * both the strip and the pane container. The strip and the tab-content-
- * wrapper are siblings inside .main-panel. Any future refactor that
- * moves the strip must also update the pane-visibility sync in
- * _syncTabStrip — otherwise clicking a tab highlights it but leaves the
- * previous pane visible.
+ * The 'details' tab is rendered by this file directly (read-only view +
+ * Edit button that opens the standard culture modal).
+ *
+ * NON-OBVIOUS DECISION: the "details" tab is not a CultureEditorTabs tab
+ * and does not participate in the inline-pane commit model. Details are
+ * edited through modals-culture.js::openEditCultureModal.
  *
  * DEPENDENCIES (all soft; guarded at call time):
  *   - CultureBootstrap       (js/culture/culture-bootstrap.js)       — REQUIRED
  *   - CultureQueries         (js/culture/culture-queries.js)         — REQUIRED
- *   - CultureCommands        (js/culture/culture-commands.js)        — REQUIRED for edit/delete
- *   - CultureUI              (js/culture/culture-ui-list.js)         — soft (fallback list)
- *   - CultureEditorTabs      (js/tabs/culture-editor-tab.js)         — REQUIRED for editor
+ *   - CultureCommands        (js/culture/culture-commands.js)        — REQUIRED
+ *   - CultureUI              (js/culture/culture-ui-list.js)         — soft
+ *   - CultureEditorTabs      (js/tabs/culture-editor-tab.js)         — REQUIRED
  *   - openCreateCultureModal / openEditCultureModal /
- *     openDeleteCultureModal (modals-culture.js)                      — REQUIRED for CRUD
+ *     openDeleteCultureModal (modals-culture.js)                      — REQUIRED
  *   - formatting.js          (escapeHtml)                            — REQUIRED
  *   - ui.js                  (showToast)                             — soft
  *   - storage.js             (loadMasterData, saveMasterData,
  *                             markDataDirty, normalizeMasterData,
- *                             exportData, getLastSaveError)          — REQUIRED
+ *                             exportData)                            — REQUIRED
  *   - time.js                (getCurrentYear, setCurrentYear)        — REQUIRED
+ *   - theme-boot.js          (window.ThemeSwitcher)                  — soft
  *   - names-state.js         (clearAllCaches)                        — soft
  *   - RankBootstrap / ReligionBootstrap / LocationBootstrap          — soft
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Initial extraction:
- *     - Extracted the inline orchestrator from CultureManager.html into
- *       this file, per the Tab/Manager Development Playbook §4.
- *     - Added _initialized idempotency so refresh and post-import can
- *       call init() without double-wiring topbar / sidebar listeners.
- *     - Moved the "details" pane's edit button out of the inline HTML
- *       string and into a proper click handler on the rendered button
- *       (same behavior; the handler now closes over the culture id
- *       instead of reading it from a data attribute).
- *     - Wired the theme toggle through window.ThemeSwitcher (set up by
- *       js/core/theme-boot.js) instead of duplicating the menu-building
- *       logic. See js/core/theme-toggle.js for the shared implementation.
- *     - All other behavior preserved: sidebar, selection, sub-tab strip
- *       sync, CRUD modals, year input, import/export/refresh, mobile
- *       sidebar, icons, masterDataUpdated, domain bootstraps.
+ *   Current revision (v3):
+ *     - Tab clicks now render panes INLINE. The prior revision opened
+ *       the culture editor modal on every content-tab click, which
+ *       meant the strip and the modal were two UIs for the same data.
+ *       Per playbook §1 (one UI per concern), the strip is the only
+ *       entry point for the five tabs; the modal is opened explicitly
+ *       via the topbar Edit button.
+ *     - The inline pane commit model was added: each content pane
+ *       renders against a throwaway clone, carries its own Save button,
+ *       and commits through CultureCommands.updateCulture + persist on
+ *       save. Characters and Names panes omit the Save button (they
+ *       commit immediately through their own commands).
+ *     - The theme dropdown menu is now built and wired by this file
+ *       directly. The prior revision delegated to a js/core/theme-toggle.js
+ *       file that does not exist. Folding it in removes a 404 and one
+ *       file from the load order.
+ *     - _openEditor() remains available (used by the topbar Edit button
+ *       and the Details pane's "Edit in Editor" button). It no longer
+ *       fires from tab clicks.
+ *   Previous revision (v2):
+ *     - Extracted the inline orchestrator from CultureManager.html.
+ *     - Added _initialized idempotency.
+ *     - Wired the theme toggle via window.ThemeToggle (removed in v3).
  * =============================================================================
  */
 
@@ -128,23 +139,14 @@
         selectedCultureId: null,
         activeTabId: 'details',
         initialized: false,
-        // Listener bookkeeping. The bootstrap installs a small number
-        // of listeners on document / window / specific buttons. They
-        // are tracked so destroy() (if ever needed) can remove them.
         listeners: []
     };
 
-    var _els = null;   // resolved DOM references, populated by _resolveEls
+    var _els = null;
 
     // =========================================================================
     // 3. LISTENER TRACKING
     // =========================================================================
-    //
-    // The bootstrap's listeners live for the lifetime of the page, so
-    // this is mostly for symmetry with the rest of the codebase and for
-    // any future test harness that tears down the page. Every listener
-    // that installs on a persistent node (document, window, a topbar
-    // button) goes through _track.
 
     function _track(el, eventType, handler) {
         if (!el || typeof el.addEventListener !== 'function') return;
@@ -200,12 +202,6 @@
     // =========================================================================
     // 5. ICONS
     // =========================================================================
-    //
-    // icons.js populates window.Icons with SVG strings for a fixed set of
-    // names. The sub-tab strip and topbar buttons use data-icon="NAME" and
-    // this function substitutes the SVG once at boot. If Icons is not yet
-    // loaded, it retries on a short timer rather than throwing — the
-    // manager page should still render text even if icons never load.
 
     function _injectIcons() {
         if (typeof window.Icons === 'undefined') {
@@ -301,7 +297,6 @@
         if (cultures && cultures.length > 0) {
             _selectCulture(cultures[0].id);
         } else {
-            // No cultures: enable/disable the topbar buttons accordingly.
             _syncTopbarButtonState();
         }
     }
@@ -324,13 +319,6 @@
     // =========================================================================
     // 7. SUB-TAB STRIP SYNC
     // =========================================================================
-    //
-    // The sub-tab strip and the tab-content-wrapper are siblings. Each
-    // strip button has data-tab="<id>"; each pane has data-tab-content="<id>".
-    // This function toggles .active on both. If it only toggles the strip,
-    // clicking a tab highlights it but leaves the previous pane visible —
-    // the exact bug the Education bootstrap's containerRoot comment warns
-    // about.
 
     function _syncTabStrip(tabId) {
         var buttons = _getTabButtons();
@@ -357,19 +345,18 @@
     }
 
     // =========================================================================
-    // 8. RENDER ACTIVE TAB
+    // 8. RENDER ACTIVE TAB — INLINE PANES
     // =========================================================================
     //
-    // Renders the pane for the active tab. The 'details' tab is built
-    // here (read-only view + Edit button). The other four tabs are
-    // rendered by CultureEditorTabs — this bootstrap does NOT render them
-    // inline; it opens the editor modal. That is because the editor modal
-    // is the canonical UI for appearance/mythology/characters/names.
+    // Each content tab renders into its pane using a throwaway clone of
+    // the canonical culture. The pane carries its own Save button
+    // (appended by CultureEditorTabs.renderPaneDirect) which commits
+    // through CultureCommands.updateCulture + persist on click.
     //
-    // The sub-tab strip and the editor modal are redundant for those
-    // four tabs. When the user clicks one of those strip buttons, the
-    // bootstrap opens the editor modal with initialTab set to the clicked
-    // tab. The strip is a shortcut into the editor, not a pane.
+    // The Characters and Names panes do not participate in the composite
+    // save (their save() returns {}); their changes commit immediately
+    // through their own commands, and the pane's Save button is omitted
+    // for those tabs.
 
     function _renderActiveTab() {
         var container = document.getElementById('tab-' + _state.activeTabId);
@@ -396,39 +383,39 @@
             return;
         }
 
-        // The other four tabs open the editor modal on click, but if the
-        // pane is somehow active (e.g. via a deep-link or keyboard nav),
-        // render a hint that points to the editor.
-        var tabMeta = _getTabMeta(_state.activeTabId);
-        container.innerHTML =
-            '<div class="ct-hint">' +
-              'The "' + _escapeHtml(tabMeta.label) + '" tab is edited in the ' +
-              'culture editor. Use the "Open Editor" button below.' +
-            '</div>' +
-            '<div class="ct-names__bulk-actions">' +
-              '<button type="button" class="rt-btn rt-btn--primary" id="ct_open_editor_' +
-                _escapeHtml(_state.activeTabId) + '">Open Editor</button>' +
-            '</div>';
-
-        var openBtn = container.querySelector('#ct_open_editor_' + _state.activeTabId);
-        if (openBtn) {
-            openBtn.addEventListener('click', function () {
-                _openEditor(_state.activeTabId);
-            });
+        var Editor = _getEditor();
+        if (!Editor || typeof Editor.renderPaneDirect !== 'function') {
+            container.innerHTML =
+                '<div class="rt-unavailable">' +
+                'Culture editor is not loaded. Load culture-editor-tab.js ' +
+                'before the bootstrap.' +
+                '</div>';
+            return;
         }
-    }
 
-    function _getTabMeta(tabId) {
-        // Static metadata for the five strip tabs. Kept here (not in the
-        // HTML) so the bootstrap can build a label without a DOM lookup
-        // when it needs to render the "open editor" hint.
-        switch (tabId) {
-            case 'details':    return { label: 'Details' };
-            case 'appearance': return { label: 'Appearance' };
-            case 'mythology':  return { label: 'Mythology' };
-            case 'characters': return { label: 'Characters' };
-            case 'names':      return { label: 'Names' };
-            default:           return { label: tabId };
+        var rendered = Editor.renderPaneDirect(
+            _state.activeTabId,
+            container,
+            culture,
+            {
+                onSave: function () {
+                    // The pane's Save button (appended by
+                    // renderPaneDirect) calls this after a successful
+                    // commit. Re-render against the updated canonical
+                    // record so the pane reflects the saved state.
+                    _renderActiveTab();
+                    _renderCultureList();
+                }
+            }
+        );
+
+        if (!rendered) {
+            container.innerHTML =
+                '<div class="rt-unavailable">' +
+                'The "' + _escapeHtml(_state.activeTabId) + '" tab is not ' +
+                'registered. Load culture-' + _escapeHtml(_state.activeTabId) +
+                '-tab.js before the bootstrap.' +
+                '</div>';
         }
     }
 
@@ -455,7 +442,7 @@
               notes +
               '<div class="ct-names__bulk-actions">' +
                 '<button type="button" class="rt-btn rt-btn--primary" id="ct_details_edit">Edit Details</button>' +
-                '<button type="button" class="rt-btn rt-btn--primary" id="ct_details_editor">Open Editor</button>' +
+                '<button type="button" class="rt-btn" id="ct_details_editor">Open Full Editor</button>' +
               '</div>' +
             '</div>';
 
@@ -539,9 +526,6 @@
             onSave: function () {
                 _renderCultureList();
                 _renderActiveTab();
-            },
-            onCancel: function () {
-                // Nothing to do — the editor discards its working copy.
             }
         });
     }
@@ -670,7 +654,6 @@
                     return;
                 }
 
-                // Re-init every domain bootstrap the manager depends on.
                 if (window.CultureBootstrap)  window.CultureBootstrap.init();
                 if (window.ReligionBootstrap) window.ReligionBootstrap.init();
                 if (window.LocationBootstrap) window.LocationBootstrap.init();
@@ -699,10 +682,6 @@
         if (window.NamesState && window.NamesState.clearAllCaches) {
             window.NamesState.clearAllCaches();
         }
-        // Re-run the domain bootstraps against the reloaded masterData.
-        // CultureBootstrap.init() is idempotent (see culture-bootstrap.js);
-        // if it is not, this call is a no-op in practice because the
-        // bootstrap only hydrates once.
         setTimeout(function () {
             if (window.CultureBootstrap) window.CultureBootstrap.init();
             _renderCultureList();
@@ -723,22 +702,101 @@
     }
 
     // =========================================================================
-    // 14. THEME TOGGLE
+    // 14. THEME TOGGLE (folded from theme-toggle.js)
     // =========================================================================
     //
     // theme-boot.js installs window.ThemeSwitcher = { apply, getSaved,
-    // themes }. js/core/theme-toggle.js installs the menu-building and
-    // click-wiring. This bootstrap just delegates to it if it exists;
-    // if not, the theme button is a no-op (the OS preference still
-    // applies via theme-boot.js's matchMedia listener).
+    // themes }. This block builds the dropdown menu from
+    // ThemeSwitcher.themes and wires the button + menu + label.
+    //
+    // Folded in here rather than loaded as a separate file because:
+    //   1. It is ~50 lines and only used by manager pages that have a
+    //      theme button.
+    //   2. It would otherwise be a cross-file dependency with a 404 if
+    //      the file did not exist. Folding it in makes the manager page
+    //      self-contained given theme-boot.js.
+
+    var _themeState = { menu: null, button: null, label: null, wired: false };
+
+    function _themeLabelFor(id) {
+        return id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+    }
+
+    function _buildThemeMenu() {
+        var switcher = window.ThemeSwitcher;
+        if (!switcher || !Array.isArray(switcher.themes)) return;
+        if (!_themeState.menu) return;
+
+        var html = '';
+        for (var i = 0; i < switcher.themes.length; i++) {
+            var id = switcher.themes[i];
+            html += '<li role="none"><button role="menuitem" type="button" ' +
+                'data-theme-id="' + id + '">' + _themeLabelFor(id) + '</button></li>';
+        }
+        _themeState.menu.innerHTML = html;
+    }
+
+    function _openThemeMenu() {
+        if (!_themeState.menu || !_themeState.button) return;
+        _themeState.menu.hidden = false;
+        _themeState.button.setAttribute('aria-expanded', 'true');
+    }
+
+    function _closeThemeMenu() {
+        if (!_themeState.menu || !_themeState.button) return;
+        _themeState.menu.hidden = true;
+        _themeState.button.setAttribute('aria-expanded', 'false');
+    }
+
+    function _applyThemeLabel(id) {
+        if (_themeState.label) _themeState.label.textContent = _themeLabelFor(id);
+    }
 
     function _initThemeToggle() {
-        if (typeof window.ThemeToggle === 'undefined') return;
-        if (typeof window.ThemeToggle.init !== 'function') return;
-        window.ThemeToggle.init({
-            button: _els.themeBtn,
-            menu:   _els.themeMenu,
-            label:  _els.themeName
+        if (!_els.themeBtn || !_els.themeMenu) return;
+        if (_themeState.wired) return;
+        _themeState.wired = true;
+        _themeState.button = _els.themeBtn;
+        _themeState.menu = _els.themeMenu;
+        _themeState.label = _els.themeName;
+
+        _buildThemeMenu();
+
+        var switcher = window.ThemeSwitcher;
+        var saved = switcher && typeof switcher.getSaved === 'function'
+            ? switcher.getSaved()
+            : null;
+        if (saved) _applyThemeLabel(saved);
+
+        _track(_els.themeBtn, 'click', function (e) {
+            e.stopPropagation();
+            if (_els.themeMenu.hidden) _openThemeMenu();
+            else _closeThemeMenu();
+        });
+
+        _track(_els.themeMenu, 'click', function (e) {
+            var btn = e.target && e.target.closest
+                ? e.target.closest('[data-theme-id]')
+                : null;
+            if (!btn) return;
+            var id = btn.getAttribute('data-theme-id');
+            if (switcher && typeof switcher.apply === 'function') {
+                switcher.apply(id);
+            }
+            _applyThemeLabel(id);
+            _closeThemeMenu();
+        });
+
+        _track(document, 'click', function (e) {
+            if (!_els.themeMenu.hidden) {
+                if (_els.themeMenu.contains(e.target)) return;
+                if (e.target === _els.themeBtn) return;
+                _closeThemeMenu();
+            }
+        });
+
+        _track(document, 'keydown', function (e) {
+            if (e.key === 'Escape' && !_els.themeMenu.hidden) _closeThemeMenu();
         });
     }
 
@@ -796,18 +854,7 @@
                 _track(btn, 'click', function () {
                     var tabId = btn.dataset.tab;
                     if (!tabId) return;
-
-                    // The four content tabs open the editor modal
-                    // directly. The 'details' tab renders inline.
-                    if (tabId === 'details') {
-                        _activateTab('details');
-                        return;
-                    }
-                    if (!_state.selectedCultureId) {
-                        _showToast('Select a culture first.', 'warning');
-                        return;
-                    }
-                    _openEditor(tabId);
+                    _activateTab(tabId);
                 });
             })(buttons[i]);
         }
@@ -877,9 +924,8 @@
         destroy: function () {
             _untrackAll();
             _state.initialized = false;
+            _themeState.wired = false;
         },
-
-        // Introspection (for tests and diagnostics — not for UI)
         _getSelectedCultureId: function () { return _state.selectedCultureId; },
         _getActiveTabId: function () { return _state.activeTabId; }
     };
