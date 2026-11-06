@@ -12,349 +12,185 @@
     <link rel="stylesheet" href="css/common.css">
 
     <style>
-        /* ============================================================
-           Household Manager — inline CSS
-           STRUCTURAL ONLY. Every visual value comes from a theme token
-           in themes.css. Same shell as ReligionManager.html, CultureManager.html,
-           EducationManager.html. The .hh-* rules at the bottom are the
-           household tab content styles that the six household tab files
-           emit.
-           ============================================================ */
-
         html, body { height: 100%; margin: 0; overflow: hidden; }
         body {
-            display: flex;
-            flex-direction: column;
-            background: var(--bg);
-            color: var(--text);
-            font-family: var(--f-body);
-            font-size: 1rem;
+            display: flex; flex-direction: column;
+            background: var(--bg); color: var(--text);
+            font-family: var(--f-body); font-size: 1rem;
             line-height: var(--lh, 1.5);
             -webkit-font-smoothing: antialiased;
         }
 
         .topbar {
-            position: relative;
-            z-index: 100;
-            flex-shrink: 0;
-            background: var(--bg2);
-            padding: 0.5rem 1rem;
-            display: flex;
-            align-items: center;
-            gap: 0.625rem;
+            position: relative; z-index: 100; flex-shrink: 0;
+            background: var(--bg2); padding: 0.5rem 1rem;
+            display: flex; align-items: center; gap: 0.625rem;
             border-bottom: 1px solid var(--border);
-            min-height: 3rem;
-            flex-wrap: wrap;
+            min-height: 3rem; flex-wrap: wrap;
         }
         .topbar .title {
-            font-family: var(--f-display);
-            font-weight: 600;
-            font-size: 0.9rem;
-            color: var(--accent);
-            white-space: nowrap;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.375rem;
+            font-family: var(--f-display); font-weight: 600; font-size: 0.9rem;
+            color: var(--accent); white-space: nowrap;
+            display: inline-flex; align-items: center; gap: 0.375rem;
         }
         .topbar .title svg { width: 1em; height: 1em; fill: currentColor; }
         .topbar .spacer { flex: 1; min-width: 0.75rem; }
         .topbar .burger-menu {
-            display: none;
-            align-items: center;
-            justify-content: center;
-            padding: 0.25rem 0.625rem;
-            background: transparent;
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--text);
-            cursor: pointer;
+            display: none; align-items: center; justify-content: center;
+            padding: 0.25rem 0.625rem; background: transparent;
+            border: 1px solid var(--border); border-radius: var(--radius);
+            color: var(--text); cursor: pointer;
         }
 
         .tb-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.3125rem;
-            padding: 0.375rem 0.875rem;
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--text);
-            font-family: var(--f-body);
-            font-size: 0.7rem;
-            font-weight: 500;
-            cursor: pointer;
-            line-height: 1.2;
+            display: inline-flex; align-items: center; gap: 0.3125rem;
+            padding: 0.375rem 0.875rem; background: var(--bg2);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            color: var(--text); font-family: var(--f-body);
+            font-size: 0.7rem; font-weight: 500; cursor: pointer; line-height: 1.2;
         }
         .tb-btn svg { width: 0.9em; height: 0.9em; fill: currentColor; }
-        .tb-btn:hover {
-            border-color: var(--accent);
-            background: var(--accent-dim);
-            color: var(--accent-light);
-        }
-        .tb-btn.primary {
-            background: var(--accent);
-            border-color: var(--accent);
-            color: var(--accent-fg);
-        }
+        .tb-btn:hover { border-color: var(--accent); background: var(--accent-dim); color: var(--accent-light); }
+        .tb-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
         .tb-btn.primary:hover { background: var(--accent-dark); }
         .tb-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
         .year-input {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.3125rem;
-            padding: 0.1875rem 0.625rem;
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            font-family: var(--f-body);
-            font-size: 0.7rem;
-            line-height: 1.2;
+            display: inline-flex; align-items: center; gap: 0.3125rem;
+            padding: 0.1875rem 0.625rem; background: var(--bg);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            font-family: var(--f-body); font-size: 0.7rem; line-height: 1.2;
         }
         .year-input label {
-            font-family: var(--f-display);
-            font-size: 0.55rem;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            color: var(--dim);
-            white-space: nowrap;
+            font-family: var(--f-display); font-size: 0.55rem;
+            letter-spacing: 0.06em; text-transform: uppercase;
+            color: var(--dim); white-space: nowrap;
         }
         .year-input input {
-            width: 4rem;
-            padding: 0.1875rem 0.375rem;
-            background: transparent;
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--text);
-            font-family: var(--f-mono);
-            font-size: 0.7rem;
-            text-align: right;
+            width: 4rem; padding: 0.1875rem 0.375rem;
+            background: transparent; border: 1px solid var(--border);
+            border-radius: var(--radius); color: var(--text);
+            font-family: var(--f-mono); font-size: 0.7rem; text-align: right;
         }
-        .year-input input:focus {
-            outline: none;
-            border-color: var(--accent);
-        }
+        .year-input input:focus { outline: none; border-color: var(--accent); }
 
         .theme-toggle { position: relative; display: inline-flex; }
         .theme-toggle__menu {
-            position: absolute;
-            top: calc(100% + 0.25rem);
-            right: 0;
-            z-index: 9999;
-            min-width: 10rem;
-            max-height: 60vh;
-            padding: 0.25rem;
-            margin: 0;
-            list-style: none;
-            background: var(--surface);
-            border: 1px solid var(--line);
-            border-radius: var(--radius);
-            box-shadow: var(--shadow);
+            position: absolute; top: calc(100% + 0.25rem); right: 0;
+            z-index: 9999; min-width: 10rem; max-height: 60vh;
+            padding: 0.25rem; margin: 0; list-style: none;
+            background: var(--surface); border: 1px solid var(--line);
+            border-radius: var(--radius); box-shadow: var(--shadow);
             overflow-y: auto;
         }
         .theme-toggle__menu[hidden] { display: none; }
         .theme-toggle__menu button {
-            display: block;
-            width: 100%;
-            padding: 0.375rem 0.75rem;
-            text-align: left;
-            background: transparent;
-            border: none;
-            color: var(--text);
-            font-family: var(--f-body);
-            font-size: 0.7rem;
-            border-radius: var(--radius);
-            cursor: pointer;
+            display: block; width: 100%; padding: 0.375rem 0.75rem;
+            text-align: left; background: transparent; border: none;
+            color: var(--text); font-family: var(--f-body); font-size: 0.7rem;
+            border-radius: var(--radius); cursor: pointer;
         }
-        .theme-toggle__menu button:hover {
-            background: var(--accent-dim);
-            color: var(--accent-light);
-        }
+        .theme-toggle__menu button:hover { background: var(--accent-dim); color: var(--accent-light); }
 
         .app-layout {
-            display: flex;
-            flex-direction: row;
-            flex: 1;
-            min-height: 0;
-            overflow: hidden;
+            display: flex; flex-direction: row; flex: 1;
+            min-height: 0; overflow: hidden;
         }
         .sidebar {
-            flex-shrink: 0;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            background: var(--bg2);
-            border-right: 1px solid var(--border);
-            width: 17.5rem;
+            flex-shrink: 0; display: flex; flex-direction: column;
+            overflow: hidden; background: var(--bg2);
+            border-right: 1px solid var(--border); width: 17.5rem;
         }
         .sidebar-header {
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid var(--border);
+            padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);
             background: var(--bg3);
         }
         .sidebar-header h3 {
-            margin: 0;
-            font-family: var(--f-display);
-            font-size: 0.65rem;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            color: var(--accent);
-            display: flex;
-            align-items: center;
-            gap: 0.375rem;
+            margin: 0; font-family: var(--f-display); font-size: 0.65rem;
+            letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent);
+            display: flex; align-items: center; gap: 0.375rem;
         }
-        .sidebar-list {
-            flex: 1;
-            overflow-y: auto;
-            padding: 0.5rem;
-            min-height: 0;
-        }
+        .sidebar-list { flex: 1; overflow-y: auto; padding: 0.5rem; min-height: 0; }
         .main-panel {
-            display: flex;
-            flex-direction: column;
-            flex: 1;
-            min-width: 0;
-            min-height: 0;
-            overflow: hidden;
+            display: flex; flex-direction: column; flex: 1;
+            min-width: 0; min-height: 0; overflow: hidden;
         }
 
         .manager-subtabs {
-            position: sticky;
-            top: 0;
-            display: flex;
-            align-items: stretch;
-            gap: 0.25rem;
-            padding: 0.5rem 1.5rem 0;
-            margin: 0 0 1.25rem;
-            background: var(--bg2);
-            border-bottom: 1px solid var(--border);
-            flex-wrap: wrap;
-            z-index: 10;
+            position: sticky; top: 0; display: flex; align-items: stretch;
+            gap: 0.25rem; padding: 0.5rem 1.5rem 0; margin: 0 0 1.25rem;
+            background: var(--bg2); border-bottom: 1px solid var(--border);
+            flex-wrap: wrap; z-index: 10;
         }
         .manager-subtab {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.75rem 1.125rem 0.6875rem;
-            background: transparent;
-            border: 1px solid transparent;
-            border-bottom: none;
-            border-radius: var(--radius) var(--radius) 0 0;
-            color: var(--dim);
-            font-family: var(--f-display);
-            font-size: 0.78rem;
-            font-weight: 500;
-            cursor: pointer;
+            position: relative; display: inline-flex; align-items: center;
+            gap: 0.5rem; padding: 0.75rem 1.125rem 0.6875rem;
+            background: transparent; border: 1px solid transparent;
+            border-bottom: none; border-radius: var(--radius) var(--radius) 0 0;
+            color: var(--dim); font-family: var(--f-display);
+            font-size: 0.78rem; font-weight: 500; cursor: pointer;
         }
-        .manager-subtab:hover {
-            color: var(--accent-light);
-            background: var(--accent-dim);
-        }
+        .manager-subtab:hover { color: var(--accent-light); background: var(--accent-dim); }
         .manager-subtab.active {
-            color: var(--accent);
-            background: var(--bg2);
-            border-color: var(--border);
-            font-weight: 600;
+            color: var(--accent); background: var(--bg2);
+            border-color: var(--border); font-weight: 600;
         }
         .manager-subtab-icon {
-            display: inline-flex;
-            width: 1rem;
-            height: 1rem;
-            align-items: center;
-            justify-content: center;
-            color: currentColor;
+            display: inline-flex; width: 1rem; height: 1rem;
+            align-items: center; justify-content: center; color: currentColor;
         }
         .manager-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
 
         .tab-content-wrapper {
-            flex: 1;
-            min-height: 0;
-            overflow-y: auto;
-            overflow-x: hidden;
-            padding: 1.25rem 1.5rem;
-            background: var(--bg);
+            flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+            padding: 1.25rem 1.5rem; background: var(--bg);
         }
         .tab-pane { display: none; }
         .tab-pane.active { display: block; }
 
         .ct-hint {
-            background: var(--bg2);
-            border-left: 3px solid var(--accent);
-            padding: 0.625rem 0.875rem;
-            margin-bottom: 1rem;
-            font-size: 0.7rem;
-            color: var(--dim);
-            line-height: 1.55;
+            background: var(--bg2); border-left: 3px solid var(--accent);
+            padding: 0.625rem 0.875rem; margin-bottom: 1rem;
+            font-size: 0.7rem; color: var(--dim); line-height: 1.55;
             border-radius: 0 var(--radius) var(--radius) 0;
         }
-
-        .ct-empty,
-        .hh-empty-global {
-            padding: 1.5rem;
-            text-align: center;
-            color: var(--dim);
-            font-size: 0.8rem;
+        .ct-empty {
+            padding: 1.5rem; text-align: center;
+            color: var(--dim); font-size: 0.8rem;
         }
-        .ct-empty__sub,
-        .hh-empty-global__sub {
-            display: block;
-            margin-top: 0.375rem;
-            font-size: 0.7rem;
-            color: var(--dim);
+        .ct-empty__sub {
+            display: block; margin-top: 0.375rem;
+            font-size: 0.7rem; color: var(--dim);
         }
-        .hh-unavailable-global {
-            padding: 1.5rem;
-            text-align: center;
-            color: var(--danger-lt);
-            font-size: 0.8rem;
-        }
-        .loading,
-        .loading-placeholder {
-            padding: 1.5rem;
-            text-align: center;
-            color: var(--dim);
-            font-size: 0.85rem;
+        .loading, .loading-placeholder {
+            padding: 1.5rem; text-align: center;
+            color: var(--dim); font-size: 0.85rem;
         }
         .empty-state, .error-state {
-            padding: 1.5rem;
-            text-align: center;
-            color: var(--dim);
-            font-size: 0.8rem;
+            padding: 1.5rem; text-align: center;
+            color: var(--dim); font-size: 0.8rem;
         }
         .error-state { color: var(--danger-lt); }
 
-        /* ============================================================
-           HOUSEHOLD TAB CONTENT (.hh-*)
-           Emitted by the six household tab files. Mirrors the .rt-*
-           pattern used by ReligionManager.html.
-           ============================================================ */
-
+        /* Household tab content classes */
         .hh-tab { display: flex; flex-direction: column; gap: 1rem; max-width: 62rem; margin: 0 auto; }
-        .hh-tab-header {
-            display: flex; justify-content: space-between;
-            align-items: center; gap: 0.75rem; flex-wrap: wrap;
-        }
+        .hh-tab-header { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
         .hh-tab-title {
-            font-family: var(--f-display); font-size: 0.85rem;
-            font-weight: 600; color: var(--accent-light);
-            display: inline-flex; align-items: center; gap: 0.375rem;
-            margin: 0;
+            font-family: var(--f-display); font-size: 0.85rem; font-weight: 600;
+            color: var(--accent-light); display: inline-flex;
+            align-items: center; gap: 0.375rem; margin: 0;
         }
         .hh-tab-actions { display: flex; gap: 0.375rem; align-items: center; flex-wrap: wrap; }
         .hh-tab-footer {
-            font-family: var(--f-mono); font-size: 0.65rem;
-            color: var(--dim); text-align: center;
-            padding-top: 0.75rem; border-top: 1px solid var(--border);
+            font-family: var(--f-mono); font-size: 0.65rem; color: var(--dim);
+            text-align: center; padding-top: 0.75rem; border-top: 1px solid var(--border);
         }
-
         .hh-btn {
             display: inline-flex; align-items: center; gap: 0.25rem;
             padding: 0.3125rem 0.75rem; background: var(--bg3);
             border: 1px solid var(--border); border-radius: var(--radius);
-            color: var(--text); font-family: var(--f-body);
-            font-size: 0.7rem; font-weight: 500; cursor: pointer;
-            line-height: 1.2;
+            color: var(--text); font-family: var(--f-body); font-size: 0.7rem;
+            font-weight: 500; cursor: pointer; line-height: 1.2;
         }
         .hh-btn:hover { border-color: var(--accent); color: var(--accent-light); }
         .hh-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
@@ -363,7 +199,6 @@
         .hh-btn-danger { border-color: var(--danger-lt); color: var(--danger-lt); }
         .hh-btn-danger:hover { background: var(--danger-soft); }
         .hh-btn-subtle { background: transparent; }
-
         .hh-icon-btn {
             padding: 0.25rem 0.5rem; background: transparent;
             border: 1px solid transparent; border-radius: var(--radius);
@@ -374,7 +209,6 @@
         .hh-icon-btn-danger { color: var(--danger-lt); }
         .hh-icon-btn-danger:hover { background: var(--danger-soft); }
         .hh-icon-btn-success { color: var(--accent-light); }
-
         .hh-cell {
             padding: 0.625rem 0.75rem; background: var(--bg2);
             border: 1px solid var(--border); border-radius: var(--radius);
@@ -383,15 +217,10 @@
         .hh-cell-stat, .hh-cell-detail { display: flex; flex-direction: column; gap: 0.125rem; }
         .hh-cell-label {
             font-family: var(--f-display); font-size: 0.55rem;
-            text-transform: uppercase; letter-spacing: 0.06em;
-            color: var(--dim);
+            text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim);
         }
-        .hh-cell-value {
-            font-family: var(--f-mono); font-size: 0.9rem;
-            font-weight: 600; color: var(--text);
-        }
+        .hh-cell-value { font-family: var(--f-mono); font-size: 0.9rem; font-weight: 600; color: var(--text); }
         .hh-cell-detail .hh-cell-value { font-size: 0.72rem; font-weight: 400; }
-
         .hh-kv-row {
             display: grid; grid-template-columns: max-content 1fr;
             gap: 0.25rem 0.625rem; font-size: 0.7rem;
@@ -400,36 +229,26 @@
         .hh-kv-label { color: var(--dim); }
         .hh-kv-value { color: var(--text); }
         .hh-kv-list { padding: 0.625rem 0.875rem; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); }
-
         .hh-section-header {
-            display: flex; justify-content: space-between;
-            align-items: center; gap: 0.5rem; flex-wrap: wrap;
-            margin-bottom: 0.5rem;
-            padding-bottom: 0.375rem;
-            border-bottom: 1px solid var(--border);
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem;
+            padding-bottom: 0.375rem; border-bottom: 1px solid var(--border);
         }
         .hh-section-title {
-            font-family: var(--f-display); font-size: 0.7rem;
-            font-weight: 600; color: var(--accent-light);
-            text-transform: uppercase; letter-spacing: 0.06em;
+            font-family: var(--f-display); font-size: 0.7rem; font-weight: 600;
+            color: var(--accent-light); text-transform: uppercase; letter-spacing: 0.06em;
         }
-
         .hh-empty { padding: 1rem; text-align: center; color: var(--dim); font-size: 0.75rem; }
         .hh-failure { padding: 1rem; text-align: center; color: var(--danger-lt); font-size: 0.75rem; }
-
-        /* Sidebar items */
         .hh-sidebar-list { display: flex; flex-direction: column; gap: 0.125rem; }
         .hh-sidebar-item {
             display: flex; flex-direction: column; gap: 0.125rem;
             padding: 0.5rem 0.625rem; border-radius: var(--radius);
-            border-left: 3px solid transparent;
-            cursor: pointer; font-size: 0.78rem;
+            border-left: 3px solid transparent; cursor: pointer; font-size: 0.78rem;
         }
         .hh-sidebar-item:hover { background: var(--bg3); }
         .hh-sidebar-item.active {
-            background: var(--accent-dim);
-            border-left-color: var(--accent);
-            color: var(--accent-light);
+            background: var(--accent-dim); border-left-color: var(--accent); color: var(--accent-light);
         }
         .hh-sidebar-item-name { font-family: var(--f-display); font-weight: 600; color: var(--text); }
         .hh-sidebar-item-meta {
@@ -444,22 +263,15 @@
         .hh-sidebar-status-destroyed { color: var(--danger-lt); }
         .hh-sidebar-status-bankrupt  { color: var(--danger-lt); }
         .hh-sidebar-status-unknown   { color: var(--dim); }
-
-        /* Overview tab */
         .hh-overview-header {
-            padding: 1rem 1.25rem;
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
+            padding: 1rem 1.25rem; background: var(--bg2);
+            border: 1px solid var(--border); border-radius: var(--radius);
         }
         .hh-overview-title {
             font-family: var(--f-display); font-size: 1.1rem;
             font-weight: 600; color: var(--accent-light); margin: 0;
         }
-        .hh-overview-subtitle {
-            font-family: var(--f-mono); font-size: 0.65rem;
-            color: var(--dim); margin-top: 0.125rem;
-        }
+        .hh-overview-subtitle { font-family: var(--f-mono); font-size: 0.65rem; color: var(--dim); margin-top: 0.125rem; }
         .hh-overview-status { font-family: var(--f-mono); font-size: 0.7rem; font-weight: 600; text-align: right; }
         .hh-overview-status-meta { font-family: var(--f-mono); font-size: 0.6rem; color: var(--dim); }
         .hh-status-active    { color: var(--accent-light); }
@@ -471,7 +283,6 @@
         .hh-status-destroyed { color: var(--danger-lt); }
         .hh-status-bankrupt  { color: var(--danger-lt); }
         .hh-status-unknown   { color: var(--dim); }
-
         .hh-overview-grid {
             display: grid; grid-template-columns: max-content 1fr;
             gap: 0.375rem 1rem; font-size: 0.7rem;
@@ -485,16 +296,12 @@
             margin-top: 0.75rem; padding-top: 0.75rem;
             border-top: 1px solid var(--border);
         }
-
         .hh-name-history { margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: var(--bg3); border-radius: var(--radius); }
         .hh-name-history-title { font-family: var(--f-display); font-size: 0.6rem; text-transform: uppercase; color: var(--dim); margin-bottom: 0.25rem; }
         .hh-name-history-entry { font-family: var(--f-mono); font-size: 0.65rem; color: var(--dim); line-height: 1.5; }
         .hh-name-history-more { font-family: var(--f-mono); font-size: 0.6rem; color: var(--dim); margin-top: 0.25rem; }
-
-        /* Members tab */
         .hh-member-row {
-            display: flex; justify-content: space-between;
-            align-items: center; gap: 0.5rem;
+            display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
             padding: 0.5rem 0.75rem; background: var(--bg2);
             border: 1px solid var(--border); border-left: 3px solid var(--border);
             border-radius: var(--radius);
@@ -502,64 +309,40 @@
         .hh-member-row.head { border-left-color: var(--accent); }
         .hh-member-row.deceased { opacity: 0.7; border-left-color: var(--danger-lt); }
         .hh-member-info { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; flex: 1; min-width: 0; }
-        .hh-member-gender,
-        .hh-member-age,
-        .hh-member-joined { font-family: var(--f-mono); font-size: 0.6rem; color: var(--dim); }
+        .hh-member-gender, .hh-member-age, .hh-member-joined { font-family: var(--f-mono); font-size: 0.6rem; color: var(--dim); }
         .hh-member-name { font-family: var(--f-display); font-size: 0.78rem; font-weight: 600; color: var(--text); }
         .hh-member-name.head { color: var(--accent-light); }
         .hh-member-status-living { font-family: var(--f-mono); font-size: 0.6rem; color: var(--accent-light); }
         .hh-member-status-deceased { font-family: var(--f-mono); font-size: 0.6rem; color: var(--danger-lt); }
         .hh-member-role { font-family: var(--f-mono); font-size: 0.65rem; color: var(--dim); }
         .hh-member-dept { font-family: var(--f-mono); font-size: 0.6rem; color: var(--dim); }
-        .hh-member-badge {
-            padding: 0.125rem 0.5rem; border-radius: var(--radius);
-            font-family: var(--f-mono); font-size: 0.55rem;
-        }
+        .hh-member-badge { padding: 0.125rem 0.5rem; border-radius: var(--radius); font-family: var(--f-mono); font-size: 0.55rem; }
         .hh-member-badge.head { background: var(--accent-dim); color: var(--accent-light); }
         .hh-member-badge.family { background: var(--bg3); color: var(--dim); }
         .hh-member-badge.staff { background: var(--accent-dim); color: var(--accent-light); }
         .hh-member-actions { display: flex; gap: 0.125rem; flex-shrink: 0; }
-
         .hh-members-section { display: flex; flex-direction: column; gap: 0.375rem; }
         .hh-members-section-former .hh-member-row { opacity: 0.85; }
-
-        /* Departments tab */
         .hh-dept-card {
-            padding: 0.75rem 0.875rem;
-            background: var(--bg2); border: 1px solid var(--border);
-            border-left: 3px solid var(--accent);
-            border-radius: var(--radius);
-            display: flex; flex-direction: column; gap: 0.5rem;
+            padding: 0.75rem 0.875rem; background: var(--bg2);
+            border: 1px solid var(--border); border-left: 3px solid var(--accent);
+            border-radius: var(--radius); display: flex; flex-direction: column; gap: 0.5rem;
         }
-        .hh-dept-header {
-            display: flex; justify-content: space-between;
-            align-items: flex-start; gap: 0.5rem; flex-wrap: wrap;
-        }
+        .hh-dept-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; flex-wrap: wrap; }
         .hh-dept-title-group { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
         .hh-dept-title { font-family: var(--f-display); font-size: 0.8rem; font-weight: 600; color: var(--text); }
-        .hh-dept-stat,
-        .hh-dept-head { font-family: var(--f-mono); font-size: 0.6rem; color: var(--dim); }
+        .hh-dept-stat, .hh-dept-head { font-family: var(--f-mono); font-size: 0.6rem; color: var(--dim); }
         .hh-dept-actions { display: flex; gap: 0.25rem; flex-wrap: wrap; flex-shrink: 0; }
-
         .hh-dept-staff-list { margin-left: 0.5rem; display: flex; flex-direction: column; gap: 0.125rem; }
         .hh-dept-staff-empty { font-family: var(--f-mono); font-size: 0.65rem; color: var(--dim); padding: 0.25rem 0.5rem; }
-        .hh-dept-staff-row {
-            display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
-            padding: 0.25rem 0.5rem; border-radius: var(--radius); font-size: 0.7rem;
-        }
+        .hh-dept-staff-row { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.25rem 0.5rem; border-radius: var(--radius); font-size: 0.7rem; }
         .hh-dept-staff-row.deceased { opacity: 0.55; }
         .hh-dept-staff-info { display: flex; gap: 0.25rem; flex-wrap: wrap; align-items: center; }
         .hh-dept-staff-actions { display: flex; gap: 0.125rem; flex-shrink: 0; }
         .hh-dept-staff-head { color: var(--accent-light); font-family: var(--f-mono); font-size: 0.55rem; }
         .hh-dept-staff-role { color: var(--dim); font-family: var(--f-mono); font-size: 0.6rem; }
-
         .hh-dept-pos-list { margin-left: 0.5rem; padding-top: 0.25rem; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.125rem; }
-        .hh-dept-pos-row {
-            display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
-            padding: 0.25rem 0.5rem;
-            border-left: 2px solid var(--accent); border-radius: var(--radius);
-            font-size: 0.7rem;
-        }
+        .hh-dept-pos-row { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.25rem 0.5rem; border-left: 2px solid var(--accent); border-radius: var(--radius); font-size: 0.7rem; }
         .hh-dept-pos-row-unassigned { border-left-color: var(--warn, #c87040); }
         .hh-dept-pos-info { display: flex; gap: 0.25rem; flex-wrap: wrap; align-items: center; }
         .hh-dept-pos-name { font-family: var(--f-display); font-weight: 500; }
@@ -567,113 +350,49 @@
         .hh-dept-pos-assigned { color: var(--dim); font-family: var(--f-mono); font-size: 0.55rem; }
         .hh-dept-pos-unassigned { color: var(--warn, #c87040); font-family: var(--f-mono); font-size: 0.55rem; }
         .hh-dept-pos-actions { display: flex; gap: 0.125rem; flex-shrink: 0; }
-
         .hh-dept-unassigned { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--border); }
         .hh-dept-unassigned-title { font-family: var(--f-display); font-size: 0.6rem; text-transform: uppercase; color: var(--warn, #c87040); margin-bottom: 0.25rem; }
-
-        /* Economy tab */
         .hh-econ-grid { display: grid; gap: 0.5rem; margin-bottom: 0.75rem; }
         .hh-econ-grid-2 { grid-template-columns: repeat(2, 1fr); }
         .hh-econ-grid-3 { grid-template-columns: repeat(3, 1fr); }
         .hh-econ-grid-4 { grid-template-columns: repeat(4, 1fr); }
         .hh-econ-grid-5 { grid-template-columns: repeat(5, 1fr); }
-        .hh-econ-net {
-            text-align: center; padding: 0.5rem;
-            background: var(--bg2); border: 1px solid var(--border);
-            border-radius: var(--radius);
-            font-family: var(--f-mono); font-size: 0.8rem;
-            font-weight: 600; margin-bottom: 0.75rem;
-        }
+        .hh-econ-net { text-align: center; padding: 0.5rem; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); font-family: var(--f-mono); font-size: 0.8rem; font-weight: 600; margin-bottom: 0.75rem; }
         .hh-econ-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-
-        .hh-econ-enterprise {
-            padding: 0.75rem 0.875rem; background: var(--bg2);
-            border: 1px solid var(--border); border-radius: var(--radius);
-            margin-bottom: 0.75rem;
-        }
-        .hh-econ-enterprise-empty {
-            padding: 0.75rem 0.875rem; background: var(--bg2);
-            border: 1px solid var(--border); border-radius: var(--radius);
-            margin-bottom: 0.75rem; font-family: var(--f-mono);
-            font-size: 0.65rem; color: var(--dim);
-        }
-        .hh-econ-enterprise-header {
-            display: flex; justify-content: space-between; align-items: center;
-            gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem;
-            padding-bottom: 0.375rem; border-bottom: 1px solid var(--border);
-        }
-        .hh-econ-enterprise-title {
-            font-family: var(--f-display); font-size: 0.7rem;
-            font-weight: 600; color: var(--accent-light);
-            text-transform: uppercase; letter-spacing: 0.06em;
-        }
+        .hh-econ-enterprise { padding: 0.75rem 0.875rem; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 0.75rem; }
+        .hh-econ-enterprise-empty { padding: 0.75rem 0.875rem; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 0.75rem; font-family: var(--f-mono); font-size: 0.65rem; color: var(--dim); }
+        .hh-econ-enterprise-header { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem; padding-bottom: 0.375rem; border-bottom: 1px solid var(--border); }
+        .hh-econ-enterprise-title { font-family: var(--f-display); font-size: 0.7rem; font-weight: 600; color: var(--accent-light); text-transform: uppercase; letter-spacing: 0.06em; }
         .hh-econ-enterprise-meta { font-family: var(--f-mono); font-size: 0.65rem; color: var(--dim); }
         .hh-econ-enterprise-total { font-family: var(--f-mono); font-size: 0.65rem; margin-bottom: 0.25rem; }
         .hh-econ-enterprise-list { max-height: 7.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.125rem; }
-        .hh-econ-enterprise-row {
-            display: flex; justify-content: space-between;
-            padding: 0.25rem 0.5rem;
-            background: var(--bg3); border-radius: var(--radius);
-            font-family: var(--f-mono); font-size: 0.65rem;
-        }
+        .hh-econ-enterprise-row { display: flex; justify-content: space-between; padding: 0.25rem 0.5rem; background: var(--bg3); border-radius: var(--radius); font-family: var(--f-mono); font-size: 0.65rem; }
         .hh-econ-enterprise-name { font-family: var(--f-body); }
         .hh-econ-enterprise-more { text-align: center; font-family: var(--f-mono); font-size: 0.6rem; color: var(--dim); padding-top: 0.25rem; }
-
         .hh-resource-list { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 0.75rem; }
-        .hh-resource-row {
-            display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
-            padding: 0.5rem 0.75rem; background: var(--bg2);
-            border: 1px solid var(--border); border-radius: var(--radius);
-        }
+        .hh-resource-row { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); }
         .hh-resource-label { font-family: var(--f-display); font-size: 0.72rem; }
         .hh-resource-controls { display: flex; align-items: center; gap: 0.5rem; }
         .hh-resource-value { font-family: var(--f-mono); font-size: 1rem; font-weight: 600; }
-
-        /* Holdings tab */
         .hh-holding-section { display: flex; flex-direction: column; gap: 0.5rem; }
         .hh-holding-section-meta { font-family: var(--f-mono); font-size: 0.65rem; color: var(--accent-light); }
         .hh-holding-list { display: flex; flex-direction: column; gap: 0.5rem; }
-        .hh-holding-card {
-            padding: 0.75rem 0.875rem; background: var(--bg2);
-            border: 1px solid var(--border); border-left: 3px solid var(--accent);
-            border-radius: var(--radius);
-            display: flex; flex-direction: column; gap: 0.375rem;
-        }
+        .hh-holding-card { padding: 0.75rem 0.875rem; background: var(--bg2); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius); display: flex; flex-direction: column; gap: 0.375rem; }
         .hh-holding-card.demolished { opacity: 0.55; }
         .hh-holding-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; flex-wrap: wrap; }
         .hh-holding-title { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; font-size: 0.8rem; }
-        .hh-holding-type   { font-family: var(--f-mono); font-size: 0.6rem; color: var(--dim); }
+        .hh-holding-type { font-family: var(--f-mono); font-size: 0.6rem; color: var(--dim); }
         .hh-holding-status { font-family: var(--f-mono); font-size: 0.6rem; }
-        .hh-holding-badge {
-            padding: 0.125rem 0.5rem; border-radius: var(--radius);
-            background: var(--accent-dim); color: var(--accent-light);
-            font-family: var(--f-mono); font-size: 0.55rem;
-        }
+        .hh-holding-badge { padding: 0.125rem 0.5rem; border-radius: var(--radius); background: var(--accent-dim); color: var(--accent-light); font-family: var(--f-mono); font-size: 0.55rem; }
         .hh-holding-meta { display: flex; flex-wrap: wrap; gap: 0.625rem; font-family: var(--f-mono); font-size: 0.65rem; color: var(--dim); }
         .hh-holding-meta-dim { font-family: var(--f-mono); font-size: 0.65rem; color: var(--dim); }
         .hh-holding-actions { display: flex; gap: 0.25rem; align-items: center; flex-shrink: 0; }
-
-        /* Activity tab */
         .hh-activity-total { font-family: var(--f-mono); font-size: 0.7rem; color: var(--dim); }
-        .hh-activity-chips {
-            display: flex; flex-wrap: wrap; gap: 0.25rem;
-            margin-bottom: 0.75rem; padding: 0.5rem;
-            background: var(--bg2); border-radius: var(--radius);
-        }
-        .hh-activity-chip {
-            padding: 0.125rem 0.5rem; border-radius: var(--radius);
-            background: var(--bg3); font-family: var(--f-mono);
-            font-size: 0.6rem; color: var(--dim);
-        }
+        .hh-activity-chips { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-bottom: 0.75rem; padding: 0.5rem; background: var(--bg2); border-radius: var(--radius); }
+        .hh-activity-chip { padding: 0.125rem 0.5rem; border-radius: var(--radius); background: var(--bg3); font-family: var(--f-mono); font-size: 0.6rem; color: var(--dim); }
         .hh-activity-events-section { display: flex; flex-direction: column; gap: 0.375rem; }
         .hh-activity-events { max-height: 32rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.125rem; }
-        .hh-activity-event {
-            display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
-            padding: 0.5rem 0.625rem; background: var(--bg2);
-            border: 1px solid var(--border); border-left: 3px solid var(--border);
-            border-radius: var(--radius); cursor: pointer;
-            transition: background 0.1s;
-        }
+        .hh-activity-event { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.5rem 0.625rem; background: var(--bg2); border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: background 0.1s; }
         .hh-activity-event:hover { background: var(--bg3); }
         .hh-activity-event-inner { display: flex; gap: 0.5rem; align-items: center; flex: 1; min-width: 0; }
         .hh-activity-icon { font-size: 0.7rem; }
@@ -684,97 +403,30 @@
         .hh-activity-amount-negative { color: var(--danger-lt); }
         .hh-activity-detail { font-family: var(--f-mono); font-size: 0.65rem; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
         .hh-activity-source { font-family: var(--f-mono); font-size: 0.55rem; color: var(--dim); }
-        .hh-activity-priority-important {
-            padding: 0.125rem 0.375rem; border-radius: var(--radius);
-            background: var(--danger-lt); color: var(--accent-fg);
-            font-family: var(--f-mono); font-size: 0.55rem;
-        }
-        .hh-activity-priority-major {
-            padding: 0.125rem 0.375rem; border-radius: var(--radius);
-            background: var(--warn, #c87040); color: var(--accent-fg);
-            font-family: var(--f-mono); font-size: 0.55rem;
-        }
+        .hh-activity-priority-important { padding: 0.125rem 0.375rem; border-radius: var(--radius); background: var(--danger-lt); color: var(--accent-fg); font-family: var(--f-mono); font-size: 0.55rem; }
+        .hh-activity-priority-major { padding: 0.125rem 0.375rem; border-radius: var(--radius); background: var(--warn, #c87040); color: var(--accent-fg); font-family: var(--f-mono); font-size: 0.55rem; }
         .hh-activity-event-actions { display: flex; gap: 0.125rem; flex-shrink: 0; }
-        .hh-activity-detail-header {
-            display: flex; justify-content: space-between; align-items: center;
-            gap: 0.5rem; margin-bottom: 0.75rem;
-            padding: 0.75rem; background: var(--bg2);
-            border: 1px solid var(--border); border-left: 4px solid var(--accent);
-            border-radius: var(--radius);
-        }
+        .hh-activity-detail-header { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; padding: 0.75rem; background: var(--bg2); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius); }
         .hh-activity-detail-title { font-family: var(--f-display); font-size: 0.85rem; font-weight: 600; color: var(--text); }
         .hh-activity-detail-meta { font-family: var(--f-mono); font-size: 0.65rem; color: var(--dim); }
-        .hh-activity-raw-pre {
-            font-family: var(--f-mono); font-size: 0.6rem;
-            color: var(--dim); max-height: 12rem; overflow: auto;
-            background: var(--bg); padding: 0.5rem;
-            border-radius: var(--radius); margin: 0;
-        }
-
-        /* Filter bar */
-        .hh-filter-bar {
-            display: flex; flex-wrap: wrap; gap: 0.5rem;
-            padding: 0.625rem 0.75rem; margin-bottom: 0.75rem;
-            background: var(--bg2); border: 1px solid var(--border);
-            border-radius: var(--radius);
-            align-items: center;
-        }
-        .hh-filter-search {
-            flex: 2; min-width: 10rem;
-            padding: 0.375rem 0.5rem; background: var(--bg);
-            border: 1px solid var(--border); border-radius: var(--radius);
-            color: var(--text); font-family: var(--f-body); font-size: 0.72rem;
-        }
-        .hh-filter-select {
-            padding: 0.375rem 0.5rem; background: var(--bg);
-            border: 1px solid var(--border); border-radius: var(--radius);
-            color: var(--text); font-family: var(--f-body); font-size: 0.72rem;
-        }
-        .hh-filter-year {
-            width: 4.5rem; padding: 0.375rem 0.5rem; background: var(--bg);
-            border: 1px solid var(--border); border-radius: var(--radius);
-            color: var(--text); font-family: var(--f-mono); font-size: 0.72rem;
-        }
+        .hh-activity-raw-pre { font-family: var(--f-mono); font-size: 0.6rem; color: var(--dim); max-height: 12rem; overflow: auto; background: var(--bg); padding: 0.5rem; border-radius: var(--radius); margin: 0; }
+        .hh-filter-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0.625rem 0.75rem; margin-bottom: 0.75rem; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); align-items: center; }
+        .hh-filter-search { flex: 2; min-width: 10rem; padding: 0.375rem 0.5rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-family: var(--f-body); font-size: 0.72rem; }
+        .hh-filter-select { padding: 0.375rem 0.5rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-family: var(--f-body); font-size: 0.72rem; }
+        .hh-filter-year { width: 4.5rem; padding: 0.375rem 0.5rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-family: var(--f-mono); font-size: 0.72rem; }
         .hh-filter-sep { color: var(--dim); font-size: 0.7rem; align-self: center; }
-
-        /* Modal form primitives */
         .hh-modal-form { display: flex; flex-direction: column; gap: 0.625rem; }
-        .hh-modal-current {
-            padding: 0.625rem 0.875rem; background: var(--bg3);
-            border-radius: var(--radius); font-size: 0.72rem;
-        }
+        .hh-modal-current { padding: 0.625rem 0.875rem; background: var(--bg3); border-radius: var(--radius); font-size: 0.72rem; }
         .hh-form-group { display: flex; flex-direction: column; gap: 0.25rem; }
-        .hh-form-group label {
-            font-family: var(--f-display); font-size: 0.6rem;
-            text-transform: uppercase; letter-spacing: 0.06em;
-            color: var(--dim);
-        }
-        .hh-form-group input[type="text"],
-        .hh-form-group input[type="number"],
-        .hh-form-group select,
-        .hh-form-group textarea {
-            width: 100%; box-sizing: border-box;
-            padding: 0.375rem 0.5rem; background: var(--bg);
-            border: 1px solid var(--border); border-radius: var(--radius);
-            color: var(--text); font-family: var(--f-body); font-size: 0.72rem;
-        }
-        .hh-form-group input:focus,
-        .hh-form-group select:focus,
-        .hh-form-group textarea:focus {
-            outline: none; border-color: var(--accent);
-        }
+        .hh-form-group label { font-family: var(--f-display); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); }
+        .hh-form-group input[type="text"], .hh-form-group input[type="number"], .hh-form-group select, .hh-form-group textarea { width: 100%; box-sizing: border-box; padding: 0.375rem 0.5rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-family: var(--f-body); font-size: 0.72rem; }
+        .hh-form-group input:focus, .hh-form-group select:focus, .hh-form-group textarea:focus { outline: none; border-color: var(--accent); }
         .hh-form-group textarea { font-family: var(--f-mono); resize: vertical; }
-        .hh-form-row {
-            display: grid; grid-template-columns: 1fr 1fr; gap: 0.625rem;
-        }
-        .hh-form-hint {
-            font-family: var(--f-mono); font-size: 0.6rem;
-            color: var(--dim); line-height: 1.5;
-        }
+        .hh-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.625rem; }
+        .hh-form-hint { font-family: var(--f-mono); font-size: 0.6rem; color: var(--dim); line-height: 1.5; }
         .hh-inline-actions { display: flex; gap: 0.375rem; flex-wrap: wrap; align-items: center; }
         .hh-inline-actions input { flex: 1; min-width: 4rem; }
 
-        /* Utility */
         .placeholder { padding: 2rem; text-align: center; color: var(--dim); font-size: 0.8rem; }
         .loading { padding: 2rem; text-align: center; color: var(--dim); font-size: 0.8rem; }
 
@@ -801,35 +453,21 @@
             .year-input input { width: 3.25rem; font-size: 0.65rem; }
             .app-layout { flex-direction: column; }
             .sidebar {
-                position: fixed;
-                top: 0; bottom: 0; left: 0;
-                height: 100vh;
-                width: 85%;
-                max-width: 17.5rem;
-                z-index: 1000;
-                transform: translateX(-100%);
-                transition: transform 0.3s ease;
+                position: fixed; top: 0; bottom: 0; left: 0; height: 100vh;
+                width: 85%; max-width: 17.5rem; z-index: 1000;
+                transform: translateX(-100%); transition: transform 0.3s ease;
             }
             .sidebar.visible { transform: translateX(0); }
             .tab-content-wrapper { padding: 1rem; }
             .manager-subtabs { padding-left: 1rem; padding-right: 1rem; }
-            .manager-subtab {
-                flex: 1 1 auto; min-width: 0;
-                padding: 0.625rem 0.875rem; font-size: 0.72rem;
-            }
-            .hh-econ-grid-3,
-            .hh-econ-grid-4,
-            .hh-econ-grid-5 { grid-template-columns: repeat(2, 1fr); }
+            .manager-subtab { flex: 1 1 auto; min-width: 0; padding: 0.625rem 0.875rem; font-size: 0.72rem; }
+            .hh-econ-grid-3, .hh-econ-grid-4, .hh-econ-grid-5 { grid-template-columns: repeat(2, 1fr); }
             .hh-form-row { grid-template-columns: 1fr; }
         }
-
         .sidebar-overlay { display: none; }
         .sidebar-overlay.active {
-            display: block;
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: var(--overlay, rgba(0, 0, 0, 0.6));
-            z-index: 999;
+            display: block; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--overlay, rgba(0, 0, 0, 0.6)); z-index: 999;
         }
     </style>
 </head>
@@ -918,9 +556,10 @@
 </div>
 
 <!-- ================================================================
-     SCRIPTS
+     SCRIPTS — verified load order
      ================================================================ -->
 
+<!-- Core constants -->
 <script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
 <script src="js/core/constants/character-constants.js"></script>
@@ -928,14 +567,17 @@
 <script src="js/core/constants/location-constants.js"></script>
 <script src="js/core/constants/relationship-constants.js"></script>
 
+<!-- Core utilities -->
 <script src="js/core/formatting.js"></script>
 <script src="js/core/icons.js"></script>
 <script src="js/core/collections.js"></script>
 <script src="js/core/ids.js"></script>
 <script src="js/core/randomness.js"></script>
 
+<!-- Time -->
 <script src="js/core/time.js"></script>
 
+<!-- Storage + init -->
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
 <script>
@@ -946,12 +588,15 @@
     })();
 </script>
 
+<!-- Accessors -->
 <script src="js/core/accessors.js"></script>
 
+<!-- Validation, world, names -->
 <script src="js/core/validation.js"></script>
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
 
+<!-- UI primitives -->
 <script src="js/core/ui.js"></script>
 <script src="js/core/ui-state.js"></script>
 <script src="js/core/modals-core.js"></script>
@@ -960,48 +605,40 @@
 <script src="js/core/tab-manager.js"></script>
 <script src="js/core/exportUtils.js"></script>
 
+<!-- Skill + events -->
 <script src="js/roles/skill-utils.js"></script>
 <script src="js/events/eventLogger.js"></script>
 
+<!-- Character policy -->
 <script src="js/character/family-rules.js"></script>
 <script src="js/character/children-rules.js"></script>
 <script src="js/character/mortality-rules.js"></script>
-
 <script src="js/character/character-state.js"></script>
 <script src="js/character/family-state.js"></script>
 <script src="js/character/children-state.js"></script>
-
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
 <script src="js/character/family-queries.js"></script>
 <script src="js/character/family-commands.js"></script>
-
 <script src="js/character/mortality-queries.js"></script>
 <script src="js/character/mortality-statistics.js"></script>
 <script src="js/character/family-statistics.js"></script>
 <script src="js/character/character-statistics.js"></script>
 <script src="js/character/character-lifecycle.js"></script>
 
-<script src="js/selectors/selector-base.js"></script>
-<script src="js/selectors/modals-char-selector.js"></script>
-<script src="js/selectors/modals-household-selector.js"></script>
-
-<!-- Relationship policy (prerequisite for household-servant) -->
+<!-- Relationship domain (before household — household-servant needs it) -->
 <script src="js/relationships/relationship-types.js"></script>
 <script src="js/relationships/relationship-utils.js"></script>
 <script src="js/relationships/relationship-state.js"></script>
 <script src="js/relationships/relationship-queries.js"></script>
 <script src="js/relationships/relationship-commands.js"></script>
 
-<!-- Flat-global shim — maps household-bootstrap's expected names to the
-     relationship domain's actual exported names. See notes in previous
-     responses. -->
+<!-- Flat-global shim for household-bootstrap's expected names -->
 <script>
     (function () {
         'use strict';
         var RC = window.RelationshipCommands;
         var RQ = window.RelationshipQueries;
-
         var MAP = [
             ['createRelationship',           RC, 'create'],
             ['endRelationship',              RC, 'end'],
@@ -1010,7 +647,6 @@
             ['getRelationshipsForCharacter', RQ, 'getForCharacter'],
             ['getRelationshipById',          RQ, 'getById']
         ];
-
         for (var i = 0; i < MAP.length; i++) {
             var name = MAP[i][0], source = MAP[i][1], method = MAP[i][2];
             if (typeof window[name] === 'function') continue;
@@ -1021,7 +657,9 @@
     })();
 </script>
 
-<!-- Household domain -->
+<!-- ================================================================
+     HOUSEHOLD DOMAIN — must load BEFORE selectors
+     ================================================================ -->
 <script src="js/households/household-constants.js"></script>
 <script src="js/households/household-rules.js"></script>
 <script src="js/households/household-view-models.js"></script>
@@ -1049,7 +687,14 @@
 <script src="js/households/modals-residence-rental.js"></script>
 <script src="js/households/modals-residence-staff.js"></script>
 
-<!-- Household tabs (self-register) -->
+<!-- ================================================================
+     SELECTORS — must load AFTER household-queries.js
+     ================================================================ -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
+
+<!-- Household tabs (self-register with TabManager) -->
 <script src="js/tabs/household-overview-tab.js"></script>
 <script src="js/tabs/household-members-tab.js"></script>
 <script src="js/tabs/household-departments-tab.js"></script>
@@ -1057,7 +702,7 @@
 <script src="js/tabs/household-holdings-tab.js"></script>
 <script src="js/tabs/household-activity-tab.js"></script>
 
-<!-- Bootstrap -->
+<!-- Household bootstrap (configures TabManager, wires shell) -->
 <script src="js/tabs/household-manager-bootstrap.js"></script>
 
 <!-- Theme switcher -->
