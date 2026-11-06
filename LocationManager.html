@@ -440,7 +440,7 @@
 <script src="js/core/responsive.js"></script>
 <script src="js/core/collapsible.js"></script>
 <script src="js/core/exportUtils.js"></script>
-<script src="js/core/tab-manager.js"></script>
+<script src="js/core/tab-manager.js?v=7"></script>
 
 <!-- ================================================================
      BLOCK 7 — SKILL TAXONOMY
@@ -563,6 +563,13 @@
             getPlaceSummaries: function () {
                 return (window.LocationQueries && typeof window.LocationQueries.getPlaceSummaries === 'function')
                     ? window.LocationQueries.getPlaceSummaries() : [];
+            },
+            getAllPlaces: function () {
+                return (window.LocationQueries && typeof window.LocationQueries.getAllPlaces === 'function')
+                    ? window.LocationQueries.getAllPlaces()
+                    : (window.LocationState && typeof window.LocationState.getAllPlaces === 'function')
+                        ? window.LocationState.getAllPlaces()
+                        : [];
             }
         };
     })();
@@ -658,8 +665,12 @@
 
 <!-- ================================================================
      BLOCK 24 — SETTLEMENT UI
+     ================================================================
+     NOTE: settlement-tabs.js is intentionally NOT loaded on this page.
+     It is a rival document-level tab router that would overwrite the
+     active pane with "This tab is not available." after TabManager
+     renders. TabManager is the sole tab router for this manager.
      ================================================================ -->
-<script src="js/settlement/settlement-tabs.js"></script>
 <script src="js/settlement/settlement-ui-list.js"></script>
 <script src="js/settlement/modals-settlement-core.js"></script>
 <script src="js/settlement/modals-settlement-economy.js"></script>
@@ -668,16 +679,16 @@
 <!-- ================================================================
      BLOCK 25 — LOCATION TABS (each self-registers with TabManager)
      ================================================================ -->
-<script src="js/tabs/location-detail-tab.js"></script>
-<script src="js/tabs/location-hierarchy-tab.js"></script>
-<script src="js/tabs/location-population-tab.js"></script>
-<script src="js/tabs/location-movement-tab.js"></script>
-<script src="js/tabs/location-leadership-tab.js"></script>
+<script src="js/tabs/location-detail-tab.js?v=7"></script>
+<script src="js/tabs/location-hierarchy-tab.js?v=7"></script>
+<script src="js/tabs/location-population-tab.js?v=7"></script>
+<script src="js/tabs/location-movement-tab.js?v=7"></script>
+<script src="js/tabs/location-leadership-tab.js?v=7"></script>
 
 <!-- ================================================================
      BLOCK 26 — LOCATION MANAGER BOOTSTRAP (configures TabManager, wires shell)
      ================================================================ -->
-<script src="js/tabs/location-manager-bootstrap.js"></script>
+<script src="js/tabs/location-manager-bootstrap.js?v=7"></script>
 
 <!-- ================================================================
      THEME SWITCHER
