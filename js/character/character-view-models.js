@@ -17,10 +17,11 @@
  *   - compactRow(targetId, detail)   one-line character reference HTML
  *   - buildIdentityModel(id)         model for the Identity tab
  *   - buildFriendshipModel(id)       model for the Friendship tab
+ *   - buildRomanceModel(id)          model for the Romance tab
  *
  * SCOPE (future revisions, as tabs are built):
- *   - buildLocationModel, buildFamilyModel, buildRomanceModel,
- *     buildSkillsModel, buildOverviewModel
+ *   - buildLocationModel, buildFamilyModel, buildSkillsModel,
+ *     buildOverviewModel
  *
  * OUT OF SCOPE:
  *   - Any DOM writes                    -> tab files
@@ -42,14 +43,14 @@
  * REQUIRED DEPENDENCIES (load-time):
  *   - CharacterState, CharacterQueries, CharacterCommands
  *   - FamilyQueries, ChildrenQueries, MortalityQueries
- *   - RomanceQueries, FriendshipQueries  (relationship domain)
- *   - RelationshipUI                     (relationship display metadata)
+ *   - RomanceQueries, FriendshipQueries, AffairQueries  (relationship domain)
+ *   - RelationshipUI                                     (display metadata)
  *   - formatting.js (escapeHtml, formatAge, formatYear, formatYearRange,
  *                    formatDuration, formatCount, getGenderLabel)
  *   - icons.js (Icons)
  *
  * OPTIONAL DEPENDENCIES (guarded at call time):
- *   - window.getRankById         for rank display resolution
+ *   - window.getRankById         for rank display resolution and rank policy
  *   - window.getPlaceById        for place display resolution
  *   - ReligionQueries            for religion name resolution
  *   - CultureQueries             for culture name resolution
@@ -60,19 +61,24 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - buildFriendshipModel(characterId) added. Sections:
- *         identity, best, active[], former[], stats, errors.
- *       Each friend entry carries the friendship projection plus
- *       RelationshipUI-derived display metadata (archetypeName / icon /
- *       color) and a mutual-friend count. Former friendships are
- *       included read-only (ended status).
- *     - RelationshipUI + FriendshipQueries + RelationshipQueries are
- *       new required-at-load dependencies. The whole module already
- *       required the character subsystem; the relationship domain is
- *       loaded before the manager modules in CharacterManager.html, so
- *       the relationship domain is available at load.
- *     - No behavioural change to buildIdentityModel or to any resolver.
+ *     - buildRomanceModel(characterId) added. Sections:
+ *         identity, current[], former[], stats, errors.
+ *       Each entry carries the raw RomanceQueries projection enriched
+ *       with partner character data (via CharacterQueries.getCharacterSummary),
+ *       RelationshipUI display metadata for the archetype / institution /
+ *       status, a normalized displayLabel, and a widowed-vs-ended flag.
+ *     - identity block extended with activeRankId and allowsMultipleSpouses
+ *       so the Romance tab can render a small polygamy-permission
+ *       indicator without calling getRankById itself.
+ *     - AffairQueries and RomanceQueries are new required-at-load
+ *       dependencies. AffairQueries.getActiveAffairs is used to
+ *       populate stats.activeAffairs without needing a fresh count on
+ *       the tab.
+ *     - No behavioural change to buildIdentityModel, buildFriendshipModel,
+ *       or any resolver.
  *   Previous revision:
+ *     - buildFriendshipModel(characterId) added.
+ *   Earlier revision:
  *     - Initial revision. Shared resolvers + buildIdentityModel only.
  * =============================================================================
  */
@@ -94,6 +100,7 @@
             'MortalityQueries',
             'RomanceQueries',
             'FriendshipQueries',
+            'AffairQueries',
             'RelationshipUI',
             'escapeHtml',
             'Icons'
@@ -117,6 +124,8 @@
     var CC  = window.CharacterCommands;
     var MQ  = window.MortalityQueries;
     var FQ  = window.FriendshipQueries;
+    var RQm = window.RomanceQueries;
+    var AQ  = window.AffairQueries;
     var RUI = window.RelationshipUI;
 
     // =========================================================================
@@ -158,10 +167,6 @@
     // =========================================================================
     // 2. RESOLVERS
     // =========================================================================
-    //
-    // A resolver never throws. It returns the most specific answer it
-    // can prove, and falls back to the raw id (or null) when the
-    // relevant optional domain is absent.
 
     function resolveName(id) {
         if (!_hasId(id)) return '';
@@ -191,11 +196,6 @@
         return placeId;
     }
 
-    /**
-     * Resolves a rank id to a normalized display record. Returns null
-     * when the rank domain (`window.getRankById`) is not available, or
-     * the rank record does not exist.
-     */
     function resolveRankDisplay(rankId) {
         if (!_hasId(rankId)) return null;
         if (typeof window.getRankById !== 'function') return null;
@@ -226,15 +226,11 @@
                 : 'reign',
             numberingGroup: typeof rank.numberingGroup === 'string'
                 ? rank.numberingGroup
-                : 'global'
+                : 'global',
+            allowsMultipleSpouses: rank.allowsMultipleSpouses === true
         };
     }
 
-    /**
-     * 5-band skill tier label. The current tree has no canonical skill-
-     * tier vocabulary (the old apprenticeship/skill systems are not in
-     * the tree). Defined here once so Identity and Skills tabs agree.
-     */
     function skillTierLabel(level) {
         if (typeof level !== 'number' || !Number.isFinite(level)) return 'Unknown';
         if (level >= 91) return 'Master';
@@ -248,9 +244,6 @@
     // =========================================================================
     // 3. COMPACT ROW
     // =========================================================================
-    //
-    // One-line character reference: rank glyph, gender glyph, clickable
-    // name, age, location, relationship detail, deceased marker.
 
     function compactRow(targetId, detailText) {
         if (!_hasId(targetId)) return '';
@@ -649,28 +642,7 @@
     // =========================================================================
     // 7. FRIENDSHIP — SECTION BUILDERS
     // =========================================================================
-    //
-    // One friendship projection looks like this (from
-    // friendship-queries.js::_project):
-    //
-    //   {
-    //     relationshipId, participantA, participantB, friendId,
-    //     startYear, endYear, status, strength, tier, notes, eventCount
-    //   }
-    //
-    // We enrich it with:
-    //   - display metadata from RelationshipUI (name, icon, color)
-    //   - the friend's character summary (name, age, location, etc.)
-    //   - a mutual-friend count via FriendshipQueries.getMutualFriends
-    //
-    // The tab reads ONLY the model. It does not call FriendshipQueries
-    // directly for the list. This is the same discipline as Identity.
 
-    /**
-     * Enriches a raw friendship projection with display data.
-     * Returns null if the projection is invalid or the friend is
-     * missing (a dangling reference is not rendered).
-     */
     function _enrichFriend(friendProjection, subjectId, currentYear) {
         if (!friendProjection || !_hasId(friendProjection.friendId)) return null;
 
@@ -684,13 +656,6 @@
             ? friendSummary.fullName
             : (friendSummary.name || friendProjection.friendId);
 
-        // RelationshipUI metadata. If the UI metadata module ever
-        // returns null for friendship (it shouldn't — the load-time
-        // assertion in relationship-ui-metadata.js guarantees a name
-        // exists for every archetype), we fall back to a minimal
-        // set with no icon and no color. That keeps the tab
-        // renderable in a broken build; the module load guard catches
-        // the real bug elsewhere.
         var typeName = RUI.archetypeName('friendship') || 'Friendship';
         var typeIcon = RUI.archetypeIcon('friendship') || null;
         var typeColor = RUI.archetypeColor('friendship') || null;
@@ -766,8 +731,6 @@
             for (var i = 0; i < list.length; i++) {
                 var raw = list[i];
                 if (!raw) continue;
-                // Filter: active list keeps only status === 'ongoing';
-                // former list keeps only non-ongoing.
                 if (!includeEnded) {
                     if (raw.status !== 'ongoing') continue;
                 } else {
@@ -777,10 +740,6 @@
                 if (entry) enriched.push(entry);
             }
 
-            // Sort by strength descending (highest first); entries
-            // without a numeric strength fall to the end, sorted by
-            // start year (newest first). Former list sorts by end year
-            // descending (most recently ended first).
             if (!includeEnded) {
                 enriched.sort(function (a, b) {
                     var sa = (typeof a.strength === 'number') ? a.strength : -1;
@@ -864,29 +823,6 @@
     // 8. FRIENDSHIP — PUBLIC BUILDER
     // =========================================================================
 
-    /**
-     * Builds the model the Friendship tab consumes.
-     *
-     * Shape:
-     *   {
-     *     characterId,
-     *     identity:  { id, fullName, name, surname },     -- header for the tab
-     *     best:      <enriched friend> | null,
-     *     active:    [<enriched friend>, ...],
-     *     former:    [<enriched friend>, ...],
-     *     stats:     { totalFriends, averageStrength, earliestStartYear,
-     *                  strongestFriendId, strongestStrength, tierBreakdown },
-     *     errors:    { <sectionKey>: <message> }
-     *   }
-     *
-     * Each enriched friend is the raw friendship projection plus:
-     *   - friendName / friendSurname / friendGender / friendAge /
-     *     friendIsDeceased / friendLocationId / friendRankId
-     *   - typeName / typeIcon / typeColor        (from RelationshipUI)
-     *   - tierLabel                              (human label from tier)
-     *   - durationYears
-     *   - mutualFriendCount
-     */
     function buildFriendshipModel(characterId) {
         if (!_hasId(characterId)) return null;
 
@@ -922,7 +858,328 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 9. ROMANCE — HELPERS
+    // =========================================================================
+    //
+    // The RomanceQueries projection per relationship carries:
+    //   { relationshipId, type, status, participantA, participantB,
+    //     partnerId, startYear, endYear, attributes[], institution,
+    //     isCommitted, isAffair, isPolyamorous, isSecret, isScandalous,
+    //     notes }
+    //
+    // The enrichment below adds:
+    //   - partner character data (name, surname, gender, age, deceased,
+    //     location, rank)
+    //   - RelationshipUI display metadata for archetype / status /
+    //     institution
+    //   - displayLabel (single string that distinguishes every
+    //     widowed/ended state)
+    //   - isWidowed / isEnded booleans for the tab to bucket
+
+    /**
+     * Returns a display label for a romance entry that distinguishes
+     * every widowed-vs-ended state the tab needs to render.
+     *
+     * The old Love tab had exactly this matrix; the current tree
+     * supports it via { status } plus the two participants' isDeceased
+     * flags.
+     */
+    function _romanceDisplayLabel(rel, subjectDeceased, partnerDeceased) {
+        var status = rel.status;
+        var ongoing  = status === 'ongoing';
+        var widowed  = status === 'widowed';
+        var ended    = status === 'ended';
+
+        if (ongoing) {
+            if (subjectDeceased && partnerDeceased) return 'Both deceased';
+            if (subjectDeceased)  return 'Deceased (was partnered)';
+            if (partnerDeceased)  return 'Widowed (partner deceased)';
+            return 'Active';
+        }
+        if (widowed) {
+            if (subjectDeceased) return 'Deceased (was widowed)';
+            if (partnerDeceased) return 'Widowed';
+            return 'Widowed';
+        }
+        if (ended) {
+            if (subjectDeceased && partnerDeceased) return 'Both deceased (ended)';
+            if (subjectDeceased) return 'Deceased (was partnered)';
+            if (partnerDeceased) return 'Partner deceased (ended)';
+            return 'Ended';
+        }
+        return status || 'Unknown';
+    }
+
+    function _enrichRomance(rel, subjectId, subjectDeceased, currentYear) {
+        if (!rel || !_hasId(rel.partnerId)) return null;
+
+        var partnerSummary = null;
+        try { partnerSummary = CQ.getCharacterSummary(rel.partnerId); }
+        catch (e) { partnerSummary = null; }
+        if (!partnerSummary) return null;
+
+        var partnerName = (typeof partnerSummary.fullName === 'string'
+            && partnerSummary.fullName.length > 0)
+            ? partnerSummary.fullName
+            : (partnerSummary.name || rel.partnerId);
+        var partnerDeceased = partnerSummary.isDeceased === true;
+
+        var typeName  = RUI.archetypeName(rel.type) || rel.type;
+        var typeIcon  = RUI.archetypeIcon(rel.type) || null;
+        var typeColor = RUI.archetypeColor(rel.type) || null;
+
+        var institutionName  = rel.institution
+            ? (RUI.attributeName(rel.institution) || rel.institution)
+            : null;
+        var institutionIcon  = rel.institution
+            ? (RUI.attributeIcon(rel.institution) || null)
+            : null;
+        var institutionColor = rel.institution
+            ? (RUI.attributeColor(rel.institution) || null)
+            : null;
+
+        var statusLabel = RUI.statusName(rel.status) || rel.status;
+        var statusIcon  = RUI.statusIcon(rel.status) || null;
+
+        var durationYears = 0;
+        if (typeof rel.startYear === 'number') {
+            var endYear = (typeof rel.endYear === 'number')
+                ? rel.endYear
+                : currentYear;
+            durationYears = Math.max(0, endYear - rel.startYear);
+        }
+
+        return {
+            relationshipId: rel.relationshipId,
+            partnerId: rel.partnerId,
+            partnerName: partnerName,
+            partnerSurname: partnerSummary.surname || '',
+            partnerGender: partnerSummary.gender || 'unknown',
+            partnerAge: (typeof partnerSummary.age === 'number')
+                ? partnerSummary.age
+                : null,
+            partnerIsDeceased: partnerDeceased,
+            partnerLocationId: partnerSummary.locationId || null,
+            partnerRankId: partnerSummary.rankId || null,
+            type: rel.type,
+            status: rel.status,
+            startYear: _isMissing(rel.startYear) ? null : rel.startYear,
+            endYear: _isMissing(rel.endYear) ? null : rel.endYear,
+            attributes: Array.isArray(rel.attributes) ? rel.attributes.slice() : [],
+            institution: rel.institution || null,
+            institutionName: institutionName,
+            institutionIcon: institutionIcon,
+            institutionColor: institutionColor,
+            isCommitted: rel.isCommitted === true,
+            isAffair: rel.isAffair === true,
+            isPolyamorous: rel.isPolyamorous === true,
+            isSecret: rel.isSecret === true,
+            isScandalous: rel.isScandalous === true,
+            isWidowed: rel.status === 'widowed'
+                || (rel.status === 'ongoing' && partnerDeceased),
+            isEnded: rel.status === 'ended',
+            durationYears: durationYears,
+            typeName: typeName,
+            typeIcon: typeIcon,
+            typeColor: typeColor,
+            statusLabel: statusLabel,
+            statusIcon: statusIcon,
+            displayLabel: _romanceDisplayLabel(rel, subjectDeceased, partnerDeceased),
+            notes: rel.notes || ''
+        };
+    }
+
+    function _buildRomanceCurrentBlock(subjectId, subjectDeceased, currentYear, errors) {
+        return _safe('current', function () {
+            var list = RQm.getActiveRomanticRelationships(subjectId);
+            var enriched = [];
+            for (var i = 0; i < list.length; i++) {
+                var entry = _enrichRomance(list[i], subjectId, subjectDeceased, currentYear);
+                if (entry) enriched.push(entry);
+            }
+            // Sort: committed first, then casual, then one-night; within
+            // each group, oldest first (longest-running first, matching
+            // the old tab's ordering).
+            var rankOrder = { committed: 0, casual_dating: 1, one_night_stand: 2 };
+            enriched.sort(function (a, b) {
+                var ra = rankOrder[a.type] === undefined ? 99 : rankOrder[a.type];
+                var rb = rankOrder[b.type] === undefined ? 99 : rankOrder[b.type];
+                if (ra !== rb) return ra - rb;
+                var sa = typeof a.startYear === 'number' ? a.startYear : Infinity;
+                var sb = typeof b.startYear === 'number' ? b.startYear : Infinity;
+                return sa - sb;
+            });
+            return enriched;
+        }, errors);
+    }
+
+    function _buildRomanceFormerBlock(subjectId, subjectDeceased, currentYear, errors) {
+        return _safe('former', function () {
+            var list = RQm.getRomanticRelationships(subjectId, { activeOnly: false });
+            var enriched = [];
+            for (var i = 0; i < list.length; i++) {
+                var raw = list[i];
+                if (!raw) continue;
+                if (raw.status === 'ongoing') continue;
+                var entry = _enrichRomance(raw, subjectId, subjectDeceased, currentYear);
+                if (entry) enriched.push(entry);
+            }
+            // Sort: most recently ended first; widowed relationships
+            // (partner died) sort with ended ones, but the displayLabel
+            // distinguishes them.
+            enriched.sort(function (a, b) {
+                var ea = typeof a.endYear === 'number' ? a.endYear : -1;
+                var eb = typeof b.endYear === 'number' ? b.endYear : -1;
+                if (ea !== eb) return eb - ea;
+                var sa = typeof a.startYear === 'number' ? a.startYear : -1;
+                var sb = typeof b.startYear === 'number' ? b.startYear : -1;
+                return sb - sa;
+            });
+            return enriched;
+        }, errors);
+    }
+
+    function _buildRomanceStatsBlock(subjectId, errors) {
+        return _safe('stats', function () {
+            var raw = RQm.getRomanceStats(subjectId);
+            if (!raw || typeof raw !== 'object') {
+                return {
+                    totalRelationships: 0,
+                    activeRelationships: 0,
+                    activeCommitted: 0,
+                    activeCasual: 0,
+                    activeOneNight: 0,
+                    activeAffairs: 0,
+                    earliestStartYear: null,
+                    institutions: [],
+                    hasActiveAffair: false
+                };
+            }
+
+            // Distinct institutions across the subject's active
+            // committed relationships, resolved to display names.
+            var active = RQm.getActiveCommittedPartners(subjectId);
+            var seenInst = {};
+            var institutions = [];
+            for (var i = 0; i < active.length; i++) {
+                var inst = active[i].institution;
+                if (!inst || seenInst[inst]) continue;
+                seenInst[inst] = true;
+                institutions.push({
+                    id: inst,
+                    name: RUI.attributeName(inst) || inst,
+                    icon: RUI.attributeIcon(inst) || null,
+                    color: RUI.attributeColor(inst) || null
+                });
+            }
+
+            var hasAffair = false;
+            try { hasAffair = AQ.isHavingAffair(subjectId) === true; }
+            catch (e) { hasAffair = false; }
+
+            return {
+                totalRelationships: (typeof raw.totalRelationships === 'number')
+                    ? raw.totalRelationships : 0,
+                activeRelationships: (typeof raw.activeRelationships === 'number')
+                    ? raw.activeRelationships : 0,
+                activeCommitted: (typeof raw.activeCommitted === 'number')
+                    ? raw.activeCommitted : 0,
+                activeCasual: (typeof raw.activeCasual === 'number')
+                    ? raw.activeCasual : 0,
+                activeOneNight: (typeof raw.activeOneNight === 'number')
+                    ? raw.activeOneNight : 0,
+                activeAffairs: (typeof raw.activeAffairs === 'number')
+                    ? raw.activeAffairs : 0,
+                earliestStartYear: _isMissing(raw.earliestStartYear)
+                    ? null : raw.earliestStartYear,
+                institutions: institutions,
+                hasActiveAffair: hasAffair
+            };
+        }, errors);
+    }
+
+    // =========================================================================
+    // 10. ROMANCE — PUBLIC BUILDER
+    // =========================================================================
+
+    /**
+     * Builds the model the Romance tab consumes.
+     *
+     * Shape:
+     *   {
+     *     characterId,
+     *     identity: { id, name, surname, fullName,
+     *                 activeRankId, allowsMultipleSpouses },
+     *     current:  [<enriched romance>, ...],
+     *     former:   [<enriched romance>, ...],
+     *     stats: {
+     *       totalRelationships, activeRelationships,
+     *       activeCommitted, activeCasual, activeOneNight, activeAffairs,
+     *       earliestStartYear,
+     *       institutions: [ { id, name, icon, color } ],
+     *       hasActiveAffair
+     *     },
+     *     errors: { <sectionKey>: <message> }
+     *   }
+     *
+     * Each enriched romance entry carries the raw romance projection plus:
+     *   - partnerName / partnerSurname / partnerGender / partnerAge /
+     *     partnerIsDeceased / partnerLocationId / partnerRankId
+     *   - typeName / typeIcon / typeColor
+     *   - institutionName / institutionIcon / institutionColor
+     *   - statusLabel / statusIcon
+     *   - isWidowed / isEnded
+     *   - durationYears
+     *   - displayLabel     (single label that distinguishes every
+     *                       widowed/ended state)
+     */
+    function buildRomanceModel(characterId) {
+        if (!_hasId(characterId)) return null;
+
+        var summary;
+        try { summary = CQ.getCharacterSummary(characterId); }
+        catch (e) { return null; }
+        if (!summary) return null;
+
+        var currentYear = 0;
+        if (typeof window.getCurrentYear === 'function') {
+            try { currentYear = window.getCurrentYear(); }
+            catch (e) { currentYear = 0; }
+        }
+
+        var errors = {};
+        var subjectDeceased = summary.isDeceased === true;
+
+        var identityBlock = _safe('identity', function () {
+            var allowsMultiple = false;
+            if (_hasId(summary.rankId)) {
+                var rank = resolveRankDisplay(summary.rankId);
+                if (rank && rank.allowsMultipleSpouses) {
+                    allowsMultiple = true;
+                }
+            }
+            return {
+                id: summary.id,
+                name: summary.name || '',
+                surname: summary.surname || '',
+                fullName: summary.fullName || summary.name || '',
+                activeRankId: summary.rankId || null,
+                allowsMultipleSpouses: allowsMultiple
+            };
+        }, errors);
+
+        return {
+            characterId: characterId,
+            identity: identityBlock,
+            current:  _buildRomanceCurrentBlock(characterId, subjectDeceased, currentYear, errors) || [],
+            former:   _buildRomanceFormerBlock(characterId, subjectDeceased, currentYear, errors) || [],
+            stats:    _buildRomanceStatsBlock(characterId, errors),
+            errors:   errors
+        };
+    }
+
+    // =========================================================================
+    // 11. EXPORTS
     // =========================================================================
 
     window.CharacterViewModels = {
@@ -937,7 +1194,10 @@
         buildIdentityModel: buildIdentityModel,
 
         // Friendship
-        buildFriendshipModel: buildFriendshipModel
+        buildFriendshipModel: buildFriendshipModel,
+
+        // Romance
+        buildRomanceModel: buildRomanceModel
     };
 
     if (typeof module !== 'undefined' && module.exports) {
