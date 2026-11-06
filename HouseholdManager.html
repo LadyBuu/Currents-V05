@@ -11,14 +11,26 @@
     <style>
         /* ============================================================ */
         /* 1. MANAGER SHELL LAYOUT                                       */
+        /*    Full-viewport flex chain: body → .app-layout →             */
+        /*    .main-panel → .tab-content-wrapper. The `min-height: 0`    */
+        /*    on flex items is REQUIRED — it allows them to shrink       */
+        /*    below content size so the layout fills the viewport        */
+        /*    exactly with no empty band at the bottom.                  */
         /* ============================================================ */
+        html,
         body {
+            height: 100%;
             margin: 0;
-            padding: 0;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
             background: var(--bg);
             color: var(--text);
             font-family: var(--font-body, sans-serif);
             font-size: 14px;
+            overflow: hidden;
         }
 
         .topbar {
@@ -31,6 +43,7 @@
             position: sticky;
             top: 0;
             z-index: 100;
+            flex-shrink: 0;
         }
         .topbar .title {
             font-size: 0.9rem;
@@ -67,11 +80,24 @@
             transition: background 0.1s;
         }
         .topbar button:hover { background: var(--bg2); }
+        .topbar button.topbar-btn-primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--text-inverse);
+            font-weight: 600;
+        }
+        .topbar button.topbar-btn-primary:hover {
+            background: var(--accent-bright, var(--accent));
+            border-color: var(--accent-bright, var(--accent));
+        }
 
         .app-layout {
             display: flex;
-            min-height: calc(100vh - 40px);
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
         }
+
         .sidebar {
             width: 240px;
             min-width: 240px;
@@ -80,10 +106,12 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            flex-shrink: 0;
         }
         .sidebar-header {
             padding: 10px 12px;
             border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
         }
         .sidebar-header h3 {
             margin: 0;
@@ -95,6 +123,7 @@
             flex: 1;
             overflow-y: auto;
             padding: 4px;
+            min-height: 0;
         }
         .main-panel {
             flex: 1;
@@ -102,6 +131,7 @@
             flex-direction: column;
             overflow: hidden;
             min-width: 0;
+            min-height: 0;
         }
         .manager-subtabs {
             display: flex;
@@ -110,6 +140,7 @@
             background: var(--bg2);
             border-bottom: 1px solid var(--border);
             overflow-x: auto;
+            flex-shrink: 0;
         }
         .manager-subtab {
             padding: 6px 14px;
@@ -135,13 +166,19 @@
         .tab-content-wrapper {
             flex: 1;
             overflow-y: auto;
+            overflow-x: hidden;
             padding: 0;
+            min-height: 0;
         }
         .tab-pane {
             display: none;
             padding: 16px;
         }
-        .tab-pane.active { display: block; }
+        .tab-pane.active {
+            display: block;
+            min-height: calc(100% - 32px);
+            box-sizing: border-box;
+        }
 
         #bootstrapError {
             display: none;
@@ -909,6 +946,7 @@
         <input type="number" id="yearInput">
         <button id="setYearBtn">Set</button>
     </div>
+    <button id="createHouseholdBtn" class="topbar-btn-primary">+ Household</button>
     <button id="importBtn">Import</button>
     <button id="exportBtn">Export</button>
     <button id="refreshBtn">Refresh</button>
@@ -997,28 +1035,14 @@
 <script src="js/character/family-queries.js"></script>
 <script src="js/character/family-commands.js"></script>
 
-<!-- 8b. Relationship policy — types → utils → state → queries → commands -->
+<!-- 8b. Relationship policy -->
 <script src="js/relationships/relationship-types.js"></script>
 <script src="js/relationships/relationship-utils.js"></script>
 <script src="js/relationships/relationship-state.js"></script>
 <script src="js/relationships/relationship-queries.js"></script>
 <script src="js/relationships/relationship-commands.js"></script>
 
-<!-- 8c. Flat-global shim — maps the names household-bootstrap.js and
-         household-servant.js expect to the actual names the
-         relationship domain exports.
-
-         Bootstrap wants              → Domain ships as
-         createRelationship           → RelationshipCommands.create
-         endRelationship              → RelationshipCommands.end
-         updateRelationship           → RelationshipCommands.update
-         getRelationshipBetween       → RelationshipQueries.getBetween
-         getRelationshipsForCharacter → RelationshipQueries.getForCharacter
-         getRelationshipById          → RelationshipQueries.getById
-
-         Bound to their source, so no duplication, no drift. Safe to
-         remove once household-bootstrap.js and household-servant.js
-         are migrated to the namespaced API. -->
+<!-- 8c. Flat-global shim -->
 <script>
     (function () {
         'use strict';
@@ -1080,10 +1104,10 @@
 <script src="js/households/residence-system.js"></script>
 <script src="js/households/household-bootstrap.js"></script>
 
-<!-- 10. Runtime — must load before any tab -->
+<!-- 10. Runtime -->
 <script src="js/tabs/household-tab-runtime.js"></script>
 
-<!-- 11. Household modals the tabs delegate to -->
+<!-- 11. Household modals -->
 <script src="js/households/modals-helper.js"></script>
 <script src="js/households/modals-household.js"></script>
 <script src="js/households/modals-household-economy.js"></script>
@@ -1099,7 +1123,7 @@
 <script src="js/selectors/modals-char-selector.js"></script>
 <script src="js/selectors/modals-household-selector.js"></script>
 
-<!-- 13. Household tabs — self-register with TabManager at load -->
+<!-- 13. Household tabs -->
 <script src="js/tabs/household-overview-tab.js"></script>
 <script src="js/tabs/household-members-tab.js"></script>
 <script src="js/tabs/household-departments-tab.js"></script>
@@ -1107,7 +1131,7 @@
 <script src="js/tabs/household-holdings-tab.js"></script>
 <script src="js/tabs/household-activity-tab.js"></script>
 
-<!-- 14. Bootstrap — configures TabManager, wires shell -->
+<!-- 14. Bootstrap -->
 <script src="js/tabs/household-manager-bootstrap.js"></script>
 
 </body>
