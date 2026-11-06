@@ -10,6 +10,7 @@
  * Single orchestrator for LocationManager.html. Owns:
  *   - TabManager.configure / TabManager.init
  *   - The tab strip (#locationTabStrip) and pane (#panelContent) visual sync
+ *   - The active-tab id (module-local; NOT stored on LocationUIState)
  *   - Sidebar rendering + selection wiring
  *   - Topbar wiring (Add / Edit / Delete / Import / Export / Refresh / Year)
  *   - Initial selected location pick (first non-world-root place)
@@ -26,16 +27,23 @@
  *   2. TabManager does NOT toggle .active on panes. _syncTabStrip must.
  *   3. init() is idempotent.
  *   4. Hydrate LocationState before TabManager.configure.
- *   5. TabManager.requestRender REQUIRES (scope, tabId). Never call it
- *      with only (scope). Use _requestRender() at every call site.
+ *   5. TabManager.requestRender REQUIRES (scope, tabId).
+ *   6. Active-tab state is LOCAL to this bootstrap. It is NOT stored on
+ *      LocationUIState — that object owns sidebar selection / expansion /
+ *      filter state, and coupling tab state to it caused a silent failure
+ *      when the UI state surface didn't include the tab methods.
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   - Extracted from the inline MANAGER INIT + SUBTAB HOST scripts.
- *   - Fix: every requestRender() call now passes (SCOPE, _activeTabId()).
- *   - Fix: tab registration is now driven entirely by the tab files
- *     themselves; this bootstrap only calls configure + init. The five
- *     tab files are KNOWN_TAB_IDS and self-register at load.
+ *   - Fix: every requestRender() call now passes (SCOPE, _activeTabId).
+ *   - Fix: active-tab state is module-local. The bootstrap no longer calls
+ *     LocationUIState.getActiveTabId / setActiveTabId / setKnownTabIds.
+ *     It keeps its own `_activeTabId` and routes it through TabManager's
+ *     configure() hooks.
+ *   - Fix: _ensureStripAndPanes and _syncTabStrip are called unconditionally
+ *     at init, so the strip and panes exist even when the UI state surface
+ *     is incomplete.
  * =============================================================================
  */
 
@@ -45,6 +53,9 @@
     var SCOPE = 'location';
     var KNOWN_TAB_IDS = ['details', 'hierarchy', 'population', 'movement', 'leadership'];
     var DEFAULT_ACTIVE_TAB_ID = 'details';
+
+    // Active-tab state — module-local, single source of truth for this scope.
+    var _activeTabId = DEFAULT_ACTIVE_TAB_ID;
 
     // =========================================================================
     // 1. DEPENDENCY HELPERS (throw — init() catches and renders a failure)
@@ -120,34 +131,6 @@
         return '<span class="tb-btn-glyph">' + icon + '</span><span>' + (text || '') + '</span>';
     }
 
-    /**
-     * Resolve the currently-active tab id, with a documented default.
-     * TabManager.requestRender requires (scope, tabId); this helper exists
-     * so every caller passes a real id and never hits _assertTabId.
-     */
-    function _activeTabId() {
-        try {
-            var ui = window.LocationUIState;
-            if (ui && typeof ui.getActiveTabId === 'function') {
-                var id = ui.getActiveTabId();
-                if (typeof id === 'string' && id.length > 0 && KNOWN_TAB_IDS.indexOf(id) !== -1) {
-                    return id;
-                }
-            }
-        } catch (e) { /* fall through */ }
-        return DEFAULT_ACTIVE_TAB_ID;
-    }
-
-    function _requestRender() {
-        var TM = window.TabManager;
-        if (!TM || typeof TM.requestRender !== 'function') return;
-        try {
-            TM.requestRender(SCOPE, _activeTabId());
-        } catch (e) {
-            console.error('[location-manager] requestRender failed:', e);
-        }
-    }
-
     // =========================================================================
     // 3. TAB STRIP + PANE MIRROR
     // =========================================================================
@@ -167,8 +150,13 @@
         var strip = document.getElementById('locationTabStrip');
         var panel = document.getElementById('panelContent');
         if (!strip || !panel) {
-            throw new Error('location-manager-bootstrap: #locationTabStrip or #panelContent is missing from the shell.');
+            throw new Error(
+                'location-manager-bootstrap: #locationTabStrip or #panelContent is missing from the shell.'
+            );
         }
+
+        // Strip buttons. Idempotent: only write if the strip is empty or the
+        // ids drifted from KNOWN_TAB_IDS.
         var needStrip = strip.children.length !== KNOWN_TAB_IDS.length;
         if (!needStrip) {
             for (var i = 0; i < KNOWN_TAB_IDS.length; i++) {
@@ -188,6 +176,8 @@
             }
             strip.innerHTML = html;
         }
+
+        // Panes. Idempotent by id.
         var panes = '';
         for (var k = 0; k < KNOWN_TAB_IDS.length; k++) {
             var pid = KNOWN_TAB_IDS[k];
@@ -219,6 +209,23 @@
                 if (p.getAttribute('data-tab-content') === tabId) p.classList.add('active');
                 else p.classList.remove('active');
             }
+        }
+    }
+
+    function _setActiveTabId(tabId) {
+        if (typeof tabId !== 'string' || tabId.length === 0) return;
+        if (KNOWN_TAB_IDS.indexOf(tabId) === -1) return;
+        _activeTabId = tabId;
+        _syncTabStrip(tabId);
+    }
+
+    function _requestRender() {
+        var TM = window.TabManager;
+        if (!TM || typeof TM.requestRender !== 'function') return;
+        try {
+            TM.requestRender(SCOPE, _activeTabId);
+        } catch (e) {
+            console.error('[location-manager] requestRender failed:', e);
         }
     }
 
@@ -354,9 +361,11 @@
         if (editBtn) editBtn.disabled = false;
         if (deleteBtn) deleteBtn.disabled = false;
 
-        if (window.LocationUIState && typeof window.LocationUIState.setSelectedLocationId === 'function') {
-            try { window.LocationUIState.setSelectedLocationId(id); } catch (e) { /* ignore */ }
-        }
+        try {
+            if (window.LocationUIState && typeof window.LocationUIState.setSelectedLocationId === 'function') {
+                window.LocationUIState.setSelectedLocationId(id);
+            }
+        } catch (e) { /* ignore */ }
 
         _applySidebarSelection(previousId, id);
         _requestRender();
@@ -583,8 +592,12 @@
         } catch (depErr) {
             var panel = document.getElementById('panelContent');
             if (panel) {
-                panel.innerHTML = '<div class="empty-state" style="color:var(--danger);">' +
+                panel.innerHTML =
+                    '<div class="empty-state" style="color:var(--danger);">' +
                     _esc(depErr.message) + '</div>';
+            }
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('[location-manager-bootstrap] dependency check failed:', depErr);
             }
             return;
         }
@@ -595,26 +608,25 @@
             catch (e) { console.error('[location-manager-bootstrap] LocationBootstrap.init failed:', e); }
         }
 
+        // Build the strip and panes before configuring TabManager. If this
+        // throws, the failure is rendered visibly and init aborts.
         try { _ensureStripAndPanes(); }
         catch (e) {
             var p = document.getElementById('panelContent');
-            if (p) p.innerHTML = '<div class="empty-state" style="color:var(--danger);">' + _esc(e.message) + '</div>';
+            if (p) p.innerHTML =
+                '<div class="empty-state" style="color:var(--danger);">' +
+                _esc(e.message) + '</div>';
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('[location-manager-bootstrap] _ensureStripAndPanes failed:', e);
+            }
             return;
         }
 
-        if (typeof uiState.setKnownTabIds === 'function') {
-            try { uiState.setKnownTabIds(KNOWN_TAB_IDS); } catch (e) { /* ignore */ }
+        // Establish the initial active tab (module-local, no UIState dependency).
+        if (KNOWN_TAB_IDS.indexOf(_activeTabId) === -1) {
+            _activeTabId = DEFAULT_ACTIVE_TAB_ID;
         }
-        if (typeof uiState.getActiveTabId === 'function') {
-            var activeId = uiState.getActiveTabId();
-            if (!activeId || KNOWN_TAB_IDS.indexOf(activeId) === -1) {
-                if (typeof uiState.setActiveTabId === 'function') {
-                    try { uiState.setActiveTabId(DEFAULT_ACTIVE_TAB_ID); } catch (e) { /* ignore */ }
-                }
-            }
-        } else if (typeof uiState.setActiveTabId === 'function') {
-            try { uiState.setActiveTabId(DEFAULT_ACTIVE_TAB_ID); } catch (e) { /* ignore */ }
-        }
+        _syncTabStrip(_activeTabId);
 
         var strip = document.getElementById('locationTabStrip');
         var containerRoot = strip ? strip.parentNode : document.getElementById('panelContent');
@@ -626,14 +638,10 @@
             },
             buildContext: _buildContext,
             getActiveTabId: function () {
-                return (typeof uiState.getActiveTabId === 'function')
-                    ? uiState.getActiveTabId() : DEFAULT_ACTIVE_TAB_ID;
+                return _activeTabId;
             },
             setActiveTabId: function (tabId) {
-                if (typeof uiState.setActiveTabId === 'function') {
-                    try { uiState.setActiveTabId(tabId); } catch (e) { /* ignore */ }
-                }
-                _syncTabStrip(tabId);
+                _setActiveTabId(tabId);
             },
             buildEmptyState: _buildEmptyState
         });
@@ -656,13 +664,7 @@
         var overlay = document.getElementById('sidebarOverlay');
         if (overlay) overlay.addEventListener('click', _closeSidebar);
 
-        var initialTab = DEFAULT_ACTIVE_TAB_ID;
-        if (typeof uiState.getActiveTabId === 'function') {
-            var got = uiState.getActiveTabId();
-            if (got && KNOWN_TAB_IDS.indexOf(got) !== -1) initialTab = got;
-        }
-        _syncTabStrip(initialTab);
-
+        // Pick the initial place, then render the active tab.
         _pickInitialSelection();
         if (!_currentPlaceId) {
             var p2 = document.getElementById('panelContent');
