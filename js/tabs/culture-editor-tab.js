@@ -7,16 +7,28 @@
  *
  * The composite-form host for the culture editor. Owns:
  *   - the CultureEditorTabs registry (register / unregister / list)
- *   - openEditor(cultureId, options) — opens the editor modal
+ *   - openEditor(cultureId, options)  — opens the editor modal
+ *   - renderPaneDirect(tabId, container, canonicalCulture, options)
+ *                                      — renders a single tab inline with
+ *                                        its own Save button (used by
+ *                                        culture-manager-bootstrap.js when
+ *                                        the user clicks a sub-tab)
  *   - tab switching, save-all orchestration
  *
  * ARCHITECTURE
  * ------------
  * Culture tabs are SECTIONS OF ONE FORM, unlike religion tabs (which are
- * independent tab-pane surfaces). Switching tabs does not commit anything.
- * "Save" merges every tab's save() result and calls
- * CultureCommands.updateCulture(...) ONCE for the culture record. Either
- * every culture-record field updates, or none does.
+ * independent tab-pane surfaces). Switching tabs in the MODAL does not
+ * commit anything. "Save" in the modal merges every tab's save() result
+ * and calls CultureCommands.updateCulture(...) ONCE for the culture
+ * record. Either every culture-record field updates, or none does.
+ *
+ * The INLINE PANE path (renderPaneDirect) is different: it renders ONE
+ * tab against a working clone of the canonical culture and appends a
+ * per-pane Save button. Clicking it commits only that tab's fields via
+ * the same updateCulture + persist sequence. Characters and Names tabs
+ * do NOT carry a Save button because their save() returns {} — their
+ * changes commit immediately through CharacterCommands / NameCommands.
  *
  * This file is intentionally the ONLY host. The four tabs
  * (appearance, mythology, characters, names) call
@@ -29,52 +41,49 @@
  *   - culture-characters-tab.js writes to character.cultureId and
  *     character.appearance via CharacterCommands. Those writes are
  *     IMMEDIATE, happen on the tab's own event handlers, and are NOT
- *     undone by the editor's Cancel.
+ *     undone by the editor's Cancel (or by the pane's Save button).
  *
  *   - culture-names-tab.js writes to masterData.data.nameLists via
  *     NameCommands. Same immediate-commit contract, same Cancel-does-
  *     not-undo behavior.
  *
- * "Save" in this editor therefore commits the composite of any tabs
- * that produce culture-record fields (appearance, mythology). It does
- * NOT roll back characters-tab or names-tab writes. Those tabs' own
- * headers document this and their UI hints surface it to the user.
+ * "Save" in the modal or pane therefore commits the composite of any
+ * tabs that produce culture-record fields (appearance, mythology). It
+ * does NOT roll back characters-tab or names-tab writes. Those tabs'
+ * own headers document this and their UI hints surface it to the user.
  *
  * TAB-SWITCH PRESERVATION CONTRACT
  * --------------------------------
- * Switching tabs re-renders the tab from `_state.culture`. Any input the
- * user has typed is present in `_state.culture` ONLY IF the tab's own
- * input/change handlers wrote it there. All four tabs do this for
- * text/number input.
+ * In the modal: switching tabs re-renders from the working culture. Any
+ * input the user has typed is present in the working culture ONLY IF
+ * the tab's own input/change handlers wrote it there. All four tabs do
+ * this for text/number input.
  *
- * Known gap: a row that has been ADDED to a list (e.g. an empty
- * appearance option row) but not yet TYPED INTO does not survive a tab
- * switch on some tabs. It has no representation in `_state.culture`
- * because the reader skips empty values. On switch-back, the row is
- * gone and must be re-added. culture-appearance-tab.js preserves empty
- * categories in the working copy (the category key survives, the empty
- * row does not), which narrows this gap for appearance; the same fix
- * should be applied to any future list tab that has the same
- * add-row-then-type flow.
+ * In the inline pane: switching tabs discards the pane's working clone
+ * (it was a throwaway; the canonical record was never touched). Users
+ * who want to preserve typed input must click the pane's Save button
+ * before switching tabs. The pane's UI hint says so.
  *
  * LIFECYCLE AND CLEANUP
  * ---------------------
- * Every listener the editor installs is tracked through _track(). Two
- * paths must call _resetEditorState() to remove them:
+ * Every listener the modal editor installs is tracked through _track().
+ * Three paths call _resetEditorState() to remove them:
  *
- *   1. Successful save — at the end of _saveCulture, after _closeTopModal.
- *   2. Programmatic close — CultureEditorTabs.closeEditor(), after
- *      _closeTopModal.
+ *   1. The modal's onCancel callback.
+ *   2. The end of _saveCulture (after _closeTopModal).
+ *   3. CultureEditorTabs.closeEditor() (after _closeTopModal).
  *
- * The modal's own onCancel callback runs _resetEditorState() directly
- * (it is the third path). Without this, a second openEditor call stacks
- * a second document-level Ctrl+S handler, and a click on a stale nav
- * button can fire a handler against a detached root.
+ * The INLINE PANE path does not track listeners in _state. Each pane
+ * render installs its own listeners on the pane container; those go
+ * away with the container when the pane is replaced. The pane's Save
+ * button commits and calls options.onSave, which the bootstrap uses
+ * to re-render.
  *
  * ICON POLICY: no emojis. Icons via _getIcon(name) — returns '' for
  * unknown names, never a fabricated glyph.
  *
- * INLINE STYLES: none. All classes are in css/culture-tabs.css.
+ * INLINE STYLES: none. All classes are in CultureManager.html's inline
+ * <style> block.
  *
  * DEPENDENCIES (resolved at call time — no load-time guards):
  *   - TabManager is NOT used here. The composite-form architecture does
@@ -89,49 +98,43 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (A8):
- *     - _resetEditorState() extracted. It runs _cleanup(), nulls every
- *       field of _state, and is now called from THREE paths:
- *         (a) the modal's onCancel callback,
- *         (b) the end of _saveCulture (after _closeTopModal),
- *         (c) CultureEditorTabs.closeEditor() (after _closeTopModal).
- *       Prior to this revision, paths (b) and (c) only closed the modal
- *       without running _cleanup(). Path (b) was fixed in A7 by
- *       inlining the cleanup; path (c) was never fixed. The extracted
- *       helper closes that gap and makes the three paths share one
- *       implementation.
- *     - CultureEditorTabs.closeEditor() now calls _resetEditorState().
- *       The public API is unchanged; the side effects are now correct.
- *     - Header gained a LIFECYCLE AND CLEANUP section documenting the
- *       three cleanup paths.
- *     - Header TAB-SWITCH PRESERVATION CONTRACT updated to note that
- *       culture-appearance-tab.js now preserves empty categories in
- *       the working copy (reduces, but does not eliminate, the
- *       added-but-untyped-row gap).
- *     - _saveCulture now calls _resetEditorState() instead of inlining
- *       the cleanup block (behavior identical).
- *   Previous revisions (A7):
- *     - _saveCulture called _cleanup() and nulled _state.root /
- *       _state.culture / _state.cultureId after closing the modal, to
- *       stop the document-level Ctrl+S handler from leaking.
- *     - _renderTab distinguished no-registration / no-container /
- *       render-error failure modes via _renderHostEmptyState.
- *     - _escapeHtml became strict (throws if formatting.js is missing).
+ *   Current revision (A9):
+ *     - renderPaneDirect(tabId, container, canonicalCulture, options) added.
+ *       Renders a single tab into an external container (the inline pane
+ *       in CultureManager.html), against a working clone, and appends a
+ *       per-pane Save button if the tab participates in the composite
+ *       save. Characters and Names tabs do not get a Save button (their
+ *       save() returns {}); they get a "changes commit immediately" hint
+ *       instead.
+ *     - _savePaneDirect extracted as the commit path for renderPaneDirect.
+ *       It runs save() + validate() on the working clone, merges the
+ *       partial into a candidate clone of the canonical, then calls
+ *       CultureCommands.updateCulture + persist once.
+ *     - _commitCandidate(candidate, mode) extracted. Both _saveCulture and
+ *       _savePaneDirect route through it so the update/persist/error
+ *       handling is not duplicated. Same behavior as A8's inline block.
+ *     - _saveCulture refactored to build its candidate via the per-tab
+ *       save loop (unchanged), then call _commitCandidate.
+ *     - Header INLINE PANE PATH section added documenting the difference
+ *       between the modal composite save and the per-pane save.
+ *   Previous revisions (A8):
+ *     - closeEditor() now runs _resetEditorState(), matching the modal
+ *       onCancel and successful-save paths. Prior revision leaked the
+ *       document-level Ctrl+S handler on programmatic close.
+ *     - _renderTab disambiguates no-registration / no-container /
+ *       no-culture / render-error.
+ *     - _escapeHtml strict (throws if formatting.js is missing).
  *   Previous revisions:
- *     - _state.tabDataCache deleted; _switchTab no longer caches the
- *       pane's innerHTML; _renderTab no longer reads from a cache.
- *     - Header SAVE IS ATOMIC FOR CULTURE-RECORD FIELDS ONLY section
- *       added.
+ *     - _state.tabDataCache deleted.
+ *     - Header SAVE IS ATOMIC FOR CULTURE-RECORD FIELDS ONLY section added.
  *     - Header TAB-SWITCH PRESERVATION CONTRACT section added.
  *     - openEditor reads via CultureQueries.getCultureById.
  *     - _saveCulture calls CultureCommands.updateCulture once and
- *       CultureCommands.persist() once. No bypassing the domain save
- *       contract.
- *     - Every inline style="" is gone. Classes live in
- *       css/culture-tabs.css.
- *     - The built-in 'details' tab is REMOVED. Details are edited
- *       through modals-culture.js::openEditCultureModal.
- *     - Save is explicit. No auto-save.
+ *       CultureCommands.persist() once.
+ *     - Every inline style="" removed. Classes in CultureManager.html.
+ *     - The built-in 'details' tab is REMOVED from the editor modal.
+ *       Details are edited through modals-culture.js.
+ *     - Save is explicit. No auto-save in the modal.
  * =============================================================================
  */
 
@@ -193,15 +196,15 @@
     // Registration order, for the nav bar.
     var _tabOrder = [];
 
-    // Per-editor state. Reset by openEditor and _resetEditorState.
+    // Per-modal state. Reset by openEditor and _resetEditorState.
     var _state = {
         cultureId: null,
-        culture: null,          // working copy (deep-cloned from canonical)
+        culture: null,          // modal working copy (deep-cloned)
         activeTabId: null,
         onSaveCallback: null,
         modal: null,
-        root: null,             // the modal element (root.querySelector scoped reads)
-        listeners: []           // tracked listeners (removed on close)
+        root: null,
+        listeners: []
     };
 
     function registerTab(tabId, definition) {
@@ -240,22 +243,12 @@
     }
 
     // =========================================================================
-    // 3. LISTENER TRACKING
+    // 3. LISTENER TRACKING (modal path only)
     // =========================================================================
     //
-    // Every listener the editor installs goes through _track so that
-    // _resetEditorState can remove them all when the modal closes.
-    //
-    // _resetEditorState is called from THREE paths (see LIFECYCLE AND
-    // CLEANUP in the header):
-    //   (a) the modal's own onCancel callback,
-    //   (b) the end of _saveCulture (after _closeTopModal),
-    //   (c) CultureEditorTabs.closeEditor() (after _closeTopModal).
-    //
-    // All three must run it. A path that only closes the modal without
-    // resetting _state leaves the document-level Ctrl+S handler
-    // installed; the next openEditor call stacks a second one, which
-    // fires _saveCulture twice per keystroke.
+    // Only the MODAL's listeners are tracked. The inline pane installs
+    // listeners on the pane container, and those go away with the
+    // container when the pane is replaced by the next tab render.
 
     function _track(el, eventType, handler) {
         if (!el || typeof el.addEventListener !== 'function') return;
@@ -277,15 +270,14 @@
     }
 
     /**
-     * Full teardown of the current editor session. Runs _cleanup() and
-     * nulls every field of _state. Called from all three close paths:
-     * onCancel, _saveCulture, and closeEditor.
+     * Full teardown of the current modal session. Runs _cleanup() and
+     * nulls every field of _state. Called from all three modal-close
+     * paths: onCancel, _saveCulture, closeEditor.
      *
      * Does NOT call _closeTopModal() — callers are responsible for
      * closing the modal themselves. This keeps the helper usable from
-     * the modal's onCancel callback (which has already closed the
-     * modal by the time it runs) as well as from paths that need to
-     * call _closeTopModal first.
+     * the modal's onCancel callback (which has already closed the modal
+     * by the time it runs).
      */
     function _resetEditorState() {
         _cleanup();
@@ -295,17 +287,11 @@
         _state.onSaveCallback = null;
         _state.modal = null;
         _state.root = null;
-        // _state.listeners is reset inside _cleanup().
     }
 
     // =========================================================================
     // 4. DEEP CLONE
     // =========================================================================
-    //
-    // The editor works on a copy. Mutating the canonical record directly
-    // would corrupt masterData on any Cancel path. _saveCulture merges
-    // the copy into a candidate and calls CultureCommands.updateCulture
-    // once; the canonical record is only touched by that call.
 
     function _clone(value) {
         if (value === null || typeof value !== 'object') return value;
@@ -324,7 +310,66 @@
     }
 
     // =========================================================================
-    // 5. OPEN EDITOR
+    // 5. COMMIT — shared by modal and pane paths
+    // =========================================================================
+    //
+    // Both paths build a CANDIDATE (a fully-patched culture record) and
+    // then call _commitCandidate. This is the only place that touches
+    // CultureCommands.updateCulture + persist. It returns:
+    //   { success: true,  culture }          — committed
+    //   { success: false, reason, errors }   — rejected (validation/update)
+    //   { success: false, reason }           — persist failed but update
+    //                                          succeeded; caller decides
+    //                                          whether to surface this as
+    //                                          a warning.
+
+    function _commitCandidate(candidate, cultureId) {
+        var commands = _getCommands();
+        if (!commands) {
+            return { success: false, reason: 'Culture system not available' };
+        }
+
+        var updateResult = null;
+        try {
+            updateResult = commands.updateCulture(cultureId, candidate);
+        } catch (e) {
+            return {
+                success: false,
+                reason: 'Update failed: ' + (e && e.message ? e.message : 'unknown')
+            };
+        }
+        if (!updateResult || updateResult.success !== true) {
+            return {
+                success: false,
+                reason: 'Update failed: ' + (updateResult && updateResult.reason
+                    ? updateResult.reason
+                    : 'unknown')
+            };
+        }
+
+        var persistResult = null;
+        try { persistResult = commands.persist(); }
+        catch (e) {
+            return {
+                success: false,
+                reason: 'Save failed: ' + (e && e.message ? e.message : 'unknown'),
+                culture: updateResult.data || null
+            };
+        }
+        if (persistResult && persistResult.success === false) {
+            return {
+                success: true,
+                culture: updateResult.data || null,
+                persistWarning:
+                    'Saved in memory; storage write failed: ' +
+                    (persistResult.reason || 'unknown')
+            };
+        }
+        return { success: true, culture: updateResult.data || null };
+    }
+
+    // =========================================================================
+    // 6. OPEN EDITOR MODAL
     // =========================================================================
 
     /**
@@ -336,8 +381,7 @@
      * @param {Function} [options.onCancel]    called when the editor closes
      *                                          without saving
      * @param {string} [options.initialTab]    tab id to activate first
-     * @param {string[]} [options.tabs]        tab ids to display (default:
-     *                                          every registered tab)
+     * @param {string[]} [options.tabs]        tab ids to display
      */
     function openEditor(cultureId, options) {
         options = options || {};
@@ -365,16 +409,12 @@
             return;
         }
 
-        // Reset per-editor state. If a previous session was not reset
-        // (e.g. a caller closed the modal directly without going through
-        // closeEditor), this ensures the new session starts clean.
         _resetEditorState();
 
         _state.cultureId = cultureId;
         _state.culture = _clone(canonical);
         _state.onSaveCallback = typeof options.onSave === 'function' ? options.onSave : null;
 
-        // Determine visible tabs.
         var visibleIds = Array.isArray(options.tabs) && options.tabs.length > 0
             ? options.tabs.slice()
             : _tabOrder.slice();
@@ -390,7 +430,6 @@
             ? options.initialTab
             : visibleIds[0];
 
-        // Build nav + panes.
         var navHtml = '';
         var panesHtml = '';
         for (var i = 0; i < visibleIds.length; i++) {
@@ -453,10 +492,9 @@
             cancelText: '',
             size: 'large',
             onMount: function (root) {
-                _onModalMounted(root, visibleIds);
+                _onModalMounted(root);
             },
             onCancel: function () {
-                // Path (a): user dismissed the modal without saving.
                 _resetEditorState();
                 if (typeof options.onCancel === 'function') {
                     try { options.onCancel(); }
@@ -473,24 +511,22 @@
     }
 
     // =========================================================================
-    // 6. MODAL MOUNT — wire nav + footer, render first tab
+    // 7. MODAL MOUNT — wire nav + footer, render first tab
     // =========================================================================
 
-    function _onModalMounted(root, visibleIds) {
+    function _onModalMounted(root) {
         _state.root = root;
 
-        // Nav buttons: switch tabs.
         var navBtns = root.querySelectorAll('.ct-nav-btn');
         for (var i = 0; i < navBtns.length; i++) {
             (function (btn) {
                 _track(btn, 'click', function () {
                     var id = btn.getAttribute('data-tab');
-                    if (id) _switchTab(id);
+                    if (id) _switchModalTab(id);
                 });
             })(navBtns[i]);
         }
 
-        // Cancel: close without saving.
         var cancelBtn = root.querySelector('.ct-cancel-btn');
         if (cancelBtn) {
             _track(cancelBtn, 'click', function () {
@@ -498,7 +534,6 @@
             });
         }
 
-        // Save: run save-all.
         var saveBtn = root.querySelector('.ct-save-btn');
         if (saveBtn) {
             _track(saveBtn, 'click', function () {
@@ -506,36 +541,25 @@
             });
         }
 
-        // Ctrl/Cmd+S inside the editor.
         _track(document, 'keydown', function (e) {
             if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-                // Only fire when the culture editor is the active modal.
                 if (!_state.root || !document.body.contains(_state.root)) return;
                 e.preventDefault();
                 _saveCulture();
             }
         });
 
-        // Render the initial tab.
-        _renderTab(_state.activeTabId);
+        _renderModalTab(_state.activeTabId);
     }
 
     // =========================================================================
-    // 7. TAB SWITCHING
+    // 8. MODAL TAB SWITCHING
     // =========================================================================
-    //
-    // Switching tabs re-renders the target tab from _state.culture. Every
-    // tab writes its user input into _state.culture on its own input/
-    // change handlers, so typed values survive a switch. The one gap is
-    // a list row that has been ADDED but not yet TYPED INTO — it has no
-    // representation in _state.culture and does not survive a switch.
-    // See TAB-SWITCH PRESERVATION CONTRACT in the header.
 
-    function _switchTab(tabId) {
+    function _switchModalTab(tabId) {
         if (!_state.root || !_tabRegistry[tabId]) return;
         if (tabId === _state.activeTabId) return;
 
-        // Deactivate current tab (invoke its onDeactivate hook).
         var current = _state.activeTabId;
         if (current && _tabRegistry[current] && _tabRegistry[current].onDeactivate) {
             try { _tabRegistry[current].onDeactivate(_state.culture); }
@@ -548,7 +572,6 @@
 
         _state.activeTabId = tabId;
 
-        // Toggle nav state.
         var navBtns = _state.root.querySelectorAll('.ct-nav-btn');
         for (var i = 0; i < navBtns.length; i++) {
             var btn = navBtns[i];
@@ -557,17 +580,14 @@
             btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
         }
 
-        // Toggle panes.
         var panes = _state.root.querySelectorAll('.ct-pane');
         for (var j = 0; j < panes.length; j++) {
             var pane = panes[j];
             pane.classList.toggle('ct-pane--active', pane.getAttribute('data-tab') === tabId);
         }
 
-        // Render the newly active tab from the working culture.
-        _renderTab(tabId);
+        _renderModalTab(tabId);
 
-        // Activate hook.
         if (_tabRegistry[tabId].onActivate) {
             try { _tabRegistry[tabId].onActivate(_state.culture); }
             catch (e) {
@@ -578,24 +598,7 @@
         }
     }
 
-    // =========================================================================
-    // 8. RENDER TAB (with three-way empty-state disambiguation)
-    // =========================================================================
-    //
-    // Failure modes, per the playbook's "unavailable state, do not
-    // silent-empty" rule:
-    //
-    //   no-registration — tabId is not in _tabRegistry. Names the
-    //                     missing tab file so the fix is obvious.
-    //   no-container    — the pane element is missing from the DOM. This
-    //                     is a host bug (openEditor built the modal but
-    //                     a pane was not emitted). Names the pane id.
-    //   no-culture      — _state.culture is null. Defensive; openEditor
-    //                     always sets it, but a future refactor could
-    //                     clear it early. Distinct message.
-    //   render-error    — tab.render threw. Shows the error message.
-
-    function _renderTab(tabId) {
+    function _renderModalTab(tabId) {
         if (!_state.root) return;
 
         var tab = _tabRegistry[tabId];
@@ -633,9 +636,6 @@
         if (!_state.root) return;
         var pane = _state.root.querySelector('#ct_pane_' + tabId);
         if (!pane) {
-            // No pane to write into — this is a host bug that can only
-            // be surfaced on the console. The per-tab renderer would
-            // never have run either.
             if (typeof console !== 'undefined' && console.error) {
                 console.error(
                     '[culture-editor] cannot render host empty state: no pane for "' +
@@ -667,21 +667,8 @@
     }
 
     // =========================================================================
-    // 9. SAVE ALL
+    // 9. MODAL SAVE ALL
     // =========================================================================
-    //
-    // Iterates every REGISTERED tab (not just the visible ones; a tab
-    // that is hidden by options.tabs may still have edited data). Each
-    // tab's save() returns a partial culture object; the results are
-    // shallow-merged into a candidate. Each tab's validate() is then run
-    // against the candidate. Only if every tab validates does the
-    // candidate go to CultureCommands.updateCulture — one call, one
-    // persist.
-    //
-    // Scope of "atomic": culture-record fields only. Characters-tab and
-    // names-tab writes happen on their own handlers and are NOT rolled
-    // back by this path. See SAVE IS ATOMIC FOR CULTURE-RECORD FIELDS
-    // ONLY in the header.
 
     function _saveCulture() {
         var commands = _getCommands();
@@ -689,22 +676,17 @@
             _showToast('Culture system not available', 'error');
             return;
         }
-
         if (!_state.culture || !_state.cultureId) return;
 
-        // Start from a clone of the working copy — never the live object.
         var candidate = _clone(_state.culture);
-
         var errors = [];
-        var tabsRun = 0;
 
-        // Phase 1: run save() for every registered tab.
+        // Phase 1: save() for every registered tab.
         for (var i = 0; i < _tabOrder.length; i++) {
             var id = _tabOrder[i];
             var tab = _tabRegistry[id];
             if (!tab || typeof tab.save !== 'function') continue;
 
-            tabsRun++;
             try {
                 var partial = tab.save(_state.culture);
                 if (partial && typeof partial === 'object') {
@@ -720,7 +702,7 @@
             }
         }
 
-        // Phase 2: run validate() for every registered tab.
+        // Phase 2: validate() for every registered tab.
         for (var j = 0; j < _tabOrder.length; j++) {
             var id2 = _tabOrder[j];
             var tab2 = _tabRegistry[id2];
@@ -740,51 +722,27 @@
             }
         }
 
-        // Surface errors (if any).
         _showErrors(errors);
+        if (errors.length > 0) return;
 
-        if (errors.length > 0) {
+        // Phase 3: commit.
+        var result = _commitCandidate(candidate, _state.cultureId);
+        if (!result.success) {
+            _showToast(result.reason, 'error');
             return;
         }
-
-        // Phase 3: one command call, one persist.
-        var updateResult = null;
-        try {
-            updateResult = commands.updateCulture(_state.cultureId, candidate);
-        } catch (e) {
-            _showToast('Update failed: ' + (e && e.message ? e.message : 'unknown'), 'error');
-            return;
-        }
-
-        if (!updateResult || updateResult.success !== true) {
-            _showToast(
-                'Update failed: ' + (updateResult && updateResult.reason
-                    ? updateResult.reason
-                    : 'unknown'),
-                'error'
-            );
-            return;
-        }
-
-        var persistResult = null;
-        try { persistResult = commands.persist(); }
-        catch (e) {
-            _showToast('Save failed: ' + (e && e.message ? e.message : 'unknown'), 'error');
-            return;
-        }
-        if (persistResult && persistResult.success === false) {
-            _showToast(
-                'Saved in memory; storage write failed: ' +
-                (persistResult.reason || 'unknown'),
-                'warning'
-            );
+        if (result.persistWarning) {
+            _showToast(result.persistWarning, 'warning');
         } else {
             _showToast('Culture updated', 'success');
         }
 
-        // Notify the caller.
+        if (result.culture) {
+            _state.culture = _clone(result.culture);
+        }
+
         if (_state.onSaveCallback) {
-            try { _state.onSaveCallback(updateResult.data); }
+            try { _state.onSaveCallback(result.culture); }
             catch (e) {
                 if (typeof console !== 'undefined' && console.error) {
                     console.error('[culture-editor] onSave threw:', e);
@@ -792,12 +750,6 @@
             }
         }
 
-        // Path (b): close the modal AND reset editor state. The reset
-        // removes the document-level Ctrl+S handler (and every other
-        // tracked listener) so a second openEditor call does not stack
-        // a second handler. _resetEditorState also nulls _state, so a
-        // late-arriving event from the closing modal cannot re-enter
-        // _saveCulture.
         _closeTopModal();
         _resetEditorState();
     }
@@ -821,7 +773,177 @@
     }
 
     // =========================================================================
-    // 10. PUBLIC API
+    // 10. INLINE PANE — renderPaneDirect
+    // =========================================================================
+    //
+    // Renders ONE tab into an external container (a sub-tab pane in
+    // CultureManager.html). The canonical culture is cloned; the tab
+    // renders against the clone, and its input handlers write into the
+    // clone. A Save footer is appended for tabs that participate in the
+    // composite save (appearance, mythology). For tabs that commit
+    // immediately (characters, names) a hint is appended instead.
+    //
+    // The pane's listeners live on `container`. They are replaced when
+    // the pane is re-rendered (the bootstrap calls _renderActiveTab on
+    // tab switch, selection change, or post-save). No tracking needed.
+
+    function renderPaneDirect(tabId, container, canonicalCulture, options) {
+        options = options || {};
+        if (!container) return false;
+
+        var tab = _tabRegistry[tabId];
+        if (!tab || typeof tab.render !== 'function') return false;
+
+        if (!canonicalCulture) {
+            container.innerHTML =
+                '<div class="rt-empty">No culture loaded.</div>';
+            return true;
+        }
+
+        // Empty the container and render into a working clone.
+        container.innerHTML = '';
+        var working = _clone(canonicalCulture);
+
+        try {
+            tab.render(container, working);
+        } catch (e) {
+            container.innerHTML =
+                '<div class="rt-unavailable">' +
+                'Error rendering this tab: ' +
+                _escapeHtml(e && e.message ? e.message : 'unknown') +
+                '</div>';
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('[culture-editor] renderPaneDirect "' + tabId + '" threw:', e);
+            }
+            return true;
+        }
+
+        // Does this tab produce a composite-save partial?
+        var hasCompositeSave = false;
+        if (typeof tab.save === 'function') {
+            try {
+                var probe = tab.save(working);
+                if (probe && typeof probe === 'object') {
+                    for (var k in probe) {
+                        if (Object.prototype.hasOwnProperty.call(probe, k)) {
+                            hasCompositeSave = true;
+                            break;
+                        }
+                    }
+                }
+            } catch (e) {
+                hasCompositeSave = false;
+            }
+        }
+
+        if (!hasCompositeSave) {
+            var hint = document.createElement('div');
+            hint.className = 'ct-hint ct-hint--footer';
+            hint.textContent =
+                'Changes on this tab are saved immediately. ' +
+                'Closing or switching tabs does not undo them.';
+            container.appendChild(hint);
+            return true;
+        }
+
+        // Append the Save footer.
+        var footer = document.createElement('div');
+        footer.className = 'ct-names__bulk-actions ct-pane-save-footer';
+        footer.innerHTML =
+            '<button type="button" class="rt-btn rt-btn--primary ct-pane-save">' +
+              'Save Changes' +
+            '</button>';
+        container.appendChild(footer);
+
+        var saveBtn = footer.querySelector('.ct-pane-save');
+        if (saveBtn) {
+            saveBtn.addEventListener('click', function () {
+                _savePaneDirect(tabId, working, canonicalCulture, options);
+            });
+        }
+
+        return true;
+    }
+
+    /**
+     * Commit a single tab's working clone to the canonical record.
+     * Used by renderPaneDirect's Save button. Runs:
+     *   1. tab.save(working)       → partial culture
+     *   2. merge partial into candidate
+     *   3. tab.validate(candidate) → { valid, errors }
+     *   4. _commitCandidate (updateCulture + persist)
+     *   5. options.onSave() on success
+     */
+    function _savePaneDirect(tabId, working, canonicalCulture, options) {
+        options = options || {};
+        var tab = _tabRegistry[tabId];
+        if (!tab || !canonicalCulture) return;
+
+        var partial = null;
+        try {
+            partial = tab.save(working);
+        } catch (e) {
+            _showToast(
+                'Save failed: ' + (e && e.message ? e.message : 'unknown'),
+                'error'
+            );
+            return;
+        }
+
+        // Build the candidate from the canonical record plus this tab's
+        // partial. Other fields are preserved untouched.
+        var candidate = _clone(canonicalCulture);
+        if (partial && typeof partial === 'object') {
+            for (var k in partial) {
+                if (Object.prototype.hasOwnProperty.call(partial, k)) {
+                    candidate[k] = partial[k];
+                }
+            }
+        }
+
+        if (typeof tab.validate === 'function') {
+            var verdict = null;
+            try { verdict = tab.validate(candidate); }
+            catch (e) {
+                _showToast(
+                    'Validation threw: ' + (e && e.message ? e.message : 'unknown'),
+                    'error'
+                );
+                return;
+            }
+            if (verdict && verdict.valid === false) {
+                var errs = Array.isArray(verdict.errors) ? verdict.errors : [];
+                _showToast(
+                    'Invalid: ' + (errs.length > 0 ? errs.join('; ') : 'unknown'),
+                    'error'
+                );
+                return;
+            }
+        }
+
+        var result = _commitCandidate(candidate, canonicalCulture.id);
+        if (!result.success) {
+            _showToast(result.reason, 'error');
+            return;
+        }
+        if (result.persistWarning) {
+            _showToast(result.persistWarning, 'warning');
+        } else {
+            _showToast('Culture updated', 'success');
+        }
+
+        if (typeof options.onSave === 'function') {
+            try { options.onSave(); }
+            catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('[culture-editor] pane onSave threw:', e);
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // 11. PUBLIC API
     // =========================================================================
 
     window.CultureEditorTabs = {
@@ -833,13 +955,12 @@
         // Editor
         openEditor: openEditor,
         closeEditor: function () {
-            // Path (c): programmatic close. Must run the same reset as
-            // the successful-save path; otherwise the tracked listeners
-            // (including the document-level Ctrl+S handler) leak and
-            // _state keeps pointing at a detached modal.
             _closeTopModal();
             _resetEditorState();
         },
+
+        // Inline pane rendering (used by culture-manager-bootstrap.js)
+        renderPaneDirect: renderPaneDirect,
 
         // Introspection (for tests and diagnostics — not for UI)
         _getActiveTabId: function () { return _state.activeTabId; },
