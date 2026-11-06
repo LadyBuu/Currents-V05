@@ -14,7 +14,8 @@
  *
  *     deaths      -> MortalityQueries / CharacterQueries /
  *                    MortalityStatistics
- *     stork       -> ChildrenQueries / ChildrenStatistics
+ *     stork       -> RomanceQueries / FamilyQueries /
+ *                    ChildrenQueries / ChildrenRules
  *     disasters   -> DisasterQueries
  *     social      -> RelationshipQueries / RomanceQueries /
  *                    FriendshipQueries / RivalryQueries
@@ -35,11 +36,10 @@
  *                                              dependencies missing or
  *                                              threw
  *
- *   Individual list-returning functions return [] on unavailability
- *   (they have nowhere to put the flag), and the tab is expected to
- *   call the accompanying summary function to distinguish "no
- *   results" from "unavailable". This matches the pattern
- *   character-queries.js uses for optional family data.
+ *   List-returning functions return [] on unavailability (they have
+ *   nowhere to put the flag), and the tab is expected to call the
+ *   accompanying summary function to distinguish "no results" from
+ *   "unavailable".
  *
  * READ CONTRACT (ALL ID-SHAPED READS):
  *   Every returned object is a fresh projection. None of them leak
@@ -51,10 +51,12 @@
  * DEPENDENCIES (all optional, checked at call time):
  *   - window.MortalityQueries      (deaths facet)
  *   - window.MortalityStatistics   (deaths facet stats)
- *   - window.CharacterQueries      (deaths character roster)
- *   - window.CharacterState        (deaths location filter)
- *   - window.ChildrenQueries       (stork facet)
- *   - window.ChildrenStatistics    (stork facet stats)
+ *   - window.CharacterQueries      (deaths + stork rosters)
+ *   - window.RomanceQueries        (stork couple edges)
+ *   - window.FamilyQueries         (stork existing children)
+ *   - window.ChildrenQueries       (stork pregnancy count)
+ *   - window.ChildrenRules         (stork fertility math)
+ *   - window.LocationQueries       (sub-location expansion)
  *   - window.DisasterQueries       (disasters facet)
  *   - window.RelationshipQueries   (social facet)
  *   - window.RomanceQueries        (social facet)
@@ -65,11 +67,42 @@
  *   - window.getCurrentYear        (time.js)
  *   - window.getPlaceById          (accessors.js)
  *   - window.getEventLog           (accessors.js)
+ *   - window.getRankById           (accessors.js)
  *
  *   NO function in this module throws for a missing optional
  *   dependency. Missing -> { available: false, reason: ... } or [].
  *
  * ICON POLICY: No emojis. No icons. Returns data; the tab renders.
+ * =============================================================================
+ *
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 3A):
+ *     - Added the stork facet's query set:
+ *         getFertileCouples(locationId, filters)
+ *       returns the fertile-couple roster grouped by man. Reads
+ *       through RomanceQueries.getActiveCommittedPartners for the
+ *       couple edge, FamilyQueries.getBiologicalChildIds for
+ *       existing children, ChildrenQueries.getPregnanciesForMother
+ *       for the pregnancy count, and ChildrenRules for the fertility
+ *       and expected-children math. Helper functions
+ *       _getBiologicalChildrenForCouple, _countPregnanciesForCouple,
+ *       _expectedChildrenForCouple, _expectedRemaining,
+ *       _locationIdSetForFilter, _fullNameOf, _sumChildren,
+ *       _rankPriorityOf added (all private).
+ *     - Deleted the previous getBirthRecords(locationId) stub.
+ *       That stub aggregated getPregnanciesForMother over every
+ *       character in the world (O(population) per call) but was
+ *       never used. getFertileCouples is the actual surface the
+ *       stork tab consumes.
+ *     - No behavioural change to any deaths-facet function.
+ *   Previous revision (initial):
+ *     - Created with the deaths facet's read API
+ *       (getCharacterRoster, getCharacterPopulationStats,
+ *       getAllDeathRecords, getMortalityStats,
+ *       getRecentDeathEvents) and the facet stubs
+ *       (getDisasterRecords, getSocialEvents,
+ *       getEducationalEvents) that are consumed by the tab files
+ *       delivered so far.
  * =============================================================================
  */
 
@@ -100,23 +133,6 @@
             }
         }
         return { ok: true, module: mod };
-    }
-
-    function _requireGlobal(name, methods) {
-        if (typeof window[name] === 'undefined' || window[name] === null) {
-            return { ok: false, reason: name + ' is not loaded.' };
-        }
-        if (methods) {
-            for (var i = 0; i < methods.length; i++) {
-                if (typeof window[name][methods[i]] !== 'function') {
-                    return {
-                        ok: false,
-                        reason: name + '.' + methods[i] + ' is not available.'
-                    };
-                }
-            }
-        }
-        return { ok: true, module: window[name] };
     }
 
     function _unavailable(reason) {
@@ -169,6 +185,33 @@
         return null;
     }
 
+    function _fullNameOf(summary) {
+        if (!summary) return '';
+        var name = typeof summary.name === 'string' ? summary.name : '';
+        var surname = typeof summary.surname === 'string' ? summary.surname : '';
+        return (name + ' ' + surname).trim();
+    }
+
+    function _locationIdSetForFilter(locationId) {
+        if (!_hasId(locationId)) return null;
+
+        var set = {};
+        set[locationId] = true;
+
+        var lq = _requireModule('LocationQueries', ['getAllSubLocationIds']);
+        if (lq.ok) {
+            try {
+                var subIds = lq.module.getAllSubLocationIds(locationId);
+                if (Array.isArray(subIds)) {
+                    for (var s = 0; s < subIds.length; s++) {
+                        if (_hasId(subIds[s])) set[subIds[s]] = true;
+                    }
+                }
+            } catch (e) { /* exact-id match only */ }
+        }
+        return set;
+    }
+
     // =========================================================================
     // 3. DEATHS FACET
     // =========================================================================
@@ -198,8 +241,7 @@
      *
      * Filters are NOT applied here. The caller (the tab) applies
      * its search / status / cause / gender filters to the returned
-     * list. This keeps this function as a pure domain read and lets
-     * the tab own its own filter shape.
+     * list.
      */
     function getCharacterRoster(locationId) {
         var cq = _requireModule('CharacterQueries', [
@@ -215,28 +257,11 @@
             return _unavailable('CharacterQueries.getAllCharacters threw: ' +
                 (e && e.message ? e.message : 'unknown error'));
         }
-        if (!Array.isArray(all)) return _unavailable('CharacterQueries returned a non-array.');
-
-        // Location filter (with sub-location expansion when available).
-        var locationIdSet = null;
-        if (_hasId(locationId)) {
-            locationIdSet = {};
-            locationIdSet[locationId] = true;
-
-            var lq = _requireModule('LocationQueries', ['getAllSubLocationIds']);
-            if (lq.ok) {
-                try {
-                    var subIds = lq.module.getAllSubLocationIds(locationId);
-                    if (Array.isArray(subIds)) {
-                        for (var s = 0; s < subIds.length; s++) {
-                            if (_hasId(subIds[s])) locationIdSet[subIds[s]] = true;
-                        }
-                    }
-                } catch (e) {
-                    // Sub-location expansion failed; keep exact-id match.
-                }
-            }
+        if (!Array.isArray(all)) {
+            return _unavailable('CharacterQueries returned a non-array.');
         }
+
+        var locationIdSet = _locationIdSetForFilter(locationId);
 
         var characters = [];
         var livingCount = 0;
@@ -311,25 +336,11 @@
             return _unavailable('CharacterQueries.getAllCharacters threw: ' +
                 (e && e.message ? e.message : 'unknown error'));
         }
-        if (!Array.isArray(all)) return _unavailable('CharacterQueries returned a non-array.');
-
-        var locationIdSet = null;
-        if (_hasId(locationId)) {
-            locationIdSet = {};
-            locationIdSet[locationId] = true;
-
-            var lq = _requireModule('LocationQueries', ['getAllSubLocationIds']);
-            if (lq.ok) {
-                try {
-                    var subIds = lq.module.getAllSubLocationIds(locationId);
-                    if (Array.isArray(subIds)) {
-                        for (var s = 0; s < subIds.length; s++) {
-                            if (_hasId(subIds[s])) locationIdSet[subIds[s]] = true;
-                        }
-                    }
-                } catch (e) { /* keep exact-id match */ }
-            }
+        if (!Array.isArray(all)) {
+            return _unavailable('CharacterQueries returned a non-array.');
         }
+
+        var locationIdSet = _locationIdSetForFilter(locationId);
 
         var total = 0;
         var living = 0;
@@ -363,10 +374,6 @@
      * Returns all death records, optionally filtered by location.
      * Uses MortalityQueries.getAllDeathRecords (which returns one
      * record per deceased character).
-     *
-     * `locationId` narrows the result to records whose characterId's
-     * current location (or sub-location) matches. If MortalityQueries
-     * is not loaded -> unavailable.
      */
     function getAllDeathRecords(locationId) {
         var mq = _requireModule('MortalityQueries', ['getAllDeathRecords']);
@@ -379,7 +386,9 @@
             return _unavailable('MortalityQueries.getAllDeathRecords threw: ' +
                 (e && e.message ? e.message : 'unknown error'));
         }
-        if (!Array.isArray(records)) return _unavailable('MortalityQueries returned a non-array.');
+        if (!Array.isArray(records)) {
+            return _unavailable('MortalityQueries returned a non-array.');
+        }
 
         if (!_hasId(locationId)) {
             return _available({
@@ -388,11 +397,8 @@
             });
         }
 
-        // Location filter: match by character's currentLocationId.
         var cq = _requireModule('CharacterQueries', ['getAllCharacters']);
         if (!cq.ok) {
-            // No location filter available; return unfiltered and
-            // note the degraded state.
             return _available({
                 records: records.slice(),
                 totalCount: records.length,
@@ -405,19 +411,7 @@
         try { all = cq.module.getAllCharacters(); }
         catch (e) { all = []; }
 
-        var locationIdSet = {};
-        locationIdSet[locationId] = true;
-        var lq = _requireModule('LocationQueries', ['getAllSubLocationIds']);
-        if (lq.ok) {
-            try {
-                var subIds = lq.module.getAllSubLocationIds(locationId);
-                if (Array.isArray(subIds)) {
-                    for (var s = 0; s < subIds.length; s++) {
-                        if (_hasId(subIds[s])) locationIdSet[subIds[s]] = true;
-                    }
-                }
-            } catch (e) { /* exact match only */ }
-        }
+        var locationIdSet = _locationIdSetForFilter(locationId);
 
         var inLocationIds = {};
         if (Array.isArray(all)) {
@@ -471,9 +465,9 @@
      * by category 'death', optionally by year and by location name.
      * Bounded to `limit` entries (default 20, max 200).
      *
-     * This is a supplementary read used by the tab's optional
-     * "recent activity" strip. The tab's main list uses
-     * getCharacterRoster; this is only for the small side panel.
+     * Supplementary read used by the tab's optional "recent
+     * activity" strip. The tab's main list uses getCharacterRoster;
+     * this is only for the small side panel.
      */
     function getRecentDeathEvents(options) {
         options = options || {};
@@ -494,8 +488,7 @@
         }
 
         var filtered = [];
-        // Iterate newest-first (the log is append-ordered), so the
-        // newest events are at the end.
+        // Iterate newest-first (the log is append-ordered).
         for (var i = log.length - 1; i >= 0; i--) {
             var entry = log[i];
             if (!entry || typeof entry !== 'object') continue;
@@ -523,58 +516,379 @@
     }
 
     // =========================================================================
-    // 4. STORK FACET (births)
+    // 4. STORK FACET (bio children)
     // =========================================================================
     //
-    // Provided as a stub. The full implementation lands with the
-    // stork tab. Every function returns { available: false } if
-    // ChildrenQueries is not loaded, so the tab renders "unavailable"
-    // cleanly without a separate dependency check.
+    // Reads through:
+    //   - RomanceQueries.getActiveCommittedPartners(characterId) for
+    //     the couple edge
+    //   - FamilyQueries.getBiologicalChildIds(parentId) for existing
+    //     children (biological, both-parent intersection)
+    //   - ChildrenQueries.getPregnanciesForMother(motherId) for the
+    //     pregnancy count (includes miscarriages/stillbirths)
+    //   - ChildrenRules.calculateExpectedChildren +
+    //     getExpectedRemainingChildren for the capacity estimate
+    //
+    // Returns { available, men, totalCouples, totalMen } where each
+    // men entry is:
+    //   {
+    //     manId, manSummary,
+    //     partners: [ { womanId, womanSummary, relationshipId,
+    //                   relationshipType, relationshipStatus,
+    //                   existingChildIds, existingChildCount,
+    //                   existingPregnancyCount, fertileYears,
+    //                   fertilityModifier, expectedTotal,
+    //                   expectedRemaining, hasCapacity, isFertile } ]
+    //   }
 
-    function getBirthRecords(locationId) {
+    function _getBiologicalChildrenForCouple(motherId, fatherId) {
+        var fq = _requireModule('FamilyQueries', ['getBiologicalChildIds']);
+        if (!fq.ok) return [];
+
+        var motherKids;
+        var fatherKids;
+        try { motherKids = fq.module.getBiologicalChildIds(motherId); }
+        catch (e) { motherKids = []; }
+        try { fatherKids = fq.module.getBiologicalChildIds(fatherId); }
+        catch (e) { fatherKids = []; }
+
+        if (!Array.isArray(motherKids) || !Array.isArray(fatherKids)) return [];
+
+        var fatherSet = {};
+        for (var i = 0; i < fatherKids.length; i++) {
+            if (_hasId(fatherKids[i])) fatherSet[fatherKids[i]] = true;
+        }
+        var out = [];
+        for (var j = 0; j < motherKids.length; j++) {
+            if (_hasId(motherKids[j]) && fatherSet[motherKids[j]] === true) {
+                out.push(motherKids[j]);
+            }
+        }
+        return out;
+    }
+
+    function _countPregnanciesForCouple(motherId, fatherId) {
         var cq = _requireModule('ChildrenQueries', ['getPregnanciesForMother']);
+        if (!cq.ok) return null;
+        var records;
+        try { records = cq.module.getPregnanciesForMother(motherId); }
+        catch (e) { return null; }
+        if (!Array.isArray(records)) return null;
+
+        var count = 0;
+        for (var i = 0; i < records.length; i++) {
+            if (records[i] && records[i].fatherId === fatherId) count++;
+        }
+        return count;
+    }
+
+    function _expectedChildrenForCouple(motherAge) {
+        var cr = window.ChildrenRules;
+        if (!cr
+            || typeof cr.calculateExpectedChildren !== 'function'
+            || !cr.FERTILITY_CONSTANTS) {
+            return null;
+        }
+        var maxFertileAge = cr.FERTILITY_CONSTANTS.MAX_FERTILE_AGE;
+        if (typeof motherAge !== 'number' || typeof maxFertileAge !== 'number') {
+            return null;
+        }
+        var fertileYears = Math.max(0, maxFertileAge - motherAge);
+        try {
+            var expectedTotal = cr.calculateExpectedChildren({
+                fertileYears: fertileYears,
+                motherAgeAtStart: motherAge
+            });
+            return {
+                fertileYears: fertileYears,
+                expectedTotal: expectedTotal
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function _expectedRemaining(expectedTotal, existingChildren) {
+        var cr = window.ChildrenRules;
+        if (!cr || typeof cr.getExpectedRemainingChildren !== 'function') {
+            return null;
+        }
+        try {
+            return cr.getExpectedRemainingChildren({
+                expectedChildren: expectedTotal,
+                existingChildren: existingChildren
+            });
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function _sumChildren(manEntry) {
+        var total = 0;
+        for (var i = 0; i < manEntry.partners.length; i++) {
+            total += manEntry.partners[i].existingChildCount;
+        }
+        return total;
+    }
+
+    function _rankPriorityOf(manSummary) {
+        if (!manSummary || !_hasId(manSummary.rankId)) return 999;
+        if (typeof window.getRankById !== 'function') return 999;
+        var rank;
+        try { rank = window.getRankById(manSummary.rankId); }
+        catch (e) { return 999; }
+        return (rank && typeof rank.priority === 'number') ? rank.priority : 999;
+    }
+
+    /**
+     * Returns the fertile-couple roster, grouped by man. Each couple
+     * is a living female in a committed romantic relationship with a
+     * living male. Optionally filtered by location (with sub-location
+     * expansion) and by the caller's filter flags.
+     *
+     * @param {string|null} locationId
+     * @param {Object} [filters]
+     * @param {boolean} [filters.fertileOnly=true]
+     * @param {boolean} [filters.hasCapacityOnly=true]
+     * @param {boolean} [filters.childlessOnly=false]
+     * @param {string}  [filters.search='']
+     * @param {string}  [filters.sortBy='rank']  'rank' | 'name' | 'children'
+     *
+     * @returns {{ available: boolean, reason?: string,
+     *             men: Array, totalCouples: number, totalMen: number }}
+     */
+    function getFertileCouples(locationId, filters) {
+        filters = filters || {};
+
+        var rq = _requireModule('RomanceQueries', ['getActiveCommittedPartners']);
+        if (!rq.ok) return _unavailable(rq.reason);
+
+        var cq = _requireModule('CharacterQueries', [
+            'getAllCharacters',
+            'getCharacterSummary'
+        ]);
         if (!cq.ok) return _unavailable(cq.reason);
 
-        // The stork tab will use a "pregnancies by year" or "recent
-        // births" API on ChildrenQueries; the current ChildrenQueries
-        // does not expose one directly. For now, aggregate over every
-        // mother. This is O(population) and the stork tab will cache
-        // it at build time.
-        var charQ = _requireModule('CharacterQueries', ['getAllCharacters']);
-        if (!charQ.ok) return _unavailable(charQ.reason);
-
         var all;
-        try { all = charQ.module.getAllCharacters(); }
+        try { all = cq.module.getAllCharacters(); }
         catch (e) { return _unavailable('CharacterQueries.getAllCharacters threw.'); }
-        if (!Array.isArray(all)) return _unavailable('CharacterQueries returned a non-array.');
-
-        var records = [];
-        for (var i = 0; i < all.length; i++) {
-            var c = all[i];
-            if (!c || !_hasId(c.id)) continue;
-            var list;
-            try { list = cq.module.getPregnanciesForMother(c.id); }
-            catch (e) { list = null; }
-            if (!Array.isArray(list)) continue;
-            for (var j = 0; j < list.length; j++) records.push(list[j]);
+        if (!Array.isArray(all)) {
+            return _unavailable('CharacterQueries returned a non-array.');
         }
 
-        records.sort(function(a, b) {
-            return (b.birthYear || 0) - (a.birthYear || 0);
+        var locationIdSet = _locationIdSetForFilter(locationId);
+
+        var fertileOnly = filters.fertileOnly !== false;
+        var hasCapacityOnly = filters.hasCapacityOnly !== false;
+        var childlessOnly = filters.childlessOnly === true;
+        var searchLower = (typeof filters.search === 'string')
+            ? filters.search.trim().toLowerCase()
+            : '';
+
+        var cr = window.ChildrenRules;
+        var minAge = (cr && cr.FERTILITY_CONSTANTS
+            && typeof cr.FERTILITY_CONSTANTS.MIN_FERTILE_AGE === 'number')
+            ? cr.FERTILITY_CONSTANTS.MIN_FERTILE_AGE
+            : 14;
+        var maxAge = (cr && cr.FERTILITY_CONSTANTS
+            && typeof cr.FERTILITY_CONSTANTS.MAX_FERTILE_AGE === 'number')
+            ? cr.FERTILITY_CONSTANTS.MAX_FERTILE_AGE
+            : 47;
+        var getModifier = (cr && typeof cr.getFertilityAgeModifier === 'function')
+            ? cr.getFertilityAgeModifier
+            : function () { return 1.0; };
+
+        var menById = {};
+
+        for (var i = 0; i < all.length; i++) {
+            var femaleProj = all[i];
+            if (!femaleProj || !_hasId(femaleProj.id)) continue;
+            if (femaleProj.isDeleted === true) continue;
+            if (femaleProj.isDeceased === true) continue;
+            if (femaleProj.gender !== 'female') continue;
+
+            if (locationIdSet !== null) {
+                if (!_hasId(femaleProj.currentLocationId)
+                    || locationIdSet[femaleProj.currentLocationId] !== true) {
+                    continue;
+                }
+            }
+
+            var femaleSummary;
+            try { femaleSummary = cq.module.getCharacterSummary(femaleProj.id); }
+            catch (e) { femaleSummary = null; }
+            if (!femaleSummary) continue;
+            if (femaleSummary.isDeceased === true) continue;
+
+            var motherAge = (typeof femaleSummary.age === 'number')
+                ? femaleSummary.age : null;
+            if (typeof motherAge !== 'number') continue;
+
+            var isFertile = motherAge >= minAge && motherAge <= maxAge;
+            if (fertileOnly && !isFertile) continue;
+
+            var partners;
+            try { partners = rq.module.getActiveCommittedPartners(femaleProj.id); }
+            catch (e) { partners = []; }
+            if (!Array.isArray(partners)) continue;
+
+            for (var p = 0; p < partners.length; p++) {
+                var partner = partners[p];
+                if (!partner || !_hasId(partner.partnerId)) continue;
+
+                var maleSummary;
+                try {
+                    maleSummary = cq.module.getCharacterSummary(partner.partnerId);
+                } catch (e) {
+                    maleSummary = null;
+                }
+                if (!maleSummary) continue;
+                if (maleSummary.isDeceased === true) continue;
+                if (maleSummary.gender !== 'male') continue;
+
+                var childIds = _getBiologicalChildrenForCouple(
+                    femaleProj.id, partner.partnerId
+                );
+                var pregnancyCount = _countPregnanciesForCouple(
+                    femaleProj.id, partner.partnerId
+                );
+
+                var expected = _expectedChildrenForCouple(motherAge);
+                var expectedTotal = expected ? expected.expectedTotal : null;
+                var expectedRemaining = expected
+                    ? _expectedRemaining(expectedTotal, childIds.length)
+                    : null;
+                var hasCapacity = (typeof expectedRemaining === 'number')
+                    ? expectedRemaining > 0
+                    : isFertile; // fall back to fertility flag
+
+                if (hasCapacityOnly && !hasCapacity) continue;
+                if (childlessOnly && childIds.length > 0) continue;
+
+                if (searchLower.length > 0) {
+                    var manHay = ((maleSummary.name || '') + ' ' +
+                                  (maleSummary.surname || '')).toLowerCase();
+                    var womanHay = ((femaleSummary.name || '') + ' ' +
+                                    (femaleSummary.surname || '')).toLowerCase();
+                    if (manHay.indexOf(searchLower) === -1
+                        && womanHay.indexOf(searchLower) === -1) {
+                        continue;
+                    }
+                }
+
+                var modifier = getModifier(motherAge);
+
+                if (!menById[partner.partnerId]) {
+                    menById[partner.partnerId] = {
+                        manId: partner.partnerId,
+                        manSummary: maleSummary,
+                        partners: []
+                    };
+                }
+                menById[partner.partnerId].partners.push({
+                    womanId: femaleProj.id,
+                    womanSummary: femaleSummary,
+                    relationshipId: partner.relationshipId,
+                    relationshipType: partner.type,
+                    relationshipStatus: partner.status,
+                    existingChildIds: childIds,
+                    existingChildCount: childIds.length,
+                    existingPregnancyCount: pregnancyCount,
+                    fertileYears: expected ? expected.fertileYears : null,
+                    fertilityModifier: modifier,
+                    expectedTotal: expectedTotal,
+                    expectedRemaining: expectedRemaining,
+                    hasCapacity: hasCapacity,
+                    isFertile: isFertile
+                });
+            }
+        }
+
+        var menArray = [];
+        for (var manKey in menById) {
+            if (!Object.prototype.hasOwnProperty.call(menById, manKey)) continue;
+            menArray.push(menById[manKey]);
+        }
+
+        var sortBy = filters.sortBy || 'rank';
+
+        menArray.sort(function(a, b) {
+            if (sortBy === 'name') {
+                return _fullNameOf(a.manSummary)
+                    .localeCompare(_fullNameOf(b.manSummary));
+            }
+            if (sortBy === 'children') {
+                var aTotal = _sumChildren(a);
+                var bTotal = _sumChildren(b);
+                if (aTotal !== bTotal) return aTotal - bTotal;
+                return _fullNameOf(a.manSummary)
+                    .localeCompare(_fullNameOf(b.manSummary));
+            }
+            // rank (default)
+            var aRank = _rankPriorityOf(a.manSummary);
+            var bRank = _rankPriorityOf(b.manSummary);
+            if (aRank !== bRank) return aRank - bRank;
+            return _fullNameOf(a.manSummary)
+                .localeCompare(_fullNameOf(b.manSummary));
         });
 
+        for (var m = 0; m < menArray.length; m++) {
+            menArray[m].partners.sort(function(a, b) {
+                if (a.existingChildCount !== b.existingChildCount) {
+                    return a.existingChildCount - b.existingChildCount;
+                }
+                var ageA = (typeof a.womanSummary.age === 'number')
+                    ? a.womanSummary.age : 9999;
+                var ageB = (typeof b.womanSummary.age === 'number')
+                    ? b.womanSummary.age : 9999;
+                return ageA - ageB;
+            });
+        }
+
+        var totalCouples = 0;
+        for (var t = 0; t < menArray.length; t++) {
+            totalCouples += menArray[t].partners.length;
+        }
+
         return _available({
-            records: records,
-            totalCount: records.length
+            men: menArray,
+            totalCouples: totalCouples,
+            totalMen: menArray.length
+        });
+    }
+
+    /**
+     * Returns the character summaries for every biological child of
+     * the given couple, keyed by child id. Used by the stork tab to
+     * shape the child circles without re-reading each summary from
+     * the view-model layer.
+     *
+     * The returned object maps childId -> character summary. Missing
+     * children (id present in the family graph but no projection) are
+     * omitted; the caller renders the ones it has.
+     */
+    function getCoupleChildrenSummaries(motherId, fatherId) {
+        var cq = _requireModule('CharacterQueries', ['getCharacterSummary']);
+        if (!cq.ok) return _unavailable(cq.reason);
+
+        var childIds = _getBiologicalChildrenForCouple(motherId, fatherId);
+        var summaries = {};
+        for (var i = 0; i < childIds.length; i++) {
+            var summary;
+            try { summary = cq.module.getCharacterSummary(childIds[i]); }
+            catch (e) { summary = null; }
+            if (summary) summaries[childIds[i]] = summary;
+        }
+
+        return _available({
+            childIds: childIds,
+            summaries: summaries
         });
     }
 
     // =========================================================================
     // 5. DISASTERS FACET
     // =========================================================================
-    //
-    // Stub. The disasters tab will land later. Delegates to
-    // DisasterQueries when loaded.
 
     function getDisasterRecords(locationId) {
         var dq = _requireModule('DisasterQueries',
@@ -585,7 +899,9 @@
             var list = _hasId(locationId)
                 ? dq.module.getDisastersByLocation(locationId)
                 : dq.module.getAllDisasters();
-            if (!Array.isArray(list)) return _unavailable('DisasterQueries returned a non-array.');
+            if (!Array.isArray(list)) {
+                return _unavailable('DisasterQueries returned a non-array.');
+            }
             return _available({ records: list, totalCount: list.length });
         } catch (e) {
             return _unavailable('DisasterQueries threw: ' +
@@ -596,9 +912,6 @@
     // =========================================================================
     // 6. SOCIAL FACET
     // =========================================================================
-    //
-    // Stub. The social tab will land later. Delegates to
-    // RelationshipQueries when loaded.
 
     function getSocialEvents(locationId) {
         var rq = _requireModule('RelationshipQueries', ['getAll']);
@@ -606,7 +919,9 @@
 
         try {
             var list = rq.module.getAll();
-            if (!Array.isArray(list)) return _unavailable('RelationshipQueries returned a non-array.');
+            if (!Array.isArray(list)) {
+                return _unavailable('RelationshipQueries returned a non-array.');
+            }
             return _available({ records: list, totalCount: list.length });
         } catch (e) {
             return _unavailable('RelationshipQueries threw: ' +
@@ -617,13 +932,13 @@
     // =========================================================================
     // 7. EDUCATIONAL FACET
     // =========================================================================
-    //
-    // Stub. The educational tab will land later.
 
     function getEducationalEvents(locationId) {
         var eq = _requireModule('EducationQueries', []);
         if (!eq.ok) return _unavailable(eq.reason);
-        return _unavailable('EducationQueries does not expose an aggregate read in this build.');
+        return _unavailable(
+            'EducationQueries does not expose an aggregate read in this build.'
+        );
     }
 
     // =========================================================================
@@ -638,7 +953,7 @@
     function getFacetRecords(facetId, locationId) {
         switch (facetId) {
             case 'deaths':      return getAllDeathRecords(locationId);
-            case 'stork':       return getBirthRecords(locationId);
+            case 'stork':       return getFertileCouples(locationId);
             case 'disasters':   return getDisasterRecords(locationId);
             case 'social':      return getSocialEvents(locationId);
             case 'educational': return getEducationalEvents(locationId);
@@ -658,10 +973,11 @@
         getMortalityStats: getMortalityStats,
         getRecentDeathEvents: getRecentDeathEvents,
 
-        // Stork facet (stub)
-        getBirthRecords: getBirthRecords,
+        // Stork facet
+        getFertileCouples: getFertileCouples,
+        getCoupleChildrenSummaries: getCoupleChildrenSummaries,
 
-        // Disasters facet (stub)
+        // Disasters facet
         getDisasterRecords: getDisasterRecords,
 
         // Social facet (stub)
@@ -673,6 +989,8 @@
         // Generic facet dispatch
         getFacetRecords: getFacetRecords
     };
+
+    window._eventsQueries = window.EventsQueries;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.EventsQueries;
