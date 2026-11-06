@@ -1,106 +1,130 @@
-// js/tabs/government-history-tab.js
+// js/tabs/government-economy-tab.js
 /**
  * =============================================================================
- * GOVERNMENT HISTORY TAB
- * js/tabs/government-history-tab.js
+ * GOVERNMENT ECONOMY TAB
+ * js/tabs/government-economy-tab.js
  * =============================================================================
  *
- * LOCATION: js/tabs/government-history-tab.js
+ * LOCATION: js/tabs/government-economy-tab.js
  *
  * PURPOSE:
- *   Render government history — current and former leaders with their
- *   terms, and associated government officials (department position
- *   holders) — and manage leader assignments through LocationCommands.
+ *   Read and edit the settlement economy facts that are writable through
+ *   canonical settlement commands, and display the derived facts that are
+ *   not writable through any command.
  *
  * RENDERER CONTRACT (from GovernmentManagerBootstrap):
  *   fn(container, context)
  *   container  HTMLElement  — already emptied by TabManager
  *   context    { locationId, locationName, governmentState }
  *
+ * ARCHITECTURE:
+ *   Thin shell. No hierarchy walks, no aggregation, no probing for
+ *   private write methods. Every read goes through a canonical query
+ *   module; every write goes through a canonical settlement command.
+ *
  * DATA SOURCES:
- *   - window.getPlaceById(locationId)             deep clone; safe to read
- *   - window.getCharacterById(charId)
- *   - GovernmentState.getDepartmentsByLocationId(locationId)  (officials)
- *   - LocationCommands.assignLeader / endLeaderTerm / persist
+ *   - SettlementQueries.getSettlementData(locationId)
+ *   - SettlementProsperityQueries.getProsperity(locationId)
+ *   - SettlementCrimeQueries.getCrimeRate(locationId)
+ *   - SettlementEmploymentQueries.getEmployment(locationId)
+ *   - SettlementEducationQueries.getLiteracyStats(locationId)
+ *   - SettlementReligionQueries.getReligiousUnity(locationId)
+ *   - SettlementReligionQueries.getDominantReligion(locationId)
+ *   - LocationQueries.getPopulationCount(locationId, false)
+ *   - SettlementGovernmentDefinitions.JUSTICE_SEVERITIES
  *
  * WRITE PATH:
- *   place.leaderAssignments is Location-owned. The tab reads it via
- *   getPlaceById (deep clone — safe to read) and writes only through
- *   LocationCommands.assignLeader / endLeaderTerm. Each user action
- *   calls LocationCommands.persist() exactly once, in the modal's
- *   onConfirm, after the command(s) succeed.
+ *   - SettlementGovernmentCommands.setJusticeSeverity(locationId, id)
+ *   - SettlementGovernmentCommands.setWatch(locationId, { hasWatch, watchSize })
+ *   - SettlementFiscalCommands.setBudgetAllocation(locationId, { governmentSalaryBudget })
  *
- *   The tab never mutates the cloned place record. The tab never calls
- *   saveMasterData. Mutating the clone and calling saveMasterData was
- *   the bug in the prior revision: that write never reached canonical
- *   data — the retroactive leader was silently discarded.
+ *   Each command commits independently. This tab does NOT call
+ *   saveMasterData, does NOT call State._updateSettlementData, and does
+ *   NOT roll back a partial success. The partial-save result is
+ *   surfaced as a warning, and the tab refreshes into whatever state
+ *   the commands actually left.
  *
- * RETROACTIVE LEADERS:
- *   LocationCommands.assignLeader(placeId, charId, startYear, title)
- *   always ends the currently active leader. There is no "record a
- *   past leader without disturbing the current one" command today.
+ * READ-ONLY vs EDITABLE:
+ *   Editable (each has a canonical command):
+ *     justiceSeverity        → setJusticeSeverity
+ *     hasWatch / watchSize   → setWatch
+ *     governmentSalaryBudget → setBudgetAllocation
  *
- *   This tab handles retroactive entries as:
- *     1. assignLeader(placeId, charId, startYear, title)
- *        — installs the character as the new current leader
- *     2. endLeaderTerm(placeId, charId, endYear)
- *        — immediately ends that assignment at the requested year
- *     3. LocationCommands.persist() — once, at the end
+ *   Read-only (derived — no command writes them):
+ *     prosperity, crimeRate, religiousUnity, dominantReligion,
+ *     literacyRate, employmentRate, population
  *
- *   The net data result is a correct past-leader record, but any
- *   leader who was active before step 1 has been ended. The modal copy
- *   says so. Do not change this without adding a command that records
- *   a past leader without disturbing the current one.
- *
- * MODAL KEY TRANSLATION:
- *   modals-core.js reads titleHtml / contentHtml. The call sites in
- *   this file pass title / content. _openModal() forwards title →
- *   titleHtml and content → contentHtml, only when the *Html variant
- *   is not already supplied.
+ * MISSING DATA:
+ *   Every read returns null when the underlying data is missing. The
+ *   tab renders an em-dash placeholder for null. It never fabricates.
+ *   Distinguishing 0 from null matters:
+ *     budget = 0     → "0g"
+ *     budget = null  → "—" (never allocated)
+ *   Same for every derived numeric.
  *
  * DEPENDENCIES (hard — throw at load if missing):
- *   - js/core/accessors.js               (getPlaceById, getCharacterById)
- *   - js/government/government-state.js  (GovernmentState)
- *   - js/location/location-commands.js   (assignLeader, endLeaderTerm, persist)
- *   - js/core/formatting.js              (escapeHtml)
- *   - js/core/icons.js                   (Icons)
- *   - js/core/modals-core.js             (openModal)
- *   - js/core/tab-manager.js             (TabManager)
- *   - js/core/time.js                    (getCurrentYear, calculateAge)
+ *   - js/settlement/settlement-queries.js
+ *   - js/settlement/settlement-prosperity-queries.js
+ *   - js/settlement/settlement-crime-queries.js
+ *   - js/settlement/settlement-employment-queries.js
+ *   - js/settlement/settlement-education-queries.js
+ *   - js/settlement/settlement-religion-queries.js
+ *   - js/settlement/settlement-government-commands.js
+ *   - js/settlement/settlement-fiscal-commands.js
+ *   - js/settlement/settlement-government-definitions.js
+ *   - js/location/location-queries.js
+ *   - js/core/modals-core.js (openModal)
+ *   - js/core/formatting.js  (escapeHtml)
+ *   - js/core/icons.js       (Icons)
+ *   - js/core/tab-manager.js (TabManager)
  *
  * DEPENDENCIES (soft — toast at click if missing):
- *   - js/core/ui.js                         (showToast)
- *   - js/selectors/modals-char-selector.js  (openCharacterSelector)
+ *   - js/core/ui.js          (showToast)
+ *   - js/core/modals-core.js (closeTopModal)
  *
- * TIME CONTRACT: uses window.getCurrentYear and window.calculateAge
- *   (no fallback).
- * ICON POLICY: glyphs from Icons[name] via _icon; no emojis; no literal
- *   Unicode glyphs in string output. Arrow separators are the literal
- *   " → " string — a typographic glyph, not an icon, and permitted.
+ * TIME CONTRACT: uses window.getCurrentYear (no fallback). This tab
+ *   does not read the year directly, but the bootstrap's year control
+ *   and the settlement annual processor both do.
+ * ICON POLICY: glyphs from Icons[name] via _iconSpan; no emojis; no
+ *   literal Unicode glyphs in string output. Em-dash placeholders are
+ *   the literal "—" character, used as typographic text, not as icons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   - Migrated from renderGovernmentHistoryTab(containerId, locationId)
- *     to the TabManager renderer contract fn(container, context).
+ *   - Migrated from renderEconomyDetailsTab(containerId, locationId) to
+ *     the TabManager renderer contract fn(container, context).
  *   - Self-registers with TabManager at load.
- *   - Stale-location bug fixed: click handlers and the past-leaders
- *     toggle read container.dataset.locationId at click time. The
- *     original captured currentLocationId in a refresh closure; after
- *     a sidebar switch the closure re-rendered the old location.
- *   - Past-leaders collapsed state now uses a class toggle
- *     (.gh-subsection-body.is-collapsed) with CSS display, rather
- *     than inline style.display. Keyboard activation added on the
- *     toggle (role=button + tabindex + Enter/Space).
- *   - Modal entry points accept (locationId) — no refresh callback
- *     threaded through a bind-time closure. They call module-level
- *     _refresh() on success, which calls TM.requestRender(SCOPE, TAB_ID).
- *   - Removed dead refreshGovernmentHistoryTab(locationId) id-scanning
- *     helper; TM.requestRender(SCOPE, TAB_ID) is the only supported
- *     refresh path.
- *   - _getAllGovernmentOfficials returns Object.values of an object
- *     keyed by characterId. That order is unspecified in older JS
- *     engines; the result is now explicitly sorted by display name,
- *     matching the sort applied to _getAssociatedCharacters.
+ *   - Stale-location bug fixed: the edit modal captures a *snapshot* of
+ *     the settlement it opened against (originalSettlement) and uses
+ *     that snapshot for change detection, but every command call uses
+ *     the locationId passed at open time. The refresh path goes
+ *     through TM.requestRender(SCOPE, TAB_ID), which re-derives the
+ *     current location from the freshly built context — so if the user
+ *     switches location while the modal is open, the modal still
+ *     writes to the location it opened against, and the tab
+ *     re-renders into the newly-selected location.
+ *   - Prosperity-bar width bug fixed: the previous revision applied
+ *     data-width → style.width in _applyProsperityBarWidths after
+ *     innerHTML assignment, but the loop set `style.width = w + '%'`
+ *     and w was a string. `'75' + '%'` is `'75%'` — that works. But if
+ *     a future path passed a number, `75 + '%'` would also be `'75%'`.
+ *     The bug was that the function ran once, after the first render,
+ *     and never again — so a re-render into a different location
+ *     re-inserted the bar fill elements with the *new* data-width
+ *     attribute but no style, and the bars rendered at 0%. Fixed by
+ *     making _applyProsperityBarWidths idempotent and calling it after
+ *     every render.
+ *   - Modal entry point signature: _openEditEconomyModal(locationId,
+ *     onComplete) → _openEditEconomyModal(locationId). The refresh
+ *     callback was a bind-time closure; now the modal calls
+ *     module-level _refresh() on success/partial and on failure.
+ *   - Removed dead refreshEconomyDetailsTab(locationId, containerId)
+ *     id-scanning helper; TM.requestRender(SCOPE, TAB_ID) is the only
+ *     supported refresh path.
+ *   - _loadEconomyView: each query is wrapped individually so a throw
+ *     from one derived query does not blank the whole tab. The failing
+ *     query's value is left null and the corresponding card renders
+ *     "—"; the error is logged.
  * =============================================================================
  */
 
@@ -111,71 +135,102 @@
     // 1. CONSTANTS
     // =========================================================================
 
-    var TAB_ID = 'history';
+    var TAB_ID = 'economy';
     var SCOPE  = 'government';
 
     // =========================================================================
     // 2. LOAD-TIME DEPENDENCY CHECKS
     // =========================================================================
 
-    if (typeof window.getPlaceById !== 'function') {
+    if (!window.SettlementQueries) {
         throw new Error(
-            'government-history-tab.js: accessors.js (getPlaceById) must load first.'
+            'government-economy-tab.js: settlement-queries.js must load first.'
         );
     }
-    if (typeof window.getCharacterById !== 'function') {
+    if (!window.SettlementProsperityQueries) {
         throw new Error(
-            'government-history-tab.js: accessors.js (getCharacterById) must load first.'
+            'government-economy-tab.js: settlement-prosperity-queries.js must load first.'
         );
     }
-    if (!window.GovernmentState) {
+    if (!window.SettlementCrimeQueries) {
         throw new Error(
-            'government-history-tab.js: government-state.js must load first.'
+            'government-economy-tab.js: settlement-crime-queries.js must load first.'
         );
     }
-    if (!window.LocationCommands
-        || typeof window.LocationCommands.assignLeader !== 'function'
-        || typeof window.LocationCommands.endLeaderTerm !== 'function'
-        || typeof window.LocationCommands.persist !== 'function') {
+    if (!window.SettlementEmploymentQueries) {
         throw new Error(
-            'government-history-tab.js: location-commands.js must load first ' +
-            '(assignLeader / endLeaderTerm / persist must all be present).'
+            'government-economy-tab.js: settlement-employment-queries.js must load first.'
+        );
+    }
+    if (!window.SettlementEducationQueries) {
+        throw new Error(
+            'government-economy-tab.js: settlement-education-queries.js must load first.'
+        );
+    }
+    if (!window.SettlementReligionQueries) {
+        throw new Error(
+            'government-economy-tab.js: settlement-religion-queries.js must load first.'
+        );
+    }
+    if (!window.SettlementGovernmentCommands
+        || typeof window.SettlementGovernmentCommands.setJusticeSeverity !== 'function'
+        || typeof window.SettlementGovernmentCommands.setWatch !== 'function') {
+        throw new Error(
+            'government-economy-tab.js: settlement-government-commands.js must load first ' +
+            '(setJusticeSeverity / setWatch).'
+        );
+    }
+    if (!window.SettlementFiscalCommands
+        || typeof window.SettlementFiscalCommands.setBudgetAllocation !== 'function') {
+        throw new Error(
+            'government-economy-tab.js: settlement-fiscal-commands.js must load first ' +
+            '(setBudgetAllocation).'
+        );
+    }
+    if (!window.SettlementGovernmentDefinitions
+        || !Array.isArray(window.SettlementGovernmentDefinitions.JUSTICE_SEVERITIES)) {
+        throw new Error(
+            'government-economy-tab.js: settlement-government-definitions.js must load first ' +
+            '(JUSTICE_SEVERITIES).'
+        );
+    }
+    if (!window.LocationQueries) {
+        throw new Error(
+            'government-economy-tab.js: location-queries.js must load first.'
         );
     }
     if (typeof window.escapeHtml !== 'function') {
         throw new Error(
-            'government-history-tab.js: formatting.js (escapeHtml) must load first.'
+            'government-economy-tab.js: formatting.js (escapeHtml) must load first.'
         );
     }
     if (!window.Icons || typeof window.Icons !== 'object') {
         throw new Error(
-            'government-history-tab.js: icons.js must load first.'
+            'government-economy-tab.js: icons.js must load first.'
         );
     }
     if (typeof window.openModal !== 'function') {
         throw new Error(
-            'government-history-tab.js: modals-core.js (openModal) must load first.'
-        );
-    }
-    if (typeof window.getCurrentYear !== 'function') {
-        throw new Error(
-            'government-history-tab.js: time.js (getCurrentYear) must load first.'
-        );
-    }
-    if (typeof window.calculateAge !== 'function') {
-        throw new Error(
-            'government-history-tab.js: time.js (calculateAge) must load first.'
+            'government-economy-tab.js: modals-core.js (openModal) must load first.'
         );
     }
     if (!window.TabManager || typeof window.TabManager.register !== 'function') {
         throw new Error(
-            'government-history-tab.js: tab-manager.js must load first.'
+            'government-economy-tab.js: tab-manager.js must load first.'
         );
     }
 
-    var GS = window.GovernmentState;
-    var LC = window.LocationCommands;
-    var TM = window.TabManager;
+    var SQ   = window.SettlementQueries;
+    var SPQ  = window.SettlementProsperityQueries;
+    var SCQ  = window.SettlementCrimeQueries;
+    var SEQ  = window.SettlementEmploymentQueries;
+    var SEDQ = window.SettlementEducationQueries;
+    var SRQ  = window.SettlementReligionQueries;
+    var SGC  = window.SettlementGovernmentCommands;
+    var SFC  = window.SettlementFiscalCommands;
+    var SGD  = window.SettlementGovernmentDefinitions;
+    var LQ   = window.LocationQueries;
+    var TM   = window.TabManager;
 
     // =========================================================================
     // 3. DEPENDENCY WRAPPERS (soft)
@@ -194,7 +249,7 @@
             .replace(/'/g, '&#39;');
     }
 
-    function _getIcon(name) {
+    function _icon(name) {
         if (typeof window.getIcon === 'function') {
             try {
                 var s = window.getIcon(name);
@@ -207,7 +262,7 @@
     }
 
     function _iconSpan(name) {
-        var i = _getIcon(name);
+        var i = _icon(name);
         return i
             ? '<span class="gov-tab-icon" aria-hidden="true">' + i + '</span>'
             : '';
@@ -221,460 +276,417 @@
         }
     }
 
-    function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function'
-            ? window.getPlaceById(id)
-            : null;
+    function _unknown() {
+        return '<span class="value-unknown">—</span>';
     }
 
-    function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function'
-            ? window.getCharacterById(id)
-            : null;
+    function _fmtNumber(value) {
+        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
+        return _esc(value.toLocaleString());
     }
 
-    function _openCharacterSelector(options) {
-        if (typeof window.openCharacterSelector === 'function') {
-            return window.openCharacterSelector(options);
+    function _fmtPercent(value, digits) {
+        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
+        var factor = Math.pow(10, digits || 0);
+        var rounded = Math.round(value * factor) / factor;
+        return _esc(String(rounded) + '%');
+    }
+
+    function _placeSummary(locationId) {
+        if (!locationId) return null;
+        if (typeof LQ.getPlaceSummary === 'function') {
+            try { return LQ.getPlaceSummary(locationId); }
+            catch (e) { return null; }
         }
-        _toast('Character selector unavailable', 'error');
         return null;
     }
 
-    function _getCurrentYear() {
-        return window.getCurrentYear();
+    // =========================================================================
+    // 4. PRESENTATION HELPERS (display-only; not domain rules)
+    // =========================================================================
+
+    function _prosperityBucket(value) {
+        if (typeof value !== 'number') return { label: '—', className: 'is-unknown' };
+        if (value >= 80) return { label: 'Booming', className: 'is-ok' };
+        if (value >= 60) return { label: 'Prosperous', className: 'is-ok' };
+        if (value >= 40) return { label: 'Stable', className: 'is-warning' };
+        if (value >= 20) return { label: 'Declining', className: 'is-danger' };
+        return { label: 'Crisis', className: 'is-danger-strong' };
     }
 
-    function _openModal(opts) {
-        var forwarded = {};
-        for (var k in opts) {
-            if (Object.prototype.hasOwnProperty.call(opts, k)) {
-                forwarded[k] = opts[k];
+    function _crimeBucket(value) {
+        if (typeof value !== 'number') return { label: '—', className: 'is-unknown' };
+        if (value > 0.5) return { label: 'Extreme', className: 'is-danger-strong' };
+        if (value > 0.3) return { label: 'High', className: 'is-danger' };
+        if (value > 0.15) return { label: 'Moderate', className: 'is-warning' };
+        return { label: 'Low', className: 'is-ok' };
+    }
+
+    function _justiceLabel(severityId) {
+        if (!severityId) return '—';
+        var severities = SGD.JUSTICE_SEVERITIES;
+        for (var i = 0; i < severities.length; i++) {
+            if (severities[i].id === severityId) return severities[i].name;
+        }
+        return severityId;
+    }
+
+    // =========================================================================
+    // 5. DATA LOADERS (per-field try/catch — one bad derived query must
+    //    not blank the tab)
+    // =========================================================================
+
+    function _safe(fn, label) {
+        try { return fn(); }
+        catch (e) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn(
+                    'government-economy-tab: ' + label + ' query threw',
+                    e
+                );
             }
+            return null;
         }
-        if (forwarded.titleHtml === undefined && forwarded.title !== undefined) {
-            forwarded.titleHtml = forwarded.title;
-        }
-        if (forwarded.contentHtml === undefined && forwarded.content !== undefined) {
-            forwarded.contentHtml = forwarded.content;
-        }
-        return window.openModal(forwarded);
+    }
+
+    function _loadEconomyView(locationId) {
+        var settlement = _safe(function () {
+            return SQ.getSettlementData(locationId);
+        }, 'settlement');
+        if (!settlement) return null;
+
+        var population = _safe(function () {
+            return LQ.getPopulationCount(locationId, false);
+        }, 'population');
+
+        var prosperity = _safe(function () {
+            return SPQ.getProsperity(locationId);
+        }, 'prosperity');
+
+        var crime = _safe(function () {
+            return SCQ.getCrimeRate(locationId);
+        }, 'crime');
+
+        var employment = _safe(function () {
+            return SEQ.getEmployment(locationId);
+        }, 'employment');
+
+        var literacy = _safe(function () {
+            return SEDQ.getLiteracyStats(locationId);
+        }, 'literacy');
+
+        var religiousUnity = _safe(function () {
+            return SRQ.getReligiousUnity(locationId);
+        }, 'religiousUnity');
+
+        var dominantReligion = _safe(function () {
+            return SRQ.getDominantReligion(locationId);
+        }, 'dominantReligion');
+
+        return {
+            locationId: locationId,
+            settlement: settlement,
+            population: typeof population === 'number' ? population : null,
+            prosperity: prosperity
+                ? {
+                    value: prosperity.value,
+                    band: prosperity.band,
+                    modifiers: prosperity.modifiers
+                  }
+                : null,
+            crime: crime
+                ? { value: crime.value, modifiers: crime.modifiers }
+                : null,
+            employment: employment || null,
+            literacy: literacy || null,
+            religiousUnity: typeof religiousUnity === 'number'
+                ? religiousUnity
+                : null,
+            dominantReligion: dominantReligion || null
+        };
     }
 
     // =========================================================================
-    // 4. DATA HELPERS
+    // 6. HTML BUILDERS
     // =========================================================================
 
-    /**
-     * Age of a character. Passes the deceased flag so calculateAge
-     * computes age-at-death correctly.
-     */
-    function _calculateCharacterAge(character, asOfYear) {
-        if (!character) return null;
-        var birthYear = character.birthYear;
-        if (typeof birthYear !== 'number' || !isFinite(birthYear)) return null;
-        return window.calculateAge(
-            birthYear,
-            character.isDeceased === true,
-            character.deathYear,
-            asOfYear
+    function _buildHeader(place) {
+        var name = place ? (place.displayName || place.name || '') : '';
+
+        return (
+            '<div class="eco-details-header">' +
+                '<h3>' + _esc(name) + ' - Economy</h3>' +
+                '<div class="eco-details-actions">' +
+                    '<button type="button" class="eco-btn" ' +
+                        'data-action="edit-economy">' +
+                        _iconSpan('EDIT') + ' Edit' +
+                    '</button>' +
+                    '<button type="button" class="eco-btn" ' +
+                        'data-action="refresh-economy">' +
+                        _iconSpan('REFRESH') + ' Refresh' +
+                    '</button>' +
+                '</div>' +
+            '</div>'
         );
     }
 
-    function _getAllLeaderAssignments(place) {
-        if (!place) return [];
-        return Array.isArray(place.leaderAssignments)
-            ? place.leaderAssignments
-            : [];
+    function _buildNoteBanner() {
+        return (
+            '<div class="eco-integration-banner" role="note">' +
+                '<strong>Prosperity and crime rate are derived.</strong> ' +
+                'They are computed from the writable inputs below (justice ' +
+                'severity, watch, salary budget) plus tax rate, features, ' +
+                'military spending, employment, religion, and education. ' +
+                'Use the Edit action to change justice severity, watch, or ' +
+                'salary budget.' +
+            '</div>'
+        );
     }
 
-    function _getAssociatedCharacters(place) {
-        if (!GS || !place) return [];
+    function _renderStatCard(iconName, value, label, sub) {
+        return (
+            '<div class="eco-stat-card">' +
+                '<div class="eco-stat-icon" aria-hidden="true">' +
+                    _iconSpan(iconName) +
+                '</div>' +
+                '<div class="eco-stat-content">' +
+                    '<div class="eco-stat-value">' + value + '</div>' +
+                    '<div class="eco-stat-label">' + _esc(label) + '</div>' +
+                    (sub
+                        ? '<div class="eco-stat-sub">' + _esc(sub) + '</div>'
+                        : '') +
+                '</div>' +
+            '</div>'
+        );
+    }
 
-        var depts;
-        try {
-            depts = (typeof GS.getDepartmentsByLocationId === 'function')
-                ? (GS.getDepartmentsByLocationId(place.id) || [])
-                : [];
-        } catch (e) {
-            depts = [];
+    function _buildStatGrid(view) {
+        var emp = view.employment;
+        var lit = view.literacy;
+
+        var populationLabel = _fmtNumber(view.population);
+        var employmentLabel = emp ? _fmtPercent(emp.employmentRate, 0) : _unknown();
+        var employmentSub = emp
+            ? (emp.totalEmployed.toLocaleString() + ' employed, ' +
+               emp.unemployed.toLocaleString() + ' unemployed')
+            : 'Employment data unavailable';
+        var literacyLabel = lit ? _fmtPercent(lit.literacyRate, 0) : _unknown();
+        var literacySub = lit
+            ? (lit.literateCount.toLocaleString() + ' literate of ' +
+               lit.totalPopulation.toLocaleString())
+            : 'Literacy data unavailable';
+        var wageLabel = emp ? _fmtNumber(emp.averageWage) : _unknown();
+
+        return (
+            '<div class="eco-stats-grid">' +
+                _renderStatCard('PERSON', populationLabel, 'Living Population', '') +
+                _renderStatCard('PERSON', employmentLabel, 'Employment Rate', employmentSub) +
+                _renderStatCard('BOOK', literacyLabel, 'Literacy Rate', literacySub) +
+                _renderStatCard('COIN', wageLabel, 'Average Wage', '') +
+            '</div>'
+        );
+    }
+
+    function _buildProsperityBlock(view) {
+        var prosperity = view.prosperity;
+        if (!prosperity) {
+            return (
+                '<div class="eco-prosperity">' +
+                    '<div class="eco-prosperity-label">Prosperity (derived)</div>' +
+                    '<div class="eco-prosperity-value">' + _unknown() + '</div>' +
+                '</div>'
+            );
         }
 
-        var associated = Object.create(null);
-        for (var i = 0; i < depts.length; i++) {
-            var dept = depts[i];
-            if (!dept || !Array.isArray(dept.assignments)) continue;
+        var bucket = _prosperityBucket(prosperity.value);
+        var pct = typeof prosperity.value === 'number'
+            ? Math.min(100, Math.max(0, Math.round(prosperity.value)))
+            : 0;
 
-            for (var a = 0; a < dept.assignments.length; a++) {
-                var assignment = dept.assignments[a];
-                if (!assignment || assignment.endYear) continue;
+        return (
+            '<div class="eco-prosperity">' +
+                '<div class="eco-prosperity-label">Prosperity (derived)</div>' +
+                '<div class="eco-prosperity-bar">' +
+                    '<div class="eco-prosperity-fill ' + bucket.className + '" ' +
+                        'data-width="' + pct + '"></div>' +
+                '</div>' +
+                '<div class="eco-prosperity-value">' +
+                    (typeof prosperity.value === 'number'
+                        ? _esc(String(prosperity.value))
+                        : '—') +
+                    ' - ' + _esc(bucket.label) +
+                    (prosperity.band
+                        ? ' (' + _esc(prosperity.band.name) + ')'
+                        : '') +
+                '</div>' +
+            '</div>'
+        );
+    }
 
-                var charId = assignment.characterId;
-                if (!charId) continue;
-
-                if (!associated[charId]) {
-                    associated[charId] = {
-                        characterId: charId,
-                        positions: [],
-                        departments: []
-                    };
-                }
-
-                var pos = null;
-                for (var p = 0; p < (dept.positions || []).length; p++) {
-                    if (dept.positions[p].id === assignment.positionId) {
-                        pos = dept.positions[p];
-                        break;
-                    }
-                }
-
-                associated[charId].positions.push(
-                    pos ? pos.name : assignment.positionId
-                );
-                associated[charId].departments.push(dept.name);
-            }
+    function _buildCrimeBlock(view) {
+        var crime = view.crime;
+        if (!crime) {
+            return (
+                '<div class="eco-crime">' +
+                    '<div class="eco-crime-label">Crime Rate (derived)</div>' +
+                    '<div class="eco-crime-value">' + _unknown() + '</div>' +
+                '</div>'
+            );
         }
 
-        var result = [];
-        for (var cid in associated) {
-            if (!Object.prototype.hasOwnProperty.call(associated, cid)) continue;
-            var char = _getCharacterById(cid);
-            if (!char) continue;
-            result.push({
-                characterId: cid,
-                character: char,
-                positions: associated[cid].positions,
-                departments: associated[cid].departments,
-                isDeceased: char.isDeceased === true
-            });
+        var bucket = _crimeBucket(crime.value);
+        var pct = typeof crime.value === 'number'
+            ? Math.round(crime.value * 100)
+            : null;
+
+        return (
+            '<div class="eco-crime">' +
+                '<div class="eco-crime-label">Crime Rate (derived)</div>' +
+                '<div class="eco-crime-value ' + bucket.className + '">' +
+                    (pct !== null ? pct + '%' : '—') +
+                    ' - ' + _esc(bucket.label) +
+                '</div>' +
+            '</div>'
+        );
+    }
+
+    function _buildJusticeBlock(view) {
+        var severity = view.settlement.justiceSeverity || 'medium';
+        return (
+            '<div class="eco-justice">' +
+                '<div class="eco-justice-label">Justice Severity</div>' +
+                '<div class="eco-justice-value">' +
+                    _esc(_justiceLabel(severity)) +
+                '</div>' +
+            '</div>'
+        );
+    }
+
+    function _buildWatchBlock(view) {
+        var s = view.settlement;
+        var active = s.hasWatch === true;
+        var size = typeof s.watchSize === 'number' ? s.watchSize : 0;
+        return (
+            '<div class="eco-watch">' +
+                '<div class="eco-watch-label">Watch</div>' +
+                '<div class="eco-watch-value">' +
+                    (active
+                        ? 'Active <span class="eco-watch-size">(' +
+                          size + ' members)</span>'
+                        : 'Inactive') +
+                '</div>' +
+            '</div>'
+        );
+    }
+
+    function _buildSalaryBudgetBlock(view) {
+        var raw = view.settlement.governmentSalaryBudget;
+        var has = typeof raw === 'number';
+        return (
+            '<div class="eco-salary-budget">' +
+                '<div class="eco-salary-label">Government Salary Budget (annual)</div>' +
+                '<div class="eco-salary-value">' +
+                    (has
+                        ? raw.toLocaleString() + ' gold/year'
+                        : '— (not allocated)') +
+                '</div>' +
+            '</div>'
+        );
+    }
+
+    function _buildReligionBlock(view) {
+        var unity = view.religiousUnity;
+        var dominant = view.dominantReligion;
+        return (
+            '<div class="eco-religion">' +
+                '<div class="eco-religion-label">Religion (derived)</div>' +
+                '<div class="eco-religion-value">' +
+                    'Unity: ' + (typeof unity === 'number' ? unity + '%' : '—') +
+                    ' · Dominant: ' + (dominant ? _esc(dominant.name) : '—') +
+                '</div>' +
+            '</div>'
+        );
+    }
+
+    function _buildSettlementDetailsBlock(view) {
+        return (
+            '<div class="eco-settlement-details">' +
+                '<h4>Settlement Economy</h4>' +
+                _buildProsperityBlock(view) +
+                _buildCrimeBlock(view) +
+                _buildJusticeBlock(view) +
+                _buildWatchBlock(view) +
+                _buildSalaryBudgetBlock(view) +
+                _buildReligionBlock(view) +
+            '</div>'
+        );
+    }
+
+    function _buildEmptyState() {
+        return (
+            '<div class="eco-details-empty">' +
+                'No settlement record exists for this location. ' +
+                'The economy view requires a settlement; it cannot be ' +
+                'created from this tab.' +
+            '</div>'
+        );
+    }
+
+    function _buildShell(place, view) {
+        if (!place) {
+            return '<div class="eco-details-empty">' +
+                'Select a government from the sidebar to view economy.' +
+                '</div>';
+        }
+        if (!view) {
+            return (
+                '<div class="eco-details-container" ' +
+                    'data-location-id="' + _esc(place.id || '') + '">' +
+                    _buildHeader(place) +
+                    _buildNoteBanner() +
+                    _buildEmptyState() +
+                '</div>'
+            );
         }
 
-        result.sort(function (a, b) {
-            var nameA = (a.character.name || '') +
-                (a.character.surname || '');
-            var nameB = (b.character.name || '') +
-                (b.character.surname || '');
-            return nameA.localeCompare(nameB);
-        });
-
-        return result;
+        return (
+            '<div class="eco-details-container" ' +
+                'data-location-id="' + _esc(place.id || '') + '">' +
+                _buildHeader(place) +
+                _buildNoteBanner() +
+                _buildStatGrid(view) +
+                _buildSettlementDetailsBlock(view) +
+            '</div>'
+        );
     }
 
     /**
-     * Merges leader assignments and department-position holders into a
-     * single officials list keyed by characterId. A leader who is also
-     * a department official appears once, with both roles. Sort order
-     * is by display name (the object is a temporary key map; the
-     * result order is explicitly sorted).
+     * Applies prosperity-bar widths from the data-width attributes set
+     * by _buildProsperityBlock. Runtime percentages cannot be expressed
+     * in a static CSS class, so the width is set after innerHTML
+     * assignment. Idempotent — safe to call on every render (a fresh
+     * container needs it every time, and calling it on the same
+     * container is a no-op rewrite of the same width).
      */
-    function _getAllGovernmentOfficials(place) {
-        var leaders = _getAllLeaderAssignments(place);
-        var associated = _getAssociatedCharacters(place);
-
-        var officials = Object.create(null);
-
-        for (var i = 0; i < leaders.length; i++) {
-            var leader = leaders[i];
-            if (!leader || !leader.characterId) continue;
-            var lchar = _getCharacterById(leader.characterId);
-            if (!lchar) continue;
-
-            officials[leader.characterId] = {
-                characterId: leader.characterId,
-                character: lchar,
-                type: 'leader',
-                leaderInfo: leader,
-                isActive: leader.isActive === true && !leader.endYear,
-                positions: [],
-                departments: []
-            };
+    function _applyProsperityBarWidths(container) {
+        var fills = container.querySelectorAll('.eco-prosperity-fill');
+        for (var i = 0; i < fills.length; i++) {
+            var w = fills[i].getAttribute('data-width');
+            if (w !== null) fills[i].style.width = w + '%';
         }
-
-        for (var a = 0; a < associated.length; a++) {
-            var assoc = associated[a];
-            if (officials[assoc.characterId]) {
-                officials[assoc.characterId].positions = assoc.positions;
-                officials[assoc.characterId].departments = assoc.departments;
-            } else {
-                officials[assoc.characterId] = {
-                    characterId: assoc.characterId,
-                    character: assoc.character,
-                    type: 'official',
-                    leaderInfo: null,
-                    isActive: true,
-                    positions: assoc.positions,
-                    departments: assoc.departments
-                };
-            }
-        }
-
-        var result = [];
-        for (var cid in officials) {
-            if (!Object.prototype.hasOwnProperty.call(officials, cid)) continue;
-            result.push(officials[cid]);
-        }
-        result.sort(function (a, b) {
-            var nameA = (a.character.name || '') +
-                (a.character.surname || '');
-            var nameB = (b.character.name || '') +
-                (b.character.surname || '');
-            return nameA.localeCompare(nameB);
-        });
-        return result;
     }
 
     // =========================================================================
-    // 5. RENDER HELPERS
+    // 7. RENDERER (TabManager contract: fn(container, context))
     // =========================================================================
 
-    function _renderLeaderCard(assignment, index) {
-        var char = _getCharacterById(assignment.characterId);
-        var charName = char
-            ? (char.name + (char.surname ? ' ' + char.surname : ''))
-            : 'Unknown';
-        var isActive = assignment.isActive === true && !assignment.endYear;
-        var age = char ? _calculateCharacterAge(char) : null;
-
-        var html = '<div class="gh-leader-card" ' +
-            'data-leader-id="' + _esc(assignment.id) + '">';
-        html += '<div class="gh-leader-number">#' + (index + 1) + '</div>';
-        html += '<div class="gh-leader-info">';
-        html += '<div class="gh-leader-name">' +
-            _esc(charName) + '</div>';
-        if (assignment.title) {
-            html += '<div class="gh-leader-title">' +
-                _esc(assignment.title) + '</div>';
-        }
-        html += '<div class="gh-leader-period">';
-        html += '<span class="gh-leader-start">' +
-            (assignment.startYear || '?') + '</span>';
-        if (assignment.endYear) {
-            html += ' <span class="gh-leader-arrow" aria-hidden="true">→</span> ' +
-                '<span class="gh-leader-end">' +
-                assignment.endYear + '</span>';
-        } else {
-            html += ' <span class="gh-leader-arrow" aria-hidden="true">→</span> ' +
-                '<span class="gh-leader-present">Present</span>';
-        }
-        if (assignment.endReason) {
-            html += ' <span class="gh-leader-reason">(' +
-                _esc(assignment.endReason) + ')</span>';
-        }
-        html += '</div>';
-        if (age !== null) {
-            html += '<div class="gh-leader-age">Age: ' +
-                (char.isDeceased === true ? age + ' (at death)' : age) +
-                ' years</div>';
-        }
-        if (char && char.birthYear) {
-            html += '<div class="gh-leader-birth">Born: ' +
-                char.birthYear + '</div>';
-        }
-        if (isActive) {
-            html += '<div class="gh-leader-status active">' +
-                'Current Leader</div>';
-        } else {
-            html += '<div class="gh-leader-status ended">' +
-                'Former Leader</div>';
-        }
-        html += '</div>';
-
-        html += '<div class="gh-leader-actions">';
-        if (isActive) {
-            html += '<button type="button" class="gh-btn gh-btn-end" ' +
-                'data-action="end-leader" ' +
-                'data-leader-id="' + _esc(assignment.id) + '" ' +
-                'data-char-id="' + _esc(assignment.characterId) + '" ' +
-                'aria-label="End leadership term">' +
-                _getIcon('X') + ' End Term' +
-                '</button>';
-        }
-        html += '</div>';
-
-        html += '</div>';
-        return html;
-    }
-
-    function _renderOfficialCard(official) {
-        var char = official.character;
-        var charName = char
-            ? (char.name + (char.surname ? ' ' + char.surname : ''))
-            : 'Unknown';
-        var age = char ? _calculateCharacterAge(char) : null;
-
-        var html = '<div class="gh-official-card">';
-        html += '<div class="gh-official-info">';
-        html += '<div class="gh-official-name">' +
-            _esc(charName) + '</div>';
-        if (official.positions.length > 0) {
-            html += '<div class="gh-official-positions">';
-            for (var i = 0; i < official.positions.length; i++) {
-                html += '<span class="gh-official-position">' +
-                    _esc(official.positions[i]) + '</span>';
-            }
-            html += '</div>';
-        }
-        if (official.departments.length > 0) {
-            html += '<div class="gh-official-departments">' +
-                'Department: ' + _esc(official.departments.join(', ')) +
-                '</div>';
-        }
-        if (age !== null) {
-            html += '<div class="gh-official-age">Age: ' +
-                (char.isDeceased === true ? age + ' (at death)' : age) +
-                ' years</div>';
-        }
-        if (official.isDeceased) {
-            html += '<div class="gh-official-status deceased">Deceased</div>';
-        } else {
-            html += '<div class="gh-official-status active">Active</div>';
-        }
-        html += '</div>';
-        html += '</div>';
-        return html;
-    }
-
-    function _renderGovernmentHistory(place) {
-        if (!place) {
-            return '<div class="gh-details-empty">' +
-                'Select a government from the sidebar to view history.' +
-                '</div>';
-        }
-
-        var leaders = _getAllLeaderAssignments(place);
-        var officials = _getAllGovernmentOfficials(place);
-
-        var sortedLeaders = leaders.slice().sort(function (a, b) {
-            return (a.startYear || 0) - (b.startYear || 0);
-        });
-
-        var currentLeaders = sortedLeaders.filter(function (l) {
-            return l.isActive === true && !l.endYear;
-        });
-        var formerLeaders = sortedLeaders.filter(function (l) {
-            return !(l.isActive === true && !l.endYear);
-        });
-
-        var html = '<div class="gh-tab-container" ' +
-            'data-location-id="' + _esc(place.id || '') + '">';
-
-        // Header
-        html += '<div class="gh-tab-header">';
-        html += '<h3>Government History - ' +
-            _esc(place.displayName || place.name) + '</h3>';
-        html += '<div class="gh-tab-actions">';
-        html += '<button type="button" class="gh-btn gh-btn-add" ' +
-            'data-action="add-leader">' +
-            _iconSpan('PLUS') + ' Add Leader' +
-            '</button>';
-        html += '<button type="button" class="gh-btn" ' +
-            'data-action="refresh-history">' +
-            _iconSpan('REFRESH') + ' Refresh' +
-            '</button>';
-        html += '</div>';
-        html += '</div>';
-
-        // Stats
-        html += '<div class="gh-stats-summary">';
-        html += '<div class="gh-stat">' +
-            '<span class="gh-stat-label">Total Leaders</span>' +
-            '<span class="gh-stat-value">' + leaders.length + '</span>' +
-            '</div>';
-        html += '<div class="gh-stat">' +
-            '<span class="gh-stat-label">Current</span>' +
-            '<span class="gh-stat-value is-active">' +
-            currentLeaders.length + '</span>' +
-            '</div>';
-        html += '<div class="gh-stat">' +
-            '<span class="gh-stat-label">Former</span>' +
-            '<span class="gh-stat-value is-ended">' +
-            formerLeaders.length + '</span>' +
-            '</div>';
-        html += '<div class="gh-stat">' +
-            '<span class="gh-stat-label">Officials</span>' +
-            '<span class="gh-stat-value is-officials">' +
-            officials.length + '</span>' +
-            '</div>';
-        html += '</div>';
-
-        // Leaders section
-        html += '<div class="gh-section">';
-        html += '<div class="gh-section-header">' +
-            '<span>Leadership History</span></div>';
-
-        if (leaders.length === 0) {
-            html += '<div class="gh-empty">' +
-                '<p>No leaders in history. Assign a leader to begin.</p>' +
-                '</div>';
-        } else {
-            if (currentLeaders.length > 0) {
-                html += '<div class="gh-subsection">';
-                html += '<div class="gh-subsection-header">' +
-                    'Current Leaders</div>';
-                html += '<div class="gh-leaders-list">';
-                for (var i = 0; i < currentLeaders.length; i++) {
-                    var leaderIdx = sortedLeaders.indexOf(currentLeaders[i]);
-                    html += _renderLeaderCard(currentLeaders[i], leaderIdx);
-                }
-                html += '</div></div>';
-            }
-
-            if (formerLeaders.length > 0) {
-                html += '<div class="gh-subsection gh-subsection-ended">';
-                html += '<div class="gh-subsection-toggle" ' +
-                    'data-toggle="former-leaders" ' +
-                    'role="button" tabindex="0" aria-expanded="false">';
-                html += '<span class="gh-subsection-label">' +
-                    'Former Leaders (' + formerLeaders.length + ')</span>';
-                html += '<span class="gh-toggle-icon" aria-hidden="true">' +
-                    _getIcon('TRIANGLE_RIGHT') + '</span>';
-                html += '</div>';
-                html += '<div class="gh-subsection-body is-collapsed">';
-                html += '<div class="gh-leaders-list">';
-                for (var f = 0; f < formerLeaders.length; f++) {
-                    var formerIdx = sortedLeaders.indexOf(formerLeaders[f]);
-                    html += _renderLeaderCard(formerLeaders[f], formerIdx);
-                }
-                html += '</div></div></div>';
-            }
-        }
-        html += '</div>';
-
-        // Officials section
-        html += '<div class="gh-section">';
-        html += '<div class="gh-section-header">' +
-            '<span>Government Officials (' + officials.length + ')</span>' +
-            '</div>';
-
-        if (officials.length === 0) {
-            html += '<div class="gh-empty">' +
-                '<p>No government officials found. Assign characters ' +
-                'to department positions.</p>' +
-                '</div>';
-        } else {
-            html += '<div class="gh-officials-grid">';
-            for (var o = 0; o < officials.length; o++) {
-                html += _renderOfficialCard(officials[o]);
-            }
-            html += '</div>';
-        }
-        html += '</div>';
-
-        html += '</div>';
-        return html;
-    }
-
-    // =========================================================================
-    // 6. RENDERER (TabManager contract: fn(container, context))
-    // =========================================================================
-
-    function renderGovernmentHistoryTab(container, context) {
+    function renderEconomyDetailsTab(container, context) {
         if (!container) return;
 
         if (!context || !context.locationId) {
             container.innerHTML =
                 '<div class="empty-state">' +
-                'Select a government from the sidebar to view history.' +
+                'Select a government from the sidebar to view economy.' +
                 '</div>';
             return;
         }
@@ -682,11 +694,14 @@
         var locationId = context.locationId;
         var place = (context.governmentState && context.governmentState.place)
             ? context.governmentState.place
-            : _getPlaceById(locationId);
+            : _placeSummary(locationId);
 
-        container.innerHTML = _renderGovernmentHistory(place);
+        var view = _loadEconomyView(locationId);
+
+        container.innerHTML = _buildShell(place, view);
         container.dataset.locationId = locationId;
 
+        _applyProsperityBarWidths(container);
         _bindActions(container);
     }
 
@@ -697,12 +712,12 @@
     }
 
     // =========================================================================
-    // 7. ACTION BINDING (delegated, on the tab container)
+    // 8. ACTION BINDING (delegated, on the tab container)
     // =========================================================================
 
     function _bindActions(container) {
-        if (container._ghBound) return;
-        container._ghBound = true;
+        if (container._govEcoBound) return;
+        container._govEcoBound = true;
 
         container.addEventListener('click', function (event) {
             var target = event.target.closest('[data-action]');
@@ -712,378 +727,316 @@
             var locationId = container.dataset.locationId;
             if (!locationId) return;
 
-            if (action === 'add-leader') {
+            if (action === 'edit-economy') {
                 event.preventDefault();
-                _addLeaderToLocation(locationId);
+                _openEditEconomyModal(locationId);
                 return;
             }
 
-            if (action === 'refresh-history') {
+            if (action === 'refresh-economy') {
                 event.preventDefault();
                 _refresh();
-                _toast('History refreshed', 'info');
-                return;
-            }
-
-            if (action === 'end-leader') {
-                event.preventDefault();
-                var charId = target.getAttribute('data-char-id');
-                if (!charId) return;
-                _endLeaderTerm(locationId, charId);
+                _toast('Economy refreshed', 'info');
                 return;
             }
         });
-
-        // Former-leaders collapse toggle. Location is not needed here;
-        // the toggle only manipulates local DOM.
-        container.addEventListener('click', function (event) {
-            var toggle = event.target.closest('[data-toggle="former-leaders"]');
-            if (!toggle || !container.contains(toggle)) return;
-            event.preventDefault();
-            _toggleFormerLeaders(toggle);
-        });
-
-        // Keyboard activation for the toggle.
-        container.addEventListener('keydown', function (event) {
-            var toggle = event.target.closest('[data-toggle="former-leaders"]');
-            if (!toggle || !container.contains(toggle)) return;
-            if (event.key !== 'Enter' && event.key !== ' ') return;
-            event.preventDefault();
-            _toggleFormerLeaders(toggle);
-        });
-    }
-
-    function _toggleFormerLeaders(toggle) {
-        var body = toggle.nextElementSibling;
-        if (!body) return;
-        var collapsed = body.classList.toggle('is-collapsed');
-        var icon = toggle.querySelector('.gh-toggle-icon');
-        if (icon) {
-            icon.innerHTML = collapsed
-                ? _getIcon('TRIANGLE_RIGHT')
-                : _getIcon('TRIANGLE_DOWN');
-        }
-        toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     }
 
     // =========================================================================
-    // 8. LEADER ACTIONS (through LocationCommands)
+    // 9. EDIT MODAL
     // =========================================================================
+    //
+    // Only three fields are editable, each with a canonical command:
+    //   justiceSeverity        → SettlementGovernmentCommands.setJusticeSeverity
+    //   hasWatch / watchSize   → SettlementGovernmentCommands.setWatch
+    //   governmentSalaryBudget → SettlementFiscalCommands.setBudgetAllocation
+    //
+    // Prosperity and crime rate are NOT in the form — they are derived
+    // values, and no command writes them. The note banner and the edit
+    // modal's warning block both say so.
 
-    function _addLeaderToLocation(locationId) {
-        var place = _getPlaceById(locationId);
-        if (!place) {
-            _toast('Location not found', 'error');
+    function _openEditEconomyModal(locationId) {
+        var settlement;
+        try { settlement = SQ.getSettlementData(locationId); }
+        catch (e) { settlement = null; }
+
+        if (!settlement) {
+            _toast('No settlement record for this location', 'error');
             return;
         }
 
-        _openCharacterSelector({
-            title: 'Add Leader to ' + (place.displayName || place.name),
-            preset: 'available',
-            filters: {
-                location: locationId,
-                showDeceased: true
-            },
-            onSelect: function (characterId) {
-                var char = _getCharacterById(characterId);
-                if (!char) {
-                    _toast('Character not found', 'error');
-                    return;
+        var place = _placeSummary(locationId);
+        var placeName = place ? (place.displayName || place.name || '') : '';
+
+        // Snapshot the settlement at open time. Change detection
+        // compares against this snapshot; command calls use the same
+        // locationId the modal opened against, even if the user has
+        // since switched the sidebar selection.
+        var snapshot = settlement;
+
+        var currentJustice = snapshot.justiceSeverity || 'medium';
+        var currentHasWatch = snapshot.hasWatch === true;
+        var currentWatchSize = typeof snapshot.watchSize === 'number'
+            ? snapshot.watchSize
+            : 0;
+        var currentSalaryBudget = typeof snapshot.governmentSalaryBudget === 'number'
+            ? snapshot.governmentSalaryBudget
+            : null;
+
+        var content = '<div class="eco-edit-form">';
+
+        content += '<div class="eco-edit-warning">' +
+            '<p><strong>Edits apply to this settlement record only.</strong> ' +
+            'Each change commits independently and is persisted immediately. ' +
+            'Prosperity and crime rate are not editable — they are derived ' +
+            'from the fields below plus tax rate, features, military spending, ' +
+            'employment, religion, and education.</p>' +
+            '</div>';
+
+        // Justice severity
+        content += '<div class="form-group">' +
+            '<label for="eco-justice-select">Justice Severity</label>' +
+            '<select id="eco-justice-select" class="form-control">';
+        var severities = SGD.JUSTICE_SEVERITIES;
+        for (var i = 0; i < severities.length; i++) {
+            var s = severities[i];
+            var selected = s.id === currentJustice ? ' selected' : '';
+            content += '<option value="' + _esc(s.id) + '"' + selected + '>' +
+                _esc(s.name) + '</option>';
+        }
+        content += '</select></div>';
+
+        // Watch
+        content += '<div class="form-group">' +
+            '<label>Watch</label>' +
+            '<div class="eco-watch-toggle">' +
+                '<label><input type="radio" name="eco-watch" value="active"' +
+                    (currentHasWatch ? ' checked' : '') + '> Active</label>' +
+                '<label><input type="radio" name="eco-watch" value="inactive"' +
+                    (!currentHasWatch ? ' checked' : '') + '> Inactive</label>' +
+            '</div>' +
+            '</div>';
+
+        content += '<div class="form-group">' +
+            '<label for="eco-watch-size-input">Watch Size</label>' +
+            '<input type="number" id="eco-watch-size-input" class="form-control" ' +
+                'min="0" max="1000" step="1" value="' +
+                _esc(String(currentWatchSize)) + '"' +
+                (currentHasWatch ? '' : ' disabled') + '>' +
+            '<small class="eco-form-hint">' +
+            'Must be at least 1 when watch is active. Set to 0 when inactive.</small>' +
+            '</div>';
+
+        // Salary budget
+        content += '<div class="form-group">' +
+            '<label for="eco-salary-input">Government Salary Budget (gold/year)</label>' +
+            '<input type="number" id="eco-salary-input" class="form-control" ' +
+                'min="0" step="10" value="' +
+                (currentSalaryBudget !== null
+                    ? _esc(String(currentSalaryBudget))
+                    : '') + '">' +
+            '<small class="eco-form-hint">' +
+            'Annual gold allocated by the settlement treasury for government salaries.</small>' +
+            '</div>';
+
+        content += '</div>';
+
+        window.openModal({
+            titleHtml: 'Edit Economy: ' + _esc(placeName),
+            contentHtml: content,
+            confirmText: 'Save',
+            cancelText: 'Cancel',
+            onMount: function (root) {
+                var radios = root.querySelectorAll('input[name="eco-watch"]');
+                var sizeInput = root.querySelector('#eco-watch-size-input');
+                if (!radios.length || !sizeInput) return;
+
+                function syncWatchSizeEnabled() {
+                    var checked = root.querySelector('input[name="eco-watch"]:checked');
+                    var active = checked && checked.value === 'active';
+                    sizeInput.disabled = !active;
+                    if (!active) {
+                        sizeInput.value = '0';
+                    } else if (parseInt(sizeInput.value, 10) < 1) {
+                        sizeInput.value = '1';
+                    }
                 }
 
-                var charDisplay = char.name +
-                    (char.surname ? ' ' + char.surname : '');
+                for (var r = 0; r < radios.length; r++) {
+                    radios[r].addEventListener('change', syncWatchSizeEnabled);
+                }
+                syncWatchSizeEnabled();
+            },
+            onConfirm: function (root) {
+                return _submitEditEconomy(root, locationId, snapshot);
+            }
+        });
+    }
 
-                var content = '<div class="gh-leader-form">';
-                content += '<p>Add <strong>' + _esc(charDisplay) +
-                    '</strong> as a leader.</p>';
-                content += '<div class="form-group">';
-                content += '<label for="gh-leader-title-input">Title</label>';
-                content += '<input type="text" id="gh-leader-title-input" ' +
-                    'class="form-control" ' +
-                    'placeholder="e.g., Mayor, Governor, King" ' +
-                    'value="Leader">';
-                content += '</div>';
-                content += '<div class="form-row">';
-                content += '<div class="form-group">';
-                content += '<label for="gh-leader-start-year">' +
-                    'Start Year *</label>';
-                content += '<input type="number" id="gh-leader-start-year" ' +
-                    'class="form-control" value="' + _getCurrentYear() + '">';
-                content += '</div>';
-                content += '<div class="form-group">';
-                content += '<label for="gh-leader-end-year">' +
-                    'End Year (leave empty for current)</label>';
-                content += '<input type="number" id="gh-leader-end-year" ' +
-                    'class="form-control" placeholder="Optional">';
-                content += '</div>';
-                content += '</div>';
-                content += '<div class="form-group">';
-                content += '<label for="gh-leader-reason">' +
-                    'End Reason (if ended)</label>';
-                content += '<input type="text" id="gh-leader-reason" ' +
-                    'class="form-control" ' +
-                    'placeholder="e.g., Term ended, Resigned, Removed">';
-                content += '</div>';
-                content += '<div class="form-group">';
-                content += '<label class="gh-checkbox-label">';
-                content += '<input type="checkbox" id="gh-leader-is-active" ' +
-                    'checked> ';
-                content += 'This is a current/active leader';
-                content += '</label>';
-                content += '</div>';
-                content += '<p class="gov-modal-note">' +
-                    'Note: adding an active leader will end the current ' +
-                    'leader\'s term. Adding a past leader records the ' +
-                    'assignment but also ends the current term — the ' +
-                    'tab then starts with no active leader.' +
-                    '</p>';
-                content += '</div>';
+    /**
+     * Reads the form, dispatches the three commands (each independently),
+     * and reports the combined result. A partial success is reported as
+     * such, not rolled back. The tab refreshes into whatever the
+     * commands actually left.
+     */
+    function _submitEditEconomy(root, locationId, originalSettlement) {
+        var justiceEl = root.querySelector('#eco-justice-select');
+        var watchEl   = root.querySelector('input[name="eco-watch"]:checked');
+        var sizeEl    = root.querySelector('#eco-watch-size-input');
+        var salaryEl  = root.querySelector('#eco-salary-input');
 
-                _openModal({
-                    title: 'Add Leader',
-                    content: content,
-                    confirmText: 'Add Leader',
-                    cancelText: 'Cancel',
-                    onMount: function (root) {
-                        var activeCheck = root.querySelector('#gh-leader-is-active');
-                        var endYearInput = root.querySelector('#gh-leader-end-year');
-                        var reasonInput = root.querySelector('#gh-leader-reason');
-                        if (!activeCheck || !endYearInput || !reasonInput) return;
+        if (!justiceEl || !watchEl || !sizeEl || !salaryEl) {
+            _toast('Form not found in modal', 'error');
+            return false;
+        }
 
-                        function sync() {
-                            if (activeCheck.checked) {
-                                endYearInput.disabled = true;
-                                endYearInput.value = '';
-                                reasonInput.disabled = true;
-                                reasonInput.value = '';
-                            } else {
-                                endYearInput.disabled = false;
-                                reasonInput.disabled = false;
-                            }
-                        }
-                        activeCheck.addEventListener('change', sync);
-                        sync();
-                    },
-                    onConfirm: function (root) {
-                        var titleEl = root.querySelector('#gh-leader-title-input');
-                        var startEl = root.querySelector('#gh-leader-start-year');
-                        var endEl = root.querySelector('#gh-leader-end-year');
-                        var activeEl = root.querySelector('#gh-leader-is-active');
-                        if (!titleEl || !startEl || !activeEl) {
-                            _toast('Form not found in modal', 'error');
-                            return false;
-                        }
+        var newJustice = justiceEl.value || 'medium';
+        var newHasWatch = watchEl.value === 'active';
+        var newWatchSize = parseInt(sizeEl.value, 10);
+        if (!isFinite(newWatchSize) || newWatchSize < 0) newWatchSize = 0;
 
-                        var title = titleEl.value.trim() || 'Leader';
-                        var startYear = parseInt(startEl.value, 10);
-                        if (!isFinite(startYear)) {
-                            _toast('Start year is required', 'error');
-                            return false;
-                        }
+        var salaryRaw = salaryEl.value;
+        var newSalaryBudget = null;
+        if (salaryRaw !== '' && salaryRaw !== null) {
+            var parsed = parseInt(salaryRaw, 10);
+            if (isFinite(parsed) && parsed >= 0) {
+                newSalaryBudget = parsed;
+            } else {
+                _toast('Salary budget must be a non-negative integer', 'error');
+                return false;
+            }
+        }
 
-                        var isActive = activeEl.checked === true;
-                        var endYear = null;
-                        if (!isActive) {
-                            endYear = endEl
-                                ? parseInt(endEl.value, 10)
-                                : NaN;
-                            if (!isFinite(endYear)) {
-                                _toast(
-                                    'End year is required for ended terms',
-                                    'error'
-                                );
-                                return false;
-                            }
-                            if (endYear <= startYear) {
-                                _toast(
-                                    'End year must be after start year',
-                                    'error'
-                                );
-                                return false;
-                            }
-                        }
+        if (newHasWatch && newWatchSize < 1) {
+            _toast('Watch size must be at least 1 when watch is active', 'error');
+            return false;
+        }
 
-                        var assignResult;
-                        try {
-                            assignResult = LC.assignLeader(
-                                locationId, characterId, startYear, title
-                            );
-                        } catch (err) {
-                            _toast(
-                                'Assign leader failed: ' +
-                                (err && err.message ? err.message : 'threw'),
-                                'error'
-                            );
-                            return false;
-                        }
+        var results = [];
 
-                        if (!assignResult || assignResult.success !== true) {
-                            _toast(
-                                (assignResult && assignResult.reason)
-                                    ? assignResult.reason
-                                    : 'Failed to assign leader',
-                                'error'
-                            );
-                            return false;
-                        }
-
-                        if (!isActive) {
-                            var endResult;
-                            try {
-                                endResult = LC.endLeaderTerm(
-                                    locationId, characterId, endYear
-                                );
-                            } catch (err) {
-                                endResult = {
-                                    success: false,
-                                    reason: err && err.message
-                                };
-                            }
-                            if (!endResult || endResult.success !== true) {
-                                _toast(
-                                    'Leader assigned but end-term failed: ' +
-                                    (endResult && endResult.reason
-                                        ? endResult.reason
-                                        : 'unknown'),
-                                    'error'
-                                );
-                                // Persist the assignment that did succeed.
-                                try { LC.persist(); } catch (e) { /* logged below via _refresh */ }
-                                _refresh();
-                                return false;
-                            }
-                        }
-
-                        var persistResult;
-                        try { persistResult = LC.persist(); }
-                        catch (err) {
-                            persistResult = { success: false, reason: 'persist threw' };
-                        }
-                        if (persistResult && persistResult.success !== true) {
-                            _toast(
-                                'Leader added, but save failed: ' +
-                                (persistResult.reason || 'unknown'),
-                                'warning'
-                            );
-                        } else {
-                            _toast(
-                                isActive ? 'Leader assigned' : 'Past leader recorded',
-                                'success'
-                            );
-                        }
-
-                        _refresh();
-                        return true;
+        if (newJustice !== originalSettlement.justiceSeverity) {
+            try {
+                var jr = SGC.setJusticeSeverity(locationId, newJustice);
+                results.push({ field: 'justiceSeverity', result: jr });
+            } catch (err) {
+                results.push({
+                    field: 'justiceSeverity',
+                    result: {
+                        success: false,
+                        code: 'THROWN',
+                        message: err && err.message
                     }
                 });
             }
-        });
-    }
+        }
 
-    function _endLeaderTerm(locationId, characterId) {
-        var char = _getCharacterById(characterId);
-        var charName = char
-            ? (char.name + (char.surname ? ' ' + char.surname : ''))
-            : 'Unknown';
-
-        var content = '<div class="gh-leader-form">';
-        content += '<p>End leadership term for <strong>' +
-            _esc(charName) + '</strong>?</p>';
-        content += '<div class="form-group">';
-        content += '<label for="gh-end-year-input">End Year</label>';
-        content += '<input type="number" id="gh-end-year-input" ' +
-            'class="form-control" value="' + _getCurrentYear() + '">';
-        content += '</div>';
-        content += '</div>';
-
-        _openModal({
-            title: 'End Leadership Term',
-            content: content,
-            confirmText: 'End Term',
-            cancelText: 'Cancel',
-            onConfirm: function (root) {
-                var yearEl = root.querySelector('#gh-end-year-input');
-                if (!yearEl) {
-                    _toast('Form not found in modal', 'error');
-                    return false;
-                }
-
-                var endYear = parseInt(yearEl.value, 10);
-                if (!isFinite(endYear)) {
-                    endYear = _getCurrentYear();
-                }
-
-                var result;
-                try {
-                    result = LC.endLeaderTerm(locationId, characterId, endYear);
-                } catch (err) {
-                    _toast(
-                        'End leader term failed: ' +
-                        (err && err.message ? err.message : 'threw'),
-                        'error'
-                    );
-                    return false;
-                }
-
-                if (!result || result.success !== true) {
-                    _toast(
-                        (result && result.reason)
-                            ? result.reason
-                            : 'Failed to end leader term',
-                        'error'
-                    );
-                    return false;
-                }
-
-                var persistResult;
-                try { persistResult = LC.persist(); }
-                catch (err) {
-                    persistResult = { success: false, reason: 'persist threw' };
-                }
-                if (persistResult && persistResult.success !== true) {
-                    _toast(
-                        'Term ended, but save failed: ' +
-                        (persistResult.reason || 'unknown'),
-                        'warning'
-                    );
-                } else {
-                    _toast('Leadership term ended', 'info');
-                }
-
-                _refresh();
-                return true;
+        var currentHasWatch = originalSettlement.hasWatch === true;
+        var currentWatchSize = typeof originalSettlement.watchSize === 'number'
+            ? originalSettlement.watchSize
+            : 0;
+        var watchChanged = (newHasWatch !== currentHasWatch) ||
+            (newHasWatch && newWatchSize !== currentWatchSize);
+        if (watchChanged) {
+            try {
+                var wr = SGC.setWatch(locationId, {
+                    hasWatch: newHasWatch,
+                    watchSize: newHasWatch ? newWatchSize : 0
+                });
+                results.push({ field: 'watch', result: wr });
+            } catch (err) {
+                results.push({
+                    field: 'watch',
+                    result: {
+                        success: false,
+                        code: 'THROWN',
+                        message: err && err.message
+                    }
+                });
             }
-        });
+        }
+
+        var currentSalaryBudget = typeof originalSettlement.governmentSalaryBudget === 'number'
+            ? originalSettlement.governmentSalaryBudget
+            : null;
+        var salaryChanged = (newSalaryBudget !== null)
+            && (newSalaryBudget !== currentSalaryBudget);
+        if (salaryChanged) {
+            try {
+                var sr = SFC.setBudgetAllocation(locationId, {
+                    governmentSalaryBudget: newSalaryBudget
+                });
+                results.push({ field: 'governmentSalaryBudget', result: sr });
+            } catch (err) {
+                results.push({
+                    field: 'governmentSalaryBudget',
+                    result: {
+                        success: false,
+                        code: 'THROWN',
+                        message: err && err.message
+                    }
+                });
+            }
+        }
+
+        if (results.length === 0) {
+            _toast('No changes to save', 'info');
+            return true;
+        }
+
+        var failures = results.filter(function (r) { return !r.result.success; });
+        var successes = results.filter(function (r) { return r.result.success; });
+
+        if (failures.length > 0) {
+            var msg = failures.map(function (f) {
+                var code = f.result.code || (f.result.message || 'unknown');
+                return f.field + ': ' + code;
+            }).join('; ');
+            if (successes.length > 0) {
+                _toast('Partial save (' + successes.length + '/' +
+                    results.length + '): ' + msg, 'warning');
+            } else {
+                _toast('Save failed: ' + msg, 'error');
+            }
+            // Refresh anyway — a partial success means state changed.
+            _refresh();
+            return failures.length === results.length ? false : true;
+        }
+
+        _toast('Economy updated', 'success');
+        _refresh();
+        return true;
     }
 
     // =========================================================================
-    // 9. REGISTRATION (playbook §5)
+    // 10. REGISTRATION (playbook §5)
     // =========================================================================
 
-    TM.register(SCOPE, TAB_ID, renderGovernmentHistoryTab);
+    TM.register(SCOPE, TAB_ID, renderEconomyDetailsTab);
 
     // =========================================================================
-    // 10. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
-    window.GovernmentHistoryTab = {
+    window.EconomyDetailsTab = {
         id: TAB_ID,
-        render: renderGovernmentHistoryTab,
+        render: renderEconomyDetailsTab,
 
-        // Data accessors, exposed for tests and for any future caller
-        // that wants the same projections this tab uses.
-        getLeaders: _getAllLeaderAssignments,
-        getOfficials: _getAllGovernmentOfficials,
+        // Data loader, exposed for tests and for any future caller
+        // that wants the same view shape the tab renders.
+        _loadEconomyView: _loadEconomyView,
 
-        // Internal helpers, exposed for tests.
-        _renderLeaderCard: _renderLeaderCard,
-        _renderOfficialCard: _renderOfficialCard,
-        _addLeader: _addLeaderToLocation,
-        _endLeader: _endLeaderTerm
+        // Modal entry point, exposed so a topbar or a future deep link
+        // can route an "Edit Economy" action through this tab's single
+        // modal opener.
+        _openEditModal: _openEditEconomyModal,
+
+        // Presentation helpers, exposed for tests.
+        _prosperityBucket: _prosperityBucket,
+        _crimeBucket: _crimeBucket,
+        _justiceLabel: _justiceLabel
     };
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = window.GovernmentHistoryTab;
+        module.exports = window.EconomyDetailsTab;
     }
 })();
