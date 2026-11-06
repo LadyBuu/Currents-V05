@@ -27,19 +27,38 @@
  *     not collide with any other manager's stylesheet.
  *
  * STYLE INJECTION:
- *   Classes below are defined by events-deaths-tab.js's own
- *   injected stylesheet (id "events-deaths-tab-styles"). This
- *   module does NOT inject styles. A future facet (stork,
- *   disasters, social, educational) that reuses these renderers
- *   must also inject a stylesheet defining the same class names --
- *   or the manager host page must include them in its shell CSS.
+ *   Base classes (`.events-row`, `.events-list`, `.events-stats-bar`,
+ *   `.events-filters`, `.events-empty`, `.events-unavailable`) are
+ *   defined by events-deaths-tab.js's own injected stylesheet
+ *   (`id="events-deaths-tab-styles"`). Per-facet extras (e.g.
+ *   `.events-stork-couple`, `.events-stork-man`) are defined by that
+ *   facet's own tab file. This module does NOT inject styles.
  *
  * DEPENDENCIES (required, verified at load):
- *   - EventsViewModels  (for the option-list rendering helpers)
+ *   - EventsViewModels  (for emptyStateMessage)
  *   - window.escapeHtml (from formatting.js)
  *   - window.getIcon    (from icons.js)
  *
  * ICON POLICY: No emojis. No Unicode glyphs. Icons via _icon().
+ * =============================================================================
+ *
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 3A):
+ *     - Added the stork facet's renderers:
+ *         renderChildCircles(children)
+ *         renderCoupleRow(vm)
+ *         renderManGroup(vm, options)
+ *         renderStorkTabBody(input)
+ *       The child circles use <button> rather than <span> so they are
+ *       keyboard-activatable via the tab's delegated handler. The
+ *       couple row shows the pregnancy label only when present (set
+ *       by the view model when pregnancy count != child count).
+ *     - No behavioural change to any deaths-facet renderer.
+ *   Previous revision (initial):
+ *     - Created with the deaths facet's renderers
+ *       (renderStatsBar, renderOptionList, renderCharacterRow,
+ *       renderCharacterList, renderRecentEvents, renderEmptyState,
+ *       renderTabBody).
  * =============================================================================
  */
 
@@ -107,12 +126,6 @@
     // =========================================================================
     // 2. STATS BAR
     // =========================================================================
-    //
-    // Input: the shape produced by
-    // EventsViewModels.toDeathsStatsBarViewModel.
-    //
-    // Output: the horizontal stat strip the tab renders under the
-    // filter bar. Each cell is { label, value, colorToken, iconName }.
 
     function renderStatsBar(vm) {
         if (!vm) return '';
@@ -155,20 +168,9 @@
     }
 
     // =========================================================================
-    // 3. FILTER BAR
+    // 3. FILTER BAR OPTION LISTS
     // =========================================================================
-    //
-    // The tab builds the filter bar markup itself (it owns the state
-    // and the input ids). This module provides the <option> list
-    // renderers so the tab does not have to re-derive selected flags
-    // per option.
 
-    /**
-     * @param {Array<{id,label,selected}>} options
-     *        Output of VM.toStatusFilterOptions / toGenderFilterOptions
-     *        / toCauseFilterOptions / toSortOptions.
-     * @returns {string}  <option> elements, or '' if options is empty.
-     */
     function renderOptionList(options) {
         if (!Array.isArray(options) || options.length === 0) return '';
         var html = '';
@@ -183,16 +185,8 @@
     }
 
     // =========================================================================
-    // 4. CHARACTER ROW
+    // 4. CHARACTER ROW (deaths facet)
     // =========================================================================
-    //
-    // Input: the shape from EventsViewModels.toCharacterRow.
-    //
-    // Output: a single row for the character roster list. The row is
-    // a <div> (not a <button>), because rows contain nested
-    // interactive elements (Kill button). Rows respond to delegated
-    // clicks by data-* attributes; the Kill button stops propagation
-    // in the tab's own handler.
 
     function renderCharacterRow(vm) {
         if (!vm || !_hasId(vm.id)) return '';
@@ -311,13 +305,8 @@
     }
 
     // =========================================================================
-    // 5. RECENT EVENTS LIST (optional strip)
+    // 5. RECENT EVENTS LIST
     // =========================================================================
-    //
-    // Input: the shape from EventsViewModels.toRecentEventRows.
-    //
-    // Output: a small unbordered list. The tab chooses whether to
-    // render this strip; the renderer is provided for symmetry.
 
     function renderRecentEvents(vm) {
         if (!vm) return '';
@@ -353,15 +342,6 @@
     // =========================================================================
     // 6. EMPTY STATE
     // =========================================================================
-    //
-    // `caseId` is one of 'no-context', 'no-characters', 'no-matches',
-    // 'no-deaths', 'unavailable'. The message comes from the view
-    // model's emptyStateMessage helper (which sources from
-    // EventsConstants.UI_COPY).
-    //
-    // The 'no-context' case additionally renders the sidebar hint:
-    // the tab is in "Select a location or enable Show all locations"
-    // state, which is different from "no characters exist".
 
     function renderEmptyState(caseId, options) {
         options = options || {};
@@ -370,7 +350,9 @@
             ? 'WARNING'
             : caseId === 'no-context'
                 ? 'LOCATION'
-                : 'PERSON';
+                : caseId === 'no-couples'
+                    ? 'STORK'
+                    : 'PERSON';
         var iconColor = caseId === 'unavailable' ? 'danger' : 'dim';
 
         var extra = '';
@@ -389,24 +371,8 @@
     }
 
     // =========================================================================
-    // 7. UNIFIED TAB BODY RENDERER
+    // 7. UNIFIED TAB BODY (deaths facet)
     // =========================================================================
-    //
-    // Renders the full Deaths tab content body — stats bar, optional
-    // recent strip, and either the roster list or the empty state.
-    // Does NOT render the filter bar (the tab owns that markup,
-    // because it needs to bind input handlers). Does NOT render the
-    // header (the manager's tab strip provides the header context).
-    //
-    // Input shape:
-    //   {
-    //     statsBar: { available, cells, ... } | null,
-    //     recentEvents: { available, rows } | null,
-    //     rows: [characterRowVm...],
-    //     emptyState: 'no-context' | 'no-characters' | 'no-matches'
-    //                 | 'no-deaths' | 'unavailable' | null,
-    //     emptyStateOptions: { extraHint? } | null
-    //   }
 
     function renderTabBody(input) {
         input = input || {};
@@ -432,9 +398,6 @@
             if (Array.isArray(input.rows) && input.rows.length > 0) {
                 html += renderCharacterList(input.rows);
             } else {
-                // The tab should have set emptyState; if it did not,
-                // render the generic no-matches empty state as a
-                // safety net.
                 html += renderEmptyState('no-matches');
             }
         }
@@ -444,7 +407,213 @@
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 8. STORK FACET: CHILD CIRCLES
+    // =========================================================================
+    //
+    // Small circular markers showing one child each. Gender-tinted,
+    // deceased-tinted, with tooltip. Rendered as <button> so they
+    // are keyboard-activatable; the tab's delegated click handler
+    // intercepts data-action="open-character".
+
+    function renderChildCircles(children) {
+        if (!Array.isArray(children) || children.length === 0) {
+            return '<span class="events-stork-child-circles__empty">No children</span>';
+        }
+        var html = '<div class="events-stork-child-circles">';
+        for (var i = 0; i < children.length; i++) {
+            var c = children[i];
+            if (!c || !c.id) continue;
+
+            var classes = ['events-stork-child-circles__circle'];
+            if (c.isDeceased) classes.push('events-stork-child-circles__circle--deceased');
+            if (c.gender === 'male') classes.push('events-stork-child-circles__circle--male');
+            else if (c.gender === 'female') classes.push('events-stork-child-circles__circle--female');
+
+            var tooltip = c.displayName;
+            if (c.ageLabel && c.ageLabel !== 'Unknown') {
+                tooltip += ' (' + c.ageLabel + ')';
+            }
+            if (c.ageGroup) tooltip += ' · ' + c.ageGroup;
+            if (c.isDeceased) tooltip += ' · Deceased';
+
+            html += '<button type="button" class="' +
+                _esc(classes.join(' ')) + '" ' +
+                'data-action="open-character" data-character-id="' + _esc(c.id) + '" ' +
+                'title="' + _esc(tooltip) + '" ' +
+                'aria-label="' + _esc(tooltip) + '">' +
+                _icon(c.genderIconName) +
+                '</button>';
+        }
+        html += '</div>';
+        return html;
+    }
+
+    // =========================================================================
+    // 9. STORK FACET: COUPLE ROW
+    // =========================================================================
+    //
+    // One row per couple. Layout: rank + woman name + age + location |
+    // fertility + children/expected + pregnancy label (if present) |
+    // child circles | + Child + Surprise buttons.
+
+    function renderCoupleRow(vm) {
+        if (!vm) return '';
+
+        var html = '<div class="events-stork-couple" ' +
+            'data-woman-id="' + _esc(vm.womanId) + '">';
+
+        // Identity block
+        html += '<div class="events-stork-couple__identity">';
+        if (vm.womanRankDisplay) {
+            html += '<span class="events-stork-couple__rank">' +
+                _esc(vm.womanRankDisplay) + '</span>';
+        }
+        html += '<span class="events-stork-couple__name">' +
+            _esc(vm.womanDisplayName) + '</span>';
+        html += '<span class="events-stork-couple__age">(' +
+            _esc(vm.womanAgeLabel) + ')</span>';
+        if (vm.womanLocationName) {
+            html += '<span class="events-stork-couple__location">' +
+                _esc(vm.womanLocationName) + '</span>';
+        }
+        html += '</div>';
+
+        // Stats block
+        html += '<div class="events-stork-couple__stats">';
+        html += '<span class="events-stork-couple__fertility" ' +
+            'title="Fertility modifier">' +
+            _esc(String(vm.fertilityPercent)) + '%</span>';
+
+        var countText = String(vm.existingChildCount);
+        if (typeof vm.expectedTotal === 'number') {
+            countText += ' / ' + vm.expectedTotal;
+        }
+        html += '<span class="events-stork-couple__count" ' +
+            'title="Children / expected total">' +
+            _esc(countText) + '</span>';
+
+        if (vm.pregnancyLabel) {
+            html += '<span class="events-stork-couple__pregnancies" ' +
+                'title="Total pregnancies (including losses)">' +
+                _esc(vm.pregnancyLabel) + '</span>';
+        }
+        html += '</div>';
+
+        // Children block
+        html += '<div class="events-stork-couple__children">' +
+            renderChildCircles(vm.childCircles) + '</div>';
+
+        // Actions block
+        html += '<div class="events-stork-couple__actions">';
+        html += '<button type="button" class="events-stork-couple__action" ' +
+            'data-action="add-child" ' +
+            'data-woman-id="' + _esc(vm.womanId) + '" ' +
+            'aria-label="Add child">' +
+            _icon('STORK') + '<span>+ Child</span></button>';
+        html += '<button type="button" class="events-stork-couple__action events-stork-couple__action--surprise" ' +
+            'data-action="surprise-birth" ' +
+            'data-woman-id="' + _esc(vm.womanId) + '" ' +
+            'aria-label="Surprise birth">' +
+            _icon('EVENTS') + '<span>Surprise</span></button>';
+        html += '</div>';
+
+        html += '</div>';
+        return html;
+    }
+
+    // =========================================================================
+    // 10. STORK FACET: MAN GROUP (COLLAPSIBLE)
+    // =========================================================================
+
+    function renderManGroup(vm, options) {
+        if (!vm) return '';
+        options = options || {};
+        var expanded = options.expanded === true;
+
+        var html = '<div class="events-stork-man" ' +
+            'data-man-id="' + _esc(vm.manId) + '">';
+
+        html += '<div class="events-stork-man__header" ' +
+            'data-action="toggle-man" data-man-id="' + _esc(vm.manId) + '" ' +
+            'role="button" tabindex="0">';
+
+        html += '<span class="events-stork-man__expand-icon" aria-hidden="true">' +
+            _icon(expanded ? 'TRIANGLE_DOWN' : 'TRIANGLE_UP') + '</span>';
+
+        if (vm.manRankDisplay) {
+            html += '<span class="events-stork-man__rank">' +
+                _esc(vm.manRankDisplay) + '</span>';
+        }
+        html += '<span class="events-stork-man__name">' +
+            _esc(vm.manDisplayName) + '</span>';
+        html += '<span class="events-stork-man__age">(' +
+            _esc(vm.manAgeLabel) + ')</span>';
+        if (vm.manLocationName) {
+            html += '<span class="events-stork-man__location">' +
+                _esc(vm.manLocationName) + '</span>';
+        }
+
+        html += '<span class="events-stork-man__stats">' +
+            _esc(String(vm.partnerCount)) + ' partner' +
+            (vm.partnerCount === 1 ? '' : 's') + ' · ' +
+            _esc(String(vm.totalChildren)) + ' children' +
+            (typeof vm.totalExpected === 'number'
+                ? ' / ' + _esc(String(vm.totalExpected))
+                : '') +
+            '</span>';
+
+        html += '</div>'; // header
+
+        if (expanded) {
+            html += '<div class="events-stork-man__partners">';
+            for (var i = 0; i < vm.partners.length; i++) {
+                html += renderCoupleRow(vm.partners[i]);
+            }
+            if (vm.partners.length === 0) {
+                html += '<div class="events-stork-man__empty">No partners</div>';
+            }
+            html += '</div>';
+        }
+
+        html += '</div>';
+        return html;
+    }
+
+    // =========================================================================
+    // 11. STORK FACET: FULL BODY
+    // =========================================================================
+
+    function renderStorkTabBody(input) {
+        input = input || {};
+
+        var html = '<div class="events-stork-body">';
+
+        if (input.statsBar) {
+            html += renderStatsBar(input.statsBar);
+        }
+
+        if (input.emptyState) {
+            html += renderEmptyState(input.emptyState, input.emptyStateOptions);
+        } else if (Array.isArray(input.manGroups) && input.manGroups.length > 0) {
+            html += '<div class="events-stork-list">';
+            for (var i = 0; i < input.manGroups.length; i++) {
+                html += renderManGroup(input.manGroups[i], {
+                    expanded: input.expandedMap
+                        ? input.expandedMap[input.manGroups[i].manId] === true
+                        : true
+                });
+            }
+            html += '</div>';
+        } else {
+            html += renderEmptyState('no-matches');
+        }
+
+        html += '</div>';
+        return html;
+    }
+
+    // =========================================================================
+    // 12. EXPORTS
     // =========================================================================
 
     window.EventsUIList = {
@@ -460,7 +629,7 @@
         // Filter option lists
         renderOptionList: renderOptionList,
 
-        // Character list
+        // Character list (deaths facet)
         renderCharacterRow: renderCharacterRow,
         renderCharacterList: renderCharacterList,
 
@@ -470,8 +639,20 @@
         // Empty states
         renderEmptyState: renderEmptyState,
 
-        // Full tab body
-        renderTabBody: renderTabBody
+        // Unified body (deaths facet)
+        renderTabBody: renderTabBody,
+
+        // Child circles (stork facet)
+        renderChildCircles: renderChildCircles,
+
+        // Couple row (stork facet)
+        renderCoupleRow: renderCoupleRow,
+
+        // Man group (stork facet)
+        renderManGroup: renderManGroup,
+
+        // Full body (stork facet)
+        renderStorkTabBody: renderStorkTabBody
     };
 
     if (typeof module !== 'undefined' && module.exports) {
