@@ -41,6 +41,14 @@
  *   LocationCommands.persist() once (via _runCommand). One commit, one
  *   persist.
  *
+ * Move edit:
+ *   openEditMoveModal is the Location tab's per-row "Edit" affordance.
+ *   It calls LocationCommands.updateMove(characterId, moveIndex, patch)
+ *   once, persists once, then fires onSuccess. The patch contains only
+ *   year, locationId, note, fromLocationId, and isBirthMove. The derived
+ *   display-name fields (locationName / fromLocationName) are always
+ *   recomputed by updateMove from the id fields.
+ *
  * MODAL CALLBACK API (from modals-core.js):
  *   openModal(options) returns { element, close }.
  *
@@ -75,6 +83,7 @@
  *   Form classes used by this file:
  *     .move-form              single move
  *     .bulk-move-form         bulk move
+ *     .edit-move-form         edit move (Location tab)
  *
  * BULK-MOVE WIRING:
  *   The bulk-move modal has a character-selection list with checkboxes,
@@ -94,9 +103,33 @@
  * Optional, used when present (via the helper's fallbacks):
  *   - window.escapeHtml  (formatting.js)
  *   - window.showToast   (ui.js)
+ *   - window.getPlaces, window.getPlaceById (for the edit modal's
+ *     destination dropdown)
  *
  * =============================================================================
  * REFACTOR HISTORY:
+ *   Current revision (household-tab P6):
+ *     - Added openEditMoveModal(characterId, moveIndex, onSuccess). The
+ *       Location tab's per-row "Edit" affordance. Calls
+ *       LocationCommands.updateMove once, persists once via
+ *       _runCommand, then fires onSuccess.
+ *
+ *       The form exposes only the fields updateMove accepts: year,
+ *       locationId, note, fromLocationId, isBirthMove. Derived display
+ *       names are recomputed server-side.
+ *
+ *       The destination dropdown is populated from
+ *       window.LocationQueries.getAllPlaces() when available (falls
+ *       back to window.getPlaces). Reuses _renderDestinationOptions,
+ *       so the visual shape matches the single-move and bulk-move
+ *       destination pickers.
+ *
+ *       The "from" dropdown is optional; blank = keep the existing
+ *       fromLocationId (or set to null via a dedicated "Clear from"
+ *       option). If the move's original fromLocationId was non-null,
+ *       it is preselected.
+ *
+ *     - No behavioural change to any existing modal entry point.
  *   Current revision (B2b):
  *     - Removed the _close alias. It was assigned from
  *       window.LocationModals.close but never called in this file.
@@ -201,6 +234,96 @@
                 label + typeSuffix +
                 '</option>';
         }).join('');
+    }
+
+    /**
+     * Returns a flat destination-options list from the current place
+     * collection. Reuses LocationViewModels's building behavior when
+     * available so the visual shape matches the single-move and
+     * bulk-move modals; falls back to a direct enumeration otherwise.
+     *
+     * @param {string|null} excludePlaceId
+     * @returns {Array<{id, label, typeName, depth}>}
+     */
+    function _getDestinationOptions(excludePlaceId) {
+        // The canonical builder is LocationViewModels.buildLocationTree
+        // + a depth walk. We construct the option list inline to avoid
+        // depending on any single helper.
+        var places = [];
+        if (typeof window.getAllPlaces === 'function') {
+            try { places = window.getAllPlaces() || []; }
+            catch (e) { places = []; }
+        } else if (typeof window.getPlaces === 'function') {
+            try { places = window.getPlaces() || []; }
+            catch (e) { places = []; }
+        }
+
+        if (!Array.isArray(places) || places.length === 0) return [];
+
+        // Build a parent → children map for depth-first traversal.
+        var childrenByParent = Object.create(null);
+        for (var i = 0; i < places.length; i++) {
+            var p = places[i];
+            if (!p || typeof p.id !== 'string') continue;
+            var key = p.parentId || '__root__';
+            if (!childrenByParent[key]) childrenByParent[key] = [];
+            childrenByParent[key].push(p);
+        }
+        // Stable sibling order.
+        Object.keys(childrenByParent).forEach(function (k) {
+            childrenByParent[k].sort(function (a, b) {
+                return (a.displayName || '').localeCompare(b.displayName || '');
+            });
+        });
+
+        var out = [];
+        function walk(list, depth) {
+            for (var j = 0; j < list.length; j++) {
+                var child = list[j];
+                if (!child || typeof child.id !== 'string') continue;
+                if (child.id === excludePlaceId) continue;
+                var typeName = null;
+                if (typeof window.getLocationTypeById === 'function') {
+                    var t = null;
+                    try { t = window.getLocationTypeById(child.typeId); }
+                    catch (e) { t = null; }
+                    if (t && typeof t.displayName === 'string') {
+                        typeName = t.displayName;
+                    }
+                }
+                out.push({
+                    id: child.id,
+                    label: child.displayName || child.id,
+                    typeName: typeName,
+                    depth: depth
+                });
+                var kids = childrenByParent[child.id];
+                if (kids && kids.length > 0) walk(kids, depth + 1);
+            }
+        }
+        walk(childrenByParent['__root__'] || [], 0);
+        return out;
+    }
+
+    /**
+     * Returns a display name for a place id, or null.
+     */
+    function _resolvePlaceName(placeId) {
+        if (typeof placeId !== 'string' || placeId.length === 0) return null;
+        if (typeof window.getPlaceById === 'function') {
+            var p = null;
+            try { p = window.getPlaceById(placeId); }
+            catch (e) { p = null; }
+            if (p) {
+                if (typeof p.displayName === 'string' && p.displayName.length > 0) {
+                    return p.displayName;
+                }
+                if (typeof p.name === 'string' && p.name.length > 0) {
+                    return p.name;
+                }
+            }
+        }
+        return null;
     }
 
     // =========================================================================
@@ -440,6 +563,229 @@
     }
 
     // =========================================================================
+    // 4a. EDIT MOVE (Location tab)
+    // =========================================================================
+    //
+    // The Location tab's per-row "Edit" affordance. Calls
+    // LocationCommands.updateMove(characterId, moveIndex, patch) with a
+    // patch that is whitelisted to (year, locationId, note,
+    // fromLocationId, isBirthMove). Derived display names are recomputed
+    // by updateMove from the id fields.
+    //
+    // The modal reads the current move's values from the character
+    // projection (via window.CharacterQueries.getCharacterSummary or via
+    // direct projection access). The move at moveIndex is authoritative;
+    // the projection may lag if the caller recently mutated, but the
+    // tab re-fetches before opening.
+    //
+    // The destination dropdown is populated from
+    // _getDestinationOptions, matching the visual shape of the
+    // single-move and bulk-move destination pickers.
+
+    function openEditMoveModal(characterId, moveIndex, onSuccess) {
+        if (typeof characterId !== 'string' || characterId.length === 0) {
+            _toast('Character id is required', 'error');
+            return;
+        }
+        if (typeof moveIndex !== 'number' || !Number.isInteger(moveIndex)
+            || moveIndex < 0) {
+            _toast('Invalid move index', 'error');
+            return;
+        }
+
+        // Fetch the current move from the projection.
+        var character = null;
+        if (window.CharacterQueries
+            && typeof window.CharacterQueries.getCharacterById === 'function') {
+            try { character = window.CharacterQueries.getCharacterById(characterId); }
+            catch (e) { character = null; }
+        }
+        if (!character && typeof window.getCharacterById === 'function') {
+            try { character = window.getCharacterById(characterId); }
+            catch (e) { character = null; }
+        }
+        if (!character) {
+            _toast('Character not found', 'error');
+            return;
+        }
+
+        var moves = Array.isArray(character.moves) ? character.moves : [];
+        if (moveIndex >= moves.length) {
+            _toast('Move index out of range', 'error');
+            return;
+        }
+        var current = moves[moveIndex];
+        if (!current || typeof current !== 'object') {
+            _toast('Move data is malformed', 'error');
+            return;
+        }
+
+        var currentYear = (typeof current.year === 'number')
+            ? current.year : '';
+
+        var currentLocationId = (typeof current.locationId === 'string')
+            ? current.locationId : '';
+        var currentLocationName = _resolvePlaceName(currentLocationId)
+            || current.locationName
+            || currentLocationId;
+
+        var currentFromLocationId = (typeof current.fromLocationId === 'string')
+            ? current.fromLocationId : '';
+        var currentFromLocationName = _resolvePlaceName(currentFromLocationId)
+            || current.fromLocationName
+            || currentFromLocationId;
+
+        var currentNote = (typeof current.note === 'string')
+            ? current.note : '';
+
+        var isBirthMove = current.isBirthMove === true;
+
+        // Destination options (exclude nothing; the modal lets the user
+        // pick the current location too, in which case updateMove is a
+        // no-op for the location field).
+        var destOptions = _getDestinationOptions(null);
+
+        // "From" options: same list plus a "Clear" sentinel.
+        var fromOptionsHtml = '<option value="">— No origin —</option>' +
+            destOptions.map(function (o) {
+                var indent = (o.depth > 0)
+                    ? ' style="padding-left:' + (o.depth * 16) + 'px;"'
+                    : '';
+                var label = _escapeHtml(o.label);
+                var typeSuffix = o.typeName
+                    ? ' (' + _escapeHtml(o.typeName) + ')'
+                    : '';
+                var selected = (o.id === currentFromLocationId)
+                    ? ' selected' : '';
+                return '<option value="' + _escapeHtml(o.id) + '"' +
+                    indent + selected + '>' +
+                    label + typeSuffix +
+                    '</option>';
+            }).join('');
+
+        // Destination select: preserve the current location even if it
+        // is not in the options list (e.g. the place was deleted). We
+        // prepend a "current" option so the user sees what they are
+        // editing, and can change it.
+        var destOptionsHtml = '';
+        if (currentLocationId) {
+            var inList = false;
+            for (var di = 0; di < destOptions.length; di++) {
+                if (destOptions[di].id === currentLocationId) {
+                    inList = true;
+                    break;
+                }
+            }
+            if (!inList) {
+                // Current location is no longer in the place list (it was
+                // deleted). Show it as the current selection, disabled,
+                // and let the user pick a new one.
+                destOptionsHtml += '<option value="' + _escapeHtml(currentLocationId) +
+                    '" selected disabled>Current: ' +
+                    _escapeHtml(currentLocationName || currentLocationId) +
+                    ' (deleted)</option>';
+            }
+        }
+        destOptionsHtml += destOptions.map(function (o) {
+            var indent = (o.depth > 0)
+                ? ' style="padding-left:' + (o.depth * 16) + 'px;"'
+                : '';
+            var label = _escapeHtml(o.label);
+            var typeSuffix = o.typeName
+                ? ' (' + _escapeHtml(o.typeName) + ')'
+                : '';
+            var selected = (o.id === currentLocationId)
+                ? ' selected' : '';
+            return '<option value="' + _escapeHtml(o.id) + '"' +
+                indent + selected + '>' +
+                label + typeSuffix +
+                '</option>';
+        }).join('');
+
+        var html =
+            '<form class="edit-move-form">' +
+            '<p class="modal-note">' +
+                'Editing move #' + (moveIndex + 1) +
+                ' for <strong>' +
+                _escapeHtml((character.name || '') +
+                    (character.surname ? ' ' + character.surname : '')) +
+                '</strong>' +
+            '</p>' +
+            '<label>Destination<select name="locationId" required>' +
+            '<option value="">Select destination</option>' +
+            destOptionsHtml +
+            '</select></label>' +
+            '<label>From (optional)<select name="fromLocationId">' +
+            fromOptionsHtml +
+            '</select></label>' +
+            '<label>Year<input type="number" name="year" value="' +
+                _escapeHtml(String(currentYear)) +
+                '" required></label>' +
+            '<label>Note<textarea name="note" rows="2">' +
+                _escapeHtml(currentNote) +
+                '</textarea></label>' +
+            '<label class="move-form__checkbox">' +
+                '<input type="checkbox" name="isBirthMove"' +
+                (isBirthMove ? ' checked' : '') + '>' +
+                ' This is a birth move' +
+            '</label>' +
+            '</form>';
+
+        window.openModal({
+            titleHtml: 'Edit Move',
+            contentHtml: html,
+            confirmText: 'Save',
+            cancelText: 'Cancel',
+            onConfirm: function (root) {
+                var form = root.querySelector('.edit-move-form');
+                if (!form) return false;
+
+                var newLocationId = form.locationId.value;
+                if (!newLocationId) {
+                    _toast('Select a destination', 'error');
+                    return false;
+                }
+
+                var yearRaw = form.year.value;
+                var year = parseInt(yearRaw, 10);
+                if (!Number.isInteger(year)) {
+                    _toast('Year must be a number', 'error');
+                    return false;
+                }
+                if (typeof window.isValidYear === 'function'
+                    && window.isValidYear(year) !== true) {
+                    _toast('Year is not a valid world year', 'error');
+                    return false;
+                }
+
+                var fromLocationRaw = form.fromLocationId.value;
+                var fromLocationId = (fromLocationRaw === '')
+                    ? null
+                    : fromLocationRaw;
+
+                var note = form.note.value.trim();
+                var isBirth = form.isBirthMove.checked === true;
+
+                // Compose the patch. Only the fields updateMove accepts.
+                var patch = {
+                    year: year,
+                    locationId: newLocationId,
+                    fromLocationId: fromLocationId,
+                    note: note === '' ? null : note,
+                    isBirthMove: isBirth
+                };
+
+                return _runCommand(function () {
+                    return LC.updateMove(characterId, moveIndex, patch);
+                }, function (result) {
+                    _toast('Move updated', 'success');
+                    if (typeof onSuccess === 'function') onSuccess(result);
+                });
+            }
+        });
+    }
+
+    // =========================================================================
     // 5. MOVE HISTORY
     // =========================================================================
     //
@@ -505,11 +851,13 @@
     window.openMoveCharacterModal = openMoveCharacterModal;
     window.openBulkMoveModal = openBulkMoveModal;
     window.openMoveHistoryModal = openMoveHistoryModal;
+    window.openEditMoveModal = openEditMoveModal;
 
     window.MovesModals = {
         openMoveCharacterModal: openMoveCharacterModal,
         openBulkMoveModal: openBulkMoveModal,
-        openMoveHistoryModal: openMoveHistoryModal
+        openMoveHistoryModal: openMoveHistoryModal,
+        openEditMoveModal: openEditMoveModal
     };
 
     if (typeof module !== 'undefined' && module.exports) {
