@@ -28,9 +28,9 @@
  *     returns token NAMES like 'danger' / 'warn' / 'accent' / 'dim',
  *     which the tab wraps in var(--<token>).
  *   - It does not carry its own copy of the death-cause vocabulary,
- *     the stork sort vocabulary, or any other domain vocabulary.
- *     Every label it emits comes from either events-constants.js or
- *     from a passed-in resolver.
+ *     the stork sort vocabulary, the adoption type/status vocabulary,
+ *     or any other domain vocabulary. Every label it emits comes from
+ *     either events-constants.js or from a passed-in resolver.
  *   - It does not fabricate. A missing field on a record becomes
  *     null (not ''), a label of '?' (not 'Unknown'), or a status
  *     flag of false. Nothing is invented.
@@ -42,26 +42,38 @@
  * =============================================================================
  *
  * REFACTOR HISTORY:
- *   Current revision (Phase 3A):
- *     - Added the stork facet's view models:
- *         toChildCircle(childId, childSummary, ageGroupFn)
- *         toCoupleRow(partner, childSummaries, ageGroupFn)
- *         toManGroup(manGroup, childSummaries, ageGroupFn)
- *       Each takes the shapes produced by
- *       EventsQueries.getFertileCouples plus the character summaries
- *       it needs (either an age-group resolver callback or the raw
- *       summaries the caller already fetched).
- *     - toCoupleRow produces a `pregnancyLabel` ("N pregnancies")
- *       only when the pregnancy count differs from the living
- *       children count, so the common case (all pregnancies ->
- *       live births) stays clean.
- *     - No behavioural change to any deaths-facet function.
- *   Previous revision (initial):
- *     - Created with the deaths facet's view models
- *       (toCharacterRow, toCharacterRows, toDeathRecordRow,
- *       toDeathRecordRows, toDeathsStatsBarViewModel,
- *       toMortalityStatsViewModel, toRecentEventRow,
- *       toRecentEventRows, filter-option views, emptyStateMessage).
+ *   Current revision (Phase 3B):
+ *     - Added the adoption facet's view models:
+ *         adoptionTypeLabel(type)
+ *         adoptionTypeIconName(type)
+ *         adoptionStatusLabel(status)
+ *         adoptionStatusColorToken(status)
+ *         adoptionStatusPriority(status)
+ *         toAdoptionRow(record)
+ *         toAdoptionRows(records)
+ *         toAdoptionTypeFilterOptions(currentType)
+ *         toAdoptionStatusFilterOptions(currentStatus)
+ *         toAdoptionSortOptions(currentSortBy)
+ *         toAdoptionStatsBarViewModel(records)
+ *       The stats bar is computed from the already-fetched records
+ *       (distinct from the deaths-style stats bar the other facets
+ *       reuse). The tab renders it directly.
+ *     - emptyStateMessage gains three cases:
+ *         'no-adoptions'      -> UI_COPY.emptyNoAdoptions
+ *         'no-guardianships'  -> UI_COPY.emptyNoGuardianships
+ *         'no-foster'         -> UI_COPY.emptyNoFosterRecords
+ *       These exist because the type group headers stay visible when
+ *       empty; the wrong copy under a visible header would be
+ *       misleading.
+ *     - adoptionStatusPriority is exposed so the tab can sort active
+ *       records first within each type group.
+ *     - No behavioural change to any deaths-facet or stork-facet
+ *       function.
+ *   Previous revision (Phase 3A):
+ *     - Added the stork facet's view models: toChildCircle,
+ *       toCoupleRow, toManGroup, toStorkSortOptions.
+ *   Initial revision:
+ *     - Created with the deaths facet's view models.
  * =============================================================================
  */
 
@@ -562,8 +574,14 @@
     }
 
     // =========================================================================
-    // 7. DEATHS FACET: EMPTY-STATE MESSAGE
+    // 7. EMPTY-STATE MESSAGE
     // =========================================================================
+    //
+    // Maps a case id to its user-facing message. The case ids are the
+    // tab's own vocabulary; every tab that renders an empty state
+    // passes one of these to EventsUIList.renderEmptyState. The
+    // adoption cases are added here because the adoption tab's three
+    // distinct empty states all resolve through this function.
 
     function emptyStateMessage(caseId) {
         switch (caseId) {
@@ -579,6 +597,12 @@
                 return C.UI_COPY.emptyNoCouples;
             case 'no-births':
                 return C.UI_COPY.emptyNoBirthsRecorded;
+            case 'no-adoptions':
+                return C.UI_COPY.emptyNoAdoptions;
+            case 'no-guardianships':
+                return C.UI_COPY.emptyNoGuardianships;
+            case 'no-foster':
+                return C.UI_COPY.emptyNoFosterRecords;
             case 'unavailable':
                 return C.UI_COPY.emptyUnavailable;
             default:
@@ -624,7 +648,7 @@
     // array, plus the child summaries needed to build the child circles.
     //
     // The `childSummaries` argument is a `{ [childId]: summary }` map
-    // — the shape produced by EventsQueries.getCoupleChildrenSummaries
+    // -- the shape produced by EventsQueries.getCoupleChildrenSummaries
     // or assembled by the tab itself. Missing entries simply omit the
     // circle.
     //
@@ -771,7 +795,269 @@
     }
 
     // =========================================================================
-    // 12. INTERNAL
+    // 12. ADOPTION FACET: TYPE / STATUS VOCABULARY
+    // =========================================================================
+    //
+    // The adoption tab distinguishes three record types (legal
+    // adoption, guardianship, foster care) by `type`, and three
+    // statuses (active, ended, dissolved) by `status`. This section
+    // owns the label / icon-name / color-token / sort-priority
+    // vocabulary for both dimensions. Values match
+    // ChildrenRules.ADOPTION_TYPE and ADOPTION_STATUS.
+
+    function adoptionTypeLabel(type) {
+        switch (type) {
+            case 'legal':        return 'Legal Adoption';
+            case 'guardianship': return 'Guardianship';
+            case 'foster':       return 'Foster Care';
+            default:             return type ? String(type) : 'Unknown';
+        }
+    }
+
+    function adoptionTypeIconName(type) {
+        switch (type) {
+            case 'legal':        return 'ADOPTION_LEGAL';
+            case 'guardianship': return 'GUARDIANSHIP';
+            case 'foster':       return 'FOSTER';
+            default:             return 'ADOPTION_LEGAL';
+        }
+    }
+
+    function adoptionStatusLabel(status) {
+        switch (status) {
+            case 'active':    return 'Active';
+            case 'ended':     return 'Ended';
+            case 'dissolved': return 'Dissolved';
+            default:          return status ? String(status) : 'Unknown';
+        }
+    }
+
+    function adoptionStatusColorToken(status) {
+        switch (status) {
+            case 'active':    return 'success';
+            case 'ended':     return 'dim';
+            case 'dissolved': return 'danger';
+            default:          return 'dim';
+        }
+    }
+
+    /**
+     * Numeric priority for within-group status sorting. Lower sorts
+     * first. Active records lead each type group; ended records
+     * follow; dissolved records trail. Unknown statuses trail
+     * everything.
+     *
+     * Exposed so the tab can sort consistently without duplicating
+     * the ordering contract.
+     */
+    function adoptionStatusPriority(status) {
+        switch (status) {
+            case 'active':    return 0;
+            case 'ended':     return 1;
+            case 'dissolved': return 2;
+            default:          return 3;
+        }
+    }
+
+    // =========================================================================
+    // 13. ADOPTION FACET: ROW
+    // =========================================================================
+    //
+    // One row per adoption metadata record. Includes the enriched
+    // child and adopter summaries (from EventsQueries.getAdoptionRecords)
+    // plus the type and status labels. The tab renders these into the
+    // grouped list.
+
+    function _adoptionDisplayName(summary) {
+        if (!summary) return '';
+        return ((summary.name || '') + ' ' + (summary.surname || '')).trim();
+    }
+
+    function toAdoptionRow(record) {
+        if (!record || !_hasId(record.id)) return null;
+
+        var child = record.child || null;
+        var adopter = record.adopter || null;
+
+        return {
+            id: record.id,
+
+            // Child
+            childId: record.childId,
+            childDisplayName: _adoptionDisplayName(child) || '(unknown child)',
+            childAge: child && typeof child.age === 'number' ? child.age : null,
+            childAgeLabel: formatAge(child ? child.age : null),
+            childGender: child ? child.gender : null,
+            childGenderIconName: genderIconName(child ? child.gender : null),
+            childGenderColorToken: genderColorToken(child ? child.gender : null),
+            childIsDeceased: !!(child && child.isDeceased === true),
+            childLocationId: child && _hasId(child.locationId)
+                ? child.locationId : null,
+
+            // Adopter
+            adopterId: record.adopterId,
+            adopterDisplayName: _adoptionDisplayName(adopter) || '(unknown adopter)',
+            adopterAge: adopter && typeof adopter.age === 'number' ? adopter.age : null,
+            adopterAgeLabel: formatAge(adopter ? adopter.age : null),
+            adopterGender: adopter ? adopter.gender : null,
+            adopterGenderIconName: genderIconName(adopter ? adopter.gender : null),
+            adopterGenderColorToken: genderColorToken(adopter ? adopter.gender : null),
+            adopterIsDeceased: !!(adopter && adopter.isDeceased === true),
+            adopterLocationId: adopter && _hasId(adopter.locationId)
+                ? adopter.locationId : null,
+
+            // Record
+            type: record.type,
+            typeLabel: adoptionTypeLabel(record.type),
+            typeIconName: adoptionTypeIconName(record.type),
+            status: record.status,
+            statusLabel: adoptionStatusLabel(record.status),
+            statusColorToken: adoptionStatusColorToken(record.status),
+            statusPriority: adoptionStatusPriority(record.status),
+            year: typeof record.year === 'number' ? record.year : null,
+            yearLabel: formatYear(record.year),
+            endYear: typeof record.endYear === 'number' ? record.endYear : null,
+            endYearLabel: record.endYear ? formatYear(record.endYear) : null,
+            yearRangeLabel: record.endYear
+                ? formatYear(record.year) + '\u2013' + formatYear(record.endYear)
+                : formatYear(record.year) + '\u2013present',
+            notes: record.notes || '',
+            isActive: record.status === 'active'
+        };
+    }
+
+    function toAdoptionRows(records) {
+        if (!Array.isArray(records)) return [];
+        var out = [];
+        for (var i = 0; i < records.length; i++) {
+            var row = toAdoptionRow(records[i]);
+            if (row) out.push(row);
+        }
+        return out;
+    }
+
+    // =========================================================================
+    // 14. ADOPTION FACET: FILTER OPTION VIEWS
+    // =========================================================================
+
+    function toAdoptionTypeFilterOptions(currentType) {
+        var base = C.ADOPTION_TYPE_FILTERS;
+        if (!Array.isArray(base)) return [];
+        var out = [];
+        for (var i = 0; i < base.length; i++) {
+            out.push({
+                id: base[i].id,
+                label: base[i].label,
+                selected: base[i].id === currentType
+            });
+        }
+        return out;
+    }
+
+    function toAdoptionStatusFilterOptions(currentStatus) {
+        var base = C.ADOPTION_STATUS_FILTERS;
+        if (!Array.isArray(base)) return [];
+        var out = [];
+        for (var i = 0; i < base.length; i++) {
+            out.push({
+                id: base[i].id,
+                label: base[i].label,
+                selected: base[i].id === currentStatus
+            });
+        }
+        return out;
+    }
+
+    function toAdoptionSortOptions(currentSortBy) {
+        var base = C.ADOPTION_SORT_OPTIONS;
+        if (!Array.isArray(base)) return [];
+        var out = [];
+        for (var i = 0; i < base.length; i++) {
+            out.push({
+                id: base[i].id,
+                label: base[i].label,
+                selected: base[i].id === currentSortBy
+            });
+        }
+        return out;
+    }
+
+    // =========================================================================
+    // 15. ADOPTION FACET: STATS BAR
+    // =========================================================================
+    //
+    // Computed from the already-fetched records. Distinct from the
+    // deaths-style stats bar (which the other facets reuse). The tab
+    // renders this when the records are available.
+
+    function toAdoptionStatsBarViewModel(records) {
+        if (!Array.isArray(records)) {
+            return {
+                available: false,
+                reason: 'No records array.',
+                cells: []
+            };
+        }
+
+        var byType = { legal: 0, guardianship: 0, foster: 0 };
+        var active = 0;
+        var ended = 0;
+        var dissolved = 0;
+
+        for (var i = 0; i < records.length; i++) {
+            var r = records[i];
+            if (!r) continue;
+            if (byType[r.type] !== undefined) byType[r.type]++;
+            if (r.status === 'active') active++;
+            else if (r.status === 'ended') ended++;
+            else if (r.status === 'dissolved') dissolved++;
+        }
+
+        return {
+            available: true,
+            cells: [
+                {
+                    label: 'Total',
+                    value: String(records.length),
+                    colorToken: 'accent',
+                    iconName: 'ADOPTION_LEGAL'
+                },
+                {
+                    label: 'Active',
+                    value: String(active),
+                    colorToken: 'success',
+                    iconName: 'CHECK_SIMPLE'
+                },
+                {
+                    label: 'Ended',
+                    value: String(ended + dissolved),
+                    colorToken: 'dim',
+                    iconName: 'X_HEAVY'
+                },
+                {
+                    label: 'Legal',
+                    value: String(byType.legal),
+                    colorToken: 'accent',
+                    iconName: 'ADOPTION_LEGAL'
+                },
+                {
+                    label: 'Guardianship',
+                    value: String(byType.guardianship),
+                    colorToken: 'warn',
+                    iconName: 'GUARDIANSHIP'
+                },
+                {
+                    label: 'Foster',
+                    value: String(byType.foster),
+                    colorToken: 'dim',
+                    iconName: 'FOSTER'
+                }
+            ]
+        };
+    }
+
+    // =========================================================================
+    // 16. INTERNAL
     // =========================================================================
 
     function _isMissing(v) {
@@ -783,7 +1069,7 @@
     }
 
     // =========================================================================
-    // 13. EXPORTS
+    // 17. EXPORTS
     // =========================================================================
 
     window.EventsViewModels = {
@@ -829,7 +1115,26 @@
         toManGroup: toManGroup,
 
         // Filter option views (stork facet)
-        toStorkSortOptions: toStorkSortOptions
+        toStorkSortOptions: toStorkSortOptions,
+
+        // Adoption facet: type / status vocabulary
+        adoptionTypeLabel: adoptionTypeLabel,
+        adoptionTypeIconName: adoptionTypeIconName,
+        adoptionStatusLabel: adoptionStatusLabel,
+        adoptionStatusColorToken: adoptionStatusColorToken,
+        adoptionStatusPriority: adoptionStatusPriority,
+
+        // Adoption facet: row shapers
+        toAdoptionRow: toAdoptionRow,
+        toAdoptionRows: toAdoptionRows,
+
+        // Adoption facet: filter option views
+        toAdoptionTypeFilterOptions: toAdoptionTypeFilterOptions,
+        toAdoptionStatusFilterOptions: toAdoptionStatusFilterOptions,
+        toAdoptionSortOptions: toAdoptionSortOptions,
+
+        // Adoption facet: stats bar
+        toAdoptionStatsBarViewModel: toAdoptionStatsBarViewModel
     };
 
     if (typeof module !== 'undefined' && module.exports) {
