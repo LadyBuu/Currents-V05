@@ -31,7 +31,7 @@
  *     - the EVENT_CATEGORIES catalog (the categories that
  *       window.logEvent writes into masterData.data.eventLog)
  *     - filter vocabularies per facet (status, cause family,
- *       gender, sort)
+ *       gender, sort, type)
  *     - the canonical PANEL_ID prefix used by UIState
  *     - default filter shapes per facet
  *     - UI copy strings
@@ -66,26 +66,30 @@
  * =============================================================================
  *
  * REFACTOR HISTORY:
- *   Current revision (Phase 3A):
- *     - Added the stork facet's filter vocabulary: STORK_SORT_OPTIONS
- *       and STORK_DEFAULT_FILTERS. STORK_DEFAULT_FILTERS encodes the
- *       default filter state the deaths tab also uses:
- *         - showAllLocations true (sidebar location is opt-in scope)
- *         - collapsed false (filters expanded on first visit)
- *       The stork-specific defaults (fertileOnly: true,
- *       hasCapacityOnly: true, childlessOnly: false) mirror the old
- *       bioChildrenTabUI.js defaults.
- *     - DEFAULT_FILTERS_BY_FACET gains a `stork` entry pointing at
- *       STORK_DEFAULT_FILTERS.
- *     - EVENT_FACETS already had the stork entry from the initial
- *       delivery; no change.
- *     - Exports for STORK_SORT_OPTIONS and STORK_DEFAULT_FILTERS
- *       added.
- *   Previous revision (initial):
+ *   Current revision (Phase 3B):
+ *     - Added the adoption facet's filter vocabulary:
+ *         ADOPTION_STATUS_FILTERS  (all | active | ended | dissolved)
+ *         ADOPTION_TYPE_FILTERS    (all | legal | guardianship | foster)
+ *         ADOPTION_SORT_OPTIONS    (year | childName | adopterName)
+ *         ADOPTION_DEFAULT_FILTERS (the adoption tab's starting filter
+ *                                   state; grouped-by-type, sorted by
+ *                                   year descending, show all
+ *                                   locations true, collapsed false)
+ *     - DEFAULT_FILTERS_BY_FACET gains an `adoption` entry.
+ *     - UI_COPY gains emptyNoAdoptions, emptyNoGuardianships,
+ *       emptyNoFosterRecords. The adoption tab's empty state
+ *       distinguishes these three cases because the type group
+ *       headers remain visible: a "Legal Adoption (0)" header with
+ *       the wrong copy under it would be misleading.
+ *     - Exports for all four new adoption constants added.
+ *     - No behavioural change to any other facet's vocabulary.
+ *   Previous revision (Phase 3A):
+ *     - Added the stork facet's filter vocabulary
+ *       (STORK_SORT_OPTIONS, STORK_DEFAULT_FILTERS).
+ *     - DEFAULT_FILTERS_BY_FACET gains a `stork` entry.
+ *   Initial revision:
  *     - Created with the deaths facet's vocabulary and the
- *       facet catalog for the six declared tabs (deaths, stork,
- *       disasters, social, educational -- adoption and surrogacy
- *       land in Phase 3B / 3C).
+ *       facet catalog.
  * =============================================================================
  */
 
@@ -310,14 +314,63 @@
     });
 
     // =========================================================================
-    // 7. DEFAULT FILTERS PER FACET
+    // 7. ADOPTION FACET: FILTER VOCABULARY
+    // =========================================================================
+    //
+    // The adoption tab distinguishes three record types (legal
+    // adoption, guardianship, foster care) by `type`, and three
+    // statuses (active, ended, dissolved) by `status`. The tab groups
+    // rows by type, then by status within each type group. Filters
+    // narrow the list without changing the grouping.
+    //
+    // Values match ChildrenRules.ADOPTION_TYPE and ADOPTION_STATUS,
+    // plus 'all'. The tab matches against record.type and
+    // record.status (the stable ids), never against the label
+    // strings.
+
+    var ADOPTION_STATUS_FILTERS = Object.freeze([
+        Object.freeze({ id: 'all',       label: 'All Statuses' }),
+        Object.freeze({ id: 'active',    label: 'Active'       }),
+        Object.freeze({ id: 'ended',     label: 'Ended'        }),
+        Object.freeze({ id: 'dissolved', label: 'Dissolved'    })
+    ]);
+
+    var ADOPTION_TYPE_FILTERS = Object.freeze([
+        Object.freeze({ id: 'all',           label: 'All Types'       }),
+        Object.freeze({ id: 'legal',         label: 'Legal Adoption'  }),
+        Object.freeze({ id: 'guardianship',  label: 'Guardianship'    }),
+        Object.freeze({ id: 'foster',        label: 'Foster Care'     })
+    ]);
+
+    // Sorting reorders rows within each type group:
+    //   - year         descending (newest first)
+    //   - childName    ascending (localeCompare)
+    //   - adopterName  ascending (localeCompare)
+    var ADOPTION_SORT_OPTIONS = Object.freeze([
+        Object.freeze({ id: 'year',        label: 'Year'         }),
+        Object.freeze({ id: 'childName',   label: 'Child Name'   }),
+        Object.freeze({ id: 'adopterName', label: 'Adopter Name' })
+    ]);
+
+    var ADOPTION_DEFAULT_FILTERS = Object.freeze({
+        search: '',
+        type: 'all',
+        status: 'all',
+        sortBy: 'year',
+        locationId: null,
+        showAllLocations: true,
+        collapsed: false
+    });
+
+    // =========================================================================
+    // 8. DEFAULT FILTERS PER FACET
     // =========================================================================
 
     var DEFAULT_FILTERS_BY_FACET = Object.freeze({
-        deaths: DEATHS_DEFAULT_FILTERS,
-        stork:  STORK_DEFAULT_FILTERS
-        // adoption, surrogacy, social, educational: added when their
-        // tabs land.
+        deaths:   DEATHS_DEFAULT_FILTERS,
+        stork:    STORK_DEFAULT_FILTERS,
+        adoption: ADOPTION_DEFAULT_FILTERS
+        // surrogacy, social, educational: added when their tabs land.
     });
 
     // The fallback shape for a facet whose defaults have not yet
@@ -329,7 +382,7 @@
     });
 
     // =========================================================================
-    // 8. UI COPY
+    // 9. UI COPY
     // =========================================================================
     //
     // Long-form UI strings used by the tabs. Kept here so that a
@@ -343,6 +396,9 @@
         emptyNoDeathsRecorded:  'No deaths have been recorded.',
         emptyNoCouples:         'No fertile couples found. Women must be between 14 and 47 and in an active committed relationship with a living man.',
         emptyNoBirthsRecorded:  'No births have been recorded.',
+        emptyNoAdoptions:       'No adoption records found. Use the + New Adoption action to create one.',
+        emptyNoGuardianships:   'No guardianship records found.',
+        emptyNoFosterRecords:   'No foster placements found.',
         emptyUnavailable:       'This information is not available in the current build.',
         loadFailed:             'Could not load data.',
         killUnavailable:        'Kill action is unavailable: the death modal is not loaded.',
@@ -353,7 +409,7 @@
     });
 
     // =========================================================================
-    // 9. HELPERS (pure)
+    // 10. HELPERS (pure)
     // =========================================================================
 
     function getFacet(facetId) {
@@ -424,7 +480,7 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     var EventsConstants = {
@@ -456,6 +512,12 @@
         // Stork facet vocabulary
         STORK_SORT_OPTIONS: STORK_SORT_OPTIONS,
         STORK_DEFAULT_FILTERS: STORK_DEFAULT_FILTERS,
+
+        // Adoption facet vocabulary
+        ADOPTION_STATUS_FILTERS: ADOPTION_STATUS_FILTERS,
+        ADOPTION_TYPE_FILTERS: ADOPTION_TYPE_FILTERS,
+        ADOPTION_SORT_OPTIONS: ADOPTION_SORT_OPTIONS,
+        ADOPTION_DEFAULT_FILTERS: ADOPTION_DEFAULT_FILTERS,
 
         // Default filters
         DEFAULT_FILTERS_FALLBACK: DEFAULT_FILTERS_FALLBACK,
