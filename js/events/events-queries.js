@@ -16,6 +16,7 @@
  *                    MortalityStatistics
  *     stork       -> RomanceQueries / FamilyQueries /
  *                    ChildrenQueries / ChildrenRules
+ *     adoption    -> ChildrenState / ChildrenQueries / CharacterQueries
  *     disasters   -> DisasterQueries
  *     social      -> RelationshipQueries / RomanceQueries /
  *                    FriendshipQueries / RivalryQueries
@@ -51,19 +52,17 @@
  * DEPENDENCIES (all optional, checked at call time):
  *   - window.MortalityQueries      (deaths facet)
  *   - window.MortalityStatistics   (deaths facet stats)
- *   - window.CharacterQueries      (deaths + stork rosters)
+ *   - window.CharacterQueries      (deaths + stork + adoption rosters)
  *   - window.RomanceQueries        (stork couple edges)
  *   - window.FamilyQueries         (stork existing children)
- *   - window.ChildrenQueries       (stork pregnancy count)
+ *   - window.ChildrenQueries       (stork pregnancy count, adoption
+ *                                   fallback if ChildrenState absent)
+ *   - window.ChildrenState         (adoption records)
  *   - window.ChildrenRules         (stork fertility math)
  *   - window.LocationQueries       (sub-location expansion)
  *   - window.DisasterQueries       (disasters facet)
  *   - window.RelationshipQueries   (social facet)
- *   - window.RomanceQueries        (social facet)
- *   - window.FriendshipQueries     (social facet)
- *   - window.RivalryQueries        (social facet)
  *   - window.EducationQueries      (educational facet)
- *   - window.ApprenticeshipQueries (educational facet)
  *   - window.getCurrentYear        (time.js)
  *   - window.getPlaceById          (accessors.js)
  *   - window.getEventLog           (accessors.js)
@@ -76,33 +75,32 @@
  * =============================================================================
  *
  * REFACTOR HISTORY:
- *   Current revision (Phase 3A):
- *     - Added the stork facet's query set:
- *         getFertileCouples(locationId, filters)
- *       returns the fertile-couple roster grouped by man. Reads
- *       through RomanceQueries.getActiveCommittedPartners for the
- *       couple edge, FamilyQueries.getBiologicalChildIds for
- *       existing children, ChildrenQueries.getPregnanciesForMother
- *       for the pregnancy count, and ChildrenRules for the fertility
- *       and expected-children math. Helper functions
- *       _getBiologicalChildrenForCouple, _countPregnanciesForCouple,
- *       _expectedChildrenForCouple, _expectedRemaining,
- *       _locationIdSetForFilter, _fullNameOf, _sumChildren,
- *       _rankPriorityOf added (all private).
- *     - Deleted the previous getBirthRecords(locationId) stub.
- *       That stub aggregated getPregnanciesForMother over every
- *       character in the world (O(population) per call) but was
- *       never used. getFertileCouples is the actual surface the
- *       stork tab consumes.
- *     - No behavioural change to any deaths-facet function.
- *   Previous revision (initial):
- *     - Created with the deaths facet's read API
- *       (getCharacterRoster, getCharacterPopulationStats,
- *       getAllDeathRecords, getMortalityStats,
- *       getRecentDeathEvents) and the facet stubs
- *       (getDisasterRecords, getSocialEvents,
- *       getEducationalEvents) that are consumed by the tab files
- *       delivered so far.
+ *   Current revision (Phase 3B):
+ *     - Added the adoption facet's query set:
+ *         getAdoptionRecords(locationId)
+ *       reads every adoption metadata record via
+ *       ChildrenState.allAdoptionIds() when available, or by
+ *       iterating every character and calling
+ *       ChildrenQueries.getAdoptionsForAdopter when it isn't.
+ *       Records are enriched with child and adopter character
+ *       summaries so the tab does not fetch summaries itself.
+ *       Optional location filter restricts to adoptions where the
+ *       CHILD's currentLocationId is in the location subtree.
+ *     - Added _getAllAdoptionsRaw() private helper. It returns the
+ *       raw adoption records (un-enriched), so getAdoptionRecords
+ *       can distinguish "no records" from "records exist but
+ *       couldn't be enriched".
+ *     - getFacetRecords now dispatches 'adoption' to
+ *       getAdoptionRecords.
+ *     - No behavioural change to any deaths-facet or stork-facet
+ *       function.
+ *   Previous revision (Phase 3A):
+ *     - Added the stork facet's query set: getFertileCouples,
+ *       getCoupleChildrenSummaries.
+ *   Initial revision:
+ *     - Created with the deaths facet's read API and the facet
+ *       stubs (getDisasterRecords, getSocialEvents,
+ *       getEducationalEvents).
  * =============================================================================
  */
 
@@ -887,6 +885,170 @@
     }
 
     // =========================================================================
+    // 4b. ADOPTION FACET
+    // =========================================================================
+    //
+    // Reads every adoption metadata record via
+    // ChildrenState.allAdoptionIds() when available, or by iterating
+    // every character and calling ChildrenQueries.getAdoptionsForAdopter
+    // when it isn't. Records are the shape produced by
+    // ChildrenState.getAdoptionCopy:
+    //
+    //   { id, childId, adopterId, type, status, year, endYear,
+    //     notes, createdAt, updatedAt }
+    //
+    // The tab enriches them with child and adopter character summaries
+    // (via CharacterQueries.getCharacterSummary) to render names,
+    // ages, and location filters. That enrichment happens here so the
+    // tab does not need to fetch summaries itself.
+    //
+    // Optional location filter: when locationId is supplied, restricts
+    // to adoptions where the CHILD's currentLocationId is in the
+    // location subtree (using the same LocationQueries expansion as
+    // the deaths facet).
+    //
+    // FALLBACK NOTE:
+    //   ChildrenState.allAdoptionIds is the preferred path. It is a
+    //   flat id list backed by ChildrenState's own index and takes
+    //   O(adoptions) rather than O(population). The fallback scans
+    //   every character and calls getAdoptionsForAdopter, which is
+    //   O(population). The fallback only fires when ChildrenState
+    //   is absent or broken -- a legitimate reduced harness, not
+    //   the production configuration.
+
+    function _getAllAdoptionsRaw() {
+        var ChS = _requireModule('ChildrenState', ['allAdoptionIds', 'getAdoptionCopy']);
+        if (ChS.ok) {
+            try {
+                var ids = ChS.module.allAdoptionIds();
+                if (Array.isArray(ids)) {
+                    var out = [];
+                    for (var i = 0; i < ids.length; i++) {
+                        var rec = ChS.module.getAdoptionCopy(ids[i]);
+                        if (rec) out.push(rec);
+                    }
+                    return { ok: true, records: out };
+                }
+            } catch (e) { /* fall through to population scan */ }
+        }
+
+        // Fallback: iterate characters, call getAdoptionsForAdopter.
+        var cq = _requireModule('ChildrenQueries', ['getAdoptionsForAdopter']);
+        if (!cq.ok) return { ok: false, reason: cq.reason };
+
+        var chq = _requireModule('CharacterQueries', ['getAllCharacters']);
+        if (!chq.ok) return { ok: false, reason: chq.reason };
+
+        var all;
+        try { all = chq.module.getAllCharacters(); }
+        catch (e) {
+            return { ok: false, reason: 'CharacterQueries.getAllCharacters threw.' };
+        }
+        if (!Array.isArray(all)) {
+            return { ok: false, reason: 'CharacterQueries returned a non-array.' };
+        }
+
+        var seen = {};
+        var records = [];
+        for (var j = 0; j < all.length; j++) {
+            var c = all[j];
+            if (!c || !_hasId(c.id)) continue;
+            var list;
+            try { list = cq.module.getAdoptionsForAdopter(c.id); }
+            catch (e) { list = []; }
+            if (!Array.isArray(list)) continue;
+            for (var k = 0; k < list.length; k++) {
+                var r = list[k];
+                if (!r || !_hasId(r.id)) continue;
+                if (seen[r.id]) continue;
+                seen[r.id] = true;
+                records.push(r);
+            }
+        }
+        return { ok: true, records: records };
+    }
+
+    /**
+     * Returns the adoption records for the Adoption tab. Each record
+     * is enriched with child and adopter character summaries.
+     *
+     * @param {string|null} locationId  null -> all locations
+     * @returns {{
+     *   available: boolean,
+     *   reason?: string,
+     *   records: Array<{
+     *     id, childId, adopterId, type, status, year, endYear, notes,
+     *     child: characterSummary|null,
+     *     adopter: characterSummary|null
+     *   }>,
+     *   totalCount: number
+     * }}
+     */
+    function getAdoptionRecords(locationId) {
+        var cq = _requireModule('CharacterQueries', ['getCharacterSummary']);
+        if (!cq.ok) return _unavailable(cq.reason);
+
+        var raw = _getAllAdoptionsRaw();
+        if (!raw.ok) return _unavailable(raw.reason);
+
+        var locationIdSet = _locationIdSetForFilter(locationId);
+
+        var records = [];
+        for (var i = 0; i < raw.records.length; i++) {
+            var r = raw.records[i];
+            if (!r || !_hasId(r.id)) continue;
+
+            var child = null;
+            if (_hasId(r.childId)) {
+                try { child = cq.module.getCharacterSummary(r.childId); }
+                catch (e) { child = null; }
+            }
+
+            var adopter = null;
+            if (_hasId(r.adopterId)) {
+                try { adopter = cq.module.getCharacterSummary(r.adopterId); }
+                catch (e) { adopter = null; }
+            }
+
+            if (locationIdSet !== null) {
+                var childLoc = child && _hasId(child.locationId)
+                    ? child.locationId : null;
+                if (!childLoc || locationIdSet[childLoc] !== true) continue;
+            }
+
+            records.push({
+                id: r.id,
+                childId: r.childId,
+                adopterId: r.adopterId,
+                type: r.type,
+                status: r.status,
+                year: r.year,
+                endYear: _isMissing(r.endYear) ? null : r.endYear,
+                notes: typeof r.notes === 'string' ? r.notes : '',
+                child: child,
+                adopter: adopter
+            });
+        }
+
+        // Sort by year descending (newest first), then by id for
+        // stability. The tab re-sorts within type groups per its own
+        // sortBy; this default ordering makes the pre-group order
+        // deterministic and sensible even if a caller uses the raw
+        // list.
+        records.sort(function(a, b) {
+            var ya = (typeof a.year === 'number') ? a.year : 0;
+            var yb = (typeof b.year === 'number') ? b.year : 0;
+            if (ya !== yb) return yb - ya;
+            return a.id.localeCompare(b.id);
+        });
+
+        return _available({
+            records: records,
+            totalCount: records.length
+        });
+    }
+
+    // =========================================================================
     // 5. DISASTERS FACET
     // =========================================================================
 
@@ -954,6 +1116,7 @@
         switch (facetId) {
             case 'deaths':      return getAllDeathRecords(locationId);
             case 'stork':       return getFertileCouples(locationId);
+            case 'adoption':    return getAdoptionRecords(locationId);
             case 'disasters':   return getDisasterRecords(locationId);
             case 'social':      return getSocialEvents(locationId);
             case 'educational': return getEducationalEvents(locationId);
@@ -976,6 +1139,9 @@
         // Stork facet
         getFertileCouples: getFertileCouples,
         getCoupleChildrenSummaries: getCoupleChildrenSummaries,
+
+        // Adoption facet
+        getAdoptionRecords: getAdoptionRecords,
 
         // Disasters facet
         getDisasterRecords: getDisasterRecords,
