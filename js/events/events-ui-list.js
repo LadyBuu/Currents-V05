@@ -31,8 +31,9 @@
  *   `.events-filters`, `.events-empty`, `.events-unavailable`) are
  *   defined by events-deaths-tab.js's own injected stylesheet
  *   (`id="events-deaths-tab-styles"`). Per-facet extras (e.g.
- *   `.events-stork-couple`, `.events-stork-man`) are defined by that
- *   facet's own tab file. This module does NOT inject styles.
+ *   `.events-stork-couple`, `.events-stork-man`,
+ *   `.events-adoption-row`) are defined by that facet's own tab
+ *   file. This module does NOT inject styles.
  *
  * DEPENDENCIES (required, verified at load):
  *   - EventsViewModels  (for emptyStateMessage)
@@ -43,22 +44,36 @@
  * =============================================================================
  *
  * REFACTOR HISTORY:
- *   Current revision (Phase 3A):
- *     - Added the stork facet's renderers:
- *         renderChildCircles(children)
- *         renderCoupleRow(vm)
- *         renderManGroup(vm, options)
- *         renderStorkTabBody(input)
- *       The child circles use <button> rather than <span> so they are
- *       keyboard-activatable via the tab's delegated handler. The
- *       couple row shows the pregnancy label only when present (set
- *       by the view model when pregnancy count != child count).
- *     - No behavioural change to any deaths-facet renderer.
- *   Previous revision (initial):
- *     - Created with the deaths facet's renderers
- *       (renderStatsBar, renderOptionList, renderCharacterRow,
- *       renderCharacterList, renderRecentEvents, renderEmptyState,
- *       renderTabBody).
+ *   Current revision (Phase 3B):
+ *     - Added the adoption facet's renderers:
+ *         renderAdoptionRow(vm)
+ *         renderAdoptionGroup(typeId, typeLabel, records, typeIconName)
+ *         renderAdoptionTabBody(input)
+ *       The row is a type-icon + child identity + adopter identity +
+ *       status badge/year range + action buttons. Active records
+ *       expose End + Edit; inactive records expose Edit only
+ *       (endAdoptionMetadata refuses non-active records).
+ *       The tab body accepts `statsBar` (adoption-specific,
+ *       pre-computed by the tab via
+ *       EventsViewModels.toAdoptionStatsBarViewModel), `typeGroups`
+ *       (the pre-grouped row array), `emptyState` (case id), and
+ *       `emptyStateOptions` (extra hint per case). The renderer
+ *       omits empty type groups entirely.
+ *     - renderEmptyState gains icon fallbacks for the three new
+ *       adoption cases:
+ *         no-adoptions       -> PERSON
+ *         no-guardianships   -> GUARDIANSHIP
+ *         no-foster          -> HOME
+ *       This matches the tab's grouping: an empty "Legal Adoption"
+ *       group still shows a group header in the tab body; when the
+ *       WHOLE tab is empty of a case, the icon reflects the case.
+ *     - No behavioural change to any deaths-facet or stork-facet
+ *       renderer.
+ *   Previous revision (Phase 3A):
+ *     - Added the stork facet's renderers: renderChildCircles,
+ *       renderCoupleRow, renderManGroup, renderStorkTabBody.
+ *   Initial revision:
+ *     - Created with the deaths facet's renderers.
  * =============================================================================
  */
 
@@ -280,13 +295,13 @@
 
         if (secondaryParts.length > 0) {
             html += '<div class="events-row__secondary">' +
-                secondaryParts.join('<span class="events-row__sep">·</span>') +
+                secondaryParts.join('<span class="events-row__sep">\u00b7</span>') +
                 '</div>';
         }
 
         if (deathParts.length > 0) {
             html += '<div class="events-row__death">' +
-                deathParts.join('<span class="events-row__sep">·</span>') +
+                deathParts.join('<span class="events-row__sep">\u00b7</span>') +
                 '</div>';
         }
 
@@ -342,17 +357,27 @@
     // =========================================================================
     // 6. EMPTY STATE
     // =========================================================================
+    //
+    // Icon selection per case id. The adoption cases fall back to
+    // their facet icon so an "empty adoptions" empty state visually
+    // matches the adoption facet even when the tab body is fully
+    // empty (as opposed to one type group being empty while another
+    // is populated).
+
+    function _emptyStateIconName(caseId) {
+        if (caseId === 'unavailable') return 'WARNING';
+        if (caseId === 'no-context')  return 'LOCATION';
+        if (caseId === 'no-couples')  return 'STORK';
+        if (caseId === 'no-adoptions') return 'ADOPTION_LEGAL';
+        if (caseId === 'no-guardianships') return 'GUARDIANSHIP';
+        if (caseId === 'no-foster') return 'HOME';
+        return 'PERSON';
+    }
 
     function renderEmptyState(caseId, options) {
         options = options || {};
         var message = VM.emptyStateMessage(caseId) || 'Nothing to show.';
-        var iconName = caseId === 'unavailable'
-            ? 'WARNING'
-            : caseId === 'no-context'
-                ? 'LOCATION'
-                : caseId === 'no-couples'
-                    ? 'STORK'
-                    : 'PERSON';
+        var iconName = _emptyStateIconName(caseId);
         var iconColor = caseId === 'unavailable' ? 'danger' : 'dim';
 
         var extra = '';
@@ -433,8 +458,8 @@
             if (c.ageLabel && c.ageLabel !== 'Unknown') {
                 tooltip += ' (' + c.ageLabel + ')';
             }
-            if (c.ageGroup) tooltip += ' · ' + c.ageGroup;
-            if (c.isDeceased) tooltip += ' · Deceased';
+            if (c.ageGroup) tooltip += ' \u00b7 ' + c.ageGroup;
+            if (c.isDeceased) tooltip += ' \u00b7 Deceased';
 
             html += '<button type="button" class="' +
                 _esc(classes.join(' ')) + '" ' +
@@ -555,7 +580,7 @@
 
         html += '<span class="events-stork-man__stats">' +
             _esc(String(vm.partnerCount)) + ' partner' +
-            (vm.partnerCount === 1 ? '' : 's') + ' · ' +
+            (vm.partnerCount === 1 ? '' : 's') + ' \u00b7 ' +
             _esc(String(vm.totalChildren)) + ' children' +
             (typeof vm.totalExpected === 'number'
                 ? ' / ' + _esc(String(vm.totalExpected))
@@ -613,7 +638,213 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 12. ADOPTION FACET: ROW
+    // =========================================================================
+    //
+    // One adoption record. Layout:
+    //   [type icon] [child identity] [adopter identity] [status badge +
+    //   year range] [actions]
+    //
+    // Active records expose End + Edit.
+    // Inactive records expose Edit only (endAdoptionMetadata refuses
+    // non-active records, so the End button would be misleading).
+    //
+    // Both the child and the adopter identities use the same gender
+    // marker pattern as the deaths and stork rows: a small icon tinted
+    // by gender, followed by the display name, followed by the age in
+    // parentheses when available. Deceased markers are appended inline
+    // so the row still reads cleanly in the "ended because the adopter
+    // died" case.
+
+    function _renderAdoptionPersonIdentity(displayName, ageLabel, genderIconName, genderColorToken, isDeceased, extraClasses) {
+        var classes = _classNames([
+            'events-adoption-row__person',
+            extraClasses
+        ]);
+
+        var html = '<div class="' + _esc(classes) + '">';
+        html += '<span class="events-adoption-row__gender-icon" ' +
+            'style="color:' + _esc(_color(genderColorToken)) + ';" ' +
+            'aria-hidden="true">' +
+            _icon(genderIconName) +
+            '</span>';
+        html += '<span class="events-adoption-row__name">' +
+            _esc(displayName) +
+            '</span>';
+        if (ageLabel && ageLabel !== 'Unknown') {
+            html += '<span class="events-adoption-row__age">(' +
+                _esc(ageLabel) + ')</span>';
+        }
+        if (isDeceased) {
+            html += '<span class="events-adoption-row__deceased" ' +
+                'title="Deceased">' + _icon('DEATHSTARS') + '</span>';
+        }
+        html += '</div>';
+        return html;
+    }
+
+    function renderAdoptionRow(vm) {
+        if (!vm || !_hasId(vm.id)) return '';
+
+        var statusStyle = 'color:' + _esc(_color(vm.statusColorToken)) + ';';
+
+        var childHtml = _renderAdoptionPersonIdentity(
+            vm.childDisplayName,
+            vm.childAgeLabel,
+            vm.childGenderIconName,
+            vm.childGenderColorToken,
+            vm.childIsDeceased,
+            'events-adoption-row__person--child'
+        );
+
+        var adopterHtml = _renderAdoptionPersonIdentity(
+            vm.adopterDisplayName,
+            vm.adopterAgeLabel,
+            vm.adopterGenderIconName,
+            vm.adopterGenderColorToken,
+            vm.adopterIsDeceased,
+            'events-adoption-row__person--adopter'
+        );
+
+        var actionsHtml = '';
+        if (vm.isActive) {
+            actionsHtml +=
+                '<button type="button" class="events-adoption-row__action events-adoption-row__action--end" ' +
+                'data-action="end-adoption" data-adoption-id="' + _esc(vm.id) + '" ' +
+                'aria-label="End adoption">' +
+                _icon('X_HEAVY') + '<span>End</span></button>';
+        }
+        actionsHtml +=
+            '<button type="button" class="events-adoption-row__action events-adoption-row__action--edit" ' +
+            'data-action="edit-adoption" data-adoption-id="' + _esc(vm.id) + '" ' +
+            'aria-label="Edit adoption">' +
+            _icon('EDIT') + '<span>Edit</span></button>';
+
+        return '<div class="events-adoption-row" ' +
+            'data-adoption-id="' + _esc(vm.id) + '" ' +
+            'data-adoption-type="' + _esc(vm.type) + '" ' +
+            'data-adoption-status="' + _esc(vm.status) + '">' +
+            '<span class="events-adoption-row__type-icon" ' +
+            'title="' + _esc(vm.typeLabel) + '" aria-hidden="true">' +
+            _icon(vm.typeIconName) +
+            '</span>' +
+            '<div class="events-adoption-row__child">' + childHtml + '</div>' +
+            '<div class="events-adoption-row__adopter">' + adopterHtml + '</div>' +
+            '<div class="events-adoption-row__status">' +
+            '<span class="events-adoption-row__status-badge" style="' +
+            _esc(statusStyle) + '">' +
+            _esc(vm.statusLabel) +
+            '</span>' +
+            '<span class="events-adoption-row__year">' +
+            _esc(vm.yearRangeLabel) +
+            '</span>' +
+            '</div>' +
+            '<div class="events-adoption-row__actions">' + actionsHtml + '</div>' +
+            '</div>';
+    }
+
+    // =========================================================================
+    // 13. ADOPTION FACET: GROUPED LIST
+    // =========================================================================
+    //
+    // The adoption list is grouped by TYPE, then by STATUS within each
+    // type group (the tab does the status sorting; this renderer only
+    // emits the group). Each group has a header. Empty type groups
+    // are omitted entirely (so a world with only legal adoptions does
+    // not show an empty Guardianship header).
+
+    function renderAdoptionGroup(typeId, typeLabel, rows, typeIconName) {
+        if (!Array.isArray(rows) || rows.length === 0) return '';
+
+        var html = '<div class="events-adoption-group" data-type="' +
+            _esc(typeId) + '">';
+
+        html += '<div class="events-adoption-group__header">' +
+            '<span class="events-adoption-group__icon" aria-hidden="true">' +
+            _icon(typeIconName) +
+            '</span>' +
+            '<span class="events-adoption-group__label">' +
+            _esc(typeLabel) +
+            '</span>' +
+            '<span class="events-adoption-group__count">(' +
+            _esc(String(rows.length)) + ')</span>' +
+            '</div>';
+
+        html += '<div class="events-adoption-group__rows">';
+        for (var i = 0; i < rows.length; i++) {
+            html += renderAdoptionRow(rows[i]);
+        }
+        html += '</div>';
+
+        html += '</div>';
+        return html;
+    }
+
+    // =========================================================================
+    // 14. ADOPTION FACET: FULL BODY
+    // =========================================================================
+    //
+    // Accepts:
+    //   statsBar           adoption-specific stats bar VM (pre-computed
+    //                      by the tab via toAdoptionStatsBarViewModel).
+    //                      Rendered when `available === true`.
+    //   typeGroups         array of
+    //                        { typeId, typeLabel, typeIconName, rows: [row] }
+    //                      Only groups with rows.length > 0 are shown.
+    //   emptyState         case id (one of the adoption / generic cases)
+    //   emptyStateOptions  { extraHint? }
+    //
+    // If emptyState is set, the type groups are ignored (the tab
+    // computed the case because there's nothing to show). If
+    // emptyState is null and typeGroups has at least one non-empty
+    // group, the groups render. If emptyState is null and every
+    // group is empty, the renderer falls back to a no-matches empty
+    // state (the tab should have set emptyState before calling, but
+    // the fallback keeps the body from rendering a blank frame).
+
+    function renderAdoptionTabBody(input) {
+        input = input || {};
+
+        var html = '<div class="events-adoption-body">';
+
+        if (input.statsBar) {
+            html += renderStatsBar(input.statsBar);
+        }
+
+        if (input.emptyState) {
+            html += renderEmptyState(input.emptyState, input.emptyStateOptions);
+        } else if (Array.isArray(input.typeGroups) && input.typeGroups.length > 0) {
+            var renderedAny = false;
+            var groupsHtml = '';
+            for (var i = 0; i < input.typeGroups.length; i++) {
+                var g = input.typeGroups[i];
+                if (!g) continue;
+                var gHtml = renderAdoptionGroup(
+                    g.typeId,
+                    g.typeLabel,
+                    g.rows,
+                    g.typeIconName
+                );
+                if (gHtml) {
+                    groupsHtml += gHtml;
+                    renderedAny = true;
+                }
+            }
+            if (renderedAny) {
+                html += '<div class="events-adoption-list">' + groupsHtml + '</div>';
+            } else {
+                html += renderEmptyState('no-matches');
+            }
+        } else {
+            html += renderEmptyState('no-matches');
+        }
+
+        html += '</div>';
+        return html;
+    }
+
+    // =========================================================================
+    // 15. EXPORTS
     // =========================================================================
 
     window.EventsUIList = {
@@ -652,7 +883,12 @@
         renderManGroup: renderManGroup,
 
         // Full body (stork facet)
-        renderStorkTabBody: renderStorkTabBody
+        renderStorkTabBody: renderStorkTabBody,
+
+        // Adoption facet
+        renderAdoptionRow: renderAdoptionRow,
+        renderAdoptionGroup: renderAdoptionGroup,
+        renderAdoptionTabBody: renderAdoptionTabBody
     };
 
     if (typeof module !== 'undefined' && module.exports) {
