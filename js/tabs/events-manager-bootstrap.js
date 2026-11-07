@@ -16,8 +16,8 @@
  *   - TabManager.init()                     -- the click router
  *   - Sidebar: location list + "All Locations" default
  *   - Topbar: year / import / export / refresh / theme
- *   - Initial character... no: initial LOCATION selection (default
- *     is "all locations"; the user picks a specific one)
+ *   - Initial LOCATION selection (default is "all locations"; the
+ *     user picks a specific one)
  *   - Initial tab render
  *
  * OUT OF SCOPE:
@@ -82,34 +82,31 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Initial revision.
+ *   Current revision (Phase 3B):
+ *     - KNOWN_TAB_IDS gains 'adoption'. The events-adoption-tab.js
+ *       file self-registers at load; adding the id here makes the
+ *       bootstrap's setActiveTabId and _syncTabStrip accept clicks
+ *       on the adoption strip button. Without this entry, a click
+ *       on 'adoption' falls through to DEFAULT_ACTIVE_TAB_ID and
+ *       re-renders the deaths tab instead.
+ *     - No other behavioural change. Every existing facet keeps its
+ *       exact id and default.
+ *   Previous revision (Phase 3A):
+ *     - KNOWN_TAB_IDS gains 'stork'. Events-stork-tab.js
+ *       self-registers at load; this entry makes its strip button
+ *       clickable.
+ *   Initial revision:
  *     - Follows the education-manager-bootstrap.js pattern: one file
  *       owns TabManager.configure, TabManager.init, sidebar,
  *       topbar, initial render.
  *     - Sidebar default is null (all locations) rather than "first
- *       place". This is a deliberate divergence from education,
- *       which defaults to the first place -- the Deaths tab is
- *       meaningful at the "all locations" scale, so the tab must
- *       work in that state, and the sidebar should start there.
- *     - The five facets (deaths, stork, disasters, social,
- *       educational) are declared in KNOWN_TAB_IDS, but only
- *       'deaths' has a registered renderer at this revision.
- *       TabManager's empty-state path renders the other four with
- *       a clean "not loaded" state until their tab files land.
+ *       place". The Deaths tab is meaningful at the "all locations"
+ *       scale, so the tab must work in that state, and the sidebar
+ *       should start there.
  *     - setActiveTabId calls _syncTabStrip, which toggles .active
- *       on both the strip buttons AND the panes. Education learned
- *       this the hard way; the Events Manager gets the fix from
- *       the start.
+ *       on both the strip buttons AND the panes.
  *     - _buildContext returns a non-null object even when no
- *       location is selected. The locationId may be null, but the
- *       context itself is always present, so TabManager's
- *       'no-context' empty state only fires if the context builder
- *       truly cannot produce one (which it always can, given the
- *       read-only nature of the Events tabs).
- *     - The topbar Refresh action calls EventsBootstrap.reinit() +
- *       loadMasterData() + a fresh sidebar + a tab re-render. This
- *       is the pattern education-manager-bootstrap.js uses; it is
- *       the canonical "reload from storage" sequence.
+ *       location is selected.
  * =============================================================================
  */
 
@@ -126,9 +123,20 @@
     // per id; TabManager renders one pane per id. Only the ids with
     // a registered renderer produce content; the rest go through
     // _buildEmptyState's 'no-renderer' branch.
+    //
+    // Registered in this revision:
+    //   deaths      events-deaths-tab.js
+    //   stork       events-stork-tab.js
+    //   adoption    events-adoption-tab.js
+    //   disasters   events-disasters-tab.js
+    //
+    // Declared but not yet registered:
+    //   surrogacy, social, educational  -> empty-state "not loaded"
     var KNOWN_TAB_IDS = [
         'deaths',
         'stork',
+        'adoption',
+        'surrogacy',
         'disasters',
         'social',
         'educational'
@@ -299,9 +307,9 @@
         }
 
         // Pre-compute the stats bar once per context. The Deaths tab
-        // will reuse it; other facets ignore it (their stats shapes
-        // differ) and re-query. This is safe: eventsState is present
-        // but optional.
+        // and Stork tab will reuse it; the adoption tab computes its
+        // own adoption-specific stats bar and ignores this one. Safe:
+        // eventsState is present but optional.
         var statsBar = null;
         if (window.EventsQueries && window.EventsViewModels
             && typeof window.EventsQueries.getCharacterPopulationStats === 'function'
