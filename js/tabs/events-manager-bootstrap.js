@@ -82,27 +82,25 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 3B):
- *     - KNOWN_TAB_IDS gains 'adoption'. The events-adoption-tab.js
+ *   Current revision (Phase 3C):
+ *     - KNOWN_TAB_IDS gains 'surrogacy'. The events-surrogacy-tab.js
  *       file self-registers at load; adding the id here makes the
  *       bootstrap's setActiveTabId and _syncTabStrip accept clicks
- *       on the adoption strip button. Without this entry, a click
- *       on 'adoption' falls through to DEFAULT_ACTIVE_TAB_ID and
+ *       on the surrogacy strip button. Without this entry, a click
+ *       on 'surrogacy' falls through to DEFAULT_ACTIVE_TAB_ID and
  *       re-renders the deaths tab instead.
  *     - No other behavioural change. Every existing facet keeps its
  *       exact id and default.
- *   Previous revision (Phase 3A):
- *     - KNOWN_TAB_IDS gains 'stork'. Events-stork-tab.js
+ *   Previous revision (Phase 3B):
+ *     - KNOWN_TAB_IDS gains 'adoption'. Events-adoption-tab.js
  *       self-registers at load; this entry makes its strip button
  *       clickable.
+ *   Previous revision (Phase 3A):
+ *     - KNOWN_TAB_IDS gains 'stork'.
  *   Initial revision:
  *     - Follows the education-manager-bootstrap.js pattern: one file
  *       owns TabManager.configure, TabManager.init, sidebar,
  *       topbar, initial render.
- *     - Sidebar default is null (all locations) rather than "first
- *       place". The Deaths tab is meaningful at the "all locations"
- *       scale, so the tab must work in that state, and the sidebar
- *       should start there.
  *     - setActiveTabId calls _syncTabStrip, which toggles .active
  *       on both the strip buttons AND the panes.
  *     - _buildContext returns a non-null object even when no
@@ -128,10 +126,11 @@
     //   deaths      events-deaths-tab.js
     //   stork       events-stork-tab.js
     //   adoption    events-adoption-tab.js
+    //   surrogacy   events-surrogacy-tab.js
     //   disasters   events-disasters-tab.js
     //
     // Declared but not yet registered:
-    //   surrogacy, social, educational  -> empty-state "not loaded"
+    //   social, educational   -> empty-state "not loaded"
     var KNOWN_TAB_IDS = [
         'deaths',
         'stork',
@@ -280,14 +279,14 @@
     // =========================================================================
     //
     // Called by TabManager once per render, per tab. Returns the
-    // context object every facet tab consumes. Unlike education (which
-    // returns null when there's no selection), the Events Manager
+    // context object every facet tab consumes. The Events Manager
     // returns a context even when no location is selected, because
     // the Deaths tab is meaningful at the "all locations" scale.
     //
     // eventsState carries the pre-computed stats bar (built once per
-    // context) so the tab can reuse it. The tab itself can re-derive
-    // if eventsState is missing.
+    // context) so the Deaths and Stork tabs can reuse it. The
+    // Adoption and Surrogacy tabs compute their own facet-specific
+    // stats bars and ignore this one.
     //
     // The context is intentionally read-only: no live references, no
     // mutable canonical state. Every field is either a primitive or
@@ -307,9 +306,8 @@
         }
 
         // Pre-compute the stats bar once per context. The Deaths tab
-        // and Stork tab will reuse it; the adoption tab computes its
-        // own adoption-specific stats bar and ignores this one. Safe:
-        // eventsState is present but optional.
+        // and Stork tab will reuse it. Safe: eventsState is present
+        // but optional.
         var statsBar = null;
         if (window.EventsQueries && window.EventsViewModels
             && typeof window.EventsQueries.getCharacterPopulationStats === 'function'
@@ -474,9 +472,6 @@
             try {
                 window.LocationUI.renderLocationList(ID_SIDEBAR_LIST, {
                     selectedId: selectedId,
-                    // "All Locations" is a synthetic row. LocationUI
-                    // supports a firstItem option in some builds; if
-                    // not, we fall through to the manual renderer.
                     firstItem: {
                         id: null,
                         label: 'All Locations',
@@ -492,8 +487,6 @@
                 // If LocationUI ignored firstItem (older builds), the
                 // "All Locations" row is missing. Detect and fall back.
                 if (!container.querySelector('[data-place-id=""], [data-all-locations]')) {
-                    // Older LocationUI: append our "All Locations" row
-                    // ourselves and wire it.
                     _prependAllLocationsRow(container);
                 }
                 return;
