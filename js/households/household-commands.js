@@ -212,6 +212,45 @@
  *       it AFTER removing the place from canonical data, which is the
  *       natural order (the place is gone, now reconcile references).
  *
+ * SILENT VARIANTS (NEW)
+ * ---------------------
+ *   Two "silent" variants exist for the "correct a mistake" UI path in
+ *   modals-household.js. They perform the same in-memory mutation as
+ *   their non-silent counterparts, but they skip the corresponding
+ *   history write:
+ *
+ *     updateHouseholdNameSilent(householdId, newName, options)
+ *         Same field change as updateHousehold's rename branch, but
+ *         does NOT append to household.nameHistory. The household name
+ *         IS changed; currentNameSince IS updated. Only the audit trail
+ *         entry is skipped.
+ *
+ *         Use case: user fixes a typo in a name that was just entered.
+ *         Recording a "rename from X to Y" entry for a correction the
+ *         user immediately caught pollutes the history.
+ *
+ *     removeMemberSilent(householdId, characterId, options)
+ *         Splices the member out of the household. Does NOT:
+ *           - close the character's householdHistory entry
+ *             (via _clearCharacterMembership), or
+ *           - trigger head succession (pickSuccessor + applyHeadChange).
+ *
+ *         Use case: user adds the wrong character to a household and
+ *         immediately removes them. Closing a householdHistory entry
+ *         for a membership that was never acknowledged, or discovering
+ *         a "successor" for a headship that was never real, would
+ *         corrupt the record.
+ *
+ *   Both silent variants COMMIT (mark dirty, invalidate accessor cache,
+ *   publish, dispatch) with a distinct event name so subscribers can
+ *   distinguish them from the recording variants:
+ *
+ *     'householdNameChangedSilently'
+ *     'householdMemberRemovedSilently'
+ *
+ *   Neither is idempotent-safe in a way the recording variants are not —
+ *   both refuse when there is nothing to do (SAME_NAME / NOT_MEMBER).
+ *
  * DEPENDENCIES (REQUIRED):
  *   - household-state.js: HouseholdState
  *   - household-rules.js: HouseholdRules
@@ -231,7 +270,20 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (P1 + household C1):
+ *   Current revision (silent variants):
+ *     - Added updateHouseholdNameSilent(householdId, newName, options).
+ *       Same in-memory rename as updateHousehold, but skips the
+ *       nameHistory push. Commits with event name
+ *       'householdNameChangedSilently'.
+ *     - Added removeMemberSilent(householdId, characterId, options).
+ *       Splices the member without closing the character's
+ *       householdHistory entry and without head succession. Commits
+ *       with event name 'householdMemberRemovedSilently'.
+ *     - Both new commands are exported on window.HouseholdCommands.
+ *     - No behavioural change to any existing command.
+ *     - Required by modals-household.js (openRenameHouseholdModal and
+ *       openRemoveHouseholdMemberModal with withHistory unchecked).
+ *   Previous revision (P1 + household C1):
  *     - _commit now calls _invalidateAccessorCaches(), matching the
  *       identical contract in character-state.js::_emitChange. Prior to
  *       this revision the household domain never invalidated the
@@ -996,6 +1048,69 @@
         return _ok({ householdId: householdId, changed: changed });
     }
 
+    /**
+     * Silent variant of updateHousehold's rename branch.
+     *
+     * Changes household.name (and currentNameSince) WITHOUT appending a
+     * nameHistory entry. The name change is real; only the audit trail
+     * entry is skipped. Used by modals-household.js's
+     * openRenameHouseholdModal when the "record in name history"
+     * checkbox is unchecked — the user is correcting a typo, not
+     * recording a historical rename.
+     *
+     * Commits with event name 'householdNameChangedSilently' so
+     * subscribers can distinguish it from the recording rename.
+     *
+     * @param {string} householdId
+     * @param {string} newName
+     * @param {{year?: number}} [options]
+     * @returns {{success, data?, code?, reason?}}
+     */
+    function updateHouseholdNameSilent(householdId, newName, options) {
+        options = options || {};
+        var household = _internal.getHouseholdRecord(householdId);
+        if (!household) return _fail('NOT_FOUND', 'Household not found');
+
+        if (newName === undefined || newName === null) {
+            return _fail('INVALID_NAME', 'Household name is required');
+        }
+        var trimmed = String(newName).trim();
+        if (trimmed === '') {
+            return _fail('INVALID_NAME', 'Household name cannot be empty');
+        }
+
+        if (trimmed === household.name) {
+            return _fail('SAME_NAME', 'New name equals current name');
+        }
+
+        var year = _resolveYear(options.year);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
+
+        var oldName = household.name;
+
+        // Field change — same as the non-silent rename branch.
+        household.name = trimmed;
+        household.currentNameSince = year;
+        household.updatedAt = Date.now();
+
+        // NOTE: no nameHistory.push(...) here. That's the "silent"
+        // difference.
+
+        _commit('householdNameChangedSilently', {
+            householdId: householdId,
+            oldName: oldName,
+            newName: trimmed,
+            year: year
+        });
+
+        return _ok({
+            householdId: householdId,
+            oldName: oldName,
+            newName: trimmed,
+            year: year
+        });
+    }
+
     function setStatus(householdId, status, options) {
         options = options || {};
         var household = _internal.getHouseholdRecord(householdId);
@@ -1240,6 +1355,64 @@
             characterId: characterId,
             wasHead: wasHead,
             successorId: successorId
+        });
+    }
+
+    /**
+     * Silent variant of removeMember.
+     *
+     * Splices the member out of the household. Does NOT:
+     *   - close the character's householdHistory entry
+     *     (via _clearCharacterMembership), or
+     *   - trigger head succession.
+     *
+     * Used by modals-household.js's openRemoveHouseholdMemberModal when
+     * the "record this removal in the character's history" checkbox is
+     * unchecked — the user added the wrong character and is undoing
+     * that. Closing a householdHistory entry for a membership that was
+     * never acknowledged, or discovering a "successor" for a headship
+     * that was never real, would corrupt the record.
+     *
+     * Commits with event name 'householdMemberRemovedSilently' so
+     * subscribers can distinguish it from the recording removal.
+     *
+     * @param {string} householdId
+     * @param {string} characterId
+     * @param {{leftYear?: number, reason?: string}} [options]
+     * @returns {{success, data?, code?, reason?}}
+     */
+    function removeMemberSilent(householdId, characterId, options) {
+        options = options || {};
+        var household = _internal.getHouseholdRecord(householdId);
+        if (!household) return _fail('NOT_FOUND', 'Household not found');
+
+        var idx = _findMember(household, characterId);
+        if (idx === -1) return _fail('NOT_MEMBER', 'Character is not a member');
+
+        var member = household.members[idx];
+        var wasHead = member.isHead === true;
+
+        household.members.splice(idx, 1);
+        household.updatedAt = Date.now();
+
+        // NOTE: no _clearCharacterMembership call here, and no
+        // pickSuccessor / applyHeadChange. That's the "silent" difference.
+        // The character's householdHistory is left untouched, and the
+        // household is left without a head if the removed member was the
+        // head — that's the intent when correcting a mistaken add.
+
+        _commit('householdMemberRemovedSilently', {
+            householdId: householdId,
+            characterId: characterId,
+            wasHead: wasHead,
+            leftYear: options.leftYear !== undefined ? options.leftYear : null,
+            reason: options.reason || 'removed_silently'
+        });
+
+        return _ok({
+            householdId: householdId,
+            characterId: characterId,
+            wasHead: wasHead
         });
     }
 
@@ -2873,12 +3046,14 @@
 
         // Household fields
         updateHousehold: updateHousehold,
+        updateHouseholdNameSilent: updateHouseholdNameSilent,
         setStatus: setStatus,
         recordEvent: recordEvent,
 
         // Members
         addMember: addMember,
         removeMember: removeMember,
+        removeMemberSilent: removeMemberSilent,
         updateMember: updateMember,
         transferMember: transferMember,
 
