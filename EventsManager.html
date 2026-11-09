@@ -449,7 +449,9 @@
      subsystem removed and the events subsystem added. The Deaths tab
      reads through CharacterQueries / MortalityQueries; the Stork tab
      reads through RomanceQueries / FamilyQueries / ChildrenQueries /
-     ChildrenRules. The remaining facets (adoption, surrogacy, social,
+     ChildrenRules. The Adoption and Surrogacy tabs read through
+     ChildrenState / ChildrenQueries / CharacterQueries (with
+     FamilyQueries for adoption). The remaining facets (social,
      educational) read through their owning domains, which are loaded
      here so that when the tab files land, no further load-order work
      is needed.
@@ -794,23 +796,29 @@
 <!-- MODALS — WRITE / READ PATH FOR THE LOADED TABS                -->
 <!--                                                                -->
 <!-- deaths      -> modals-death.js          (kill)                -->
-<!--             -> modals-character.js      (row click)          -->
-<!-- stork       -> modals-children-birth.js (add / surprise)     -->
-<!--             -> modals-character.js      (child circle click) -->
-<!-- disasters   -> modals-disaster.js       (create / destroyed) -->
-<!--             -> (loaded above in the DISASTER group)          -->
+<!--             -> modals-character.js      (row click)           -->
+<!-- stork       -> modals-children-birth.js (add / surprise)      -->
+<!--             -> modals-character.js      (child circle click)  -->
+<!-- adoption    -> modals-children-adoption.js                   -->
+<!--                 (create / edit / end adoption)                -->
+<!-- surrogacy   -> modals-children-surrogacy.js                   -->
+<!--                 (create / complete / cancel arrangement)      -->
+<!-- disasters   -> modals-disaster.js                             -->
+<!--                 (loaded above in the DISASTER group)          -->
 <!--                                                                -->
-<!-- modals-character.js is loaded here because both deaths and    -->
-<!-- stork tabs delegate to openCharacterDetailsModal. It requires -->
+<!-- All character modals live under js/character/. They require   -->
 <!-- CharacterCommands, CharacterQueries, CharacterCreation-       -->
 <!-- Commands, CharacterDeletionCommands, CharacterState,          -->
-<!-- FamilyQueries, FamilyCommands, FamilyRules, plus formatting,  -->
-<!-- icons, modals-core, accessors, time — all loaded earlier.     -->
+<!-- FamilyQueries, FamilyCommands, FamilyRules, ChildrenCommands, -->
+<!-- ChildrenQueries, ChildrenRules, plus formatting, icons,       -->
+<!-- modals-core, accessors, time — all loaded earlier.            -->
 <!-- ============================================================ -->
 
-<script src="js/core/modals/modals-death.js"></script>
-<script src="js/core/modals/modals-children-birth.js"></script>
-<script src="js/core/modals/modals-character.js"></script>
+<script src="js/character/modals-death.js"></script>
+<script src="js/character/modals-children-birth.js"></script>
+<script src="js/character/modals-children-adoption.js"></script>
+<script src="js/character/modals-children-surrogacy.js"></script>
+<script src="js/character/modals-character.js"></script>
 
 <!-- ============================================================ -->
 <!-- EVENTS MODULE (aggregate read facade over the seven facets)   -->
@@ -828,19 +836,19 @@
 <!-- The bootstrap configures TabManager and renders the initial   -->
 <!-- tab after every tab file has had a chance to register.        -->
 <!--                                                                -->
-<!-- The adoption, surrogacy, social, and educational buttons      -->
-<!-- exist in the strip but have no registered renderer yet. They  -->
-<!-- render the "not loaded in this build" empty state from        -->
+<!-- The social and educational buttons exist in the strip but     -->
+<!-- have no registered renderer yet. They render the "not         -->
+<!-- loaded in this build" empty state from                        -->
 <!-- _buildEmptyState('no-renderer') in the bootstrap.             -->
 <!-- ============================================================ -->
 
 <script src="js/tabs/events-deaths-tab.js"></script>
 <script src="js/tabs/events-stork-tab.js"></script>
+<script src="js/tabs/events-adoption-tab.js"></script>
+<script src="js/tabs/events-surrogacy-tab.js"></script>
 <script src="js/tabs/events-disasters-tab.js"></script>
 
 <!-- Future facet tabs land here as they are built:
-     <script src="js/tabs/events-adoption-tab.js"></script>
-     <script src="js/tabs/events-surrogacy-tab.js"></script>
      <script src="js/tabs/events-social-tab.js"></script>
      <script src="js/tabs/events-educational-tab.js"></script>
      Until then, the corresponding tabs render via the
