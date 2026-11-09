@@ -1710,46 +1710,53 @@
 
 <!-- ================================================================
      RELATIONSHIP DOMAIN
+     (files live under js/relationships/, not js/social/)
      ================================================================ -->
-<script src="js/social/relationship-types.js"></script>
-<script src="js/social/relationship-utils.js"></script>
-<script src="js/social/relationship-state.js"></script>
-<script src="js/social/relationship-queries.js"></script>
-<script src="js/social/relationship-commands.js"></script>
+<script src="js/relationships/relationship-types.js"></script>
+<script src="js/relationships/relationship-utils.js"></script>
+<script src="js/relationships/relationship-state.js"></script>
+<script src="js/relationships/relationship-queries.js"></script>
+<script src="js/relationships/relationship-commands.js"></script>
 
-<script src="js/social/romance-rules.js"></script>
-<script src="js/social/romance-queries.js"></script>
-<script src="js/social/romance-commands.js"></script>
+<script src="js/relationships/romance-rules.js"></script>
+<script src="js/relationships/romance-queries.js"></script>
+<script src="js/relationships/romance-commands.js"></script>
 
-<script src="js/social/friendship-rules.js"></script>
-<script src="js/social/friendship-queries.js"></script>
-<script src="js/social/friendship-commands.js"></script>
+<script src="js/relationships/friendship-rules.js"></script>
+<script src="js/relationships/friendship-queries.js"></script>
+<script src="js/relationships/friendship-commands.js"></script>
 
-<script src="js/social/rivalry-rules.js"></script>
-<script src="js/social/rivalry-queries.js"></script>
-<script src="js/social/rivalry-commands.js"></script>
+<script src="js/relationships/rivalry-rules.js"></script>
+<script src="js/relationships/rivalry-queries.js"></script>
+<script src="js/relationships/rivalry-commands.js"></script>
 
-<script src="js/social/jealousy-rules.js"></script>
-<script src="js/social/jealousy-queries.js"></script>
-<script src="js/social/jealousy-commands.js"></script>
+<script src="js/relationships/jealousy-rules.js"></script>
+<script src="js/relationships/jealousy-queries.js"></script>
+<script src="js/relationships/jealousy-commands.js"></script>
 
-<script src="js/social/affair-rules.js"></script>
-<script src="js/social/affair-queries.js"></script>
-<script src="js/social/affair-commands.js"></script>
+<script src="js/relationships/affair-rules.js"></script>
+<script src="js/relationships/affair-queries.js"></script>
+<script src="js/relationships/affair-commands.js"></script>
 
-<script src="js/social/matchmaking-rules.js"></script>
-<script src="js/social/matchmaking-queries.js"></script>
+<script src="js/relationships/matchmaking-rules.js"></script>
+<script src="js/relationships/matchmaking-queries.js"></script>
 
-<script src="js/social/professional-rules.js"></script>
-<script src="js/social/professional-queries.js"></script>
-<script src="js/social/professional-commands.js"></script>
+<script src="js/relationships/professional-rules.js"></script>
+<script src="js/relationships/professional-queries.js"></script>
+<script src="js/relationships/professional-commands.js"></script>
 
-<script src="js/social/relationship-finder-queries.js"></script>
-<script src="js/social/relationship-ui-metadata.js"></script>
-<script src="js/social/relationship-integrations.js"></script>
+<script src="js/relationships/relationship-finder-queries.js"></script>
+<script src="js/relationships/relationship-ui-metadata.js"></script>
+<script src="js/relationships/relationship-integrations.js"></script>
 
-<script src="js/social/modals-relationship.js"></script>
-<script src="js/social/modals-friendship.js"></script>
+<!-- relationship-bootstrap.js was in the tree but never referenced.
+     It is the likely source of window.RelationshipUI (the fourth
+     dependency character-view-models.js requires). Load it before
+     the view-models so the global is defined in time. -->
+<script src="js/relationships/relationship-bootstrap.js"></script>
+
+<script src="js/relationships/modals-relationship.js"></script>
+<script src="js/relationships/modals-friendship.js"></script>
 
 <!-- ================================================================
      CHARACTER MANAGER MODULES
