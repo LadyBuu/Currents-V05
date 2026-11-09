@@ -32,8 +32,8 @@
  *   defined by events-deaths-tab.js's own injected stylesheet
  *   (`id="events-deaths-tab-styles"`). Per-facet extras (e.g.
  *   `.events-stork-couple`, `.events-stork-man`,
- *   `.events-adoption-row`) are defined by that facet's own tab
- *   file. This module does NOT inject styles.
+ *   `.events-adoption-row`, `.events-surrogacy-row`) are defined by
+ *   that facet's own tab file. This module does NOT inject styles.
  *
  * DEPENDENCIES (required, verified at load):
  *   - EventsViewModels  (for emptyStateMessage)
@@ -44,34 +44,43 @@
  * =============================================================================
  *
  * REFACTOR HISTORY:
- *   Current revision (Phase 3B):
- *     - Added the adoption facet's renderers:
- *         renderAdoptionRow(vm)
- *         renderAdoptionGroup(typeId, typeLabel, records, typeIconName)
- *         renderAdoptionTabBody(input)
- *       The row is a type-icon + child identity + adopter identity +
- *       status badge/year range + action buttons. Active records
- *       expose End + Edit; inactive records expose Edit only
- *       (endAdoptionMetadata refuses non-active records).
- *       The tab body accepts `statsBar` (adoption-specific,
- *       pre-computed by the tab via
- *       EventsViewModels.toAdoptionStatsBarViewModel), `typeGroups`
- *       (the pre-grouped row array), `emptyState` (case id), and
- *       `emptyStateOptions` (extra hint per case). The renderer
- *       omits empty type groups entirely.
- *     - renderEmptyState gains icon fallbacks for the three new
- *       adoption cases:
- *         no-adoptions       -> PERSON
- *         no-guardianships   -> GUARDIANSHIP
- *         no-foster          -> HOME
- *       This matches the tab's grouping: an empty "Legal Adoption"
- *       group still shows a group header in the tab body; when the
- *       WHOLE tab is empty of a case, the icon reflects the case.
- *     - No behavioural change to any deaths-facet or stork-facet
- *       renderer.
+ *   Current revision (Phase 3C):
+ *     - Added the surrogacy facet's renderers:
+ *         renderSurrogacyRow(vm)
+ *         renderSurrogacyGroup(statusId, statusLabel, rows, statusIconName)
+ *         renderSurrogacyTabBody(input)
+ *       The row is a TWO-LINE layout:
+ *         Line 1: [type icon] [Parent (& Partner)] → [Surrogate]
+ *                 [child circles | children summary]
+ *         Line 2: [genetic-parent badge] [status badge + year range]
+ *                 [Complete] [Cancel]
+ *       This is deliberate: the family relationship is the primary
+ *       fact (line 1); administrative actions are secondary
+ *       (line 2). Trying to cram six columns into one row loses the
+ *       relationship at narrow widths.
+ *     - Actions per status:
+ *         active     Complete + Cancel (both accent/danger bordered)
+ *         completed  none (terminal state)
+ *         cancelled  none (terminal state)
+ *     - The row renders the "Completed with no children recorded"
+ *       warning honestly (from the view model's
+ *       childrenMissingDespiteCompletion flag) instead of an empty
+ *       child-circles block that looks like a rendering bug.
+ *     - The children block reuses renderChildCircles (same shape
+ *       as the stork facet's child circles) when the arrangement
+ *       produced children, and falls back to a childrenSummaryLabel
+ *       span when it didn't (or when there are children but the
+ *       summaries are missing).
+ *     - renderEmptyState gains icon fallbacks for the two new
+ *       surrogacy cases:
+ *         no-surrogacies         -> GUARDIANSHIP
+ *         no-active-surrogacies  -> GUARDIANSHIP
+ *     - No behavioural change to any deaths-, stork-, or
+ *       adoption-facet renderer.
+ *   Previous revision (Phase 3B):
+ *     - Added the adoption facet's renderers.
  *   Previous revision (Phase 3A):
- *     - Added the stork facet's renderers: renderChildCircles,
- *       renderCoupleRow, renderManGroup, renderStorkTabBody.
+ *     - Added the stork facet's renderers.
  *   Initial revision:
  *     - Created with the deaths facet's renderers.
  * =============================================================================
@@ -358,9 +367,9 @@
     // 6. EMPTY STATE
     // =========================================================================
     //
-    // Icon selection per case id. The adoption cases fall back to
-    // their facet icon so an "empty adoptions" empty state visually
-    // matches the adoption facet even when the tab body is fully
+    // Icon selection per case id. The adoption and surrogacy cases
+    // fall back to their facet icon so an "empty X" empty state
+    // visually matches the facet even when the tab body is fully
     // empty (as opposed to one type group being empty while another
     // is populated).
 
@@ -371,6 +380,8 @@
         if (caseId === 'no-adoptions') return 'ADOPTION_LEGAL';
         if (caseId === 'no-guardianships') return 'GUARDIANSHIP';
         if (caseId === 'no-foster') return 'HOME';
+        if (caseId === 'no-surrogacies') return 'GUARDIANSHIP';
+        if (caseId === 'no-active-surrogacies') return 'GUARDIANSHIP';
         return 'PERSON';
     }
 
@@ -439,6 +450,10 @@
     // deceased-tinted, with tooltip. Rendered as <button> so they
     // are keyboard-activatable; the tab's delegated click handler
     // intercepts data-action="open-character".
+    //
+    // Reused by the surrogacy facet for the children block, so the
+    // visual language is consistent across "children produced by
+    // this relationship" surfaces.
 
     function renderChildCircles(children) {
         if (!Array.isArray(children) || children.length === 0) {
@@ -476,10 +491,6 @@
     // =========================================================================
     // 9. STORK FACET: COUPLE ROW
     // =========================================================================
-    //
-    // One row per couple. Layout: rank + woman name + age + location |
-    // fertility + children/expected + pregnancy label (if present) |
-    // child circles | + Child + Surprise buttons.
 
     function renderCoupleRow(vm) {
         if (!vm) return '';
@@ -640,21 +651,6 @@
     // =========================================================================
     // 12. ADOPTION FACET: ROW
     // =========================================================================
-    //
-    // One adoption record. Layout:
-    //   [type icon] [child identity] [adopter identity] [status badge +
-    //   year range] [actions]
-    //
-    // Active records expose End + Edit.
-    // Inactive records expose Edit only (endAdoptionMetadata refuses
-    // non-active records, so the End button would be misleading).
-    //
-    // Both the child and the adopter identities use the same gender
-    // marker pattern as the deaths and stork rows: a small icon tinted
-    // by gender, followed by the display name, followed by the age in
-    // parentheses when available. Deceased markers are appended inline
-    // so the row still reads cleanly in the "ended because the adopter
-    // died" case.
 
     function _renderAdoptionPersonIdentity(displayName, ageLabel, genderIconName, genderColorToken, isDeceased, extraClasses) {
         var classes = _classNames([
@@ -746,12 +742,6 @@
     // =========================================================================
     // 13. ADOPTION FACET: GROUPED LIST
     // =========================================================================
-    //
-    // The adoption list is grouped by TYPE, then by STATUS within each
-    // type group (the tab does the status sorting; this renderer only
-    // emits the group). Each group has a header. Empty type groups
-    // are omitted entirely (so a world with only legal adoptions does
-    // not show an empty Guardianship header).
 
     function renderAdoptionGroup(typeId, typeLabel, rows, typeIconName) {
         if (!Array.isArray(rows) || rows.length === 0) return '';
@@ -783,24 +773,6 @@
     // =========================================================================
     // 14. ADOPTION FACET: FULL BODY
     // =========================================================================
-    //
-    // Accepts:
-    //   statsBar           adoption-specific stats bar VM (pre-computed
-    //                      by the tab via toAdoptionStatsBarViewModel).
-    //                      Rendered when `available === true`.
-    //   typeGroups         array of
-    //                        { typeId, typeLabel, typeIconName, rows: [row] }
-    //                      Only groups with rows.length > 0 are shown.
-    //   emptyState         case id (one of the adoption / generic cases)
-    //   emptyStateOptions  { extraHint? }
-    //
-    // If emptyState is set, the type groups are ignored (the tab
-    // computed the case because there's nothing to show). If
-    // emptyState is null and typeGroups has at least one non-empty
-    // group, the groups render. If emptyState is null and every
-    // group is empty, the renderer falls back to a no-matches empty
-    // state (the tab should have set emptyState before calling, but
-    // the fallback keeps the body from rendering a blank frame).
 
     function renderAdoptionTabBody(input) {
         input = input || {};
@@ -844,7 +816,345 @@
     }
 
     // =========================================================================
-    // 15. EXPORTS
+    // 15. SURROGACY FACET: PARTY RENDERING
+    // =========================================================================
+    //
+    // One shaped "party" entry (from the view model's _surrogacyParty
+    // helper) rendered as inline HTML: gender icon, name, age,
+    // deceased marker. Reused by the row renderer for each of the
+    // four party slots.
+
+    function _renderSurrogacyParty(party, extraClasses) {
+        if (!party || !party.hasData) {
+            return '<span class="' +
+                _esc(_classNames(['events-surrogacy-row__party',
+                    'events-surrogacy-row__party--unknown',
+                    extraClasses])) + '">' +
+                '<span class="events-surrogacy-row__name">(unknown)</span>' +
+                '</span>';
+        }
+
+        var classes = _classNames([
+            'events-surrogacy-row__party',
+            extraClasses
+        ]);
+
+        var html = '<span class="' + _esc(classes) + '">';
+        html += '<span class="events-surrogacy-row__gender-icon" ' +
+            'style="color:' + _esc(_color(party.genderColorToken)) + ';" ' +
+            'aria-hidden="true">' +
+            _icon(party.genderIconName) +
+            '</span>';
+        html += '<span class="events-surrogacy-row__name">' +
+            _esc(party.displayName) + '</span>';
+        if (party.ageLabel && party.ageLabel !== 'Unknown') {
+            html += '<span class="events-surrogacy-row__age">(' +
+                _esc(party.ageLabel) + ')</span>';
+        }
+        if (party.isDeceased) {
+            html += '<span class="events-surrogacy-row__deceased" ' +
+                'title="Deceased">' + _icon('DEATHSTARS') + '</span>';
+        }
+        html += '</span>';
+        return html;
+    }
+
+    // =========================================================================
+    // 16. SURROGACY FACET: GENETIC-PARENT BADGE
+    // =========================================================================
+    //
+    // The row's family chain is: [intended parent (+ partner)]
+    //   -> [surrogate] -> [children].
+    //
+    // Below that chain, a small "genetic parents" line makes the
+    // family facts explicit:
+    //   Traditional  -> "Genetic mother: <surrogate>" (the surrogate
+    //                   is the egg donor by definition)
+    //   Gestational  -> "Genetic mother: <egg donor>" if egg donor
+    //                   present, otherwise "(no egg donor recorded)"
+    //   Sperm donor  -> "Genetic father: <donor>" if present,
+    //                   otherwise "(no sperm donor recorded)"
+    //
+    // This is the whole point of showing a surrogacy arrangement on
+    // a "who is related to this child" surface: the intended parents
+    // may not be the genetic parents, and the row must say so.
+
+    function _renderGeneticParentLine(vm) {
+        var parts = [];
+
+        if (vm.surrogateIsGeneticMother) {
+            parts.push(
+                '<span class="events-surrogacy-row__genetic-label">Genetic mother:</span> ' +
+                '<span class="events-surrogacy-row__genetic-name">' +
+                _esc(vm.surrogate.displayName) +
+                '</span> <span class="events-surrogacy-row__genetic-note">' +
+                '(surrogate)</span>'
+            );
+        } else if (vm.eggDonorIsGeneticMother && vm.eggDonor) {
+            parts.push(
+                '<span class="events-surrogacy-row__genetic-label">Genetic mother:</span> ' +
+                '<span class="events-surrogacy-row__genetic-name">' +
+                _esc(vm.eggDonor.displayName) +
+                '</span> <span class="events-surrogacy-row__genetic-note">' +
+                '(egg donor)</span>'
+            );
+        }
+
+        if (vm.spermDonorIsGeneticFather && vm.spermDonor) {
+            parts.push(
+                '<span class="events-surrogacy-row__genetic-label">Genetic father:</span> ' +
+                '<span class="events-surrogacy-row__genetic-name">' +
+                _esc(vm.spermDonor.displayName) +
+                '</span> <span class="events-surrogacy-row__genetic-note">' +
+                '(sperm donor)</span>'
+            );
+        }
+
+        if (parts.length === 0) return '';
+
+        return '<div class="events-surrogacy-row__genetic-parents">' +
+            parts.join('<span class="events-surrogacy-row__sep">\u00b7</span>') +
+            '</div>';
+    }
+
+    // =========================================================================
+    // 17. SURROGACY FACET: ROW
+    // =========================================================================
+    //
+    // Two-line layout.
+    //
+    // Line 1 (relationship): [type icon] [Parent (& Partner)]
+    //                       → [Surrogate] [children block]
+    // Line 2 (administration): [genetic parents line]
+    //                          [status badge + year range] [actions]
+    //
+    // Actions per status:
+    //   active     Complete + Cancel (both prominent)
+    //   completed  none
+    //   cancelled  none
+    //
+    // The "Completed with no children recorded" warning renders
+    // inline in the children block when that case applies (a
+    // legitimate state produced by completeSurrogacyArrangement when
+    // an arrangement was created with a future birthYear and then
+    // completed without children actually being recorded). Rendering
+    // that warning honestly is the point of the flag; hiding it
+    // behind "No children" would erase a data quality issue.
+
+    function renderSurrogacyRow(vm) {
+        if (!vm || !_hasId(vm.id)) return '';
+
+        var statusStyle = 'color:' + _esc(_color(vm.statusColorToken)) + ';';
+
+        // Line 1: relationship
+        var originatorHtml = _renderSurrogacyParty(
+            vm.intendedParent,
+            'events-surrogacy-row__party--intended'
+        );
+        if (vm.intendedPartner && vm.intendedPartner.hasData) {
+            originatorHtml +=
+                '<span class="events-surrogacy-row__pair-sep" aria-hidden="true">' +
+                '&amp;' +
+                '</span>' +
+                _renderSurrogacyParty(
+                    vm.intendedPartner,
+                    'events-surrogacy-row__party--partner'
+                );
+        }
+
+        var surrogateHtml = _renderSurrogacyParty(
+            vm.surrogate,
+            'events-surrogacy-row__party--surrogate'
+        );
+
+        var childrenHtml;
+        if (vm.childrenMissingDespiteCompletion) {
+            childrenHtml =
+                '<span class="events-surrogacy-row__warning" ' +
+                'title="A completed arrangement with no children recorded">' +
+                _icon('WARNING') +
+                '<span>Completed with no children recorded</span>' +
+                '</span>';
+        } else if (vm.childCircles.length > 0) {
+            childrenHtml = renderChildCircles(vm.childCircles);
+        } else if (vm.childrenSummaryLabel) {
+            childrenHtml = '<span class="events-surrogacy-row__no-children">' +
+                _esc(vm.childrenSummaryLabel) +
+                '</span>';
+        } else {
+            childrenHtml = '';
+        }
+
+        // Line 2: administration
+        var geneticLineHtml = _renderGeneticParentLine(vm);
+
+        var actionsHtml = '';
+        if (vm.isActive) {
+            actionsHtml +=
+                '<button type="button" class="events-surrogacy-row__action events-surrogacy-row__action--complete" ' +
+                'data-action="complete-surrogacy" data-surrogacy-id="' + _esc(vm.id) + '" ' +
+                'aria-label="Complete arrangement">' +
+                _icon('CHECK_SIMPLE') + '<span>Complete</span></button>';
+            actionsHtml +=
+                '<button type="button" class="events-surrogacy-row__action events-surrogacy-row__action--cancel" ' +
+                'data-action="cancel-surrogacy" data-surrogacy-id="' + _esc(vm.id) + '" ' +
+                'aria-label="Cancel arrangement">' +
+                _icon('X_HEAVY') + '<span>Cancel</span></button>';
+        }
+
+        // Row-level class: active rows are visually distinct (the
+        // tab's CSS colors the left border by status).
+        var rowClasses = _classNames([
+            'events-surrogacy-row',
+            'events-surrogacy-row--' + vm.status
+        ]);
+
+        return '<div class="' + _esc(rowClasses) + '" ' +
+            'data-surrogacy-id="' + _esc(vm.id) + '" ' +
+            'data-surrogacy-status="' + _esc(vm.status) + '" ' +
+            'data-surrogacy-type="' + _esc(vm.type) + '">' +
+
+            // Line 1
+            '<div class="events-surrogacy-row__line1">' +
+            '<span class="events-surrogacy-row__type-icon" ' +
+            'title="' + _esc(vm.typeLabel) + '" aria-hidden="true">' +
+            _icon(vm.typeIconName) +
+            '</span>' +
+            '<div class="events-surrogacy-row__originators">' +
+            originatorHtml +
+            '</div>' +
+            '<span class="events-surrogacy-row__arrow" aria-hidden="true">' +
+            _icon('ARROW_RIGHT') +
+            '</span>' +
+            '<div class="events-surrogacy-row__surrogate">' +
+            surrogateHtml +
+            '</div>' +
+            '<div class="events-surrogacy-row__children">' +
+            childrenHtml +
+            '</div>' +
+            '</div>' +
+
+            // Line 2
+            '<div class="events-surrogacy-row__line2">' +
+            geneticLineHtml +
+            '<div class="events-surrogacy-row__status">' +
+            '<span class="events-surrogacy-row__status-badge" style="' +
+            _esc(statusStyle) + '">' +
+            _icon(vm.statusIconName) + ' ' + _esc(vm.statusLabel) +
+            '</span>' +
+            '<span class="events-surrogacy-row__year">' +
+            _esc(vm.yearRangeLabel) +
+            '</span>' +
+            '</div>' +
+            '<div class="events-surrogacy-row__actions">' +
+            actionsHtml +
+            '</div>' +
+            '</div>' +
+
+            '</div>';
+    }
+
+    // =========================================================================
+    // 18. SURROGACY FACET: GROUPED LIST
+    // =========================================================================
+    //
+    // The surrogacy list is grouped by STATUS (active -> completed
+    // -> cancelled). Within each group the tab does its own sorting;
+    // this renderer only emits the group and its rows. Empty groups
+    // are omitted entirely (the tab does not call this with an empty
+    // rows array; the guard is defensive).
+
+    function renderSurrogacyGroup(statusId, statusLabel, rows, statusIconName) {
+        if (!Array.isArray(rows) || rows.length === 0) return '';
+
+        var html = '<div class="events-surrogacy-group" data-status="' +
+            _esc(statusId) + '">';
+
+        html += '<div class="events-surrogacy-group__header">' +
+            '<span class="events-surrogacy-group__icon" aria-hidden="true">' +
+            _icon(statusIconName) +
+            '</span>' +
+            '<span class="events-surrogacy-group__label">' +
+            _esc(statusLabel) +
+            '</span>' +
+            '<span class="events-surrogacy-group__count">(' +
+            _esc(String(rows.length)) + ')</span>' +
+            '</div>';
+
+        html += '<div class="events-surrogacy-group__rows">';
+        for (var i = 0; i < rows.length; i++) {
+            html += renderSurrogacyRow(rows[i]);
+        }
+        html += '</div>';
+
+        html += '</div>';
+        return html;
+    }
+
+    // =========================================================================
+    // 19. SURROGACY FACET: FULL BODY
+    // =========================================================================
+    //
+    // Accepts:
+    //   statsBar           surrogacy-specific stats bar VM (pre-computed
+    //                      by the tab via toSurrogacyStatsBarViewModel).
+    //   statusGroups       array of
+    //                        { statusId, statusLabel, statusIconName,
+    //                          rows: [row] }
+    //                      Empty groups are omitted.
+    //   emptyState         case id
+    //   emptyStateOptions  { extraHint? }
+    //
+    // If emptyState is set, the status groups are ignored. If
+    // emptyState is null and statusGroups has at least one non-empty
+    // group, the groups render. If emptyState is null and every
+    // group is empty, the renderer falls back to a no-matches empty
+    // state (defensive; the tab should have set emptyState before
+    // calling).
+
+    function renderSurrogacyTabBody(input) {
+        input = input || {};
+
+        var html = '<div class="events-surrogacy-body">';
+
+        if (input.statsBar) {
+            html += renderStatsBar(input.statsBar);
+        }
+
+        if (input.emptyState) {
+            html += renderEmptyState(input.emptyState, input.emptyStateOptions);
+        } else if (Array.isArray(input.statusGroups) && input.statusGroups.length > 0) {
+            var renderedAny = false;
+            var groupsHtml = '';
+            for (var i = 0; i < input.statusGroups.length; i++) {
+                var g = input.statusGroups[i];
+                if (!g) continue;
+                var gHtml = renderSurrogacyGroup(
+                    g.statusId,
+                    g.statusLabel,
+                    g.rows,
+                    g.statusIconName
+                );
+                if (gHtml) {
+                    groupsHtml += gHtml;
+                    renderedAny = true;
+                }
+            }
+            if (renderedAny) {
+                html += '<div class="events-surrogacy-list">' + groupsHtml + '</div>';
+            } else {
+                html += renderEmptyState('no-matches');
+            }
+        } else {
+            html += renderEmptyState('no-matches');
+        }
+
+        html += '</div>';
+        return html;
+    }
+
+    // =========================================================================
+    // 20. EXPORTS
     // =========================================================================
 
     window.EventsUIList = {
@@ -873,7 +1183,7 @@
         // Unified body (deaths facet)
         renderTabBody: renderTabBody,
 
-        // Child circles (stork facet)
+        // Child circles (stork + surrogacy facets)
         renderChildCircles: renderChildCircles,
 
         // Couple row (stork facet)
@@ -888,7 +1198,12 @@
         // Adoption facet
         renderAdoptionRow: renderAdoptionRow,
         renderAdoptionGroup: renderAdoptionGroup,
-        renderAdoptionTabBody: renderAdoptionTabBody
+        renderAdoptionTabBody: renderAdoptionTabBody,
+
+        // Surrogacy facet
+        renderSurrogacyRow: renderSurrogacyRow,
+        renderSurrogacyGroup: renderSurrogacyGroup,
+        renderSurrogacyTabBody: renderSurrogacyTabBody
     };
 
     if (typeof module !== 'undefined' && module.exports) {
