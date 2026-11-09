@@ -29,8 +29,9 @@
  *     which the tab wraps in var(--<token>).
  *   - It does not carry its own copy of the death-cause vocabulary,
  *     the stork sort vocabulary, the adoption type/status vocabulary,
- *     or any other domain vocabulary. Every label it emits comes from
- *     either events-constants.js or from a passed-in resolver.
+ *     the surrogacy type/status vocabulary, or any other domain
+ *     vocabulary. Every label it emits comes from either
+ *     events-constants.js or from a passed-in resolver.
  *   - It does not fabricate. A missing field on a record becomes
  *     null (not ''), a label of '?' (not 'Unknown'), or a status
  *     flag of false. Nothing is invented.
@@ -42,36 +43,49 @@
  * =============================================================================
  *
  * REFACTOR HISTORY:
- *   Current revision (Phase 3B):
- *     - Added the adoption facet's view models:
- *         adoptionTypeLabel(type)
- *         adoptionTypeIconName(type)
- *         adoptionStatusLabel(status)
- *         adoptionStatusColorToken(status)
- *         adoptionStatusPriority(status)
- *         toAdoptionRow(record)
- *         toAdoptionRows(records)
- *         toAdoptionTypeFilterOptions(currentType)
- *         toAdoptionStatusFilterOptions(currentStatus)
- *         toAdoptionSortOptions(currentSortBy)
- *         toAdoptionStatsBarViewModel(records)
- *       The stats bar is computed from the already-fetched records
- *       (distinct from the deaths-style stats bar the other facets
- *       reuse). The tab renders it directly.
- *     - emptyStateMessage gains three cases:
- *         'no-adoptions'      -> UI_COPY.emptyNoAdoptions
- *         'no-guardianships'  -> UI_COPY.emptyNoGuardianships
- *         'no-foster'         -> UI_COPY.emptyNoFosterRecords
- *       These exist because the type group headers stay visible when
- *       empty; the wrong copy under a visible header would be
- *       misleading.
- *     - adoptionStatusPriority is exposed so the tab can sort active
- *       records first within each type group.
- *     - No behavioural change to any deaths-facet or stork-facet
- *       function.
+ *   Current revision (Phase 3C):
+ *     - Added the surrogacy facet's view models:
+ *         surrogacyTypeLabel(type)
+ *         surrogacyTypeIconName(type)
+ *         surrogacyStatusLabel(status)
+ *         surrogacyStatusColorToken(status)
+ *         surrogacyStatusIconName(status)
+ *         surrogacyStatusPriority(status)
+ *         toSurrogacyRow(record)
+ *         toSurrogacyRows(records)
+ *         toSurrogacyStatusFilterOptions(currentStatus)
+ *         toSurrogacyTypeFilterOptions(currentType)
+ *         toSurrogacySortOptions(currentSortBy)
+ *         toSurrogacyStatsBarViewModel(records)
+ *       The row view model exposes:
+ *         - the intended parent + partner, surrogate, and donors as
+ *           fully-shaped party entries (so the renderer never has to
+ *           walk the character summaries again)
+ *         - children as an array of child-circle-shaped entries
+ *           (same shape as the stork facet's circles, so the tab
+ *           reuses EventsUIList.renderChildCircles)
+ *         - genetic-parent derived fields:
+ *             surrogateIsGeneticMother
+ *             spermDonorIsGeneticFather
+ *             eggDonorIsGeneticMother
+ *           so the renderer can show "Genetic mother: X" without
+ *           re-deriving the traditional-vs-gestational rule.
+ *         - childrenMissingDespiteCompletion (from the query layer)
+ *           so the row renders "Completed with no children recorded"
+ *           honestly instead of an empty child-circles block.
+ *     - emptyStateMessage gains two cases:
+ *         'no-surrogacies'         -> UI_COPY.emptyNoSurrogacies
+ *         'no-active-surrogacies'  -> UI_COPY.emptyNoActiveSurrogacies
+ *       These exist because the tab renders one empty state for
+ *       "no records at all" and a different one for "filters
+ *       exclude everything"; the two cases read differently and
+ *       the tab picks between them via its empty-state detector.
+ *     - No behavioural change to any deaths-, stork-, or
+ *       adoption-facet function.
+ *   Previous revision (Phase 3B):
+ *     - Added the adoption facet's view models.
  *   Previous revision (Phase 3A):
- *     - Added the stork facet's view models: toChildCircle,
- *       toCoupleRow, toManGroup, toStorkSortOptions.
+ *     - Added the stork facet's view models.
  *   Initial revision:
  *     - Created with the deaths facet's view models.
  * =============================================================================
@@ -580,7 +594,7 @@
     // Maps a case id to its user-facing message. The case ids are the
     // tab's own vocabulary; every tab that renders an empty state
     // passes one of these to EventsUIList.renderEmptyState. The
-    // adoption cases are added here because the adoption tab's three
+    // adoption and surrogacy cases are added here because those tabs'
     // distinct empty states all resolve through this function.
 
     function emptyStateMessage(caseId) {
@@ -603,6 +617,10 @@
                 return C.UI_COPY.emptyNoGuardianships;
             case 'no-foster':
                 return C.UI_COPY.emptyNoFosterRecords;
+            case 'no-surrogacies':
+                return C.UI_COPY.emptyNoSurrogacies;
+            case 'no-active-surrogacies':
+                return C.UI_COPY.emptyNoActiveSurrogacies;
             case 'unavailable':
                 return C.UI_COPY.emptyUnavailable;
             default:
@@ -841,15 +859,6 @@
         }
     }
 
-    /**
-     * Numeric priority for within-group status sorting. Lower sorts
-     * first. Active records lead each type group; ended records
-     * follow; dissolved records trail. Unknown statuses trail
-     * everything.
-     *
-     * Exposed so the tab can sort consistently without duplicating
-     * the ordering contract.
-     */
     function adoptionStatusPriority(status) {
         switch (status) {
             case 'active':    return 0;
@@ -862,11 +871,6 @@
     // =========================================================================
     // 13. ADOPTION FACET: ROW
     // =========================================================================
-    //
-    // One row per adoption metadata record. Includes the enriched
-    // child and adopter summaries (from EventsQueries.getAdoptionRecords)
-    // plus the type and status labels. The tab renders these into the
-    // grouped list.
 
     function _adoptionDisplayName(summary) {
         if (!summary) return '';
@@ -882,7 +886,6 @@
         return {
             id: record.id,
 
-            // Child
             childId: record.childId,
             childDisplayName: _adoptionDisplayName(child) || '(unknown child)',
             childAge: child && typeof child.age === 'number' ? child.age : null,
@@ -894,7 +897,6 @@
             childLocationId: child && _hasId(child.locationId)
                 ? child.locationId : null,
 
-            // Adopter
             adopterId: record.adopterId,
             adopterDisplayName: _adoptionDisplayName(adopter) || '(unknown adopter)',
             adopterAge: adopter && typeof adopter.age === 'number' ? adopter.age : null,
@@ -906,7 +908,6 @@
             adopterLocationId: adopter && _hasId(adopter.locationId)
                 ? adopter.locationId : null,
 
-            // Record
             type: record.type,
             typeLabel: adoptionTypeLabel(record.type),
             typeIconName: adoptionTypeIconName(record.type),
@@ -985,10 +986,6 @@
     // =========================================================================
     // 15. ADOPTION FACET: STATS BAR
     // =========================================================================
-    //
-    // Computed from the already-fetched records. Distinct from the
-    // deaths-style stats bar (which the other facets reuse). The tab
-    // renders this when the records are available.
 
     function toAdoptionStatsBarViewModel(records) {
         if (!Array.isArray(records)) {
@@ -1057,7 +1054,421 @@
     }
 
     // =========================================================================
-    // 16. INTERNAL
+    // 16. SURROGACY FACET: TYPE / STATUS VOCABULARY
+    // =========================================================================
+    //
+    // The surrogacy tab distinguishes two arrangement types
+    // (traditional, gestational) and three statuses (active,
+    // completed, cancelled). This section owns the label /
+    // icon-name / color-token / sort-priority vocabulary for both
+    // dimensions. Values match ChildrenRules.SURROGACY_TYPE and
+    // SURROGACY_STATUS.
+    //
+    // The type badges are informational, not grouping dimensions:
+    // arrangements group by status, not type. The type tells the
+    // user whether the surrogate is also the genetic mother
+    // (traditional) or whether a separate egg donor provided the
+    // genetic material (gestational).
+
+    function surrogacyTypeLabel(type) {
+        switch (type) {
+            case 'traditional':  return 'Traditional';
+            case 'gestational':  return 'Gestational';
+            default:             return type ? String(type) : 'Unknown';
+        }
+    }
+
+    function surrogacyTypeIconName(type) {
+        switch (type) {
+            case 'traditional':  return 'STORK';
+            case 'gestational':  return 'GUARDIANSHIP';
+            default:             return 'GUARDIANSHIP';
+        }
+    }
+
+    function surrogacyStatusLabel(status) {
+        switch (status) {
+            case 'active':    return 'Active';
+            case 'completed': return 'Completed';
+            case 'cancelled': return 'Cancelled';
+            default:          return status ? String(status) : 'Unknown';
+        }
+    }
+
+    function surrogacyStatusColorToken(status) {
+        switch (status) {
+            case 'active':    return 'accent';
+            case 'completed': return 'success';
+            case 'cancelled': return 'dim';
+            default:          return 'dim';
+        }
+    }
+
+    function surrogacyStatusIconName(status) {
+        switch (status) {
+            case 'active':    return 'TIMELINE';
+            case 'completed': return 'CHECK_SIMPLE';
+            case 'cancelled': return 'X_HEAVY';
+            default:          return 'CIRCLE';
+        }
+    }
+
+    /**
+     * Numeric priority for within-group status sorting. Lower sorts
+     * first. Active arrangements lead the tab (the "work in flight"),
+     * then completed, then cancelled. Unknown statuses trail
+     * everything.
+     *
+     * Exposed so the tab can sort consistently without duplicating
+     * the ordering contract.
+     */
+    function surrogacyStatusPriority(status) {
+        switch (status) {
+            case 'active':    return 0;
+            case 'completed': return 1;
+            case 'cancelled': return 2;
+            default:          return 3;
+        }
+    }
+
+    // =========================================================================
+    // 17. SURROGACY FACET: PARTY SHAPING
+    // =========================================================================
+    //
+    // Helper that shapes one character summary into a "party" entry.
+    // The surrogacy row shows four kinds of party (intended parent,
+    // intended partner, surrogate, and the two donor kinds), and each
+    // needs the same {name, age, gender, isDeceased} shape. Factoring
+    // it here keeps toSurrogacyRow readable and lets the renderer
+    // reuse a single _renderParty helper.
+
+    function _surrogacyParty(summary) {
+        if (!summary) {
+            return {
+                id: null,
+                displayName: '',
+                hasData: false,
+                age: null,
+                ageLabel: 'Unknown',
+                gender: null,
+                genderIconName: 'GENDER_NEUTRAL',
+                genderColorToken: 'dim',
+                isDeceased: false
+            };
+        }
+        var displayName = ((summary.name || '') + ' ' +
+                           (summary.surname || '')).trim();
+        return {
+            id: summary.id || null,
+            displayName: displayName,
+            hasData: true,
+            age: typeof summary.age === 'number' ? summary.age : null,
+            ageLabel: formatAge(summary.age),
+            gender: summary.gender || null,
+            genderIconName: genderIconName(summary.gender),
+            genderColorToken: genderColorToken(summary.gender),
+            isDeceased: summary.isDeceased === true
+        };
+    }
+
+    // =========================================================================
+    // 18. SURROGACY FACET: ROW
+    // =========================================================================
+    //
+    // One row per arrangement. The row view model exposes:
+    //
+    //   - Every party as a shaped "party" entry, so the renderer
+    //     never has to walk the character summaries again.
+    //   - Children as child-circle-shaped entries (same shape as the
+    //     stork facet's circles), so the renderer can reuse
+    //     EventsUIList.renderChildCircles.
+    //   - Genetic-parent derived fields:
+    //       surrogateIsGeneticMother  (traditional only)
+    //       spermDonorIsGeneticFather (sperm donor present)
+    //       eggDonorIsGeneticMother   (egg donor present)
+    //   - A childrenSummaryLabel for the row's children block:
+    //       '<n> child(ren)' when children exist
+    //       'Expected: <year>' when active and no children yet
+    //       'No children' when cancelled and no children
+    //       null when completed with children (the circles speak)
+    //   - childrenMissingDespiteCompletion (from the query layer)
+    //     so the renderer can show the honest warning instead of an
+    //     empty child-circles block.
+    //
+    // The year range label depends on status:
+    //   active     'arrangementYear–present'
+    //   completed  'arrangementYear–actualBirthYear' when both known
+    //              'arrangementYear–completed' otherwise
+    //   cancelled  'arrangementYear–cancelled'
+    //   (Any missing arrangementYear renders as '?' via formatYear.)
+
+    function toSurrogacyRow(record) {
+        if (!record || !_hasId(record.id)) return null;
+
+        var intendedParent = _surrogacyParty(record.intendedParent);
+        var intendedPartner = record.intendedPartner
+            ? _surrogacyParty(record.intendedPartner)
+            : null;
+        var surrogate = _surrogacyParty(record.surrogate);
+        var spermDonor = record.spermDonor
+            ? _surrogacyParty(record.spermDonor)
+            : null;
+        var eggDonor = record.eggDonor
+            ? _surrogacyParty(record.eggDonor)
+            : null;
+
+        // Child circles: same shape as the stork facet's, so the
+        // renderer can call EventsUIList.renderChildCircles directly.
+        var childCircles = [];
+        var childSummaries = Array.isArray(record.children) ? record.children : [];
+        for (var i = 0; i < childSummaries.length; i++) {
+            var c = childSummaries[i];
+            if (!c || !_hasId(c.id)) continue;
+            childCircles.push({
+                id: c.id,
+                displayName: ((c.name || '') + ' ' + (c.surname || '')).trim(),
+                gender: c.gender,
+                genderIconName: genderIconName(c.gender),
+                genderColorToken: genderColorToken(c.gender),
+                isDeceased: c.isDeceased === true,
+                age: typeof c.age === 'number' ? c.age : null,
+                ageLabel: formatAge(typeof c.age === 'number' ? c.age : null),
+                ageGroup: null
+            });
+        }
+
+        var arrangementYearLabel = formatYear(record.arrangementYear);
+        var yearRangeLabel;
+        if (record.status === 'completed' && typeof record.actualBirthYear === 'number') {
+            yearRangeLabel = arrangementYearLabel +
+                '\u2013' + formatYear(record.actualBirthYear);
+        } else if (record.status === 'cancelled') {
+            yearRangeLabel = arrangementYearLabel + '\u2013cancelled';
+        } else if (record.status === 'completed') {
+            yearRangeLabel = arrangementYearLabel + '\u2013completed';
+        } else {
+            yearRangeLabel = arrangementYearLabel + '\u2013present';
+        }
+
+        var childrenSummaryLabel = null;
+        if (childCircles.length > 0) {
+            childrenSummaryLabel = childCircles.length === 1
+                ? '1 child'
+                : childCircles.length + ' children';
+        } else if (record.status === 'active') {
+            childrenSummaryLabel = typeof record.expectedBirthYear === 'number'
+                ? 'Expected: ' + formatYear(record.expectedBirthYear)
+                : 'No children yet';
+        } else if (record.status === 'cancelled') {
+            childrenSummaryLabel = 'No children';
+        } else if (record.childrenMissingDespiteCompletion) {
+            childrenSummaryLabel = 'Completed with no children recorded';
+        } else {
+            childrenSummaryLabel = 'No children recorded';
+        }
+
+        return {
+            id: record.id,
+
+            // Parties (each is a shaped { displayName, ageLabel, ... }
+            // entry; intendedPartner, spermDonor, and eggDonor are
+            // null when not present).
+            intendedParent: intendedParent,
+            intendedPartner: intendedPartner,
+            surrogate: surrogate,
+            spermDonor: spermDonor,
+            eggDonor: eggDonor,
+
+            // Genetic-parent derivation.
+            surrogateIsGeneticMother: record.surrogateIsGeneticMother === true,
+            spermDonorIsGeneticFather: record.spermDonorIsGeneticFather === true,
+            eggDonorIsGeneticMother: record.eggDonorIsGeneticMother === true,
+
+            // Types and statuses.
+            type: record.type,
+            typeLabel: surrogacyTypeLabel(record.type),
+            typeIconName: surrogacyTypeIconName(record.type),
+            status: record.status,
+            statusLabel: surrogacyStatusLabel(record.status),
+            statusColorToken: surrogacyStatusColorToken(record.status),
+            statusIconName: surrogacyStatusIconName(record.status),
+            statusPriority: surrogacyStatusPriority(record.status),
+
+            // Years.
+            arrangementYear: typeof record.arrangementYear === 'number'
+                ? record.arrangementYear : null,
+            arrangementYearLabel: arrangementYearLabel,
+            expectedBirthYear: typeof record.expectedBirthYear === 'number'
+                ? record.expectedBirthYear : null,
+            actualBirthYear: typeof record.actualBirthYear === 'number'
+                ? record.actualBirthYear : null,
+            yearRangeLabel: yearRangeLabel,
+
+            // Children.
+            childCount: childCircles.length,
+            childCircles: childCircles,
+            childrenSummaryLabel: childrenSummaryLabel,
+
+            // Honest flag for the misleading-completion case.
+            childrenMissingDespiteCompletion:
+                record.childrenMissingDespiteCompletion === true,
+
+            notes: record.notes || '',
+
+            // Status convenience flags (the renderer switches on these).
+            isActive: record.status === 'active',
+            isCompleted: record.status === 'completed',
+            isCancelled: record.status === 'cancelled'
+        };
+    }
+
+    function toSurrogacyRows(records) {
+        if (!Array.isArray(records)) return [];
+        var out = [];
+        for (var i = 0; i < records.length; i++) {
+            var row = toSurrogacyRow(records[i]);
+            if (row) out.push(row);
+        }
+        return out;
+    }
+
+    // =========================================================================
+    // 19. SURROGACY FACET: FILTER OPTION VIEWS
+    // =========================================================================
+
+    function toSurrogacyStatusFilterOptions(currentStatus) {
+        var base = C.SURROGACY_STATUS_FILTERS;
+        if (!Array.isArray(base)) return [];
+        var out = [];
+        for (var i = 0; i < base.length; i++) {
+            out.push({
+                id: base[i].id,
+                label: base[i].label,
+                selected: base[i].id === currentStatus
+            });
+        }
+        return out;
+    }
+
+    function toSurrogacyTypeFilterOptions(currentType) {
+        var base = C.SURROGACY_TYPE_FILTERS;
+        if (!Array.isArray(base)) return [];
+        var out = [];
+        for (var i = 0; i < base.length; i++) {
+            out.push({
+                id: base[i].id,
+                label: base[i].label,
+                selected: base[i].id === currentType
+            });
+        }
+        return out;
+    }
+
+    function toSurrogacySortOptions(currentSortBy) {
+        var base = C.SURROGACY_SORT_OPTIONS;
+        if (!Array.isArray(base)) return [];
+        var out = [];
+        for (var i = 0; i < base.length; i++) {
+            out.push({
+                id: base[i].id,
+                label: base[i].label,
+                selected: base[i].id === currentSortBy
+            });
+        }
+        return out;
+    }
+
+    // =========================================================================
+    // 20. SURROGACY FACET: STATS BAR
+    // =========================================================================
+    //
+    // Computed from the already-fetched records. Distinct from the
+    // deaths-style stats bar (which the other facets reuse). The tab
+    // renders this when the records are available.
+    //
+    // Six cells. The adoption stats bar has six as well; the
+    // surrogacy bar shares the same visual rhythm.
+
+    function toSurrogacyStatsBarViewModel(records) {
+        if (!Array.isArray(records)) {
+            return {
+                available: false,
+                reason: 'No records array.',
+                cells: []
+            };
+        }
+
+        var active = 0;
+        var completed = 0;
+        var cancelled = 0;
+        var traditional = 0;
+        var gestational = 0;
+        var childrenBorn = 0;
+
+        for (var i = 0; i < records.length; i++) {
+            var r = records[i];
+            if (!r) continue;
+            if (r.status === 'active') active++;
+            else if (r.status === 'completed') completed++;
+            else if (r.status === 'cancelled') cancelled++;
+            if (r.type === 'traditional') traditional++;
+            else if (r.type === 'gestational') gestational++;
+            if (Array.isArray(r.childIds)) {
+                childrenBorn += r.childIds.length;
+            }
+        }
+
+        return {
+            available: true,
+            cells: [
+                {
+                    label: 'Total',
+                    value: String(records.length),
+                    colorToken: 'accent',
+                    iconName: 'GUARDIANSHIP'
+                },
+                {
+                    label: 'Active',
+                    value: String(active),
+                    colorToken: 'accent',
+                    iconName: 'TIMELINE'
+                },
+                {
+                    label: 'Completed',
+                    value: String(completed),
+                    colorToken: 'success',
+                    iconName: 'CHECK_SIMPLE'
+                },
+                {
+                    label: 'Cancelled',
+                    value: String(cancelled),
+                    colorToken: 'dim',
+                    iconName: 'X_HEAVY'
+                },
+                {
+                    label: 'Children',
+                    value: String(childrenBorn),
+                    colorToken: 'accent',
+                    iconName: 'STORK'
+                },
+                {
+                    label: 'Traditional',
+                    value: String(traditional),
+                    colorToken: 'dim',
+                    iconName: 'STORK'
+                },
+                {
+                    label: 'Gestational',
+                    value: String(gestational),
+                    colorToken: 'dim',
+                    iconName: 'GUARDIANSHIP'
+                }
+            ]
+        };
+    }
+
+    // =========================================================================
+    // 21. INTERNAL
     // =========================================================================
 
     function _isMissing(v) {
@@ -1069,7 +1480,7 @@
     }
 
     // =========================================================================
-    // 17. EXPORTS
+    // 22. EXPORTS
     // =========================================================================
 
     window.EventsViewModels = {
@@ -1134,7 +1545,27 @@
         toAdoptionSortOptions: toAdoptionSortOptions,
 
         // Adoption facet: stats bar
-        toAdoptionStatsBarViewModel: toAdoptionStatsBarViewModel
+        toAdoptionStatsBarViewModel: toAdoptionStatsBarViewModel,
+
+        // Surrogacy facet: type / status vocabulary
+        surrogacyTypeLabel: surrogacyTypeLabel,
+        surrogacyTypeIconName: surrogacyTypeIconName,
+        surrogacyStatusLabel: surrogacyStatusLabel,
+        surrogacyStatusColorToken: surrogacyStatusColorToken,
+        surrogacyStatusIconName: surrogacyStatusIconName,
+        surrogacyStatusPriority: surrogacyStatusPriority,
+
+        // Surrogacy facet: row shapers
+        toSurrogacyRow: toSurrogacyRow,
+        toSurrogacyRows: toSurrogacyRows,
+
+        // Surrogacy facet: filter option views
+        toSurrogacyStatusFilterOptions: toSurrogacyStatusFilterOptions,
+        toSurrogacyTypeFilterOptions: toSurrogacyTypeFilterOptions,
+        toSurrogacySortOptions: toSurrogacySortOptions,
+
+        // Surrogacy facet: stats bar
+        toSurrogacyStatsBarViewModel: toSurrogacyStatsBarViewModel
     };
 
     if (typeof module !== 'undefined' && module.exports) {
