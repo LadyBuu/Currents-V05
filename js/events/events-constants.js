@@ -66,27 +66,29 @@
  * =============================================================================
  *
  * REFACTOR HISTORY:
- *   Current revision (Phase 3B):
- *     - Added the adoption facet's filter vocabulary:
- *         ADOPTION_STATUS_FILTERS  (all | active | ended | dissolved)
- *         ADOPTION_TYPE_FILTERS    (all | legal | guardianship | foster)
- *         ADOPTION_SORT_OPTIONS    (year | childName | adopterName)
- *         ADOPTION_DEFAULT_FILTERS (the adoption tab's starting filter
- *                                   state; grouped-by-type, sorted by
- *                                   year descending, show all
- *                                   locations true, collapsed false)
- *     - DEFAULT_FILTERS_BY_FACET gains an `adoption` entry.
- *     - UI_COPY gains emptyNoAdoptions, emptyNoGuardianships,
- *       emptyNoFosterRecords. The adoption tab's empty state
- *       distinguishes these three cases because the type group
- *       headers remain visible: a "Legal Adoption (0)" header with
- *       the wrong copy under it would be misleading.
- *     - Exports for all four new adoption constants added.
+ *   Current revision (Phase 3C):
+ *     - Added the surrogacy facet's filter vocabulary:
+ *         SURROGACY_STATUS_FILTERS  (all | active | completed | cancelled)
+ *         SURROGACY_TYPE_FILTERS    (all | traditional | gestational)
+ *         SURROGACY_SORT_OPTIONS    (year | intendedName | surrogateName)
+ *         SURROGACY_DEFAULT_FILTERS (the surrogacy tab's starting filter
+ *                                    state; grouped-by-status, sorted by
+ *                                    year descending, show all
+ *                                    locations true, collapsed false)
+ *     - DEFAULT_FILTERS_BY_FACET gains a `surrogacy` entry.
+ *     - UI_COPY gains:
+ *         emptyNoSurrogacies          (no records at all)
+ *         emptyNoActiveSurrogacies    (filters exclude everything)
+ *         surrogacyIntro              (a one-line hint above the
+ *                                      New Arrangement action,
+ *                                      explaining that arrangements
+ *                                      produce children)
+ *     - Exports for all four new surrogacy constants added.
  *     - No behavioural change to any other facet's vocabulary.
+ *   Previous revision (Phase 3B):
+ *     - Added the adoption facet's filter vocabulary.
  *   Previous revision (Phase 3A):
- *     - Added the stork facet's filter vocabulary
- *       (STORK_SORT_OPTIONS, STORK_DEFAULT_FILTERS).
- *     - DEFAULT_FILTERS_BY_FACET gains a `stork` entry.
+ *     - Added the stork facet's filter vocabulary.
  *   Initial revision:
  *     - Created with the deaths facet's vocabulary and the
  *       facet catalog.
@@ -100,9 +102,14 @@
     // 1. FACETS (the manager's tabs)
     // =========================================================================
     //
-    // The Events Manager hosts one tab per event family. The
-    // "adoption" and "surrogacy" entries are declared here so the
-    // tab strip can render their buttons; their renderers land in
+    // The Events Manager hosts one tab per event family. Every facet
+    // id below renders a self-registering tab at load; the
+    // EventsManagerBootstrap's KNOWN_TAB_IDS list must match this
+    // catalog exactly (plus any not-yet-loaded stubs the manager
+    // chooses to expose, which currently is none).
+    //
+    // The adoption and surrogacy facets are declared here so the tab
+    // strip can render their buttons; their renderers land in
     // Phase 3B / 3C. Until then, TabManager renders the "not loaded
     // in this build" empty state from _buildEmptyState's
     // 'no-renderer' branch.
@@ -130,7 +137,7 @@
             id: 'surrogacy',
             label: 'Surrogacy',
             iconName: 'GUARDIANSHIP',
-            description: 'Surrogacy arrangements.'
+            description: 'Surrogacy arrangements and the children they produce.'
         }),
         Object.freeze({
             id: 'disasters',
@@ -342,10 +349,6 @@
         Object.freeze({ id: 'foster',        label: 'Foster Care'     })
     ]);
 
-    // Sorting reorders rows within each type group:
-    //   - year         descending (newest first)
-    //   - childName    ascending (localeCompare)
-    //   - adopterName  ascending (localeCompare)
     var ADOPTION_SORT_OPTIONS = Object.freeze([
         Object.freeze({ id: 'year',        label: 'Year'         }),
         Object.freeze({ id: 'childName',   label: 'Child Name'   }),
@@ -363,14 +366,70 @@
     });
 
     // =========================================================================
-    // 8. DEFAULT FILTERS PER FACET
+    // 8. SURROGACY FACET: FILTER VOCABULARY
+    // =========================================================================
+    //
+    // The surrogacy tab groups arrangements by STATUS (active ->
+    // completed -> cancelled). The type axis (traditional,
+    // gestational) is a badge on each row, not a grouping dimension.
+    // Filters narrow the list without changing the grouping.
+    //
+    // Values match ChildrenRules.SURROGACY_STATUS and SURROGACY_TYPE,
+    // plus 'all'. The tab matches against record.status and
+    // record.type (the stable ids), never against the label strings.
+    //
+    // Status grouping order (fixed, not caller-configurable):
+    //   1. active      -- the work in flight; children still to come
+    //   2. completed   -- children born; terminal
+    //   3. cancelled   -- arrangement fell through; terminal
+    //
+    // This ordering is stable across renders and filters because
+    // users learn "active arrangements appear first" and expect it
+    // to stay that way.
+
+    var SURROGACY_STATUS_FILTERS = Object.freeze([
+        Object.freeze({ id: 'all',       label: 'All Statuses' }),
+        Object.freeze({ id: 'active',    label: 'Active'       }),
+        Object.freeze({ id: 'completed', label: 'Completed'    }),
+        Object.freeze({ id: 'cancelled', label: 'Cancelled'    })
+    ]);
+
+    var SURROGACY_TYPE_FILTERS = Object.freeze([
+        Object.freeze({ id: 'all',          label: 'All Types'   }),
+        Object.freeze({ id: 'traditional',  label: 'Traditional' }),
+        Object.freeze({ id: 'gestational',  label: 'Gestational' })
+    ]);
+
+    // Sorting reorders rows within each status group:
+    //   - year           descending by arrangementYear (newest first)
+    //   - intendedName   ascending by intended parent name
+    //   - surrogateName  ascending by surrogate name
+    var SURROGACY_SORT_OPTIONS = Object.freeze([
+        Object.freeze({ id: 'year',          label: 'Year'            }),
+        Object.freeze({ id: 'intendedName',  label: 'Intended Parent' }),
+        Object.freeze({ id: 'surrogateName', label: 'Surrogate'       })
+    ]);
+
+    var SURROGACY_DEFAULT_FILTERS = Object.freeze({
+        search: '',
+        status: 'all',
+        type: 'all',
+        sortBy: 'year',
+        locationId: null,
+        showAllLocations: true,
+        collapsed: false
+    });
+
+    // =========================================================================
+    // 9. DEFAULT FILTERS PER FACET
     // =========================================================================
 
     var DEFAULT_FILTERS_BY_FACET = Object.freeze({
-        deaths:   DEATHS_DEFAULT_FILTERS,
-        stork:    STORK_DEFAULT_FILTERS,
-        adoption: ADOPTION_DEFAULT_FILTERS
-        // surrogacy, social, educational: added when their tabs land.
+        deaths:    DEATHS_DEFAULT_FILTERS,
+        stork:     STORK_DEFAULT_FILTERS,
+        adoption:  ADOPTION_DEFAULT_FILTERS,
+        surrogacy: SURROGACY_DEFAULT_FILTERS
+        // social, educational: added when their tabs land.
     });
 
     // The fallback shape for a facet whose defaults have not yet
@@ -382,7 +441,7 @@
     });
 
     // =========================================================================
-    // 9. UI COPY
+    // 10. UI COPY
     // =========================================================================
     //
     // Long-form UI strings used by the tabs. Kept here so that a
@@ -399,17 +458,26 @@
         emptyNoAdoptions:       'No adoption records found. Use the + New Adoption action to create one.',
         emptyNoGuardianships:   'No guardianship records found.',
         emptyNoFosterRecords:   'No foster placements found.',
+        emptyNoSurrogacies:     'No surrogacy arrangements found. Use the + New Arrangement action to create one.',
+        emptyNoActiveSurrogacies: 'No arrangements match your filters. Try clearing them or widening the search.',
         emptyUnavailable:       'This information is not available in the current build.',
         loadFailed:             'Could not load data.',
         killUnavailable:        'Kill action is unavailable: the death modal is not loaded.',
         birthUnavailable:       'Birth modal is unavailable.',
         characterDetailsUnavailable: 'Character details are unavailable.',
+
+        // Surrogacy tab hint. One line above the New Arrangement
+        // action. Explains to the user that this tab IS the write
+        // surface for a whole class of children -- the tab is not a
+        // passive list of past records.
+        surrogacyIntro:         'Surrogacy arrangements produce children. Active arrangements can be completed to record the birth, or cancelled if the arrangement falls through.',
+
         refreshSuccess:         'Refreshed.',
         filtersCleared:         'Filters cleared.'
     });
 
     // =========================================================================
-    // 10. HELPERS (pure)
+    // 11. HELPERS (pure)
     // =========================================================================
 
     function getFacet(facetId) {
@@ -480,7 +548,7 @@
     }
 
     // =========================================================================
-    // 11. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     var EventsConstants = {
@@ -518,6 +586,12 @@
         ADOPTION_TYPE_FILTERS: ADOPTION_TYPE_FILTERS,
         ADOPTION_SORT_OPTIONS: ADOPTION_SORT_OPTIONS,
         ADOPTION_DEFAULT_FILTERS: ADOPTION_DEFAULT_FILTERS,
+
+        // Surrogacy facet vocabulary
+        SURROGACY_STATUS_FILTERS: SURROGACY_STATUS_FILTERS,
+        SURROGACY_TYPE_FILTERS: SURROGACY_TYPE_FILTERS,
+        SURROGACY_SORT_OPTIONS: SURROGACY_SORT_OPTIONS,
+        SURROGACY_DEFAULT_FILTERS: SURROGACY_DEFAULT_FILTERS,
 
         // Default filters
         DEFAULT_FILTERS_FALLBACK: DEFAULT_FILTERS_FALLBACK,
