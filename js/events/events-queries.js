@@ -17,6 +17,7 @@
  *     stork       -> RomanceQueries / FamilyQueries /
  *                    ChildrenQueries / ChildrenRules
  *     adoption    -> ChildrenState / ChildrenQueries / CharacterQueries
+ *     surrogacy   -> ChildrenState / ChildrenQueries / CharacterQueries
  *     disasters   -> DisasterQueries
  *     social      -> RelationshipQueries / RomanceQueries /
  *                    FriendshipQueries / RivalryQueries
@@ -52,12 +53,12 @@
  * DEPENDENCIES (all optional, checked at call time):
  *   - window.MortalityQueries      (deaths facet)
  *   - window.MortalityStatistics   (deaths facet stats)
- *   - window.CharacterQueries      (deaths + stork + adoption rosters)
+ *   - window.CharacterQueries      (deaths + stork + adoption + surrogacy)
  *   - window.RomanceQueries        (stork couple edges)
  *   - window.FamilyQueries         (stork existing children)
  *   - window.ChildrenQueries       (stork pregnancy count, adoption
- *                                   fallback if ChildrenState absent)
- *   - window.ChildrenState         (adoption records)
+ *                                   fallback, surrogacy fallback)
+ *   - window.ChildrenState         (adoption + surrogacy records)
  *   - window.ChildrenRules         (stork fertility math)
  *   - window.LocationQueries       (sub-location expansion)
  *   - window.DisasterQueries       (disasters facet)
@@ -75,28 +76,45 @@
  * =============================================================================
  *
  * REFACTOR HISTORY:
- *   Current revision (Phase 3B):
- *     - Added the adoption facet's query set:
- *         getAdoptionRecords(locationId)
- *       reads every adoption metadata record via
- *       ChildrenState.allAdoptionIds() when available, or by
+ *   Current revision (Phase 3C):
+ *     - Added the surrogacy facet's query set:
+ *         getSurrogacyRecords(locationId)
+ *       reads every surrogacy arrangement record via
+ *       ChildrenState.allSurrogacyIds() when available, or by
  *       iterating every character and calling
- *       ChildrenQueries.getAdoptionsForAdopter when it isn't.
- *       Records are enriched with child and adopter character
- *       summaries so the tab does not fetch summaries itself.
- *       Optional location filter restricts to adoptions where the
- *       CHILD's currentLocationId is in the location subtree.
- *     - Added _getAllAdoptionsRaw() private helper. It returns the
- *       raw adoption records (un-enriched), so getAdoptionRecords
- *       can distinguish "no records" from "records exist but
- *       couldn't be enriched".
- *     - getFacetRecords now dispatches 'adoption' to
- *       getAdoptionRecords.
- *     - No behavioural change to any deaths-facet or stork-facet
- *       function.
+ *       ChildrenQueries.getSurrogacyArrangementsForIntendedParent
+ *       when it isn't.
+ *     - Records are enriched with character summaries for:
+ *         intended parent, intended partner, surrogate,
+ *         sperm donor, egg donor, and each child in childIds.
+ *     - Derived fields added for the tab's family-chain renderer:
+ *         surrogateIsGeneticMother  (traditional surrogacy only)
+ *         spermDonorIsGeneticFather (sperm donor present)
+ *         eggDonorIsGeneticMother   (egg donor present)
+ *         childrenMissingDespiteCompletion
+ *           (status === 'completed' && childIds.length === 0;
+ *            a legitimate state produced by
+ *            completeSurrogacyArrangement when the arrangement was
+ *            created with birthYear > currentYear and then
+ *            completed without ever having children recorded --
+ *            the tab must render this honestly rather than as an
+ *            empty child circles block that looks like a
+ *            rendering bug)
+ *     - Location filter axis is EXPLICIT: filters by the INTENDED
+ *       PARENT's currentLocationId. Rationale documented inline.
+ *       A user who wants to find arrangements by surrogate or donor
+ *       location must filter through the character roster, not
+ *       through this query.
+ *     - Added _getAllSurrogaciesRaw() and _enrichSurrogacyRecord()
+ *       private helpers.
+ *     - getFacetRecords now dispatches 'surrogacy' to
+ *       getSurrogacyRecords.
+ *     - No behavioural change to any deaths-, stork-, or
+ *       adoption-facet function.
+ *   Previous revision (Phase 3B):
+ *     - Added the adoption facet's query set.
  *   Previous revision (Phase 3A):
- *     - Added the stork facet's query set: getFertileCouples,
- *       getCoupleChildrenSummaries.
+ *     - Added the stork facet's query set.
  *   Initial revision:
  *     - Created with the deaths facet's read API and the facet
  *       stubs (getDisasterRecords, getSocialEvents,
@@ -885,7 +903,7 @@
     }
 
     // =========================================================================
-    // 4b. ADOPTION FACET
+    // 5. ADOPTION FACET
     // =========================================================================
     //
     // Reads every adoption metadata record via
@@ -1049,7 +1067,260 @@
     }
 
     // =========================================================================
-    // 5. DISASTERS FACET
+    // 6. SURROGACY FACET
+    // =========================================================================
+    //
+    // Reads every surrogacy arrangement record via
+    // ChildrenState.allSurrogacyIds() when available, or by iterating
+    // every character and calling
+    // ChildrenQueries.getSurrogacyArrangementsForIntendedParent when
+    // it isn't.
+    //
+    // Records are the shape produced by ChildrenState.getSurrogacyCopy:
+    //
+    //   { id, intendedParentId, intendedPartnerId, surrogateId,
+    //     spermDonorId, eggDonorId, type, status, arrangementYear,
+    //     expectedBirthYear, actualBirthYear, childIds, notes,
+    //     createdAt, updatedAt }
+    //
+    // The tab enriches them with character summaries for every party:
+    //   intended parent, intended partner, surrogate, sperm donor,
+    //   egg donor, and each child in childIds.
+    //
+    // DERIVED FIELDS FOR THE TAB:
+    //   surrogateIsGeneticMother     true iff type === 'traditional'
+    //   spermDonorIsGeneticFather    true iff spermDonorId is set
+    //   eggDonorIsGeneticMother      true iff eggDonorId is set
+    //   childrenMissingDespiteCompletion
+    //     true iff status === 'completed' && childIds.length === 0
+    //
+    //   The first three fields let the tab render the genetic-parent
+    //   chain accurately. The fourth flags a legitimate but confusing
+    //   state: completeSurrogacyArrangement flips status to
+    //   'completed' WITHOUT creating children (children are created
+    //   by recordSurrogacyArrangement at arrangement time, if the
+    //   arrangement's birthYear <= currentYear). An arrangement
+    //   created with birthYear > currentYear and then completed
+    //   without children being recorded will have status
+    //   'completed' and childIds === []. The tab must render that
+    //   honestly ("Completed with no children recorded") rather than
+    //   as an empty child-circles block that looks like a rendering
+    //   bug.
+    //
+    // LOCATION FILTER AXIS (EXPLICIT):
+    //   When locationId is supplied, this function filters by the
+    //   INTENDED PARENT's currentLocationId (and its sub-locations).
+    //   This is a deliberate choice:
+    //
+    //     - The intended parent is the person commissioning the
+    //       arrangement. The arrangement conceptually exists wherever
+    //       they are.
+    //     - The surrogate is typically in a different location (that
+    //       is the entire premise of surrogacy as a demographic
+    //       event). Filtering by the surrogate's location would
+    //       produce a "who is incubating in this town" view, which is
+    //       not what a manager browsing the Surrogacy tab is looking
+    //       for.
+    //     - A user who wants to find arrangements by surrogate or
+    //       donor location must filter through the character roster
+    //       (deaths tab) or the stork tab, both of which filter by
+    //       the roster subject's location. This tab deliberately
+    //       filters by the arrangement's originating location.
+    //
+    //   The choice is stated here so a future reader does not "fix"
+    //   the filter by pointing it at the surrogate's location
+    //   without understanding the trade-off.
+
+    function _getAllSurrogaciesRaw() {
+        var ChS = _requireModule('ChildrenState', ['allSurrogacyIds', 'getSurrogacyCopy']);
+        if (ChS.ok) {
+            try {
+                var ids = ChS.module.allSurrogacyIds();
+                if (Array.isArray(ids)) {
+                    var out = [];
+                    for (var i = 0; i < ids.length; i++) {
+                        var rec = ChS.module.getSurrogacyCopy(ids[i]);
+                        if (rec) out.push(rec);
+                    }
+                    return { ok: true, records: out };
+                }
+            } catch (e) { /* fall through to population scan */ }
+        }
+
+        // Fallback: iterate characters, call
+        // getSurrogacyArrangementsForIntendedParent.
+        var cq = _requireModule('ChildrenQueries',
+            ['getSurrogacyArrangementsForIntendedParent']);
+        if (!cq.ok) return { ok: false, reason: cq.reason };
+
+        var chq = _requireModule('CharacterQueries', ['getAllCharacters']);
+        if (!chq.ok) return { ok: false, reason: chq.reason };
+
+        var all;
+        try { all = chq.module.getAllCharacters(); }
+        catch (e) {
+            return { ok: false, reason: 'CharacterQueries.getAllCharacters threw.' };
+        }
+        if (!Array.isArray(all)) {
+            return { ok: false, reason: 'CharacterQueries returned a non-array.' };
+        }
+
+        var seen = {};
+        var records = [];
+        for (var j = 0; j < all.length; j++) {
+            var c = all[j];
+            if (!c || !_hasId(c.id)) continue;
+            var list;
+            try {
+                list = cq.module.getSurrogacyArrangementsForIntendedParent(c.id);
+            } catch (e) {
+                list = [];
+            }
+            if (!Array.isArray(list)) continue;
+            for (var k = 0; k < list.length; k++) {
+                var r = list[k];
+                if (!r || !_hasId(r.id)) continue;
+                if (seen[r.id]) continue;
+                seen[r.id] = true;
+                records.push(r);
+            }
+        }
+        return { ok: true, records: records };
+    }
+
+    function _enrichSurrogacyRecord(record, cqModule) {
+        function safeSummary(id) {
+            if (!_hasId(id)) return null;
+            try { return cqModule.getCharacterSummary(id); }
+            catch (e) { return null; }
+        }
+
+        var intendedParent = safeSummary(record.intendedParentId);
+        var intendedPartner = safeSummary(record.intendedPartnerId);
+        var surrogate = safeSummary(record.surrogateId);
+        var spermDonor = safeSummary(record.spermDonorId);
+        var eggDonor = safeSummary(record.eggDonorId);
+
+        var childIds = Array.isArray(record.childIds) ? record.childIds.slice() : [];
+        var childSummaries = [];
+        for (var i = 0; i < childIds.length; i++) {
+            var s = safeSummary(childIds[i]);
+            if (s) childSummaries.push(s);
+        }
+
+        var isTraditional = record.type === 'traditional';
+        var childrenMissingDespiteCompletion =
+            record.status === 'completed' && childIds.length === 0;
+
+        return {
+            id: record.id,
+
+            intendedParentId: record.intendedParentId,
+            intendedPartnerId: _isMissing(record.intendedPartnerId)
+                ? null : record.intendedPartnerId,
+            surrogateId: record.surrogateId,
+            spermDonorId: _isMissing(record.spermDonorId)
+                ? null : record.spermDonorId,
+            eggDonorId: _isMissing(record.eggDonorId)
+                ? null : record.eggDonorId,
+
+            type: record.type,
+            status: record.status,
+            arrangementYear: typeof record.arrangementYear === 'number'
+                ? record.arrangementYear : null,
+            expectedBirthYear: typeof record.expectedBirthYear === 'number'
+                ? record.expectedBirthYear : null,
+            actualBirthYear: typeof record.actualBirthYear === 'number'
+                ? record.actualBirthYear : null,
+            childIds: childIds,
+            notes: typeof record.notes === 'string' ? record.notes : '',
+
+            // Enriched party summaries.
+            intendedParent: intendedParent,
+            intendedPartner: intendedPartner,
+            surrogate: surrogate,
+            spermDonor: spermDonor,
+            eggDonor: eggDonor,
+            children: childSummaries,
+
+            // Derived fields for the tab's family-chain renderer.
+            surrogateIsGeneticMother: isTraditional,
+            spermDonorIsGeneticFather: !!spermDonor,
+            eggDonorIsGeneticMother: !!eggDonor,
+            childrenMissingDespiteCompletion: childrenMissingDespiteCompletion
+        };
+    }
+
+    /**
+     * Returns the surrogacy arrangement records for the Surrogacy tab.
+     * Each record is enriched with character summaries for every
+     * party, and with the derived fields listed in the section header.
+     *
+     * @param {string|null} locationId  null -> all locations
+     * @returns {{
+     *   available: boolean,
+     *   reason?: string,
+     *   records: Array,
+     *   totalCount: number
+     * }}
+     */
+    function getSurrogacyRecords(locationId) {
+        var cq = _requireModule('CharacterQueries', ['getCharacterSummary']);
+        if (!cq.ok) return _unavailable(cq.reason);
+
+        var raw = _getAllSurrogaciesRaw();
+        if (!raw.ok) return _unavailable(raw.reason);
+
+        var locationIdSet = _locationIdSetForFilter(locationId);
+
+        var records = [];
+        for (var i = 0; i < raw.records.length; i++) {
+            var r = raw.records[i];
+            if (!r || !_hasId(r.id)) continue;
+
+            // Resolve the intended parent once to apply the location
+            // filter. _enrichSurrogacyRecord will resolve it again;
+            // the double read is cheap and keeps the enrichment
+            // block clean.
+            var intendedParentSummary = null;
+            try {
+                intendedParentSummary =
+                    cq.module.getCharacterSummary(r.intendedParentId);
+            } catch (e) {
+                intendedParentSummary = null;
+            }
+
+            if (locationIdSet !== null) {
+                var loc = intendedParentSummary
+                    && _hasId(intendedParentSummary.locationId)
+                    ? intendedParentSummary.locationId
+                    : null;
+                if (!loc || locationIdSet[loc] !== true) continue;
+            }
+
+            records.push(_enrichSurrogacyRecord(r, cq.module));
+        }
+
+        // Sort by arrangementYear descending (newest first), then by
+        // id for stability. The tab re-sorts within status groups per
+        // its own sortBy; this default ordering makes the pre-group
+        // order deterministic and sensible even if a caller uses the
+        // raw list.
+        records.sort(function(a, b) {
+            var ya = (typeof a.arrangementYear === 'number') ? a.arrangementYear : 0;
+            var yb = (typeof b.arrangementYear === 'number') ? b.arrangementYear : 0;
+            if (ya !== yb) return yb - ya;
+            return String(a.id).localeCompare(String(b.id));
+        });
+
+        return _available({
+            records: records,
+            totalCount: records.length
+        });
+    }
+
+    // =========================================================================
+    // 7. DISASTERS FACET
     // =========================================================================
 
     function getDisasterRecords(locationId) {
@@ -1072,7 +1343,7 @@
     }
 
     // =========================================================================
-    // 6. SOCIAL FACET
+    // 8. SOCIAL FACET
     // =========================================================================
 
     function getSocialEvents(locationId) {
@@ -1092,7 +1363,7 @@
     }
 
     // =========================================================================
-    // 7. EDUCATIONAL FACET
+    // 9. EDUCATIONAL FACET
     // =========================================================================
 
     function getEducationalEvents(locationId) {
@@ -1104,7 +1375,7 @@
     }
 
     // =========================================================================
-    // 8. FACET DISPATCH
+    // 10. FACET DISPATCH
     // =========================================================================
     //
     // A single entry point that dispatches to the correct facet read.
@@ -1117,6 +1388,7 @@
             case 'deaths':      return getAllDeathRecords(locationId);
             case 'stork':       return getFertileCouples(locationId);
             case 'adoption':    return getAdoptionRecords(locationId);
+            case 'surrogacy':   return getSurrogacyRecords(locationId);
             case 'disasters':   return getDisasterRecords(locationId);
             case 'social':      return getSocialEvents(locationId);
             case 'educational': return getEducationalEvents(locationId);
@@ -1125,7 +1397,7 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.EventsQueries = {
@@ -1142,6 +1414,9 @@
 
         // Adoption facet
         getAdoptionRecords: getAdoptionRecords,
+
+        // Surrogacy facet
+        getSurrogacyRecords: getSurrogacyRecords,
 
         // Disasters facet
         getDisasterRecords: getDisasterRecords,
