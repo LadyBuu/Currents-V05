@@ -1482,39 +1482,28 @@
 </div>
 
 <!-- ================================================================
-     SCRIPTS — load order matches the documented sequence.
+     SCRIPTS — load order is load-bearing.
 
-     The load order is load-bearing. Every module in this page has
-     a load-time guard that throws if a required dependency is not
-     yet on window. The guards make a wrong order fail loudly at
-     the console; they do NOT make a wrong order work.
+     The order below reflects the dependency graph documented in
+     load order.txt and household-doc.txt:
 
-     Groups are ordered by dependency depth:
-       1. Boot (theme)
-       2. Core constants        (leaf)
-       3. Core utilities        (leaf)
-       4. Core time             (leaf)
-       5. Core storage + accessors
-       6. Core UI primitives
-       7. Domain constants      (religion, culture)
-       8. Character subsystem   (character-commands, character-queries,
-                                 family-*)
-       9. Relationship domain   (relationships/*)
-      10. Location subsystem    (location/*)
-      11. Religion subsystem    (religion/*)
-      12. Culture subsystem     (culture/*)
-      13. Names subsystem       (names/*)
-      14. Household subsystem   (households/*)
-      15. Role/rank/skill       (roles/*, ranks/*)
-      16. Industry              (industry/*)
-      17. Settlements, government, etc.
-      18. Character manager shell
+       core constants  →  core utilities  →  core time  →
+       core storage  →  accessors  →  UI primitives  →
+       events/logging + skill-utils + selectors  →
+       character  →  apprenticeship  →  relationship domain  →
+       location  →  religion  →  culture  →  relationship-bootstrap  →
+       names  →  households  →  character shell
+
+     Every module here has a load-time guard that throws if a
+     required dependency is not yet on window. Reordering this block
+     without understanding those guards will produce console errors
+     at line numbers inside the modules, not here.
      ================================================================ -->
 
 <!-- ---- 1. Boot ---- -->
 <script src="js/core/theme-boot.js"></script>
 
-<!-- ---- 2. Core constants ---- -->
+<!-- ---- 2. Core constants (leaf) ---- -->
 <script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
 <script src="js/core/constants/character-constants.js"></script>
@@ -1522,14 +1511,14 @@
 <script src="js/core/constants/location-constants.js"></script>
 <script src="js/core/constants/relationship-constants.js"></script>
 
-<!-- ---- 3. Core utilities ---- -->
+<!-- ---- 3. Core utilities (leaf) ---- -->
 <script src="js/core/formatting.js"></script>
 <script src="js/core/icons.js"></script>
 <script src="js/core/collections.js"></script>
 <script src="js/core/ids.js"></script>
 <script src="js/core/randomness.js"></script>
 
-<!-- ---- 4. Core time ---- -->
+<!-- ---- 4. Core time (leaf) ---- -->
 <script src="js/core/time.js"></script>
 
 <!-- ---- 5. Core storage + accessors ---- -->
@@ -1577,13 +1566,25 @@
 <script src="js/core/exportUtils.js"></script>
 <script src="js/core/tab-manager.js"></script>
 
-<!-- ---- 7. World + names (leaf UI-side data) ---- -->
+<!-- ---- 7. World + names (leaf data) ---- -->
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
 
-<!-- ---- 8. Character subsystem (MUST come before location, religion,
-        culture, names, households — all of which load-time require
-        CharacterCommands and/or CharacterQueries) ---- -->
+<!-- ---- 7a. Event logging (REQUIRED by relationship-bootstrap and
+        many cross-domain modules) ---- -->
+<script src="js/events/eventLogger.js"></script>
+
+<!-- ---- 7b. Skill taxonomy (REQUIRED by professional-rules) ---- -->
+<script src="js/roles/skill-utils.js"></script>
+
+<!-- ---- 7c. Selectors (REQUIRED by modals-religion and other modals) ---- -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
+
+<!-- ---- 8. Character subsystem (REQUIRED by location, religion,
+        culture, names, and households) ---- -->
 <script src="js/character/family-rules.js"></script>
 <script src="js/character/children-rules.js"></script>
 <script src="js/character/mortality-rules.js"></script>
@@ -1616,8 +1617,15 @@
 <script src="js/character/character-ui-list.js"></script>
 <script src="js/character/character-system.js"></script>
 
-<!-- ---- 9. Relationship domain (must come before household-servant,
-        which load-time requires the six relationship functions) ---- -->
+<!-- ---- 9. Apprenticeship (REQUIRED by modals-relationship) ---- -->
+<script src="js/apprenticeship/apprenticeship-constants.js"></script>
+<script src="js/apprenticeship/apprenticeship-rules.js"></script>
+<script src="js/apprenticeship/apprenticeship-queries.js"></script>
+<script src="js/apprenticeship/apprenticeship-commands.js"></script>
+<script src="js/apprenticeship/professional-knowledge-commands.js"></script>
+<script src="js/apprenticeship/modals-apprenticeship.js"></script>
+
+<!-- ---- 10. Relationship domain (REQUIRED by location, household-servant) ---- -->
 <script src="js/relationships/relationship-types.js"></script>
 <script src="js/relationships/relationship-utils.js"></script>
 <script src="js/relationships/relationship-state.js"></script>
@@ -1654,13 +1662,9 @@
 <script src="js/relationships/relationship-finder-queries.js"></script>
 <script src="js/relationships/relationship-ui-metadata.js"></script>
 <script src="js/relationships/relationship-integrations.js"></script>
-<script src="js/relationships/relationship-bootstrap.js"></script>
 
-<script src="js/relationships/modals-relationship.js"></script>
-<script src="js/relationships/modals-friendship.js"></script>
-
-<!-- ---- 10. Location subsystem (REQUIRES CharacterCommands,
-        CharacterQueries — both now loaded above) ---- -->
+<!-- ---- 11. Location subsystem (REQUIRES CharacterCommands,
+        CharacterQueries) ---- -->
 <script src="js/location/location-state.js"></script>
 <script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-commands.js"></script>
@@ -1675,7 +1679,8 @@
 <script src="js/location/modals-moves.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
-<!-- ---- 11. Religion subsystem (REQUIRES CharacterCommands) ---- -->
+<!-- ---- 12. Religion subsystem (REQUIRES CharacterCommands,
+        openCharacterSelector) ---- -->
 <script src="js/religion/religion-constants.js"></script>
 <script src="js/religion/religion-format.js"></script>
 <script src="js/religion/religion-validation.js"></script>
@@ -1691,7 +1696,7 @@
 <script src="js/religion/modals-religion.js"></script>
 <script src="js/religion/religion-bootstrap.js"></script>
 
-<!-- ---- 12. Culture subsystem (REQUIRES CharacterQueries) ---- -->
+<!-- ---- 13. Culture subsystem (REQUIRES CharacterQueries) ---- -->
 <script src="js/culture/culture-constants.js"></script>
 <script src="js/culture/culture-validation.js"></script>
 <script src="js/culture/culture-state.js"></script>
@@ -1704,7 +1709,15 @@
 <script src="js/culture/modals-culture.js"></script>
 <script src="js/culture/culture-bootstrap.js"></script>
 
-<!-- ---- 13. Names subsystem (REQUIRES CultureQueries) ---- -->
+<!-- ---- 14. Relationship bootstrap — DEFERRED until after culture
+        so its CultureRules verification succeeds. ---------------- -->
+<script src="js/relationships/relationship-bootstrap.js"></script>
+
+<!-- ---- 14a. Relationship modals (after bootstrap) ---- -->
+<script src="js/relationships/modals-relationship.js"></script>
+<script src="js/relationships/modals-friendship.js"></script>
+
+<!-- ---- 15. Names subsystem (REQUIRES CultureQueries) ---- -->
 <script src="js/names/name-queries.js"></script>
 <script src="js/names/name-rules.js"></script>
 <script src="js/names/names-state.js"></script>
@@ -1712,7 +1725,7 @@
 <script src="js/names/name-system.js"></script>
 <script src="js/names/modals-name.js"></script>
 
-<!-- ---- 14. Household subsystem (REQUIRES CharacterCommands,
+<!-- ---- 16. Household subsystem (REQUIRES CharacterCommands,
         CharacterQueries, FamilyQueries, relationship-commands,
         relationship-queries) ---- -->
 <script src="js/households/household-constants.js"></script>
@@ -1743,17 +1756,13 @@
 <script src="js/households/modals-residence-rental.js"></script>
 <script src="js/households/modals-residence-staff.js"></script>
 
-<!-- Compatibility shims — remove once external callers are audited. -->
+<!-- Household compatibility shims — remove once external callers are audited. -->
 <script src="js/households/modals-assign-staff.js"></script>
 <script src="js/households/modals-residence-history.js"></script>
 <script src="js/households/modals-residence-vacancy.js"></script>
 <script src="js/households/modals-residence-snapshot.js"></script>
 
-<!-- ---- 15. Roles / ranks / skills ---- -->
-<script src="js/roles/skill-utils.js"></script>
-<script src="js/events/eventLogger.js"></script>
-
-<!-- ---- 16. Character manager shell (tabs + bootstrap) ---- -->
+<!-- ---- 17. Character manager shell (tabs + bootstrap) ---- -->
 <script src="js/character/character-ui-state.js"></script>
 <script src="js/character/character-view-models.js"></script>
 
