@@ -446,15 +446,14 @@
      SCRIPTS
 
      Load order mirrors EducationManager.html with the education
-     subsystem removed and the events subsystem added. The Deaths tab
-     reads through CharacterQueries / MortalityQueries; the Stork tab
-     reads through RomanceQueries / FamilyQueries / ChildrenQueries /
-     ChildrenRules. The Adoption and Surrogacy tabs read through
-     ChildrenState / ChildrenQueries / CharacterQueries (with
-     FamilyQueries for adoption). The remaining facets (social,
-     educational) read through their owning domains, which are loaded
-     here so that when the tab files land, no further load-order work
-     is needed.
+     subsystem kept (educational facet stub) and the disaster
+     subsystem corrected to js/disaster/ (its actual location in the
+     tree). The Deaths tab reads through CharacterQueries /
+     MortalityQueries. The Stork tab reads through RomanceQueries /
+     FamilyQueries / ChildrenQueries / ChildrenRules. The Adoption
+     and Surrogacy tabs read through ChildrenState /
+     ChildrenQueries / CharacterQueries (with FamilyQueries for
+     adoption).
 
      The PlaceQueries shim is required by culture-queries.js and
      religion-queries.js at load time; it lazily reaches LocationState,
@@ -637,11 +636,22 @@
 
 <!-- ============================================================ -->
 <!-- RELATIONSHIP (stork + social facets read through these)       -->
+<!--                                                                -->
+<!-- RomanceQueries is REQUIRED by the stork facet (it reads       -->
+<!-- committed partners for each fertile couple). The romance      -->
+<!-- sub-module depends on the base relationship primitives, so it -->
+<!-- loads AFTER relationship-state.js and relationship-queries.js -->
+<!-- and BEFORE relationship-commands.js.                           -->
 <!-- ============================================================ -->
 <script src="js/relationships/relationship-types.js"></script>
 <script src="js/relationships/relationship-utils.js"></script>
 <script src="js/relationships/relationship-state.js"></script>
 <script src="js/relationships/relationship-queries.js"></script>
+
+<script src="js/relationships/romance-rules.js"></script>
+<script src="js/relationships/romance-queries.js"></script>
+<script src="js/relationships/romance-commands.js"></script>
+
 <script src="js/relationships/relationship-commands.js"></script>
 <script src="js/relationships/professional-rules.js"></script>
 <script src="js/relationships/professional-queries.js"></script>
@@ -756,16 +766,20 @@
 
 <!-- ============================================================ -->
 <!-- DISASTER (disasters facet reads through these)                -->
+<!--                                                                -->
+<!-- Files live at js/disaster/, NOT js/core/disaster/. The        -->
+<!-- earlier path was incorrect and produced ten 404s. Corrected   -->
+<!-- here per structure.txt.                                       -->
 <!-- ============================================================ -->
-<script src="js/core/disaster/disaster-constants.js"></script>
-<script src="js/core/disaster/disaster-state.js"></script>
-<script src="js/core/disaster/disaster-queries.js"></script>
-<script src="js/core/disaster/disaster-damage.js"></script>
-<script src="js/core/disaster/disaster-commands.js"></script>
-<script src="js/core/disaster/disaster-view-models.js"></script>
-<script src="js/core/disaster/modals-disaster.js"></script>
-<script src="js/core/disaster/disaster-ui-stats.js"></script>
-<script src="js/core/disaster/disaster-bootstrap.js"></script>
+<script src="js/disaster/disaster-constants.js"></script>
+<script src="js/disaster/disaster-state.js"></script>
+<script src="js/disaster/disaster-queries.js"></script>
+<script src="js/disaster/disaster-damage.js"></script>
+<script src="js/disaster/disaster-commands.js"></script>
+<script src="js/disaster/disaster-view-models.js"></script>
+<script src="js/disaster/modals-disaster.js"></script>
+<script src="js/disaster/disaster-ui-stats.js"></script>
+<script src="js/disaster/disaster-bootstrap.js"></script>
 
 <!-- ============================================================ -->
 <!-- EDUCATION (educational facet reads through these)             -->
@@ -799,7 +813,7 @@
 <!--             -> modals-character.js      (row click)           -->
 <!-- stork       -> modals-children-birth.js (add / surprise)      -->
 <!--             -> modals-character.js      (child circle click)  -->
-<!-- adoption    -> modals-children-adoption.js                   -->
+<!-- adoption    -> modals-children-adoption.js                    -->
 <!--                 (create / edit / end adoption)                -->
 <!-- surrogacy   -> modals-children-surrogacy.js                   -->
 <!--                 (create / complete / cancel arrangement)      -->
@@ -836,19 +850,24 @@
 <!-- The bootstrap configures TabManager and renders the initial   -->
 <!-- tab after every tab file has had a chance to register.        -->
 <!--                                                                -->
+<!-- events-disasters-tab.js does not exist in the tree yet. The   -->
+<!-- disasters facet button will render the "not loaded in this    -->
+<!-- build" empty state from _buildEmptyState('no-renderer').      -->
+<!-- When the tab file lands, uncomment the reference below.       -->
+<!--                                                                -->
 <!-- The social and educational buttons exist in the strip but     -->
-<!-- have no registered renderer yet. They render the "not         -->
-<!-- loaded in this build" empty state from                        -->
-<!-- _buildEmptyState('no-renderer') in the bootstrap.             -->
+<!-- have no registered renderer yet. They render the same         -->
+<!-- "not loaded" empty state.                                     -->
 <!-- ============================================================ -->
 
 <script src="js/tabs/events-deaths-tab.js"></script>
 <script src="js/tabs/events-stork-tab.js"></script>
 <script src="js/tabs/events-adoption-tab.js"></script>
 <script src="js/tabs/events-surrogacy-tab.js"></script>
-<script src="js/tabs/events-disasters-tab.js"></script>
+<!-- <script src="js/tabs/events-disasters-tab.js"></script> -->
 
 <!-- Future facet tabs land here as they are built:
+     <script src="js/tabs/events-disasters-tab.js"></script>
      <script src="js/tabs/events-social-tab.js"></script>
      <script src="js/tabs/events-educational-tab.js"></script>
      Until then, the corresponding tabs render via the
