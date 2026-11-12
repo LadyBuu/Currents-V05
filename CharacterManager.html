@@ -1484,24 +1484,22 @@
 <!-- ================================================================
      SCRIPTS — load order is load-bearing.
 
-     The order below reflects the dependency graph documented in
-     load order.txt and household-doc.txt:
+     Dependency order reflects the load-time guards inside every
+     module. Changing the order without understanding those guards
+     produces "requires X first" errors at the module, not here.
 
-       boot  →  core constants  →  core utilities  →  core time  →
-       core storage  →  accessors  →  UI primitives  →
-       world + names  →  eventLogger  →  skill-utils  →
-       selector-base + locationDropdown  →  character  →
-       character-selector  →  roles  →  relationship core  →
-       apprenticeship  →  relationship domain (remaining)  →
-       location  →  religion (domain only, no modals)  →
-       culture  →  relationship-bootstrap + relationship modals  →
-       names  →  households  →  household-selector  →  character shell
+       boot → constants → utilities → time → storage → accessors →
+       UI → world/names → eventLogger → skill-utils →
+       selector-base/locationDropdown → character →
+       character-selector → roles → relationship core (incl.
+       professional triad) → apprenticeship → relationship
+       (remaining) → location → religion (domain only) → culture →
+       relationship-bootstrap + relationship modals → names →
+       households → household-selector → character shell
 
-     Religion modals are intentionally NOT loaded on this page: they
-     load-time require getFilteredLocationOptions, which is provided
-     by locationDropdown.js under a different export name in this
-     build. The religion domain works fine without its modals (see
-     religion-bootstrap's optional-modules warning).
+     The professional triad (professional-rules/queries/commands)
+     loads BEFORE apprenticeship because apprenticeship-commands.js
+     load-time requires ProfessionalCommands.
      ================================================================ -->
 
 <!-- ---- 1. Boot ---- -->
@@ -1580,7 +1578,7 @@
 <!-- ---- 7b. Skill taxonomy ---- -->
 <script src="js/roles/skill-utils.js"></script>
 
-<!-- ---- 7c. Selector base + location dropdown (no domain deps) ---- -->
+<!-- ---- 7c. Selector base + location dropdown ---- -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
 
@@ -1629,15 +1627,25 @@
 <script src="js/roles/role-system.js"></script>
 <script src="js/roles/role-ui-list.js"></script>
 
-<!-- ---- 9. Relationship core ---- -->
+<!-- ---- 9. Relationship core.
+        Includes the professional triad (professional-rules,
+        professional-queries, professional-commands) because
+        apprenticeship-commands.js load-time requires
+        ProfessionalCommands.{createEdge, updateEdgeMetadata,
+        updateEdgeFields, endEdge, removeEdge}. ---- -->
 <script src="js/relationships/relationship-types.js"></script>
 <script src="js/relationships/relationship-utils.js"></script>
 <script src="js/relationships/relationship-state.js"></script>
 <script src="js/relationships/relationship-queries.js"></script>
 <script src="js/relationships/relationship-commands.js"></script>
 
-<!-- ---- 9a. Apprenticeship (REQUIRES relationship-types and
-        RoleState; PROVIDES ApprenticeshipCommands) ---- -->
+<script src="js/relationships/professional-rules.js"></script>
+<script src="js/relationships/professional-queries.js"></script>
+<script src="js/relationships/professional-commands.js"></script>
+
+<!-- ---- 9a. Apprenticeship (REQUIRES relationship-types,
+        RoleState, and ProfessionalCommands; PROVIDES
+        ApprenticeshipCommands used by modals-relationship) ---- -->
 <script src="js/apprenticeship/apprenticeship-constants.js"></script>
 <script src="js/apprenticeship/apprenticeship-rules.js"></script>
 <script src="js/apprenticeship/apprenticeship-queries.js"></script>
@@ -1669,10 +1677,6 @@
 <script src="js/relationships/matchmaking-rules.js"></script>
 <script src="js/relationships/matchmaking-queries.js"></script>
 
-<script src="js/relationships/professional-rules.js"></script>
-<script src="js/relationships/professional-queries.js"></script>
-<script src="js/relationships/professional-commands.js"></script>
-
 <script src="js/relationships/relationship-finder-queries.js"></script>
 <script src="js/relationships/relationship-ui-metadata.js"></script>
 <script src="js/relationships/relationship-integrations.js"></script>
@@ -1693,7 +1697,10 @@
 <script src="js/location/location-bootstrap.js"></script>
 
 <!-- ---- 11. Religion subsystem — domain only; modals intentionally
-        omitted (see header note at top of script block) ---- -->
+        omitted (they load-time require getFilteredLocationOptions,
+        which isn't exported by locationDropdown.js in this build).
+        religion-bootstrap reports this as an optional-module
+        warning; the domain itself works. ---- -->
 <script src="js/religion/religion-constants.js"></script>
 <script src="js/religion/religion-format.js"></script>
 <script src="js/religion/religion-validation.js"></script>
