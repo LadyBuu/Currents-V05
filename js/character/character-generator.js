@@ -41,9 +41,14 @@
  *   - Missing optional dependencies (religion, culture, appearance) are
  *     treated as a feature being unavailable. The generated field is left
  *     absent (never fabricated).
- *   - A character without any resolvable culture receives a name from the
- *     first culture that has name data, or fails generation with a
- *     structured reason. It does not fabricate one.
+ *   - A character must end up with a resolvable culture that has actual
+ *     given-name data (or a culture whose name pool can be supplemented
+ *     by the fallback name list — John/Jane/Emery style). If the
+ *     location's primary culture has no name data and no other culture
+ *     does either, the character is assigned the location's culture and
+ *     given a name from the built-in fallback pool. The alternative —
+ *     leaving cultureId null and passing it into NameQueries.getRandomName
+ *     — throws.
  *
  * NAME GENERATION KEY — CULTURE, NOT COUNTRY
  * ------------------------------------------
@@ -55,14 +60,30 @@
  *
  * Prior revisions of this generator computed a country (place) id and
  * passed it as the "cultureId" argument. NameQueries.getRandomName
- * refuses a place id (no nameLists entry), and the fallback path passed
+ * refuses a place id (no nameLists entry) and the fallback path passed
  * `null`, which throws "getRandomName: cultureId must be a non-empty
  * string". Random character generation failed for every character.
  *
- * This revision resolves a CULTURE id from the birthplace first, and
- * falls back to a random culture that has name data when the birthplace
- * has no culture assigned. The same culture id is used for appearance
- * generation (step 9), so the two stay aligned.
+ * This revision resolves a CULTURE id from the birthplace first, uses
+ * that id for names, surnames, and appearance, and falls back to a
+ * random culture with name data (or, ultimately, to the built-in
+ * fallback name list) when no culture has data.
+ *
+ * SURNAME SOURCE VOCABULARY
+ * -------------------------
+ * The factory accepts: country, cultural, inherited, custom, none.
+ * This generator emits 'cultural' (surname from a culture's surname
+ * pool), 'custom' (surname was supplied/overridden by the caller), and
+ * 'none' (no surname). It does NOT emit 'culture' — that spelling is
+ * not in the factory's allowlist and will be rejected at build time.
+ *
+ * FALLBACK NAME POOL
+ * ------------------
+ * When no culture has any name data (empty nameLists everywhere, or a
+ * single culture with all-empty pools), the generator falls back to a
+ * small built-in name pool (JOHN/JANE/EMERY). The fallback names are
+ * cosmetic only; they do NOT invent a culture. The character keeps
+ * whatever culture the location resolved to (possibly null).
  *
  * DEPENDENCIES (REQUIRED):
  *   - randomness.js: pickRandom, random, randomBoolean, randomInt,
@@ -81,32 +102,26 @@
  *                             Method used: getPrimaryCultureForLocation.
  *   - culture-generation.js (CultureGeneration) — for appearance generation
  *   - name-queries.js      (NameQueries)       — for the culture-with-
- *                             name-data fallback (getCultureIdsWithNameLists)
+ *                             name-data fallback (getCultureIdsWithGivenNames,
+ *                             hasGivenNameData, hasSurnameData)
  *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - _generateGivenName now takes a cultureId (as its name implies) and
- *       calls getRandomNameFromCountry(cultureId, gender). The fallback
- *       enumerates cultures with name data via
- *       NameQueries.getCultureIdsWithNameLists and picks one, instead of
- *       passing null.
- *     - generateRandomCharacterData resolves culture (step 5) BEFORE name
- *       and surname (steps 6–7), then reuses the same cultureId for
- *       appearance (step 9). Prior revisions resolved culture AFTER name
- *       generation, so the name step had no culture to work with and the
- *       appearance step received null.
- *     - Culture resolution now falls back to a random culture with name
- *       data when getPrimaryCultureForLocation returns null. The
- *       generator can now always resolve a culture that has a name pool,
- *       which is the precondition for generating a name.
- *     - _getCountryFromLocation and _getRandomCountryWithNameData are
- *       retained as legacy helpers; both are no longer called by
- *       generateRandomCharacterData but are left in place because other
- *       consumers may reach them via the module (they are not exported;
- *       removing them is a follow-up cleanup).
+ *     - Culture resolution runs BEFORE names (step 5), and the resolved
+ *       culture is reused for names, surnames, and appearance.
+ *     - _generateGivenName takes a cultureId and consults
+ *       NameQueries.hasGivenNameData before calling
+ *       getRandomNameFromCountry. Empty cultures fall through to a
+ *       random culture with data, then to the built-in fallback pool.
+ *     - _generateSurname takes a cultureId and consults
+ *       NameQueries.hasSurnameData; empty cultures return ''.
+ *     - _surnameSourceFor emits 'cultural' (not 'culture'), matching
+ *       the factory's allowlist.
+ *     - Added FALLBACK_FIRST_NAMES (JOHN/JANE/EMERY) for the "no
+ *       culture has name data at all" case.
  *   Previous revision (K2):
  *     - _resolveCultureForLocation now calls
  *       CultureQueries.getPrimaryCultureForLocation, not
@@ -187,6 +202,14 @@
     var MIN_TRAITS = 1;
     var MAX_TRAITS = 3;
 
+    // Fallback given-name pool. Used ONLY when no culture has any name
+    // data (empty nameLists everywhere, or a single culture with empty
+    // pools). Cosmetic names; they do NOT invent a culture.
+    var FALLBACK_FIRST_NAMES = {
+        male: ['John', 'Emery', 'Aldric', 'Cedric', 'Rowan'],
+        female: ['Jane', 'Emery', 'Adela', 'Celia', 'Rowena']
+    };
+
     // =========================================================================
     // 2. INTERNAL HELPERS
     // =========================================================================
@@ -231,12 +254,13 @@
         return window.randomInt(min, max);
     }
 
+    function _nameQueries() {
+        return (typeof window.NameQueries !== 'undefined') ? window.NameQueries : null;
+    }
+
     // =========================================================================
     // 3. TRAIT SELECTION
     // =========================================================================
-    //
-    // Picks MIN_TRAITS..MAX_TRAITS distinct traits from the canonical
-    // vocabulary. All randomness flows through randomness.js.
 
     function _selectTraits() {
         var pool = window.CHARACTER_TRAIT_VALUES;
@@ -274,14 +298,6 @@
     // 4. LOCATION RESOLUTION
     // =========================================================================
 
-    /**
-     * Walks the parent hierarchy of a place to find the country-scoped
-     * ancestor. Returns the country place object or null.
-     *
-     * Retained for potential external consumers of the module; no longer
-     * called by generateRandomCharacterData (see NAME GENERATION KEY
-     * above).
-     */
     function _getCountryFromLocation(locationId) {
         if (!_hasId(locationId)) return null;
 
@@ -305,10 +321,6 @@
         return null;
     }
 
-    /**
-     * Returns a random place with a non-empty variableKey, preferring
-     * places that have name data.
-     */
     function _getRandomLocationWithVariableKey() {
         var places = window.getPlaces();
         var withKey = [];
@@ -344,38 +356,6 @@
             : window.pickRandom(withKey);
     }
 
-    /**
-     * Returns a random place whose id is a key in nameLists. Falls back to
-     * any country-scoped place. Returns null if nothing is available.
-     *
-     * Retained for potential external consumers of the module; no longer
-     * called by generateRandomCharacterData (see NAME GENERATION KEY
-     * above).
-     */
-    function _getRandomCountryWithNameData() {
-        var nameLists = window.getNameLists();
-        var countryIds = Object.keys(nameLists).filter(function (id) {
-            var list = nameLists[id];
-            if (!list) return false;
-            var hasMale = Array.isArray(list.male) && list.male.length > 0;
-            var hasFemale = Array.isArray(list.female) && list.female.length > 0;
-            return hasMale || hasFemale;
-        });
-
-        if (countryIds.length > 0) {
-            var chosenId = window.pickRandom(countryIds);
-            return window.getPlaceById(chosenId);
-        }
-
-        var places = window.getPlaces();
-        var countries = [];
-        for (var i = 0; i < places.length; i++) {
-            if (window.getPlaceScope(places[i]) === 'country') countries.push(places[i]);
-        }
-
-        return countries.length > 0 ? window.pickRandom(countries) : null;
-    }
-
     // =========================================================================
     // 5. AGE
     // =========================================================================
@@ -403,103 +383,161 @@
     // 6. CULTURE RESOLUTION
     // =========================================================================
     //
-    // Culture is resolved BEFORE names are generated, because the name
-    // subsystem keys its pools by culture.id. See NAME GENERATION KEY in
-    // the module header.
-    //
-    // Resolution cascade:
-    //   1. CultureQueries.getPrimaryCultureForLocation(birthplaceId) — the
-    //      primary-culture relationship lives on place.cultureId and is
-    //      resolved by walking the hierarchy in culture-queries.js.
-    //   2. A random culture that has name data, via
-    //      NameQueries.getCultureIdsWithNameLists().
-    //
-    // If neither resolves, the caller fails generation with a structured
-    // reason. We do not fabricate a culture.
+    // Culture is resolved BEFORE names. The name subsystem keys its pools
+    // by culture.id (see name-queries.js's header), so without a culture
+    // we cannot resolve a name.
 
     function _resolveCultureForLocation(locationId) {
-        if (_hasId(locationId)
-            && typeof window.CultureQueries !== 'undefined'
-            && typeof window.CultureQueries.getPrimaryCultureForLocation === 'function') {
-            var culture = window.CultureQueries.getPrimaryCultureForLocation(locationId);
-            if (culture && _hasId(culture.id)) return culture.id;
-        }
-        return null;
-    }
-
-    function _resolveRandomCultureWithNameData() {
-        if (typeof window.NameQueries === 'undefined'
-            || typeof window.NameQueries.getCultureIdsWithNameLists !== 'function') {
+        if (!_hasId(locationId)) return null;
+        if (typeof window.CultureQueries === 'undefined') return null;
+        if (typeof window.CultureQueries.getPrimaryCultureForLocation !== 'function') {
             return null;
         }
-        var ids = window.NameQueries.getCultureIdsWithNameLists();
-        if (!Array.isArray(ids) || ids.length === 0) return null;
-        var chosen = window.pickRandom(ids);
-        return _hasId(chosen) ? chosen : null;
+
+        var culture = window.CultureQueries.getPrimaryCultureForLocation(locationId);
+        if (!culture || !_hasId(culture.id)) return null;
+        return culture.id;
+    }
+
+    /**
+     * Returns a random culture id that has actual given-name data
+     * (male or female pool non-empty). Prefers NameQueries'
+     * getCultureIdsWithGivenNames when available; falls back to scanning
+     * the raw nameLists map otherwise.
+     */
+    function _resolveRandomCultureWithGivenNames() {
+        var NQ = _nameQueries();
+        if (NQ && typeof NQ.getCultureIdsWithGivenNames === 'function') {
+            var ids = NQ.getCultureIdsWithGivenNames();
+            if (Array.isArray(ids) && ids.length > 0) {
+                var chosen = window.pickRandom(ids);
+                return _hasId(chosen) ? chosen : null;
+            }
+            return null;
+        }
+
+        // Fallback scan against raw canonical data when NameQueries is
+        // not loaded or does not expose the helper.
+        var nameLists = window.getNameLists();
+        if (!nameLists || typeof nameLists !== 'object') return null;
+        var withNames = [];
+        var keys = Object.keys(nameLists);
+        for (var i = 0; i < keys.length; i++) {
+            var list = nameLists[keys[i]];
+            if (!list || typeof list !== 'object') continue;
+            var hasMale = Array.isArray(list.male) && list.male.length > 0;
+            var hasFemale = Array.isArray(list.female) && list.female.length > 0;
+            if (hasMale || hasFemale) withNames.push(keys[i]);
+        }
+        if (withNames.length === 0) return null;
+        var pick = window.pickRandom(withNames);
+        return _hasId(pick) ? pick : null;
+    }
+
+    function _cultureHasGivenNames(cultureId) {
+        var NQ = _nameQueries();
+        if (NQ && typeof NQ.hasGivenNameData === 'function') {
+            try { return NQ.hasGivenNameData(cultureId) === true; }
+            catch (e) { /* fall through */ }
+        }
+        // Fallback: inspect the raw pool directly.
+        var nameLists = window.getNameLists();
+        if (!nameLists || typeof nameLists !== 'object') return false;
+        var list = nameLists[cultureId];
+        if (!list || typeof list !== 'object') return false;
+        var hasMale = Array.isArray(list.male) && list.male.length > 0;
+        var hasFemale = Array.isArray(list.female) && list.female.length > 0;
+        return hasMale || hasFemale;
+    }
+
+    function _cultureHasSurnames(cultureId) {
+        var NQ = _nameQueries();
+        if (NQ && typeof NQ.hasSurnameData === 'function') {
+            try { return NQ.hasSurnameData(cultureId) === true; }
+            catch (e) { /* fall through */ }
+        }
+        var nameLists = window.getNameLists();
+        if (!nameLists || typeof nameLists !== 'object') return false;
+        var list = nameLists[cultureId];
+        if (!list || typeof list !== 'object') return false;
+        return Array.isArray(list.surnames) && list.surnames.length > 0;
     }
 
     // =========================================================================
     // 7. NAME AND SURNAME
     // =========================================================================
     //
-    // Both functions take a CULTURE id, not a country id. The
-    // getRandomNameFromCountry / getRandomSurnameFromCountry names are
-    // legacy aliases on name-system.js that delegate to the culture-keyed
-    // NameQueries.getRandomName / getRandomSurname.
+    // Both functions take a CULTURE id. When the resolved culture has no
+    // data, they return null/'' so the caller can decide. The public
+    // entry point has a final fallback path that tries a random culture
+    // with name data, then the built-in FALLBACK_FIRST_NAMES pool.
 
-    function _generateGivenName(cultureId, gender) {
-        if (_hasId(cultureId)) {
-            var fromCulture = window.getRandomNameFromCountry(cultureId, gender);
-            if (typeof fromCulture === 'string' && fromCulture.length > 0) {
-                return fromCulture;
-            }
+    function _generateGivenNameFromCulture(cultureId, gender) {
+        if (!_hasId(cultureId)) return null;
+        if (!_cultureHasGivenNames(cultureId)) return null;
+
+        var NQ = _nameQueries();
+        if (NQ && typeof NQ.getRandomName === 'function') {
+            try {
+                var fromNQ = NQ.getRandomName(cultureId, gender);
+                if (typeof fromNQ === 'string' && fromNQ.length > 0) {
+                    return fromNQ;
+                }
+            } catch (e) { /* fall through to legacy alias */ }
         }
-        // Fallback: any culture with name data. The caller already tried
-        // the resolved culture; this covers the case where that culture
-        // exists but has no male/female pool configured.
-        var fallbackId = _resolveRandomCultureWithNameData();
-        if (fallbackId) {
-            var fromFallback = window.getRandomNameFromCountry(fallbackId, gender);
-            if (typeof fromFallback === 'string' && fromFallback.length > 0) {
-                return fromFallback;
+        if (typeof window.getRandomNameFromCountry === 'function') {
+            var fromAlias = window.getRandomNameFromCountry(cultureId, gender);
+            if (typeof fromAlias === 'string' && fromAlias.length > 0) {
+                return fromAlias;
             }
         }
         return null;
     }
 
-    /**
-     * Generates a surname from a culture's pool.
-     * Returns '' when no surname data is available for the culture.
-     */
-    function _generateSurname(cultureId, gender) {
-        if (!_hasId(cultureId)) return '';
+    function _generateGivenName(gender) {
+        var finalGender = (gender === 'female') ? 'female' : 'male';
+        var pool = FALLBACK_FIRST_NAMES[finalGender];
+        if (!Array.isArray(pool) || pool.length === 0) return null;
+        return window.pickRandom(pool);
+    }
 
-        if (typeof window.NameQueries !== 'undefined'
-            && typeof window.NameQueries.getCultureSurnameRules === 'function'
-            && typeof window.NameQueries.generateSurnameFromRules === 'function') {
-            var rules = window.NameQueries.getCultureSurnameRules(cultureId);
+    function _generateSurnameFromCulture(cultureId, gender) {
+        if (!_hasId(cultureId)) return '';
+        if (!_cultureHasSurnames(cultureId)) return '';
+
+        var NQ = _nameQueries();
+        if (NQ
+            && typeof NQ.getCultureSurnameRules === 'function'
+            && typeof NQ.generateSurnameFromRules === 'function') {
+            var rules = null;
+            try { rules = NQ.getCultureSurnameRules(cultureId); }
+            catch (e) { rules = null; }
             if (rules && rules.type) {
-                var fromRules = window.NameQueries.generateSurnameFromRules(
-                    null, null, gender, rules
-                );
+                var fromRules = null;
+                try {
+                    fromRules = NQ.generateSurnameFromRules(
+                        null, null, gender, rules
+                    );
+                } catch (e) { fromRules = null; }
                 if (typeof fromRules === 'string' && fromRules.length > 0) {
                     return fromRules;
                 }
             }
         }
 
-        var cultural = window.getRandomSurnameFromCountry(cultureId);
-        if (typeof cultural === 'string' && cultural.length > 0) {
-            if (cultural === 'Unknown' || cultural === 'Unnamed') return '';
-            return cultural;
+        if (typeof window.getRandomSurnameFromCountry === 'function') {
+            var cultural = window.getRandomSurnameFromCountry(cultureId);
+            if (typeof cultural === 'string' && cultural.length > 0) {
+                if (cultural === 'Unknown' || cultural === 'Unnamed') return '';
+                return cultural;
+            }
         }
-
         return '';
     }
 
     function _surnameSourceFor(surname, cultureId) {
         if (!surname) return 'none';
-        if (_hasId(cultureId)) return 'culture';
+        if (_hasId(cultureId) && _cultureHasSurnames(cultureId)) return 'cultural';
         return 'custom';
     }
 
@@ -547,7 +585,14 @@
         if (typeof window.CultureGeneration === 'undefined') return {};
         if (typeof window.CultureGeneration.generateAppearance !== 'function') return {};
 
-        var appearance = window.CultureGeneration.generateAppearance(cultureId, gender);
+        var appearance = null;
+        try {
+            appearance = window.CultureGeneration.generateAppearance(cultureId, gender);
+        } catch (e) {
+            // Appearance is optional. A culture without appearance data
+            // throws inside generateAppearance; treat as unavailable.
+            return {};
+        }
         if (!appearance || typeof appearance !== 'object' || Array.isArray(appearance)) {
             return {};
         }
@@ -607,6 +652,17 @@
     // 11. PUBLIC ENTRY POINT
     // =========================================================================
 
+    /**
+     * Generates random character data suitable for buildCharacter().
+     *
+     * @param {Object} [options]
+     * @param {string} [options.gender]        'male' | 'female' — random if omitted
+     * @param {number} [options.age]           specific age — random if omitted
+     * @param {string} [options.countryId]     specific country place id
+     * @param {string} [options.religionId]    specific religion id
+     * @param {boolean} [options.assignProfession] default true
+     * @returns {{ success: boolean, data?: Object, reason?: string }}
+     */
     function generateRandomCharacterData(options) {
         if (_isMissing(options)) options = {};
         if (typeof options !== 'object' || Array.isArray(options)) {
@@ -646,9 +702,11 @@
         if (_hasId(countryIdResult.value)) {
             var specified = window.getPlaceById(countryIdResult.value);
             if (!specified) {
-                return { success: false, reason: 'Specified countryId does not resolve to a place' };
+                return {
+                    success: false,
+                    reason: 'Specified countryId does not resolve to a place'
+                };
             }
-            // Explicit countryId → birthplace is the country itself.
             birthplaceId = specified.id;
         } else {
             var birthplace = _getRandomLocationWithVariableKey();
@@ -657,34 +715,48 @@
 
         // 5. Culture resolution — BEFORE names.
         //
-        // The name subsystem keys by culture.id. We resolve culture from
-        // the birthplace first; if the birthplace has no culture, we fall
-        // back to a random culture with name data. Without a culture,
-        // getRandomNameFromCountry throws.
+        // The name subsystem keys by culture.id. If the location has a
+        // primary culture, that's what we use. If the culture exists but
+        // has no name data, we reassign the character to a culture that
+        // does, so the character's cultureId always points at a culture
+        // that can produce a name.
         var cultureId = _resolveCultureForLocation(birthplaceId);
+
         if (!cultureId) {
-            cultureId = _resolveRandomCultureWithNameData();
-        }
-        if (!cultureId) {
-            return {
-                success: false,
-                reason: 'No culture with name data is available; ' +
-                    'cannot generate a name.'
-            };
+            // No location culture at all — pick any culture with names.
+            cultureId = _resolveRandomCultureWithGivenNames();
+        } else if (!_cultureHasGivenNames(cultureId)) {
+            // Location culture exists but its name pool is empty. Reassign
+            // to a random culture with names so the character's cultureId
+            // matches the culture whose name was actually used.
+            var replacement = _resolveRandomCultureWithGivenNames();
+            if (replacement) {
+                cultureId = replacement;
+            }
+            // If no replacement exists, cultureId stays as the empty
+            // culture; the fallback name pool below will supply a name.
         }
 
         // 6. Given name
-        var name = _generateGivenName(cultureId, gender);
+        var name = _generateGivenNameFromCulture(cultureId, gender);
+        if (!name) {
+            // No culture produced a name. Try the fallback name pool.
+            // This is the JOHN/JANE/EMERY path — cosmetic only. The
+            // character keeps whatever cultureId we resolved above
+            // (which may be an empty culture, or null if the map is
+            // entirely without cultures).
+            name = _generateGivenName(gender);
+        }
         if (!name) {
             return {
                 success: false,
-                reason: 'No name could be generated for culture "' +
-                    cultureId + '"'
+                reason: 'No name could be generated (no culture has a ' +
+                    'name pool and the fallback pool is unavailable)'
             };
         }
 
         // 7. Surname
-        var surname = _generateSurname(cultureId, gender);
+        var surname = _generateSurnameFromCulture(cultureId, gender);
         var surnameSource = _surnameSourceFor(surname, cultureId);
 
         // 8. Religion
