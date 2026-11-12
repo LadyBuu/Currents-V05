@@ -108,9 +108,47 @@
  * Also verify (loaded earlier in the page):
  *   character-commands.js, character-queries.js
  *   industry-commands.js, industry-queries.js (optional but loaded)
- *   relationship-*.js (RelationshipSystem)
+ *   relationship-commands.js, relationship-queries.js
  *   time.js, accessors.js, storage.js
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _verifyCrossDomain now checks the relationship domain through
+ *       its namespaces (window.RelationshipCommands and
+ *       window.RelationshipQueries) instead of the six flat globals
+ *       (createRelationship, endRelationship, updateRelationship,
+ *       getRelationshipBetween, getRelationshipsForCharacter,
+ *       getRelationshipById).
+ *
+ *       No module in the codebase assigns those functions as flat
+ *       globals; they live on RelationshipCommands /
+ *       RelationshipQueries. The prior _requireGlobal checks threw at
+ *       init time even when the relationship domain was loaded,
+ *       because _requireGlobal tests `typeof window[name] ===
+ *       'function'` for the FLAT name — which was always undefined.
+ *
+ *       This is the same pattern household-servant.js already uses:
+ *       resolve the relationship functions at CALL time through the
+ *       namespaces. _verifyCrossDomain now uses a new helper,
+ *       _requireNamespaceFunction(namespace, fnName), which verifies
+ *       window[namespace][fnName] is a function and throws a clear
+ *       error if either the namespace or the function is missing.
+ *
+ *       The six call sites that used _requireGlobal for the
+ *       relationship functions now call _requireNamespaceFunction
+ *       with the correct namespace per function:
+ *
+ *         RelationshipCommands.createRelationship
+ *         RelationshipCommands.endRelationship
+ *         RelationshipCommands.updateRelationship
+ *         RelationshipQueries.getRelationshipBetween
+ *         RelationshipQueries.getRelationshipsForCharacter
+ *         RelationshipQueries.getRelationshipById
+ *
+ *     - No change to module verification, canonical data verification,
+ *       hydration, integrity checks, namespace exposure, init(),
+ *       auto-init, or the masterDataUpdated listener.
  * =============================================================================
  */
 
@@ -151,6 +189,39 @@
             );
         }
         return window[name];
+    }
+
+    /**
+     * Verifies that `window[namespace][fnName]` is a function.
+     *
+     * Unlike _requireGlobal, this accepts the namespace shape that
+     * relationship-commands.js and relationship-queries.js actually
+     * expose. No module assigns the relationship functions as flat
+     * globals; they live on the namespaces. Prior to this revision,
+     * _verifyCrossDomain used _requireGlobal('createRelationship'),
+     * which always threw because window.createRelationship is
+     * undefined even when the relationship domain is fully loaded.
+     *
+     * @private
+     * @param {string} namespace - e.g. 'RelationshipCommands'
+     * @param {string} fnName    - e.g. 'createRelationship'
+     * @throws {Error} if the namespace or the function is missing
+     */
+    function _requireNamespaceFunction(namespace, fnName) {
+        var ns = window[namespace];
+        if (typeof ns === 'undefined' || ns === null) {
+            throw new Error(
+                'HouseholdBootstrap: window.' + namespace +
+                ' is required (to provide ' + fnName + '). ' +
+                'Load the corresponding relationship-* module first.'
+            );
+        }
+        if (typeof ns[fnName] !== 'function') {
+            throw new Error(
+                'HouseholdBootstrap: window.' + namespace + '.' + fnName +
+                ' is required but not a function.'
+            );
+        }
     }
 
     function _checkOptionalModule(name, methods) {
@@ -426,12 +497,20 @@
         _requireModule('CharacterQueries', ['getCharacterById']);
 
         // Relationship system — required by HouseholdServant.
-        _requireGlobal('createRelationship');
-        _requireGlobal('endRelationship');
-        _requireGlobal('updateRelationship');
-        _requireGlobal('getRelationshipBetween');
-        _requireGlobal('getRelationshipsForCharacter');
-        _requireGlobal('getRelationshipById');
+        //
+        // These six functions are NOT flat globals. They live on
+        // window.RelationshipCommands and window.RelationshipQueries,
+        // matching the shape household-servant.js already resolves at
+        // call time. Prior to this revision, _verifyCrossDomain used
+        // _requireGlobal for each of them, which always threw because
+        // no module assigns window.createRelationship etc. — the
+        // functions are namespace members, not window members.
+        _requireNamespaceFunction('RelationshipCommands', 'createRelationship');
+        _requireNamespaceFunction('RelationshipCommands', 'endRelationship');
+        _requireNamespaceFunction('RelationshipCommands', 'updateRelationship');
+        _requireNamespaceFunction('RelationshipQueries', 'getRelationshipBetween');
+        _requireNamespaceFunction('RelationshipQueries', 'getRelationshipsForCharacter');
+        _requireNamespaceFunction('RelationshipQueries', 'getRelationshipById');
 
         // Industry — optional but expected in production.
         var industryCommands = _checkOptionalModule('IndustryCommands', [
