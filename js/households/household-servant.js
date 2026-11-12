@@ -14,9 +14,8 @@
  * OWNERSHIP MODEL
  * ---------------
  * This module does NOT own the canonical service relationship. The
- * relationship system owns it (via RelationshipCommands.createRelationship
- * / endRelationship / updateRelationship and the corresponding queries
- * on RelationshipQueries).
+ * relationship system owns it (via RelationshipCommands.create /
+ * end / update and the corresponding queries on RelationshipQueries).
  *
  * This module does NOT own household membership. HouseholdCommands does.
  *
@@ -68,38 +67,40 @@
  *
  * RELATIONSHIP DOMAIN RESOLUTION
  * ------------------------------
- * Six relationship-domain functions are used by this module:
+ * Six relationship-domain functions are used by this module, by
+ * their COMPACT names as exposed by the real relationship domain:
  *
- *   createRelationship
- *   endRelationship
- *   updateRelationship
- *   getRelationshipBetween
- *   getRelationshipsForCharacter
- *   getRelationshipById
+ *   RelationshipCommands.create         (create a relationship)
+ *   RelationshipCommands.end            (end an ongoing relationship)
+ *   RelationshipCommands.update         (patch a relationship)
+ *   RelationshipQueries.getBetween      (list edges between a and b)
+ *   RelationshipQueries.getForCharacter (list edges incident on a)
+ *   RelationshipQueries.getById         (read one edge by id)
  *
  * These are NOT flat globals. The relationship domain exports them on
- * a namespace:
+ * two namespaces:
  *
- *   window.RelationshipCommands   { createRelationship, endRelationship,
- *                                   updateRelationship, ..., persist }
- *   window.RelationshipQueries    { getRelationshipBetween,
- *                                   getRelationshipsForCharacter,
- *                                   getRelationshipById, ... }
+ *   window.RelationshipCommands   { create, createBatch, update, end,
+ *                                   setWidowed, remove, addAttribute,
+ *                                   removeAttribute,
+ *                                   endAllActiveForCharacter,
+ *                                   removeAllReferencesTo }
+ *
+ *   window.RelationshipQueries    { getById, getBetween, getForCharacter,
+ *                                   getByType, getAll, ... }
  *
  * (An older surface, window.RelationshipSystem, combined both. It is
  * still honoured as a fallback so this module works in either
  * configuration.)
  *
- * Prior revisions resolved these via load-time _requireFunction(name,
- * window.name) calls, which threw on load because window.name is never
- * assigned. This revision resolves them at CALL time against the
- * namespaces, so:
- *
- *   - a missing relationship domain fails at the first command that
- *     needs it, with a clear error naming the function and the
- *     namespace it was looked up on, and
- *   - the module still loads cleanly when the relationship domain
- *     loads first (which it does under the documented order).
+ * Prior revisions of this file called the namespaces with the FULL
+ * names (createRelationship / endRelationship / updateRelationship /
+ * getRelationshipBetween / getRelationshipsForCharacter /
+ * getRelationshipById). None of those methods exist on the real
+ * namespaces. Every servant command would have thrown at call time
+ * ("HouseholdServant: createRelationship is required") the first time
+ * a service relationship was created, promoted, or terminated. This
+ * revision aligns the call sites with the real exports.
  *
  * SERVICE RELATIONSHIP FIELD CONTRACT
  * -----------------------------------
@@ -161,10 +162,37 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - The six relationship-domain functions (createRelationship,
- *       endRelationship, updateRelationship, getRelationshipBetween,
- *       getRelationshipsForCharacter, getRelationshipById) are now
- *       resolved at CALL time against window.RelationshipCommands /
+ *     - The six relationship-domain wrappers now resolve the namespaces
+ *       with the method names those namespaces ACTUALLY export:
+ *
+ *         _createRelationship  → RelationshipCommands.create
+ *         _endRelationship     → RelationshipCommands.end
+ *         _updateRelationship  → RelationshipCommands.update
+ *         _getRelationshipBetween        → RelationshipQueries.getBetween
+ *         _getRelationshipsForCharacter  → RelationshipQueries.getForCharacter
+ *         _getRelationshipById           → RelationshipQueries.getById
+ *
+ *       Prior revisions resolved them at CALL time against the correct
+ *       namespaces but with the wrong method names (createRelationship
+ *       etc.). The namespaces exist, but the checked method never
+ *       matches, so every call threw with a clear "is required" error.
+ *       The servant-service feature (createServiceRelationship,
+ *       terminateService, promoteServant, adjustServantWages,
+ *       recordEmployerSatisfaction, updateServiceQuality,
+ *       generateServiceReference, transferServantToHousehold) was
+ *       silently broken; it now works against the real exports.
+ *
+ *     - _persistRelationshipSystem is unchanged: RelationshipCommands
+ *       still doesn't expose persist, so it falls back to
+ *       RelationshipSystem.persist and reports
+ *       relationshipPersisted: false when neither is present. This
+ *       matches the documented contract in CROSS-DOMAIN PERSISTENCE.
+ *
+ *     - No change to any command's logic, any query, the finisher,
+ *       the flat aliases, or the exports shape.
+ *   Previous revision:
+ *     - The six relationship-domain functions were resolved at CALL
+ *       time against window.RelationshipCommands /
  *       window.RelationshipQueries, with window.RelationshipSystem as
  *       a fallback. Prior revisions resolved them at LOAD time against
  *       flat globals that no module assigns, so household-servant.js
@@ -173,12 +201,7 @@
  *       RELATIONSHIP DOMAIN RESOLUTION.
  *     - Added _getCurrentYearSafe(), an internal helper used by the
  *       three call sites that previously referenced an undefined
- *       _getCurrentYearSafe global. The helper prefers
- *       window.getCurrentYear (time.js) and falls back to
- *       masterData.data.currentYear when time.js is not loaded.
- *       Behaviour at those three sites (generateServiceReference,
- *       updateServiceQuality, ...) is unchanged when time.js is
- *       present, which it is under the documented load order.
+ *       _getCurrentYearSafe global.
  *     - No change to any command's logic, any query, the finisher,
  *       the flat aliases, or the exports shape.
  * =============================================================================
@@ -258,17 +281,15 @@
     // naming the function and both namespaces if it is missing, and
     // otherwise returns the wrapped call.
     //
-    // The lookup order matches how the relationship domain can appear:
+    // The namespaces expose COMPACT method names:
     //
-    //   1. RelationshipCommands  (commands: create, end, update, persist)
-    //      RelationshipQueries   (queries:  get-by-id, get-between,
-    //                                        get-for-character)
-    //   2. RelationshipSystem    (older combined surface, still honoured)
+    //   RelationshipCommands  { create, end, update, ... , persist? }
+    //   RelationshipQueries   { getById, getBetween, getForCharacter,
+    //                           ... }
     //
-    // Under the documented load order, relationship-commands.js and
-    // relationship-queries.js load before household-servant.js, so the
-    // primary path resolves. The fallback exists so a page that loads
-    // the older combined surface continues to work.
+    // RelationshipCommands does NOT currently export persist. The
+    // fallback path goes through window.RelationshipSystem, whose
+    // persist is checked by _persistRelationshipSystem.
 
     function _resolveRelationshipCommandsFn(fnName) {
         var rc = window.RelationshipCommands;
@@ -306,26 +327,37 @@
         );
     }
 
-    // Command wrappers.
+    // Command wrappers — bind to the actual compact names.
     function _createRelationship(a, b, options) {
-        return _resolveRelationshipCommandsFn('createRelationship')(a, b, options);
+        return _resolveRelationshipCommandsFn('create')(a, b, options);
     }
     function _endRelationship(id, year, reason) {
-        return _resolveRelationshipCommandsFn('endRelationship')(id, year, reason);
+        return _resolveRelationshipCommandsFn('end')(id, year, reason);
     }
     function _updateRelationship(id, patch) {
-        return _resolveRelationshipCommandsFn('updateRelationship')(id, patch);
+        return _resolveRelationshipCommandsFn('update')(id, patch);
     }
 
-    // Query wrappers.
+    // Query wrappers — bind to the actual compact names.
     function _getRelationshipBetween(a, b) {
-        return _resolveRelationshipQueriesFn('getRelationshipBetween')(a, b);
+        var list = _resolveRelationshipQueriesFn('getBetween')(a, b);
+        // getBetween returns an array of relationships; servant treats
+        // it as "the first service relationship between these two", so
+        // pick the most recent.
+        if (!Array.isArray(list) || list.length === 0) return null;
+        var best = list[0];
+        for (var i = 1; i < list.length; i++) {
+            if ((list[i].startYear || 0) > (best.startYear || 0)) {
+                best = list[i];
+            }
+        }
+        return best;
     }
     function _getRelationshipsForCharacter(characterId) {
-        return _resolveRelationshipQueriesFn('getRelationshipsForCharacter')(characterId);
+        return _resolveRelationshipQueriesFn('getForCharacter')(characterId);
     }
     function _getRelationshipById(relationshipId) {
-        return _resolveRelationshipQueriesFn('getRelationshipById')(relationshipId);
+        return _resolveRelationshipQueriesFn('getById')(relationshipId);
     }
 
     // Aliased helpers — used throughout, imported once.
