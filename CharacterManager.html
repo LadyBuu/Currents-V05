@@ -1595,7 +1595,6 @@
 <script src="js/character/character-queries.js"></script>
 <script src="js/character/family-queries.js"></script>
 <script src="js/character/family-commands.js"></script>
-    <script src="js/character/modals-character.js"></script>
 
 <script src="js/character/mortality-queries.js"></script>
 <script src="js/character/mortality-statistics.js"></script>
@@ -1607,6 +1606,13 @@
 <script src="js/character/character-generator.js"></script>
 <script src="js/character/character-creation-commands.js"></script>
 <script src="js/character/character-deletion-commands.js"></script>
+
+<!-- Character CRUD modals: requires CharacterCreationCommands and
+     CharacterDeletionCommands (both loaded above), plus FamilyQueries
+     and FamilyCommands (loaded earlier). Do NOT move this tag before
+     character-deletion-commands.js — the file's load-time guards
+     will throw. -->
+<script src="js/character/modals-character.js"></script>
 
 <script src="js/character/children-queries.js"></script>
 <script src="js/character/children-generator.js"></script>
