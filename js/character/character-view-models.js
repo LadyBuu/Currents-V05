@@ -48,6 +48,30 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - _enrichRomance now passes through affair metadata from the
+ *       RomanceQueries projection: affairType, discovered,
+ *       discoveryYear, discoveryCircumstances, discovererId, and
+ *       publicBehavior. This allows the Romance tab to render
+ *       discovery state and the edit modal to show affair-specific
+ *       fields without a second getById lookup.
+ *
+ *     - _enrichRomance now defensively resolves relationshipId:
+ *       prefers rel.relationshipId, falls back to rel.id or
+ *       rel.relationship_id. If none is present, it returns null
+ *       (dropping the entry) rather than returning an entry with an
+ *       undefined id.
+ *
+ *     - buildRomanceModel now exposes a dedicated `affairs` array
+ *       by filtering `model.current` for isAffair === true. This
+ *       makes the Affairs section in the Romance tab model-driven
+ *       instead of re-deriving the filter in the UI.
+ *
+ *     - _resolveRelationshipClass now checks AffairQueries (via
+ *       AQ.getActiveAffairs) to correctly classify affair partners
+ *       as 'relative' for the relationship circle, matching the
+ *       prior behaviour for non-committed romance.
+ *
+ *   Previous revision:
  *     - _buildIdentityBlock reads religionName / cultureName from the
  *       CharacterQueries summary FIRST (the projection already carries
  *       them), and only falls back to ReligionQueries.getReligion /
@@ -57,49 +81,9 @@
  *       Prior revisions unconditionally re-queried the religion and
  *       culture domains to resolve the display names. When either
  *       query module was changed to re-derive its name from the
- *       character summary (a natural refactor that turns "give me the
- *       culture's name" into "resolve the character's culture and
- *       return its name"), the call cycled back into
- *       buildIdentityModel and blew the stack. The RangeError was
- *       caught by _safe and recorded under errors.identity, which is
- *       why the Identity tab reported "Name & Title section could not
- *       be loaded: too much recursion."
- *
- *       Reading the summary's pre-resolved fields breaks the cycle at
- *       the source. The try/catch around each fallback means a
- *       remaining cycle in one domain degrades to a null field name
- *       instead of failing the whole identity block.
- *
- *     - No other behavioural change.
- *   Previous revision (family-tab P2):
- *     - buildFamilyModel expanded with:
- *         parents.father / parents.mother  — the biological father and
- *           mother ids/names, or null.
- *
- *         children.<each>.parentCoverage  — new per-child field:
- *             'both'          both parents on the child (solid circle)
- *             'mother-only'   only the mother is on the child
- *             'father-only'   only the father is on the child
- *             'adopted'       child was adopted by this character
- *             'unknown'       cannot be determined
- *
- *         fosterAsChild[]      — foster parents OF this character.
- *         wardAsChild[]        — guardians OF this character.
- *
- *         partnerForBaby       — the single active committed partner of
- *                                this character, or null.
- *
- *       All new fields are additive; no existing field changed shape.
- *   Previous revision (household-tab P7):
- *     - Added buildLocationModel.
- *   Previous revision:
- *     - Added buildFamilyModel.
- *   Previous revision:
- *     - Added buildRomanceModel.
- *   Earlier revision:
- *     - Added buildFriendshipModel.
- *   Initial revision:
- *     - Shared resolvers + buildIdentityModel.
+ *       character summary, the call cycled back into
+ *       buildIdentityModel and blew the stack. Reading the summary's
+ *       pre-resolved fields breaks the cycle at the source.
  * =============================================================================
  */
 
@@ -349,17 +333,6 @@
 
     function _buildIdentityBlock(summary, errors) {
         return _safe('identity', function () {
-            // Prefer the projection's own resolved names. The
-            // CharacterQueries summary already carries religionName /
-            // cultureName. Re-querying the religion/culture domains
-            // from here created a recursion when either query module
-            // was changed to re-derive its name from the character
-            // summary (a circular dependency: buildIdentityModel →
-            // ReligionQueries/CultureQueries → character-queries →
-            // buildIdentityModel → ...). The RangeError was caught by
-            // _safe and recorded under errors.identity, which is why
-            // the Identity tab reported "Name & Title section could not
-            // be loaded: too much recursion."
             var religionName = (typeof summary.religionName === 'string'
                 && summary.religionName.length > 0)
                 ? summary.religionName : null;
@@ -368,10 +341,6 @@
                 && summary.cultureName.length > 0)
                 ? summary.cultureName : null;
 
-            // Fallback: only if the projection did NOT carry the name.
-            // Wrapped individually so a cycling query cannot take down
-            // the whole identity block; the field just stays null and
-            // the tab renders the raw id instead.
             if (_hasId(summary.religionId)
                 && !religionName
                 && typeof window.ReligionQueries !== 'undefined'
@@ -811,10 +780,20 @@
 
     function _enrichRomance(rel, subjectId, subjectDeceased, currentYear) {
         if (!rel || !_hasId(rel.partnerId)) return null;
+        
+        // Tolerant relationshipId resolution
+        var relId = null;
+        if (_hasId(rel.relationshipId)) relId = rel.relationshipId;
+        else if (_hasId(rel.id)) relId = rel.id;
+        else if (_hasId(rel.relationship_id)) relId = rel.relationship_id;
+        
+        if (!relId) return null;
+
         var partnerSummary = null;
         try { partnerSummary = CQ.getCharacterSummary(rel.partnerId); }
         catch (e) { partnerSummary = null; }
         if (!partnerSummary) return null;
+        
         var partnerName = (typeof partnerSummary.fullName === 'string'
             && partnerSummary.fullName.length > 0)
             ? partnerSummary.fullName
@@ -834,7 +813,7 @@
             durationYears = Math.max(0, endYear - rel.startYear);
         }
         return {
-            relationshipId: rel.relationshipId,
+            relationshipId: relId,
             partnerId: rel.partnerId,
             partnerName: partnerName,
             partnerSurname: partnerSummary.surname || '',
@@ -867,7 +846,15 @@
             statusLabel: statusLabel,
             statusIcon: statusIcon,
             displayLabel: _romanceDisplayLabel(rel, subjectDeceased, partnerDeceased),
-            notes: rel.notes || ''
+            notes: rel.notes || '',
+            
+            // Affair-specific metadata (additive)
+            affairType: rel.affairType || null,
+            discovered: rel.discovered === true,
+            discoveryYear: _isMissing(rel.discoveryYear) ? null : rel.discoveryYear,
+            discoveryCircumstances: rel.discoveryCircumstances || null,
+            discovererId: rel.discovererId || null,
+            publicBehavior: rel.publicBehavior === true
         };
     }
 
@@ -984,10 +971,18 @@
                 allowsMultipleSpouses: allowsMultiple
             };
         }, errors);
+        
+        var currentBlock = _buildRomanceCurrentBlock(characterId, subjectDeceased, currentYear, errors) || [];
+        var affairsBlock = [];
+        for (var i = 0; i < currentBlock.length; i++) {
+            if (currentBlock[i].isAffair) affairsBlock.push(currentBlock[i]);
+        }
+
         return {
             characterId: characterId,
             identity: identityBlock,
-            current:  _buildRomanceCurrentBlock(characterId, subjectDeceased, currentYear, errors) || [],
+            current:  currentBlock,
+            affairs:  affairsBlock,
             former:   _buildRomanceFormerBlock(characterId, subjectDeceased, currentYear, errors) || [],
             stats:    _buildRomanceStatsBlock(characterId, errors),
             errors:   errors
@@ -1988,6 +1983,21 @@
                         var rel = active[j];
                         if (rel && rel.partnerId === targetId
                             && rel.isCommitted !== true) {
+                            return 'relative';
+                        }
+                    }
+                }
+            }
+        } catch (e) { /* skip */ }
+
+        // Check affairs
+        try {
+            if (AQ && typeof AQ.getActiveAffairs === 'function') {
+                var affairs = AQ.getActiveAffairs(subjectId);
+                if (Array.isArray(affairs)) {
+                    for (var k = 0; k < affairs.length; k++) {
+                        var a = affairs[k];
+                        if (a.participantA === targetId || a.participantB === targetId) {
                             return 'relative';
                         }
                     }
