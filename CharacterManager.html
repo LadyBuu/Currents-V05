@@ -1607,25 +1607,35 @@
 <script src="js/character/character-creation-commands.js"></script>
 <script src="js/character/character-deletion-commands.js"></script>
 
-<!-- Character CRUD modals: requires CharacterCreationCommands and
-     CharacterDeletionCommands (both loaded above), plus FamilyQueries
-     and FamilyCommands (loaded earlier). Do NOT move this tag before
-     character-deletion-commands.js — the file's load-time guards
-     will throw. -->
-<script src="js/character/modals-character.js"></script>
-
 <script src="js/character/children-queries.js"></script>
 <script src="js/character/children-generator.js"></script>
 <script src="js/character/children-commands.js"></script>
 <script src="js/character/children-statistics.js"></script>
 
+<!-- ---- 8a. Children modals (REQUIRE ChildrenCommands/Queries/Rules
+        and FamilyCommands/Queries, all loaded above; PROVIDE
+        openAddExistingChildModal, openSetParentModal,
+        openAddFosterOrWardModal, openAddExistingSiblingModal,
+        openAddAdoptedSiblingModal, openGenerateBabyModal, plus the
+        five adoption entry points). ---- -->
+<script src="js/character/modals-children-adoption.js"></script>
+<script src="js/character/modals-children-birth.js"></script>
+<script src="js/character/modals-children-surrogacy.js"></script>
+
+<!-- ---- 8b. Character CRUD modals (REQUIRE CharacterCreationCommands
+        and CharacterDeletionCommands, both loaded above; PROVIDE
+        openCreateCharacterModal, openEditCharacterModal,
+        openDeleteCharacterModal, openCharacterDetailsModal,
+        openFamilyViewModal). ---- -->
+<script src="js/character/modals-character.js"></script>
+
 <script src="js/character/character-ui-list.js"></script>
 <script src="js/character/character-system.js"></script>
 
-<!-- ---- 8a. Character selector (REQUIRES CharacterQueries) ---- -->
+<!-- ---- 8c. Character selector (REQUIRES CharacterQueries) ---- -->
 <script src="js/selectors/modals-char-selector.js"></script>
 
-<!-- ---- 8b. Roles (REQUIRED by apprenticeship-queries for
+<!-- ---- 8d. Roles (REQUIRED by apprenticeship-queries for
         RoleState.getRole) ---- -->
 <script src="js/roles/role-constants.js"></script>
 <script src="js/roles/role-state.js"></script>
