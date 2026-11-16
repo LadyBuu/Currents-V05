@@ -36,9 +36,10 @@
  *
  *   The prior revision escaped the WHOLE string (icon + text) with
  *   _escape(...). escapeHtml turns '<svg>' into '&lt;svg&gt;', and
- *   modals-core then sets the string as textContent, which surfaced
- *   the raw SVG markup as literal text in the title bar and on the
- *   confirm button. See the screenshot in the bug report.
+ *   modals-core then inserts the string into innerHTML, which the
+ *   browser renders as literal text — the raw SVG markup showed up
+ *   in the title bar and on the confirm button. See the screenshot
+ *   in the bug report.
  *
  *   The current revision prepends the icon raw and escapes only the
  *   text:
@@ -48,7 +49,40 @@
  *   This matches how the modal body already handles icons (see the
  *   listHtml / existingHtml blocks in openFriendshipModal: they
  *   interpolate infoIcon / warningIcon directly into the innerHTML
- *   string, without escaping).
+ *   string, without escaping), and how modals-relationship.js now
+ *   builds its title.
+ *
+ * VIEW → EDIT HANDOFF
+ *
+ *   openViewFriendshipModal's confirm button ("Edit") closes the view
+ *   and opens the edit modal. modals-core.js fires onConfirm BEFORE
+ *   _closeAsConfirmed() (see its callback contract). The prior
+ *   revision worked around this by calling _closeModal() manually
+ *   and opening the edit modal synchronously; that relied on
+ *   _teardownStackEntry being idempotent to absorb the core's
+ *   follow-up close. The current revision follows the framework
+ *   contract — onConfirm returns true and the framework closes —
+ *   and schedules the edit modal from a setTimeout(0) so it opens
+ *   AFTER the view's teardown has completed.
+ *
+ *   The module's MODAL LIFECYCLE rule forbids setTimeout for HANDLER
+ *   BINDING ON MOUNT (which would race the modal's own DOM
+ *   insertion). It does not forbid setTimeout for SEQUENCING A
+ *   POST-CLOSE FOLLOW-UP; there is no DOM to race, because the view
+ *   modal is already gone by the time the timer fires.
+ *
+ * CREATE COUNT vs BUTTON LABEL
+ *
+ *   openFriendshipModal computes validPairs at open time and labels
+ *   the confirm button "Create N" from validPairs.length. It then
+ *   passes ALL selected ids to FriendshipCommands.createMutualFriendships,
+ *   which is responsible for skipping pairs that are already friends
+ *   (including any that became friends between open and confirm).
+ *   The success toast reports result.createdCount, the command's
+ *   authoritative post-skip count. Re-reading state inside the modal
+ *   to keep the label in sync would violate the module's "UI only,
+ *   no direct state access" contract, so the two counts are allowed
+ *   to differ; the toast is the truth.
  *
  * Load order: after friendship-rules.js, friendship-queries.js,
  * friendship-commands.js, relationship-ui-metadata.js.
@@ -136,6 +170,54 @@
         return '#2a6e40';
     }
 
+    /**
+     * Returns the tier label for a strength value.
+     *
+     * The friendship record does not carry a precomputed `tier` field
+     * (the previous revision read rel.tier, which always rendered as
+     * "unknown"). The canonical derivation is
+     * FriendshipRules.strengthTier(strength).
+     */
+    function _strengthTier(strength) {
+        if (typeof strength !== 'number') return 'unknown';
+        if (typeof FR.strengthTier !== 'function') return 'unknown';
+        return FR.strengthTier(strength) || 'unknown';
+    }
+
+    /**
+     * Dispatches an update to a friendship record.
+     *
+     * Preferred surface: FriendshipCommands.updateFriendship, when
+     * present. That surface validates strength against
+     * FriendshipRules.isValidStrength and clamps via clampStrength
+     * before delegating to RelationshipCommands.update.
+     *
+     * Fallback: RelationshipCommands.update, the structural primitive.
+     * Used only when the FriendshipCommands method has not landed yet
+     * in this build. The fallback still clamps strength (the caller
+     * already did) but skips the domain-level validation. When the
+     * command lands, delete the fallback branch; no call site changes.
+     *
+     * The bootstrap does not list updateFriendship under
+     * REQUIRED_METHODS.FriendshipCommands, so its absence is not a
+     * load-time failure.
+     */
+    function _updateFriendshipRecord(relationshipId, patch, aId, bId) {
+        if (window.FriendshipCommands &&
+            typeof window.FriendshipCommands.updateFriendship === 'function') {
+            return window.FriendshipCommands.updateFriendship(aId, bId, patch);
+        }
+        if (!window.RelationshipCommands ||
+            typeof window.RelationshipCommands.update !== 'function') {
+            return {
+                success: false,
+                code: 'NO_COMMAND',
+                message: 'No command available to update friendship'
+            };
+        }
+        return window.RelationshipCommands.update(relationshipId, patch);
+    }
+
     // -------------------------------------------------------------------------
     // BULK FRIENDSHIP CREATION
     // -------------------------------------------------------------------------
@@ -148,7 +230,10 @@
 
         var currentYear = _getCurrentYear();
 
-        // Partition pairs
+        // Partition pairs. The command re-checks areFriends at create
+        // time (see CREATE COUNT vs BUTTON LABEL in the header), so
+        // the label built from validPairs.length is allowed to differ
+        // from result.createdCount; the toast is authoritative.
         var validPairs = [];
         var existingPairs = [];
         for (var i = 0; i < characters.length; i++) {
@@ -223,7 +308,7 @@
             '</div>';
 
         _openModal({
-            // Icon (SVG) is raw. Text portion is escaped. Modals-core
+            // Icon (SVG) is raw. Text portion is escaped. modals-core
             // inserts titleHtml as innerHTML, not textContent. See
             // TITLE / CONFIRM HTML CONTRACT in the module header.
             titleHtml: (infoIcon ? infoIcon + ' ' : '') + _escape('Create Friendships'),
@@ -273,9 +358,14 @@
                     return false;
                 }
 
+                // result.createdCount is the command's authoritative
+                // post-skip count. It may be less than validPairs.length
+                // if a pair became friends between open and confirm;
+                // the toast is the truth. See CREATE COUNT vs BUTTON
+                // LABEL in the module header.
                 _toast(result.createdCount + ' friendship(s) created', 'success');
                 if (typeof onSuccess === 'function') onSuccess(result);
-                _closeModal();
+                // Framework closes on any non-false return.
                 return true;
             }
         });
@@ -302,6 +392,7 @@
         var currentYear = _getCurrentYear();
         var strength = rel.strength;
         var color = _strengthColor(strength);
+        var tierLabel = _strengthTier(strength);
         var duration = (typeof rel.startYear === 'number')
             ? Math.max(0, currentYear - rel.startYear)
             : null;
@@ -321,7 +412,7 @@
                     '</div>' +
                     '<div style="font-size:0.65rem;color:' + color +
                         ';margin-top:4px;">' + strength + '% · ' +
-                        _escape(rel.tier || 'unknown') + '</div>' +
+                        _escape(tierLabel) + '</div>' +
                 '</div>';
         }
 
@@ -380,9 +471,18 @@
             confirmText: 'Edit',
             cancelText: 'Close',
             onConfirm: function() {
-                _closeModal();
-                if (typeof onEdit === 'function') onEdit();
-                else openEditFriendshipModal(aId, bId);
+                // Framework contract: return true → framework closes.
+                // The edit modal must open AFTER the view's teardown
+                // (otherwise the new modal sits behind the still-mounted
+                // view and the escape handler binds to the wrong stack
+                // entry). See VIEW → EDIT HANDOFF in the header: the
+                // module forbids setTimeout for handler binding on
+                // mount, not for sequencing a post-close follow-up.
+                setTimeout(function() {
+                    if (typeof onEdit === 'function') onEdit();
+                    else openEditFriendshipModal(aId, bId);
+                }, 0);
+                return true;
             }
         });
     }
@@ -471,8 +571,14 @@
                 var endBtn = modalEl.querySelector('#fndEndBtn');
                 if (endBtn) {
                     endBtn.addEventListener('click', function() {
+                        // Close the edit modal, then open breakup. Same
+                        // post-close sequencing as VIEW → EDIT HANDOFF
+                        // in the header — setTimeout for sequencing,
+                        // not for handler binding.
                         _closeModal();
-                        openBreakupFriendshipModal(aId, bId, onSuccess);
+                        setTimeout(function() {
+                            openBreakupFriendshipModal(aId, bId, onSuccess);
+                        }, 0);
                     });
                 }
             },
@@ -495,13 +601,20 @@
                     return false;
                 }
 
-                var result = window.RelationshipCommands.update(rel.relationshipId, {
+                // _updateFriendshipRecord prefers FriendshipCommands.updateFriendship
+                // (domain-validated) and falls back to RelationshipCommands.update
+                // (structural) when the command is not present in this build.
+                // See the helper's docblock.
+                var patch = {
                     startYear: newYear,
                     metadata: {
                         strength: FR.clampStrength(newStrength),
                         notes: newNotes
                     }
-                });
+                };
+                var result = _updateFriendshipRecord(
+                    rel.relationshipId, patch, aId, bId
+                );
 
                 if (!result.success) {
                     _toast(result.message || 'Failed to update', 'error');
@@ -510,7 +623,6 @@
 
                 _toast('Friendship updated', 'success');
                 if (typeof onSuccess === 'function') onSuccess(result);
-                _closeModal();
                 return true;
             }
         });
@@ -624,7 +736,6 @@
 
                 _toast('Friendship ended', 'info');
                 if (typeof onSuccess === 'function') onSuccess(result);
-                _closeModal();
                 return true;
             }
         });
