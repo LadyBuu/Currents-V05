@@ -47,40 +47,47 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (family-tab P2):
+ *   Current revision:
+ *     - _buildIdentityBlock reads religionName / cultureName from the
+ *       CharacterQueries summary FIRST (the projection already carries
+ *       them), and only falls back to ReligionQueries.getReligion /
+ *       CultureQueries.getCultureById when the projection did not
+ *       resolve them. Each fallback is individually try/caught.
+ *
+ *       Prior revisions unconditionally re-queried the religion and
+ *       culture domains to resolve the display names. When either
+ *       query module was changed to re-derive its name from the
+ *       character summary (a natural refactor that turns "give me the
+ *       culture's name" into "resolve the character's culture and
+ *       return its name"), the call cycled back into
+ *       buildIdentityModel and blew the stack. The RangeError was
+ *       caught by _safe and recorded under errors.identity, which is
+ *       why the Identity tab reported "Name & Title section could not
+ *       be loaded: too much recursion."
+ *
+ *       Reading the summary's pre-resolved fields breaks the cycle at
+ *       the source. The try/catch around each fallback means a
+ *       remaining cycle in one domain degrades to a null field name
+ *       instead of failing the whole identity block.
+ *
+ *     - No other behavioural change.
+ *   Previous revision (family-tab P2):
  *     - buildFamilyModel expanded with:
  *         parents.father / parents.mother  — the biological father and
- *           mother ids/names, or null. Convenience for the tab's "Set
- *           mother" / "Set father" controls, which need to know whether
- *           the role is currently filled and by whom.
+ *           mother ids/names, or null.
  *
  *         children.<each>.parentCoverage  — new per-child field:
- *             'both'          both of this character's partners are on
- *                             the child (solid circle)
+ *             'both'          both parents on the child (solid circle)
  *             'mother-only'   only the mother is on the child
  *             'father-only'   only the father is on the child
  *             'adopted'       child was adopted by this character
  *             'unknown'       cannot be determined
- *           Computed from the child's biological parent ids and this
- *           character's partner set (if any). If this character has no
- *           partner, every child is 'both' or 'mother-only' /
- *           'father-only' based on which role this character fills.
  *
- *         fosterAsChild[]      — foster parents OF this character (this
- *                                character as the child in a foster
- *                                adoption record).
+ *         fosterAsChild[]      — foster parents OF this character.
  *         wardAsChild[]        — guardians OF this character.
- *         fosterChildren[]     — foster children OF this character.
- *         wardChildren[]       — wards OF this character.
- *           All four blocks return enriched entries, or [] when no
- *           records exist.
  *
  *         partnerForBaby       — the single active committed partner of
- *                                this character, or null. Convenience
- *                                for the "generate new baby" flow,
- *                                which needs a partner to resolve the
- *                                second parent without prompting when
- *                                exactly one committed partner exists.
+ *                                this character, or null.
  *
  *       All new fields are additive; no existing field changed shape.
  *   Previous revision (household-tab P7):
@@ -342,30 +349,53 @@
 
     function _buildIdentityBlock(summary, errors) {
         return _safe('identity', function () {
-            var religionName = null;
+            // Prefer the projection's own resolved names. The
+            // CharacterQueries summary already carries religionName /
+            // cultureName. Re-querying the religion/culture domains
+            // from here created a recursion when either query module
+            // was changed to re-derive its name from the character
+            // summary (a circular dependency: buildIdentityModel →
+            // ReligionQueries/CultureQueries → character-queries →
+            // buildIdentityModel → ...). The RangeError was caught by
+            // _safe and recorded under errors.identity, which is why
+            // the Identity tab reported "Name & Title section could not
+            // be loaded: too much recursion."
+            var religionName = (typeof summary.religionName === 'string'
+                && summary.religionName.length > 0)
+                ? summary.religionName : null;
+
+            var cultureName = (typeof summary.cultureName === 'string'
+                && summary.cultureName.length > 0)
+                ? summary.cultureName : null;
+
+            // Fallback: only if the projection did NOT carry the name.
+            // Wrapped individually so a cycling query cannot take down
+            // the whole identity block; the field just stays null and
+            // the tab renders the raw id instead.
             if (_hasId(summary.religionId)
+                && !religionName
                 && typeof window.ReligionQueries !== 'undefined'
                 && window.ReligionQueries !== null
                 && typeof window.ReligionQueries.getReligion === 'function') {
-                var rel;
-                try { rel = window.ReligionQueries.getReligion(summary.religionId); }
-                catch (e) { rel = null; }
-                if (rel && typeof rel.name === 'string' && rel.name.length > 0) {
-                    religionName = rel.name;
-                }
+                try {
+                    var rel = window.ReligionQueries.getReligion(summary.religionId);
+                    if (rel && typeof rel.name === 'string' && rel.name.length > 0) {
+                        religionName = rel.name;
+                    }
+                } catch (e) { /* non-fatal */ }
             }
 
-            var cultureName = null;
             if (_hasId(summary.cultureId)
+                && !cultureName
                 && typeof window.CultureQueries !== 'undefined'
                 && window.CultureQueries !== null
                 && typeof window.CultureQueries.getCultureById === 'function') {
-                var cul;
-                try { cul = window.CultureQueries.getCultureById(summary.cultureId); }
-                catch (e) { cul = null; }
-                if (cul && typeof cul.name === 'string' && cul.name.length > 0) {
-                    cultureName = cul.name;
-                }
+                try {
+                    var cul = window.CultureQueries.getCultureById(summary.cultureId);
+                    if (cul && typeof cul.name === 'string' && cul.name.length > 0) {
+                        cultureName = cul.name;
+                    }
+                } catch (e) { /* non-fatal */ }
             }
 
             return {
@@ -1006,11 +1036,6 @@
         return out;
     }
 
-    /**
-     * Reads the biological / legal / social parents of a child and groups.
-     * Also exposes `father` and `mother` convenience fields for the tab's
-     * Set-mother / Set-father controls.
-     */
     function _buildParentGroups(childId, errors) {
         return _safe('parents', function () {
             var parentEdges = FQ.getParents(childId);
@@ -1055,7 +1080,6 @@
 
                 grouped.all.push(entry);
 
-                // Convenience: expose biological father / mother.
                 if (parentType === 'biological') {
                     if (parentRole === 'father' && !grouped.father) {
                         grouped.father = entry;
@@ -1103,25 +1127,6 @@
         return typeName + ' ' + roleName;
     }
 
-    /**
-     * Classifies a child's parent coverage from the perspective of the
-     * subject:
-     *   'both'          both a mother and a father are recorded on the
-     *                   child
-     *   'mother-only'   only a mother is recorded
-     *   'father-only'   only a father is recorded
-     *   'adopted'       child is legally adopted by the subject
-     *   'unknown'       cannot be determined
-     *
-     * The classification is derived from the child's parent edges
-     * (biological mother + biological father), independent of the
-     * subject. It is the same classification the sibling-circle uses,
-     * applied to children.
-     *
-     * @param {string} childId
-     * @param {boolean} adoptedBySubject
-     * @returns {'both'|'mother-only'|'father-only'|'adopted'|'unknown'}
-     */
     function _classifyChildCoverage(childId, adoptedBySubject) {
         if (adoptedBySubject) return 'adopted';
 
@@ -1159,8 +1164,6 @@
                 if (_hasId(biologicalIds[i])) bioSet[biologicalIds[i]] = true;
             }
 
-            // Collect legal-adopted child ids (legal children who are
-            // NOT also biological) so we can flag their coverage.
             var adoptedSet = {};
             for (var l = 0; l < legalIds.length; l++) {
                 var cid = legalIds[l];
@@ -1461,13 +1464,6 @@
         }, errors);
     }
 
-    /**
-     * Reads the foster / guardianship relationships OF this character
-     * (i.e. this character as the child). These are the records where
-     * this character appears as `childId` in an adoption record of type
-     * 'foster' or 'guardianship'. Returned as two arrays so the tab can
-     * render them under Foster Parents / Guardians sections.
-     */
     function _buildAsChildFosterAndGuardianBlock(childId, errors) {
         return _safe('asChildFosterGuardian', function () {
             var records = [];
@@ -1511,12 +1507,6 @@
         }, errors);
     }
 
-    /**
-     * Resolves the single active committed partner of this character, or
-     * null. Used by the generate-new-baby flow to pre-select the second
-     * parent without prompting when there is exactly one committed
-     * partner.
-     */
     function _buildPartnerForBabyBlock(subjectId, errors) {
         return _safe('partnerForBaby', function () {
             var active;
@@ -1611,11 +1601,9 @@
             surrogacyChildren: surrogacyChildren,
             adoptedParents: adoptedParents,
 
-            // Foster / guardianship of this character (as the child):
             fosterAsChild: asChildFG.fosterParents,
             wardAsChild: asChildFG.guardians,
 
-            // Convenience for the "generate new baby" flow:
             partnerForBaby: partnerForBaby,
 
             isOrphan: isOrphan,
