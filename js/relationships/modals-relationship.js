@@ -15,6 +15,8 @@
  *     checkboxes for committed, start year, notes)
  *   - the dispatch table from archetype to the right command
  *   - integration with the character selector
+ *   - family relation warning (non-blocking)
+ *   - secret -> affair pipeline routing
  *
  * Does NOT own:
  *   - validation (the command validates; the modal trusts the
@@ -32,14 +34,12 @@
  *
  *     casual_dating      → RomanceCommands.startCasualDating
  *     one_night_stand    → RomanceCommands.startOneNightStand
- *     committed          → RomanceCommands.startCommittedRelationship
+ *     committed          → AffairCommands.createAffair (if secret/affair)
+ *                          OR RomanceCommands.startCommittedRelationship
  *     friendship         → FriendshipCommands.createFriendship
  *     rivalry            → RivalryCommands.createRivalry
  *     enmity             → RivalryCommands.createEnmity
  *     apprenticeship     → ApprenticeshipCommands.createApprenticeship
- *                          (NOT ProfessionalCommands — that module owns
- *                          the professional EDGE primitive, not the
- *                          apprenticeship LIFECYCLE)
  *     mastership         → ProfessionalCommands.createMastership
  *     employment         → ProfessionalCommands.createEmployment
  *     guild_membership   → ProfessionalCommands.createGuildMembership
@@ -77,71 +77,50 @@
  *   inserts the escaped string into innerHTML, which the browser
  *   renders as literal text. The visible symptom was a raw
  *   "<svg class="icon-svg"...>...</svg> Create Relationship" string in
- *   the title bar. See the screenshot in the bug report.
+ *   the title bar.
  *
- *   This is the same class of bug modals-friendship.js fixed (see its
- *   TITLE / CONFIRM HTML CONTRACT header). Both files now use the
- *   identical pattern: icon raw, text escaped.
+ * ATTRIBUTE CHECKBOXES (CSS FIX)
  *
- * WARNINGS FROM THE COMMAND
+ *   The checkbox list now uses a scoped CSS grid (injected via <style>)
+ *   to ensure the checkbox is on the left and the label is on the
+ *   right, avoiding global CSS conflicts that previously forced the
+ *   checkbox onto a line above the text.
  *
- *   RomanceCommands no longer refuses underage romance. It warns. The
- *   success envelope carries warnings: [{ code, message, ... }] for
- *   underage participants and for age gaps over 5 years. The modal
- *   reads result.warnings after a successful dispatch and toasts each
- *   one with type 'warning', BEFORE the success toast — warnings are
- *   the more important message, and the success toast confirms the
- *   write. Callers that ignore result.warnings are unaffected;
- *   callers that read it see [] on the no-warning path.
+ * RELATIVE WARNING
+ *
+ *   A non-blocking warning banner appears when the two characters are
+ *   blood relatives. It uses FamilyQueries.classifyKinship to detect
+ *   the relationship and FamilyRules.kinshipLabel (if available) to
+ *   render the label. It is purely informational; it does not disable
+ *   the Create button.
+ *
+ * SECRET -> AFFAIR PIPELINE
+ *
+ *   If the user checks the Secret attribute, or if RomanceRules would
+ *   classify the committed relationship as an affair (because one or
+ *   both participants already have a committed partner and lack
+ *   polyamorous permissions), the modal routes the creation through
+ *   AffairCommands.createAffair instead of
+ *   RomanceCommands.startCommittedRelationship.
+ *
+ *   This ensures the relationship receives the full affair metadata
+ *   block (affairType, discovery state, consequence arrays) and is
+ *   therefore fully compatible with the Affair tab and the annual
+ *   discovery lifecycle.
  *
  * PREVIOUS REVISIONS (FIXED)
  *
- *   Every call site used `title:` / `content:`. modals-core.js reads
- *   ONLY `titleHtml:` / `contentHtml:`; it does not read `title` or
- *   `content` (it does accept them as aliases now, but this modal has
- *   always passed the *Html names). Result: the modal rendered with
- *   "Modal" as the title and empty body — no archetype picker, no
- *   fields, nothing to click. This is the same class of bug that
- *   modals-apprenticeship.js and modals-role-select.js had; all three
- *   were fixed in the same pass.
- *
- *   Type-selector wiring used setTimeout(50) + document.getElementById,
- *   which worked but contradicted the onMount convention used by
- *   modals-roles.js and modals-education.js. Converted to onMount.
- *
- *   The attribute-checkbox collection used document.querySelectorAll,
- *   which would collide with any other modal containing elements with
- *   the same class. Scoped to the modal element.
- *
- *   getCurrentYearSafe (deprecated alias in time.js) → getCurrentYear.
- *
- *   The load-time dependency check and every call site used
- *   window.getCurrentLocation, which accessors.js never exported —
- *   that name belongs to world.js, and even there it is called
- *   getCurrentPlace / getCurrentLocationId. The guard therefore threw
- *   on load, before the modal could ever open. Replaced with a local
- *   _getCurrentLocationOrNull helper (the same two-step "resolve place,
- *   extract id, return null if missing" pattern used by
- *   modals-roles.js) and the guard now checks for getCurrentPlace.
- *
- *   The attribute-checkbox list is empty for non-committed archetypes,
- *   but the section was still mounted and shown. Now the section is
- *   only shown for A.COMMITTED (the sync() in onMount handles the
- *   display toggle). No behavioural change to committed.
- *
- *   context.defaultType was applied to the select unconditionally:
- *
- *       select.value = initialType;
- *
- *   If initialType was not among the rendered options (e.g. an
- *   archetype without a UI.archetypeName, so _typeOptionsHtml skipped
- *   it), select.value silently fell back to the first option but the
- *   field-visibility sync ran against the *unmatched* value, so the
- *   user could see "friendship" selected while the modal was asking
- *   for a roleId. Now _resolveInitialType validates initialType
- *   against the rendered option values and falls back to the first
- *   option in that case, so the displayed selection and the synced
- *   fields always agree.
+ *   - Type-selector wiring used setTimeout + document.getElementById.
+ *     Converted to onMount + modalEl.querySelector.
+ *   - Attribute checkbox collection used document.querySelectorAll,
+ *     which would collide with any other modal. Scoped to modalEl.
+ *   - getCurrentYearSafe (deprecated alias) -> getCurrentYear.
+ *   - getCurrentLocation guard threw on load because that name is not
+ *     exported by accessors.js. Replaced with getCurrentPlace +
+ *     getCurrentLocationId fallback.
+ *   - context.defaultType was applied unconditionally, leading to
+ *     visual/field desync if the default type was not in the rendered
+ *     options. Now validated via _resolveInitialType.
  *
  * DEPENDENCIES (must be loaded first):
  *   - relationship-types.js           (RELATIONSHIP_ARCHETYPES,
@@ -152,18 +131,16 @@
  *   - ui.js                           (_showToast)
  *   - icons.js                        (Icons via _getIcon)
  *   - accessors.js                    (getCharacterById)
- *   - world.js                        (getCurrentPlace — the place
- *                                      resolver; getCurrentLocationId
- *                                      is a secondary fallback)
+ *   - world.js                        (getCurrentPlace)
  *   - time.js                         (getCurrentYear, calculateAge)
+ *   - family-queries.js               (classifyKinship)
+ *   - family-rules.js                 (KINSHIP constants)
  *   - romance-commands.js             (RomanceCommands)
+ *   - affair-commands.js              (AffairCommands)
  *   - friendship-commands.js          (FriendshipCommands)
  *   - rivalry-commands.js             (RivalryCommands)
  *   - professional-commands.js        (ProfessionalCommands)
- *   - apprenticeship-commands.js      (ApprenticeshipCommands) —
- *                                      required because the
- *                                      apprenticeship dispatch calls it
- *
+ *   - apprenticeship-commands.js      (ApprenticeshipCommands)
  * =============================================================================
  */
 
@@ -186,6 +163,8 @@
         ['getCharacterById',         'accessors.js'],
         ['getCurrentYear',           'time.js'],
         ['calculateAge',             'time.js'],
+        ['FamilyQueries',            'family-queries.js'],
+        ['FamilyRules',              'family-rules.js'],
         ['RomanceCommands',          'romance-commands.js'],
         ['FriendshipCommands',       'friendship-commands.js'],
         ['RivalryCommands',          'rivalry-commands.js'],
@@ -202,10 +181,9 @@
         }
     }
 
-    // getCurrentPlace lives on world.js. It is not listed in REQUIRED
-    // above because world.js is loaded at a different point in the
-    // boot order than the modules in REQUIRED; the guard below is
-    // sufficient to catch its absence at load time.
+    // AffairCommands is optional at load time (guarded at call time)
+    var HAS_AFFAIR_COMMANDS = (window.AffairCommands && typeof window.AffairCommands.createAffair === 'function');
+
     if (typeof window.getCurrentPlace !== 'function') {
         throw new Error(
             'modals-relationship.js requires world.js (getCurrentPlace).'
@@ -261,41 +239,19 @@
 
     /**
      * Resolves the character's current place id, or null.
-     *
-     * world.js owns place resolution. There are two surfaces:
-     *
-     *   getCurrentPlace(character)      → place object or null.
-     *                                     The canonical surface.
-     *   getCurrentLocationId(character) → place id string or null.
-     *                                     A convenience wrapper that
-     *                                     may not exist on every
-     *                                     build.
-     *
-     * This helper prefers the place object (canonical) and falls back
-     * to the id accessor. It returns null if neither resolves, which
-     * the caller renders as "no location" rather than fabricating a
-     * value.
-     *
-     * This is the same two-step pattern used by
-     * js/systems/roles/modals-roles.js (_getCurrentLocationOrNull).
-     * Copying it here keeps the two modals consistent and avoids the
-     * load-time crash the old getCurrentLocation guard produced.
      */
     function _getCurrentLocationOrNull(character) {
         if (!character) return null;
-
         if (typeof window.getCurrentPlace === 'function') {
             var place = window.getCurrentPlace(character);
             if (place && typeof place.id === 'string' && place.id.length > 0) {
                 return place.id;
             }
         }
-
         if (typeof window.getCurrentLocationId === 'function') {
             var id = window.getCurrentLocationId(character);
             if (typeof id === 'string' && id.length > 0) return id;
         }
-
         return null;
     }
 
@@ -318,18 +274,6 @@
         }
     ];
 
-    /**
-     * Builds the <optgroup>/<option> HTML for the archetype picker.
-     *
-     * Returns { html, values } where values is the ordered list of
-     * option values actually rendered. The caller uses values to
-     * validate context.defaultType — see _resolveInitialType.
-     *
-     * Archetypes for which UI.archetypeName returns null are skipped
-     * (they cannot be named, so they cannot be offered); they are
-     * therefore NOT in values. The caller falls back to the first
-     * rendered value if defaultType is not in this list.
-     */
     function _typeOptionsHtml() {
         var html = '';
         var values = [];
@@ -362,19 +306,6 @@
         return { html: html, values: values };
     }
 
-    /**
-     * Resolves the initial type for the picker.
-     *
-     * If context.defaultType is present AND is one of the rendered
-     * option values, it is used. Otherwise the first rendered value
-     * is used. This keeps the displayed selection and the synced
-     * field visibility (onMount's sync()) in agreement: the previous
-     * revision set select.value = initialType unconditionally, so if
-     * initialType was not a rendered option the browser fell back to
-     * the first option visually while the sync ran against the
-     * unrendered value — the user could see "friendship" selected
-     * while the modal was asking for a roleId.
-     */
     function _resolveInitialType(renderedValues, requestedType) {
         if (renderedValues.length === 0) return null;
         if (typeof requestedType === 'string' &&
@@ -409,12 +340,11 @@
             var a = ordered[i];
             var name = UI.attributeName(a);
             if (name === null) continue;
-            var iconName = UI.attributeIcon(a);
-            var iconSvg = iconName ? _icon(iconName) : '';
-            html += '<label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:0.65rem;cursor:pointer;">' +
+            
+            // Use the new .rel-attr-row classes (defined in the <style> block)
+            html += '<label class="rel-attr-row">' +
                 '<input type="checkbox" class="attr-checkbox" value="' + _esc(a) + '">' +
-                (iconSvg ? iconSvg + ' ' : '') +
-                _esc(name) +
+                '<span class="rel-attr-name">' + _esc(name) + '</span>' +
             '</label>';
         }
         return html;
@@ -423,19 +353,6 @@
     // =========================================================================
     // 4. DISPATCH
     // =========================================================================
-    //
-    // Every archetype maps to exactly one command. The dispatch is
-    // where the ownership boundary is enforced:
-    //
-    //   - ProfessionalCommands owns the professional EDGE primitive and
-    //     the mastership / employment / guild commands.
-    //
-    //   - ApprenticeshipCommands owns the apprenticeship LIFECYCLE.
-    //     ProfessionalCommands.createEdge is the primitive that
-    //     ApprenticeshipCommands uses internally, but the modal must
-    //     NOT call ProfessionalCommands.createEdge for apprenticeship
-    //     creation — that would bypass the apprenticeship lifecycle
-    //     (profession record, teaching history, etc.).
 
     function _dispatchCreate(type, aId, bId, form) {
         switch (type) {
@@ -452,11 +369,46 @@
                 });
 
             case A.COMMITTED:
+                var isExplicitSecret = (form.attributes || []).indexOf(ATTR.SECRET) !== -1;
+                var willClassifyAsAffair = false;
+                
+                // Check if the rule engine will classify this as an affair.
+                // We do a lightweight check against existing partners.
+                if (window.RomanceQueries && typeof window.RomanceQueries.getActiveCommittedPartners === 'function') {
+                    var partnersA = window.RomanceQueries.getActiveCommittedPartners(aId);
+                    var partnersB = window.RomanceQueries.getActiveCommittedPartners(bId);
+                    
+                    var aAllowsMultiple = false;
+                    var bAllowsMultiple = false;
+                    
+                    // Check rank permissions
+                    if (window.RomanceCommands && typeof window.RomanceCommands._getExternalMultiPartnerFacts === 'function') {
+                        var factsA = window.RomanceCommands._getExternalMultiPartnerFacts(_getCharacter(aId));
+                        var factsB = window.RomanceCommands._getExternalMultiPartnerFacts(_getCharacter(bId));
+                        aAllowsMultiple = !!(factsA && factsA.allowsMultipleByRank);
+                        bAllowsMultiple = !!(factsB && factsB.allowsMultipleByRank);
+                    }
+                    
+                    if ((partnersA.length > 0 && !aAllowsMultiple) || (partnersB.length > 0 && !bAllowsMultiple)) {
+                        willClassifyAsAffair = true;
+                    }
+                }
+                
+                // Route to AffairCommands if needed.
+                if ((isExplicitSecret || willClassifyAsAffair) && HAS_AFFAIR_COMMANDS) {
+                    return window.AffairCommands.createAffair(aId, bId, {
+                        startYear: form.startYear,
+                        notes: form.notes,
+                        isScandalous: (form.attributes || []).indexOf(ATTR.SCANDALOUS) !== -1
+                    });
+                }
+                
+                // Standard legitimate relationship fallback.
                 return window.RomanceCommands.startCommittedRelationship(aId, bId, {
                     startYear: form.startYear,
                     attributes: form.attributes || [],
                     isScandalous: (form.attributes || []).indexOf(ATTR.SCANDALOUS) !== -1,
-                    isSecret: (form.attributes || []).indexOf(ATTR.SECRET) !== -1,
+                    isSecret: false,
                     notes: form.notes
                 });
 
@@ -477,8 +429,6 @@
                 });
 
             case A.APPRENTICESHIP:
-                // Apprenticeship lifecycle lives on ApprenticeshipCommands,
-                // not ProfessionalCommands. The command requires roleId.
                 if (!form.roleId) {
                     return {
                         success: false,
@@ -541,17 +491,6 @@
     // 5. PUBLIC ENTRY POINT
     // =========================================================================
 
-    /**
-     * openRelationshipModal(char1, char2, onSuccess, context)
-     *
-     * char1 and char2 are character projections or live records with at
-     * least { id, name, surname, birthYear, isDeceased, deathYear }.
-     * The modal never holds a live reference; it reads by id when it
-     * needs fresh data.
-     *
-     * context (optional):
-     *   { defaultType: <archetype id> }
-     */
     function openRelationshipModal(char1, char2, onSuccess, context) {
         context = context || {};
 
@@ -573,19 +512,26 @@
         var infoIcon = _icon('CIRCLE_DOT');
         var heartIcon = _icon('HEART');
         var checkIcon = _icon('CHECK_SIMPLE');
+        var warningIcon = _icon('WARNING');
 
         var options = _typeOptionsHtml();
         var initialType = _resolveInitialType(options.values, context.defaultType);
 
         if (initialType === null) {
-            // No archetype could be rendered (UI.archetypeName returned
-            // null for every candidate). Nothing the user can pick;
-            // fail loud rather than open an unusable modal.
             _toast('No relationship types are available', 'error');
             return;
         }
 
         var html = '' +
+            // --- START CSS FIX ---
+            '<style>' +
+                '.rel-attr-list { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }' +
+                '.rel-attr-row { display: grid; grid-template-columns: 20px 1fr; align-items: center; gap: 8px; cursor: pointer; font-size: 0.7rem; color: var(--text); user-select: none; padding: 2px 0; }' +
+                '.rel-attr-row input[type="checkbox"] { width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: var(--accent); }' +
+                '.rel-attr-name { display: block; line-height: 1.2; }' +
+            '</style>' +
+            // --- END CSS FIX ---
+
             '<div style="background:var(--bg3);padding:12px;border-radius:8px;margin-bottom:16px;">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
                     '<div>' +
@@ -602,6 +548,12 @@
                 '</div>' +
             '</div>' +
 
+            // --- START FAMILY WARNING ---
+            '<div id="relFamilyWarning" style="display:none;background:rgba(200,112,64,0.15);border:1px solid var(--warn);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.65rem;color:var(--text);">' +
+                warningIcon + ' <strong>Warning:</strong> <span id="relFamilyWarningText"></span>' +
+            '</div>' +
+            // --- END FAMILY WARNING ---
+
             '<div style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Relationship Type</label>' +
                 '<select id="relType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
@@ -611,7 +563,8 @@
 
             '<div id="relAttributesSection" style="display:none;margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Attributes</label>' +
-                '<div style="background:var(--bg2);padding:12px;border-radius:8px;max-height:220px;overflow-y:auto;">' +
+                // Use the new class for the container
+                '<div class="rel-attr-list" style="background:var(--bg2);padding:12px;border-radius:8px;max-height:220px;overflow-y:auto;">' +
                     _attributeCheckboxesHtml() +
                 '</div>' +
                 '<small style="font-size:0.55rem;color:var(--dim);">' + infoIcon +
@@ -659,16 +612,11 @@
             '</div>';
 
         _openModal({
-            // Icon (SVG) is raw. Text portion is escaped. modals-core
-            // inserts titleHtml as innerHTML, not textContent. See
-            // TITLE / CONFIRM HTML CONTRACT in the module header.
             titleHtml: (heartIcon ? heartIcon + ' ' : '') + _esc('Create Relationship'),
             contentHtml: html,
             confirmText: (checkIcon ? checkIcon + ' ' : '') + 'Create',
             cancelText: 'Cancel',
             onMount: function(modalEl) {
-                // Scoped to the modal element — not document. See
-                // MODAL LIFECYCLE in the module header.
                 var select = modalEl.querySelector('#relType');
                 var attrsSection = modalEl.querySelector('#relAttributesSection');
                 var roleSection = modalEl.querySelector('#relRoleSection');
@@ -693,14 +641,32 @@
                     }
                 }
 
-                // initialType has already been validated against the
-                // rendered option values by _resolveInitialType, so
-                // select.value here is guaranteed to match one of the
-                // <option> values. The sync() below therefore always
-                // reflects the type the user actually sees selected.
                 select.value = initialType;
                 select.addEventListener('change', sync);
                 sync();
+
+                // --- START FAMILY WARNING LOGIC ---
+                var warningBox = modalEl.querySelector('#relFamilyWarning');
+                var warningText = modalEl.querySelector('#relFamilyWarningText');
+
+                if (warningBox && warningText && window.FamilyQueries && window.FamilyRules) {
+                    try {
+                        var kinship = window.FamilyQueries.classifyKinship(char1.id, char2.id);
+                        // Check if they are blood relatives (not unrelated, not self)
+                        if (kinship && kinship.type !== window.FamilyRules.KINSHIP.UNRELATED && kinship.type !== window.FamilyRules.KINSHIP.SELF) {
+                            var relationLabel = 'blood relatives';
+                            if (typeof window.FamilyRules.kinshipLabel === 'function') {
+                                relationLabel = window.FamilyRules.kinshipLabel(kinship.type);
+                            }
+                            warningText.textContent = 'These characters are ' + relationLabel + '. Romantic relationships between relatives may have social or cultural consequences.';
+                            warningBox.style.display = 'block';
+                        }
+                    } catch (e) {
+                        // Fail silently if family query throws
+                        warningBox.style.display = 'none';
+                    }
+                }
+                // --- END FAMILY WARNING LOGIC ---
             },
             onConfirm: function(modalEl) {
                 var typeEl = modalEl.querySelector('#relType');
@@ -772,20 +738,13 @@
                     return false;
                 }
 
-                // RomanceCommands (and any future command that adopts
-                // the same envelope) may attach non-blocking warnings
-                // to a successful result. Surface each one BEFORE the
-                // success toast — warnings are the more important
-                // message, and the success toast confirms the write.
-                // See WARNINGS FROM THE COMMAND in the module header.
+                // Toast warnings if the command returned any (e.g. underage)
                 if (Array.isArray(result.warnings) && result.warnings.length > 0) {
                     for (var w = 0; w < result.warnings.length; w++) {
                         var warning = result.warnings[w];
                         var warningText = warning && warning.message
                             ? warning.message
-                            : (warning && warning.code
-                                ? String(warning.code)
-                                : 'Relationship created with a warning.');
+                            : (warning && warning.code ? String(warning.code) : 'Warning.');
                         _toast(warningText, 'warning');
                     }
                 }
