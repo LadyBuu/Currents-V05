@@ -40,25 +40,23 @@
  *   the follow-up, alongside the corresponding initializer in
  *   romance-commands.js and the condition in romance-rules.js.
  *
- *   When the field is supplied as `undefined` (a direct caller that
- *   did not go through romance-commands), the `!!` coercion yields
- *   `false`. That is intentional: there is no code path in the current
- *   tree that can legitimately produce `true`, so a caller that
- *   supplies the field is doing so as a legacy exercise, not as a
- *   policy decision.
- *
  * Load order: after relationship-queries.js and romance-rules.js.
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - getMultiPartnerFacts docstring updated to document the
- *       rank-only multi-partner policy and the interim
- *       allowsMultipleByTrait behaviour.
- *     - No behavioural change to any function. The field is still
- *       returned with the same coercion; callers that went through
- *       romance-commands observe `false` for it because that module
- *       now supplies `false`.
+ *     - _project now carries the affair-specific metadata fields:
+ *       affairType, discovered, discoveryYear, discoveryCircumstances,
+ *       discovererId, and publicBehavior. This is an additive change;
+ *       no existing caller is broken, but the affair UI and
+ *       character-view-models.js can now render discovery state
+ *       directly from the projection instead of doing a second
+ *       getById lookup for every row.
+ *
+ *     - _project now uses a tolerant id resolution for
+ *       relationshipId: it prefers record.id, but falls back to
+ *       record.relationshipId or record.relationship_id if a future
+ *       state layer change renames the field.
  * =============================================================================
  */
 
@@ -109,6 +107,19 @@
                 record.type === COMMITTED);
     }
 
+    /**
+     * Tolerant relationship-id resolution. Prefers record.id, but
+     * falls back to record.relationshipId or record.relationship_id
+     * if a future state layer change renames the field.
+     */
+    function _getRelId(record) {
+        if (!record) return null;
+        if (typeof record.id === 'string' && record.id.length > 0) return record.id;
+        if (typeof record.relationshipId === 'string' && record.relationshipId.length > 0) return record.relationshipId;
+        if (typeof record.relationship_id === 'string' && record.relationship_id.length > 0) return record.relationship_id;
+        return null;
+    }
+
     function _project(record, perspectiveId) {
         if (!record) return null;
 
@@ -126,8 +137,10 @@
         var isSecret = _hasAttr(record, ATTR.SECRET);
         var isScandalous = _hasAttr(record, ATTR.SCANDALOUS);
 
+        var meta = record.metadata || {};
+
         return {
-            relationshipId: record.id,
+            relationshipId: _getRelId(record),
             type: record.type,
             status: record.status,
             participantA: record.participantA,
@@ -142,9 +155,15 @@
             isPolyamorous: isPolyamorous,
             isSecret: isSecret,
             isScandalous: isScandalous,
-            notes: (record.metadata && typeof record.metadata.notes === 'string')
-                ? record.metadata.notes
-                : ''
+            notes: typeof meta.notes === 'string' ? meta.notes : '',
+            
+            // Affair-specific metadata (additive)
+            affairType: typeof meta.affairType === 'string' ? meta.affairType : null,
+            discovered: !!meta.discovered,
+            discoveryYear: typeof meta.discoveryYear === 'number' ? meta.discoveryYear : null,
+            discoveryCircumstances: typeof meta.discoveryCircumstances === 'string' ? meta.discoveryCircumstances : null,
+            discovererId: typeof meta.discovererId === 'string' ? meta.discovererId : null,
+            publicBehavior: !!meta.publicBehavior
         };
     }
 
@@ -376,21 +395,6 @@
 
     // -------------------------------------------------------------------------
     // MULTI-PARTNER FACTS
-    //
-    // The caller supplies `externalFacts` — facts that only the caller
-    // can know: rank-based multi-spouse permission, trait-based
-    // permission, etc. See MULTI-PARTNER FACTS in the module header for
-    // the rank-only decision and the interim allowsMultipleByTrait
-    // behaviour.
-    //
-    // Shape returned:
-    //   {
-    //     existingCommittedCount,
-    //     anyPolyamorous,
-    //     allowsMultipleByRank,     boolean, from externalFacts
-    //     allowsMultipleByTrait     boolean, from externalFacts
-    //                               (interim — always false in practice)
-    //   }
     // -------------------------------------------------------------------------
 
     function getMultiPartnerFacts(characterId, externalFacts) {
@@ -415,26 +419,6 @@
 
     // -------------------------------------------------------------------------
     // PRE-SUBMIT CONFLICT REPORT
-    //
-    // Structured list of reasons a proposed romance would be blocked or
-    // classified as an affair. Does not decide; reports.
-    //
-    // options: {
-    //   archetype:        'committed' | 'casual_dating' | 'one_night_stand'
-    //   forceAffair?:     boolean
-    //   explicitSecret?:  boolean
-    //   ageA?:            number
-    //   ageB?:            number
-    //   externalFactsA?:  object
-    //   externalFactsB?:  object
-    // }
-    //
-    // Returns {
-    //   blocked:              boolean
-    //   classification:       'legitimate' | 'affair' | 'polyamorous' | 'blocked'
-    //   classificationReason: string
-    //   conflicts:            string[]
-    // }
     // -------------------------------------------------------------------------
 
     function getRelationshipConflicts(aId, bId, options) {
