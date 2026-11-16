@@ -60,14 +60,41 @@
  *   prevents cross-modal ID collisions when one modal opens over
  *   another.
  *
+ * TITLE / CONFIRM HTML CONTRACT
+ *
+ *   modals-core.js inserts titleHtml / contentHtml / confirmText /
+ *   cancelText as HTML (via innerHTML). It does NOT escape them.
+ *   Callers that prepend an SVG icon must insert the icon RAW and
+ *   escape only the plain-text portion:
+ *
+ *       titleHtml: (heartIcon ? heartIcon + ' ' : '') + _esc('Create Relationship')
+ *
+ *   The previous revision escaped the WHOLE string (icon + text):
+ *
+ *       titleHtml: _esc((heartIcon ? heartIcon + ' ' : '') + 'Create Relationship')
+ *
+ *   escapeHtml turns '<svg>' into '&lt;svg&gt;', and modals-core then
+ *   inserts the escaped string into innerHTML, which the browser
+ *   renders as literal text. The visible symptom was a raw
+ *   "<svg class="icon-svg"...>...</svg> Create Relationship" string in
+ *   the title bar. See the screenshot in the bug report.
+ *
+ *   This is the same class of bug modals-friendship.js fixed (see its
+ *   TITLE / CONFIRM HTML CONTRACT header). Both files now use the
+ *   identical pattern: icon raw, text escaped. The body innerHTML
+ *   blocks (listHtml, existingHtml, etc.) already interpolate icons
+ *   raw — this brings the title into line with them.
+ *
  * PREVIOUS REVISIONS (FIXED)
  *
  *   Every call site used `title:` / `content:`. modals-core.js reads
  *   ONLY `titleHtml:` / `contentHtml:`; it does not read `title` or
- *   `content`. Result: the modal rendered with "Modal" as the title
- *   and empty body — no archetype picker, no fields, nothing to click.
- *   This is the same class of bug that modals-apprenticeship.js and
- *   modals-role-select.js had; all three were fixed in the same pass.
+ *   `content` (it does accept them as aliases now, but this modal has
+ *   always passed the *Html names). Result: the modal rendered with
+ *   "Modal" as the title and empty body — no archetype picker, no
+ *   fields, nothing to click. This is the same class of bug that
+ *   modals-apprenticeship.js and modals-role-select.js had; all three
+ *   were fixed in the same pass.
  *
  *   Type-selector wiring used setTimeout(50) + document.getElementById,
  *   which worked but contradicted the onMount convention used by
@@ -87,6 +114,25 @@
  *   _getCurrentLocationOrNull helper (the same two-step "resolve place,
  *   extract id, return null if missing" pattern used by
  *   modals-roles.js) and the guard now checks for getCurrentPlace.
+ *
+ *   The attribute-checkbox list is empty for non-committed archetypes,
+ *   but the section was still mounted and shown. Now the section is
+ *   only shown for A.COMMITTED (the sync() in onMount handles the
+ *   display toggle). No behavioural change to committed.
+ *
+ *   context.defaultType was applied to the select unconditionally:
+ *
+ *       select.value = initialType;
+ *
+ *   If initialType was not among the rendered options (e.g. an
+ *   archetype without a UI.archetypeName, so _typeOptionsHtml skipped
+ *   it), select.value silently fell back to the first option but the
+ *   field-visibility sync ran against the *unmatched* value, so the
+ *   user could see "friendship" selected while the modal was asking
+ *   for a roleId. Now _resolveInitialType validates initialType
+ *   against the rendered option values and falls back to the first
+ *   option in that case, so the displayed selection and the synced
+ *   fields always agree.
  *
  * DEPENDENCIES (must be loaded first):
  *   - relationship-types.js           (RELATIONSHIP_ARCHETYPES,
@@ -263,32 +309,70 @@
         }
     ];
 
+    /**
+     * Builds the <optgroup>/<option> HTML for the archetype picker.
+     *
+     * Returns { html, values } where values is the ordered list of
+     * option values actually rendered. The caller uses values to
+     * validate context.defaultType — see _resolveInitialType.
+     *
+     * Archetypes for which UI.archetypeName returns null are skipped
+     * (they cannot be named, so they cannot be offered); they are
+     * therefore NOT in values. The caller falls back to the first
+     * rendered value if defaultType is not in this list.
+     */
     function _typeOptionsHtml() {
         var html = '';
-        var first = true;
+        var values = [];
 
         for (var c = 0; c < CATEGORIES.length; c++) {
             var cat = CATEGORIES[c];
             var catName = UI.categoryName(cat.key);
             if (catName === null) continue;
 
-            html += '<optgroup label="' + _esc(catName) + '">';
+            var groupHtml = '';
             for (var i = 0; i < cat.types.length; i++) {
                 var t = cat.types[i];
                 var name = UI.archetypeName(t);
                 if (name === null) continue;
                 var iconName = UI.archetypeIcon(t);
                 var iconSvg = iconName ? _icon(iconName) : '';
-                html += '<option value="' + _esc(t) + '"' +
-                        (first ? ' selected' : '') + '>' +
+                groupHtml += '<option value="' + _esc(t) + '">' +
                         (iconSvg ? iconSvg + ' ' : '') +
                         _esc(name) +
                         '</option>';
-                first = false;
+                values.push(t);
             }
-            html += '</optgroup>';
+            if (groupHtml !== '') {
+                html += '<optgroup label="' + _esc(catName) + '">' +
+                        groupHtml +
+                    '</optgroup>';
+            }
         }
-        return html;
+
+        return { html: html, values: values };
+    }
+
+    /**
+     * Resolves the initial type for the picker.
+     *
+     * If context.defaultType is present AND is one of the rendered
+     * option values, it is used. Otherwise the first rendered value
+     * is used. This keeps the displayed selection and the synced
+     * field visibility (onMount's sync()) in agreement: the previous
+     * revision set select.value = initialType unconditionally, so if
+     * initialType was not a rendered option the browser fell back to
+     * the first option visually while the sync ran against the
+     * unrendered value — the user could see "friendship" selected
+     * while the modal was asking for a roleId.
+     */
+    function _resolveInitialType(renderedValues, requestedType) {
+        if (renderedValues.length === 0) return null;
+        if (typeof requestedType === 'string' &&
+            renderedValues.indexOf(requestedType) !== -1) {
+            return requestedType;
+        }
+        return renderedValues[0];
     }
 
     function _attributeCheckboxesHtml() {
@@ -481,7 +565,16 @@
         var heartIcon = _icon('HEART');
         var checkIcon = _icon('CHECK_SIMPLE');
 
-        var initialType = context.defaultType || A.FRIENDSHIP;
+        var options = _typeOptionsHtml();
+        var initialType = _resolveInitialType(options.values, context.defaultType);
+
+        if (initialType === null) {
+            // No archetype could be rendered (UI.archetypeName returned
+            // null for every candidate). Nothing the user can pick;
+            // fail loud rather than open an unusable modal.
+            _toast('No relationship types are available', 'error');
+            return;
+        }
 
         var html = '' +
             '<div style="background:var(--bg3);padding:12px;border-radius:8px;margin-bottom:16px;">' +
@@ -503,7 +596,7 @@
             '<div style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Relationship Type</label>' +
                 '<select id="relType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                    _typeOptionsHtml() +
+                    options.html +
                 '</select>' +
             '</div>' +
 
@@ -557,7 +650,10 @@
             '</div>';
 
         _openModal({
-            titleHtml: _esc((heartIcon ? heartIcon + ' ' : '') + 'Create Relationship'),
+            // Icon (SVG) is raw. Text portion is escaped. modals-core
+            // inserts titleHtml as innerHTML, not textContent. See
+            // TITLE / CONFIRM HTML CONTRACT in the module header.
+            titleHtml: (heartIcon ? heartIcon + ' ' : '') + _esc('Create Relationship'),
             contentHtml: html,
             confirmText: (checkIcon ? checkIcon + ' ' : '') + 'Create',
             cancelText: 'Cancel',
@@ -588,6 +684,11 @@
                     }
                 }
 
+                // initialType has already been validated against the
+                // rendered option values by _resolveInitialType, so
+                // select.value here is guaranteed to match one of the
+                // <option> values. The sync() below therefore always
+                // reflects the type the user actually sees selected.
                 select.value = initialType;
                 select.addEventListener('change', sync);
                 sync();
