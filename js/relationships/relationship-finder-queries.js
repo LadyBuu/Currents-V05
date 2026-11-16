@@ -43,47 +43,64 @@
  *   ended edges in the `existingRelationships` array; the BFS does not.
  *
  * PARENTAGE EDGE SHAPE:
- *   FamilyQueries.getParentsByRole and FamilyQueries.getChildren both
- *   return EDGE WRAPPERS with a canonical `id` field. Do NOT read
- *   `.relationshipId` from them — that field does not exist on family
- *   edges. The previous revision read it, so every parentage step in
- *   the path carried `viaRelationshipId: undefined`. Fixed here.
+ *   FamilyQueries.getParentsByRole, FamilyQueries.getParents, and
+ *   FamilyQueries.getChildren all return EDGE WRAPPERS with a
+ *   canonical `id` field. Do NOT read `.relationshipId` from them —
+ *   that field does not exist on family edges. The previous revision
+ *   read it, so every parentage step in the path carried
+ *   `viaRelationshipId: undefined`. Fixed here.
  *
  * PARENT_CHILD TYPE:
- *   Parentage edges carry `viaType: 'parent_child'` (a literal string).
- *   RELATIONSHIP_ARCHETYPES does NOT declare a PARENT_CHILD constant —
- *   parentage is not a relationship archetype; it lives in FamilyState.
- *   The previous revision read A.PARENT_CHILD, which is undefined, so
- *   every parentage step in the path carried `viaType: undefined`.
+ *   Parentage edges carry `viaType: 'parent_child'` (a literal string
+ *   via PARENT_CHILD_TYPE below). RELATIONSHIP_ARCHETYPES does NOT
+ *   declare a PARENT_CHILD constant — parentage is not a relationship
+ *   archetype; it lives in FamilyState. The previous revision read
+ *   A.PARENT_CHILD, which is undefined, so every parentage step in
+ *   the path carried `viaType: undefined`. Fixed here.
  *
  * Load order: after relationship-queries.js, family-queries.js,
  * family-rules.js.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 2.1):
- *     - _parentageEdges: FQ.getChildRelationships (which does not exist)
- *       replaced with FQ.getChildren. This was a live crash: every call
- *       to findConnectionPath and getReport threw TypeError.
+ *   Current revision:
+ *     - _getCurrentYear: replaced with _getCurrentYearOrNull, sourced
+ *       from getCurrentYear (the canonical accessor). The previous
+ *       revision required getCurrentYearSafe, a deprecated alias that
+ *       time.js no longer exports on every build; _getCurrentYear
+ *       threw "getCurrentYearSafe required" on the first call to
+ *       getReport. It now returns null when getCurrentYear is
+ *       missing, matching the file's no-fabrication rule. getReport
+ *       already passes currentYear through as-is and tolerates null.
+ *     - _parentageEdges: FQ.getChildRelationships (which does not
+ *       exist) replaced with FQ.getChildren. This was a live crash:
+ *       every call to findConnectionPath and getReport threw
+ *       TypeError.
  *     - _parentageEdges: parent and child edge wrappers now read .id
  *       (not .relationshipId). Family edges carry .id; .relationshipId
  *       was always undefined, so every parentage step carried
  *       viaRelationshipId: undefined.
- *     - _parentageEdges: uses the literal 'parent_child' for viaType.
- *       A.PARENT_CHILD is undefined (parentage is not a relationship
- *       archetype; it lives in FamilyState). Every parentage step
- *       previously carried viaType: undefined.
- *     - _parentageEdges and _parentageNeighbors: fetch edges with
- *       { includeEnded: true }. The Finder traverses the historical
- *       graph; the previous code intended this but expressed it as
- *       { activeOnly: false }, which FamilyQueries ignored.
+ *     - _parentageEdges: uses the literal 'parent_child' (via
+ *       PARENT_CHILD_TYPE) for viaType. A.PARENT_CHILD is undefined
+ *       (parentage is not a relationship archetype; it lives in
+ *       FamilyState). Every parentage step previously carried
+ *       viaType: undefined.
+ *     - _parentageEdges: fetches edges with { includeEnded: true }.
+ *       The Finder traverses the historical graph; the previous code
+ *       intended this but expressed it as { activeOnly: false },
+ *       which FamilyQueries ignored.
  *     - Deleted _allNeighbors and _parentageNeighbors. Both were dead
  *       code (no callers), and the live graph walk uses edge-based
- *       traversal via _allEdges.
+ *       traversal via _allEdges. The previous header claimed these
+ *       were deleted, but the body still defined them; both are now
+ *       actually gone.
  *     - getReport's currentYear field no longer throws if time.js is
  *       missing. It is sourced from _getCurrentYearOrNull, matching
  *       the rest of the report's no-fabrication rule.
- *     - No other behavioural change.
+ *     - No other behavioural change. findConnectionPath,
+ *       findCommonAncestors, _collectBiologicalAncestors,
+ *       _relationshipSummary, and _relationshipEdges are unchanged
+ *       from the previous revision.
  * =============================================================================
  */
 
@@ -112,6 +129,16 @@
         return window.getCharacterById(id);
     }
 
+    /**
+     * Returns the current year, or null if time.js is not loaded.
+     *
+     * time.js exports getCurrentYear (not getCurrentYearSafe — that
+     * name is a deprecated alias that is not present on every build).
+     * The Finder treats currentYear as informational only: a report
+     * without a year is still a valid report. Returning null matches
+     * the file's no-fabrication rule and keeps getReport from throwing
+     * when time.js is absent from the load order.
+     */
     function _getCurrentYearOrNull() {
         if (typeof window.getCurrentYear !== 'function') return null;
         var year = window.getCurrentYear();
@@ -183,11 +210,13 @@
         var edges = [];
 
         // Parent-side edges (this character is the child).
-        // getParentsByRole returns edge wrappers with .id, .parentId,
-        // .childId, .parentType, .parentRole. It uses the default
-        // (ongoing) filter; ended parent edges are also traversed
-        // here because the Finder is a historical-graph finder.
-        var parents = FQ.getParentsByRole(characterId);
+        //
+        // getParents returns { fathers, mothers, others } of edge
+        // wrappers with .id, .parentId, .childId, .parentType,
+        // .parentRole. includeEnded: true so the Finder traverses the
+        // historical graph (ended adoptions, superseded biological
+        // edges), matching the Finder's stated contract in the header.
+        var parents = FQ.getParents(characterId, { includeEnded: true });
         var allParents = []
             .concat(parents.fathers)
             .concat(parents.mothers)
@@ -203,25 +232,11 @@
             });
         }
 
-        // Also include ended parent edges. getParentsByRole uses the
-        // default filter; we need the full set for traversal.
-        var allParentsAllStatus = FQ.getParents(characterId, { includeEnded: true });
-        for (var p2 = 0; p2 < allParentsAllStatus.length; p2++) {
-            var pe = allParentsAllStatus[p2];
-            // Skip ongoing edges already added above.
-            if (pe.status === 'ongoing') continue;
-            edges.push({
-                from: characterId,
-                to: pe.parentId,
-                viaRelationshipId: pe.id,
-                viaType: PARENT_CHILD_TYPE,
-                viaRole: 'child_to_parent'
-            });
-        }
-
         // Child-side edges (this character is the parent).
-        // getChildren returns edge wrappers with .id, .parentId, .childId.
-        // includeEnded: true so the Finder traverses historical edges.
+        //
+        // getChildren returns edge wrappers with .id, .parentId,
+        // .childId. includeEnded: true so the Finder traverses the
+        // historical graph.
         var children = FQ.getChildren(characterId, { includeEnded: true });
         for (var j = 0; j < children.length; j++) {
             var c = children[j];
@@ -440,6 +455,12 @@
 
     // -------------------------------------------------------------------------
     // FULL REPORT
+    //
+    // currentYear is informational. It is null when time.js is not
+    // loaded. The report is otherwise complete; callers that want to
+    // gate on the year (e.g. "how long have they known each other")
+    // should check for null themselves rather than have this function
+    // throw.
     // -------------------------------------------------------------------------
 
     function getReport(aId, bId, options) {
