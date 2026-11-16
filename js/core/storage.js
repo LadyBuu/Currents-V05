@@ -13,6 +13,7 @@
  *   - Load/save/reload/reset orchestration
  *   - Import (with validation before install)
  *   - Debounced save scheduling via markDataDirty
+ *   - Domain state pulling (RelationshipState) before save
  *
  * OUT OF SCOPE:
  *   - Schema shape and default data -> storage-schema.js
@@ -46,6 +47,34 @@
  *
  *   - cross-tab: does not silently overwrite unsaved local changes, but
  *     also does not prevent a later overwrite.
+ *
+ * DOMAIN STATE PULLING (NEW):
+ *
+ *   RelationshipState keeps its records in a closure and notifies via
+ *   markDataDirty(). It does not write to masterData.data directly (its
+ *   header explicitly forbids it: "no persistence decision (only
+ *   markDataDirty is called)"). Without intervention, the save path
+ *   would serialize whatever masterData.data.relationships was last
+ *   loaded as — which is [] if the field was never populated — and
+ *   every relationship would be lost on the next reload.
+ *
+ *   To fix this without violating RelationshipState's contract,
+ *   _performSave now pulls RelationshipState.snapshot() into
+ *   masterData.data.relationships right before serializing. This is a
+ *   one-write-per-save operation; RelationshipState stays free of
+ *   persistence knowledge, and the canonical save blob carries the
+ *   current relationship state.
+ *
+ *   The corresponding read half already exists: RelationshipState's
+ *   masterDataUpdated listener calls _reloadFromMasterData(), which
+ *   reads masterData.data.relationships. So the round-trip is complete.
+ *
+ *   This pattern must be extended to any future domain that:
+ *     - holds canonical records in a closure
+ *     - signals mutations via markDataDirty()
+ *     - does not write to masterData.data directly
+ *
+ *   Add a pull block to _performSave for each such domain.
  *
  * LEGACY SAVE MARKERS
  *
@@ -156,34 +185,53 @@
  *   - validation.js:     validateImportData (used by import; if absent,
  *                        import rejects the file rather than installing
  *                        unvalidated data)
+ *   - relationship-state.js: RelationshipState.snapshot() (pulled into
+ *                        the save envelope by _performSave)
  *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - _performSave now pulls RelationshipState.snapshot() into
+ *       masterData.data.relationships before serializing. Without this,
+ *       RelationshipState's closure-held records were never serialized
+ *       (the module forbids itself from writing to masterData directly,
+ *       and the save path never reached into the closure). The result
+ *       was that creating a relationship marked the data dirty, the
+ *       save succeeded, but the saved blob contained no relationship
+ *       records. Every relationship was silently lost on the next
+ *       reload. See DOMAIN STATE PULLING in the header for the
+ *       reasoning and the pattern for future domains.
+ *
+ *     - This is paired with two required additions to storage-schema.js:
+ *       "relationships: []" in the default factory, and "'relationships'"
+ *       in normalizeMasterData's arrayKeys. Without both, the load path
+ *       drops the field even when it is correctly written by the save
+ *       path. See storage-schema.js REFACTOR HISTORY.
+ *
  *     - _isEnvelopeLessDataBlob path now sets _legacyEnvelopeLess: true
  *       on the synthetic envelope before calling normalizeMasterData.
  *       Prior revisions wrapped the blob with the current schemaVersion
  *       without any marker, so migration tooling could not distinguish
  *       "legacy save that was wrapped" from "save actually written at
  *       the current version". See LEGACY SAVE MARKERS.
+ *
  *     - _performSave now strips _legacyEnvelopeLess, _yearCoerced, and
  *       _preservedUnknownTopLevel from the serialized envelope before
  *       JSON.stringify. The in-memory window.masterData keeps them (so
  *       post-load inspection sees the load-time state), but the
  *       persisted form does not. See LEGACY SAVE MARKERS.
+ *
  *     - loadMasterData's result gains a warnings: string[] field
  *       surfacing _yearCoerced. Empty when nothing lossy happened.
  *       Existing callers reading { ok, source, error } are unaffected.
  *       See WARNINGS ON LOAD.
+ *
  *     - _handleMasterDataUpdated now clears _lastSaveError after a
  *       successful reload, so getLastSaveError() reflects the most
  *       recent storage-touching operation (which was the reload, not
  *       some prior failed save).
- *     - Header LEGACY SAVE MARKERS and WARNINGS ON LOAD sections added.
- *     - No behavioural change to the load path, save path, debounce
- *       timing, import pipeline, or cross-tab conflict policy.
  * =============================================================================
  */
 
@@ -447,6 +495,28 @@
     }
 
     /**
+     * Pulls canonical domain state into masterData.data before
+     * serializing. Currently pulls RelationshipState; future
+     * closure-backed domains add a pull block here.
+     *
+     * See DOMAIN STATE PULLING in the header.
+     *
+     * @private
+     */
+    function _pullDomainState() {
+        if (!window.masterData || !window.masterData.data) return;
+        if (!window.RelationshipState) return;
+
+        // RelationshipState holds its records in a closure and does not
+        // write to masterData.data directly (its header forbids it).
+        // Pull its current snapshot into the save envelope.
+        if (typeof window.RelationshipState.snapshot === 'function') {
+            window.masterData.data.relationships =
+                window.RelationshipState.snapshot();
+        }
+    }
+
+    /**
      * Performs the synchronous write to localStorage.
      * @private
      * @returns {{ ok: boolean, error?: Error }}
@@ -456,6 +526,12 @@
             if (!window.masterData || !window.masterData.data) {
                 return { ok: false, error: new Error('masterData not initialized') };
             }
+
+            // Pull closure-backed domain state into the save envelope.
+            // Without this, RelationshipState's records never reach the
+            // serialized blob and are lost on every reload. See DOMAIN
+            // STATE PULLING in the header.
+            _pullDomainState();
 
             // Write savedAt onto the live object so subsequent reads of
             // window.masterData see the timestamp. The serialized form
