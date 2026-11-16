@@ -19,6 +19,55 @@
  *   - breaking up and widowing
  *   - one commit per logical operation
  *
+ * UNDERAGE AND AGE-GAP POLICY (CURRENT REVISION)
+ *
+ *   Underage romance is now WARN + PROCEED, not a hard block.
+ *
+ *   For every archetype (casual_dating, one_night_stand, committed):
+ *
+ *     - If either participant is below the archetype's minimum age
+ *       at startYear, the command still creates the record, and the
+ *       success envelope carries:
+ *
+ *           warnings: [{ code: 'UNDERAGE', ... }]
+ *
+ *     - Independently, if the age gap between the participants at
+ *       startYear exceeds AGE_GAP_WARN_YEARS (5), the envelope
+ *       carries:
+ *
+ *           warnings: [{ code: 'AGE_GAP_OVER_5_YEARS', ... }]
+ *
+ *   Both can fire together. warnings is always present on a success
+ *   envelope; it is [] when there is nothing to warn about, so
+ *   callers can read it unconditionally.
+ *
+ *   The decision to warn rather than refuse lives HERE, in the
+ *   command layer, not in romance-rules.js. romance-rules.js remains
+ *   the pure-policy layer: it answers "is this age valid?" and "is
+ *   the age gap large?" as facts. This file decides what to do with
+ *   those facts. That preserves the existing separation and means
+ *   romance-rules.js needs no change for this policy.
+ *
+ *   Affair classification for committed relationships still runs
+ *   through RomanceRules.classifyNewRelationship. Underage does not
+ *   make a committed relationship 'blocked' any more — see
+ *   _committedBlockedReason below, which filters out the underage
+ *   reasons so the classification proceeds. The committed path
+ *   therefore still classifies as legitimate / affair / polyamorous
+ *   and the metadata written is the same as before for the
+ *   non-underage case.
+ *
+ *   Blocking reasons that are NOT underage (same character, missing
+ *   character, already committed, already romantic, cultural
+ *   attribute rejection, invalid attributes) are unchanged and still
+ *   return success: false.
+ *
+ *   The age-gap predicate (_isAgeGapOver5) is intentionally local to
+ *   this file. It is a UX threshold, not romance policy, and does
+ *   not belong on RomanceRules where it would need a bootstrap
+ *   manifest entry. If the threshold ever becomes policy, promote it
+ *   to romance-rules.js in a separate change.
+ *
  * Depends on:
  *   - RomanceRules for policy
  *   - RomanceQueries for existence and facts
@@ -87,13 +136,44 @@
  *   the record being created directly via startCasualDating with a
  *   different archetype.
  *
- * Every command returns { success: true, ... } or
- * { success: false, code, message }. Never throws for domain errors.
+ * RESULT ENVELOPE
+ *
+ *   Every command returns { success: true, ... } or
+ *   { success: false, code, message }. On success, the envelope also
+ *   carries warnings: [] (empty when nothing to warn about). Never
+ *   throws for domain errors.
  *
  * Load order: after relationship-commands.js, romance-rules.js,
  * romance-queries.js. RankRules is optional; if loaded before this
  * module, rank policy reads route through it.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Underage romance is warn-and-proceed for ALL archetypes. The
+ *       three startX functions no longer early-return _fail('UNDERAGE')
+ *       when a participant is below the archetype's minimum age at
+ *       startYear. They create the record and attach an UNDERAGE
+ *       warning to the success envelope.
+ *     - Age gap > AGE_GAP_WARN_YEARS (5) at startYear attaches an
+ *       AGE_GAP_OVER_5_YEARS warning to the success envelope,
+ *       independently of the underage warning. Both can fire.
+ *     - _committedBlockedReason added: filters the underage reasons
+ *       out of RomanceRules.classifyNewRelationship's 'blocked'
+ *       classification so the committed path can warn-and-proceed
+ *       instead of refusing. All other blocking reasons (same
+ *       character, already committed, cultural rejection, invalid
+ *       attributes) still refuse.
+ *     - Result envelopes on success now include warnings: [].
+ *       Callers that ignore it are unaffected; callers that read it
+ *       see [] on the non-warning paths.
+ *     - _isAgeGapOver5 added locally. Not exported, not on
+ *       RomanceRules. See UNDERAGE AND AGE-GAP POLICY above for the
+ *       rationale.
+ *     - No other behavioural change. The affair pipeline, metadata
+ *       builder, attribute gating, breakUp, deathEndsRelationship,
+ *       endAllRomanticForCharacter, and the rank-policy fallback are
+ *       unchanged.
  * =============================================================================
  */
 
@@ -127,6 +207,11 @@
     // section of the module header.
     var DEFAULT_AFFAIR_TYPE = 'secret';
 
+    // Age gap at startYear beyond which a non-blocking warning is
+    // attached to the success envelope. A UX threshold, not policy;
+    // see UNDERAGE AND AGE-GAP POLICY in the module header.
+    var AGE_GAP_WARN_YEARS = 5;
+
     // =========================================================================
     // DEPENDENCY WRAPPERS (fail loud, no fallbacks)
     // =========================================================================
@@ -147,11 +232,19 @@
         return c && typeof c.name === 'string' ? c.name : id;
     }
 
+    /**
+     * Current year.
+     *
+     * time.js exports getCurrentYear. The deprecated getCurrentYearSafe
+     * alias is not present on every build, and requiring it here would
+     * throw on builds that only ship getCurrentYear. This is the same
+     * stale-name bug that relationship-finder-queries.js had.
+     */
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('romance-commands.js: getCurrentYearSafe required');
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error('romance-commands.js: getCurrentYear required');
         }
-        return window.getCurrentYearSafe();
+        return window.getCurrentYear();
     }
 
     function _calculateAge(birthYear, isDeceased, deathYear) {
@@ -174,6 +267,81 @@
         if (typeof window.logEvent === 'function') {
             window.logEvent(category, type, message, subjects);
         }
+    }
+
+    // =========================================================================
+    // WARNINGS
+    //
+    // _collectWarnings builds the warnings array for a would-be creation.
+    // It is called on every success path immediately before the envelope
+    // is returned, and its output is warnings: [] on the no-warning path.
+    //
+    // Warning codes are stable strings. Callers should switch on code,
+    // not on message text.
+    // =========================================================================
+
+    function _isAgeGapOver5(ageA, ageB) {
+        if (typeof ageA !== 'number' || typeof ageB !== 'number') return false;
+        if (isNaN(ageA) || isNaN(ageB)) return false;
+        return Math.abs(ageA - ageB) > AGE_GAP_WARN_YEARS;
+    }
+
+    /**
+     * facts: {
+     *   archetype,            archetype id
+     *   charA, charB,         live character records
+     *   ageA, ageB,           ages at startYear (may be null)
+     *   startYear
+     * }
+     *
+     * Returns [] or an array of { code, message, ... }.
+     */
+    function _collectWarnings(facts) {
+        var warnings = [];
+
+        var minAge = RR.minimumAge(facts.archetype);
+        if (typeof minAge === 'number') {
+            if (!RR.isAgeValid(facts.archetype, facts.ageA)) {
+                warnings.push({
+                    code: 'UNDERAGE',
+                    participant: 'A',
+                    participantId: facts.charA ? facts.charA.id : null,
+                    archetype: facts.archetype,
+                    minimumAge: minAge,
+                    actualAge: facts.ageA,
+                    message: 'Participant A is below the recommended minimum age (' +
+                        minAge + ') for this relationship type.'
+                });
+            }
+            if (!RR.isAgeValid(facts.archetype, facts.ageB)) {
+                warnings.push({
+                    code: 'UNDERAGE',
+                    participant: 'B',
+                    participantId: facts.charB ? facts.charB.id : null,
+                    archetype: facts.archetype,
+                    minimumAge: minAge,
+                    actualAge: facts.ageB,
+                    message: 'Participant B is below the recommended minimum age (' +
+                        minAge + ') for this relationship type.'
+                });
+            }
+        }
+
+        if (_isAgeGapOver5(facts.ageA, facts.ageB)) {
+            warnings.push({
+                code: 'AGE_GAP_OVER_5_YEARS',
+                ageA: facts.ageA,
+                ageB: facts.ageB,
+                ageGap: Math.abs(facts.ageA - facts.ageB),
+                threshold: AGE_GAP_WARN_YEARS,
+                message: 'The age gap (' +
+                    Math.abs(facts.ageA - facts.ageB) +
+                    ' years) exceeds the recommended maximum (' +
+                    AGE_GAP_WARN_YEARS + ').'
+            });
+        }
+
+        return warnings;
     }
 
     // =========================================================================
@@ -241,8 +409,14 @@
         return { success: false, code: code, message: message };
     }
 
+    /**
+     * Success envelope. Always includes warnings: [] (or the supplied
+     * warnings array), so callers can read it unconditionally.
+     */
     function _ok(data) {
-        return Object.assign({ success: true }, data || {});
+        var out = Object.assign({ success: true }, data || {});
+        if (!Array.isArray(out.warnings)) out.warnings = [];
+        return out;
     }
 
     // =========================================================================
@@ -284,6 +458,37 @@
     }
 
     // =========================================================================
+    // COMMITTED BLOCKED-REASON FILTER
+    //
+    // RomanceRules.classifyNewRelationship returns 'blocked' for
+    // underage committed relationships. Under the warn-and-proceed
+    // policy, underage must NOT block. This helper takes the
+    // classification and returns:
+    //
+    //   null                     if the classification is not blocked,
+    //                            OR the only block reasons are
+    //                            underage (i.e. we proceed with a
+    //                            warning).
+    //   <reason string>          if the block is for a non-underage
+    //                            reason and we must refuse.
+    //
+    // The reason string is passed back to the caller's _fail so the
+    // failure envelope carries the original RomanceRules reason.
+    // =========================================================================
+
+    function _committedBlockedReason(classification) {
+        if (!classification || classification.classification !== 'blocked') {
+            return null;
+        }
+        var reason = classification.reason || '';
+        if (reason === 'participant_a_underage' ||
+            reason === 'participant_b_underage') {
+            return null; // underage is warn-only now
+        }
+        return reason || 'blocked';
+    }
+
+    // =========================================================================
     // INTERNAL: BASIC ROMANTIC CREATE
     // =========================================================================
 
@@ -307,6 +512,9 @@
 
     // =========================================================================
     // CASUAL DATING
+    //
+    // Underage and age-gap are warn-only. Both warnings (if any) are
+    // attached to the success envelope.
     // =========================================================================
 
     function startCasualDating(idA, idB, options) {
@@ -328,17 +536,21 @@
 
         var charA = _getCharacter(idA);
         var charB = _getCharacter(idB);
-
-        if (!RR.isAgeValid(CASUAL, _ageAtYear(charA, startYear))) {
-            return _fail('UNDERAGE', 'participant A below minimum age');
-        }
-        if (!RR.isAgeValid(CASUAL, _ageAtYear(charB, startYear))) {
-            return _fail('UNDERAGE', 'participant B below minimum age');
-        }
+        var ageA = _ageAtYear(charA, startYear);
+        var ageB = _ageAtYear(charB, startYear);
 
         if (RoQ.hasActiveRomanticBetween(idA, idB)) {
             return _fail('ALREADY_ROMANTIC', 'active romantic relationship already exists');
         }
+
+        var warnings = _collectWarnings({
+            archetype: CASUAL,
+            charA: charA,
+            charB: charB,
+            ageA: ageA,
+            ageB: ageB,
+            startYear: startYear
+        });
 
         var result = _createSimpleRomantic(CASUAL, idA, idB, startYear, options.notes);
         if (!result.success) return result;
@@ -348,11 +560,16 @@
             ' began casual dating in ' + startYear,
             [charA, charB]);
 
+        result.warnings = warnings;
         return result;
     }
 
     // =========================================================================
     // ONE NIGHT STAND
+    //
+    // Underage and age-gap are warn-only. Both warnings (if any) are
+    // attached to the success envelope. Two commits (create then end);
+    // see COMMIT SEMANTICS in the header.
     // =========================================================================
 
     function startOneNightStand(idA, idB, options) {
@@ -374,13 +591,17 @@
 
         var charA = _getCharacter(idA);
         var charB = _getCharacter(idB);
+        var ageA = _ageAtYear(charA, startYear);
+        var ageB = _ageAtYear(charB, startYear);
 
-        if (!RR.isAgeValid(ONE_NIGHT, _ageAtYear(charA, startYear))) {
-            return _fail('UNDERAGE', 'participant A below minimum age');
-        }
-        if (!RR.isAgeValid(ONE_NIGHT, _ageAtYear(charB, startYear))) {
-            return _fail('UNDERAGE', 'participant B below minimum age');
-        }
+        var warnings = _collectWarnings({
+            archetype: ONE_NIGHT,
+            charA: charA,
+            charB: charB,
+            ageA: ageA,
+            ageB: ageB,
+            startYear: startYear
+        });
 
         var createResult = RC.create({
             participantA: idA,
@@ -417,7 +638,10 @@
             }
         }
 
-        return _ok({ relationship: oneNightProjection || endResult.relationship });
+        return _ok({
+            relationship: oneNightProjection || endResult.relationship,
+            warnings: warnings
+        });
     }
 
     // =========================================================================
@@ -429,6 +653,10 @@
     // When the classification is 'affair', _buildCommittedMetadata
     // writes the initial affair metadata fields, so AffairQueries sees
     // an explicit affairType regardless of which path created the affair.
+    //
+    // Underage is warn-only. _committedBlockedReason filters out the
+    // underage reasons from classifyNewRelationship's 'blocked' result
+    // so the committed path proceeds. All other blocks still refuse.
     //
     // One commit.
     // =========================================================================
@@ -485,9 +713,22 @@
             explicitSecret: !!options.isSecret
         });
 
-        if (classification.classification === 'blocked') {
-            return _fail('BLOCKED', classification.reason);
+        // Underage is warn-only. Any other 'blocked' reason still refuses.
+        // See _committedBlockedReason and the UNDERAGE AND AGE-GAP POLICY
+        // section of the module header.
+        var blockedReason = _committedBlockedReason(classification);
+        if (blockedReason !== null) {
+            return _fail('BLOCKED', blockedReason);
         }
+
+        var warnings = _collectWarnings({
+            archetype: COMMITTED,
+            charA: charA,
+            charB: charB,
+            ageA: aAge,
+            ageB: bAge,
+            startYear: startYear
+        });
 
         var resolved = RR.resolveAttributes({
             classification: classification.classification,
@@ -550,7 +791,8 @@
         return _ok({
             relationship: rel,
             classification: classification.classification,
-            reason: classification.reason
+            reason: classification.reason,
+            warnings: warnings
         });
     }
 
