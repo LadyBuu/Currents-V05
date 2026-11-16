@@ -18,6 +18,29 @@
  *   - Browser APIs: Blob, URL, document, setTimeout, FileReader
  *
  * ICON POLICY: No emojis. No icons.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - importData now calls window.RelationshipState.reload() after
+ *       installing the new masterData and invalidating accessor caches.
+ *       Without this call, imported relationships exist in
+ *       masterData.data.relationships (the canonical save envelope)
+ *       but not in RelationshipState's in-memory closure until the
+ *       next page refresh. The import completes, the UI re-renders
+ *       from CharacterViewModels.buildRomanceModel, and every
+ *       romance/friendship/rivalry/profile edge appears missing even
+ *       though the JSON contained them.
+ *
+ *       RelationshipState.reload() reads masterData.data.relationships
+ *       and calls replaceAll(), which repopulates the closure maps and
+ *       reindexes the byChar / byType / byPair indexes. It is the
+ *       same code path that runs on masterDataUpdated; we call it
+ *       explicitly here because the import path installs masterData
+ *       directly (it does not dispatch masterDataUpdated).
+ *
+ *       Guarded so the call is a no-op if RelationshipState is not
+ *       loaded (older builds, or tests that only exercise export).
  * =============================================================================
  */
 
@@ -251,6 +274,21 @@
                         if (typeof window.invalidateAccessorCaches === 'function') {
                             try { window.invalidateAccessorCaches(); } catch (e) { /* ignore */ }
                         }
+
+                        // Reload closure-backed domain state from the new
+                        // masterData. Without this, imported relationships
+                        // exist in masterData.data.relationships but not in
+                        // RelationshipState's in-memory closure until the
+                        // next page refresh. See REFACTOR HISTORY.
+                        if (window.RelationshipState
+                            && typeof window.RelationshipState.reload === 'function') {
+                            try { window.RelationshipState.reload(); } catch (e) {
+                                // Non-fatal: the import still succeeded and
+                                // the next reload will rebuild the closure
+                                // from masterData.
+                            }
+                        }
+
                         if (typeof window.markDataDirty === 'function') {
                             try { window.markDataDirty(); } catch (e) { /* ignore */ }
                         }
