@@ -17,10 +17,13 @@
  *   1. Current Location    resolved location + raw-field note + birthplace
  *                          read-only. A small note explains the Identity
  *                          tab owns the birthplace editor.
- *   2. Household           current household header + member list.
- *                          Action buttons: Add Member, Rename, Edit
- *                          Details, Transfer, Remove (with history),
- *                          Remove (fix mistake), Details.
+ *   2. Household           current household header + member list, OR
+ *                          an actionable empty state with
+ *                          "+ Create Household" and "Transfer".
+ *                          Action buttons when in a household:
+ *                          Add Member, Rename, Edit Details, Transfer,
+ *                          Remove (with history), Remove (fix mistake),
+ *                          Details.
  *   3. Previous Households Read-only accordion of householdHistory
  *                          entries (joined / left years). Rows are
  *                          informational; clicking a historical
@@ -38,7 +41,12 @@
  *   Every write action delegates to a modal. The tab does not call any
  *   command module directly. Specifically:
  *
- *     Household section
+ *     Household section (empty state — no household)
+ *       Create Household openCreateHouseholdModal(cb)
+ *       Transfer         openTransferCharacterToHouseholdModal(
+ *                        characterId, cb)
+ *
+ *     Household section (populated — in a household)
  *       Add Member       openAddHouseholdMemberModal(householdId, cb,
  *                        { preselectedCharacterId: characterId })
  *       Rename           openRenameHouseholdModal(householdId, cb,
@@ -109,6 +117,7 @@
  *                              not route through a modal)
  *
  * DEPENDENCIES (optional, guarded at call time):
+ *   - openCreateHouseholdModal              Create Household (empty state)
  *   - openHouseholdDetailsModal             Details button
  *   - openAddHouseholdMemberModal           Add Member
  *   - openRenameHouseholdModal              Rename
@@ -135,22 +144,21 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Initial revision (household-tab P8).
- *     - Five collapsible sections: Current Location, Household,
- *       Previous Households, Residences, Moves.
- *     - Every write delegates to the corresponding modal. The only
- *       direct command call is LocationCommands.deleteMove (there is
- *       no delete-move modal).
- *     - Relationship circles on household members.
- *     - Disabled-with-title pattern on every action button whose
- *       backing modal is not loaded.
- *     - householdHistoryStructured flag honoured: the Previous
- *       Households section renders an "unavailable" note when the
- *       projection is still the pre-P1 string-array shape.
- *     - The current-location block distinguishes three states:
- *       resolved, recorded-but-dangling, and no-recorded-location.
- *     - Placeholder for "view household page" click: not offered
- *       because there is no household-page shell.
+ *   Current revision:
+ *     - Household section empty state is now actionable. When the
+ *       character is not in a household, the section renders
+ *       "+ Create Household" (openCreateHouseholdModal) and
+ *       "Transfer" (openTransferCharacterToHouseholdModal) buttons
+ *       instead of a dead _empty(...) message.
+ *     - The populated-state action bar is now built by
+ *       _householdActionsHtml so the empty-state and populated-state
+ *       variants stay in sync if the modal set changes. No behaviour
+ *       change to any existing button.
+ *     - _onCreateHousehold added to the action dispatcher. Same
+ *       disabled-with-title pattern as the other handlers: if
+ *       openCreateHouseholdModal is not loaded, the button renders
+ *       disabled with an explanatory title rather than silently
+ *       doing nothing.
  * =============================================================================
  */
 
@@ -171,6 +179,8 @@
         { key: 'residences',        label: 'Residences',            icon: 'CROWN' },
         { key: 'moves',             label: 'Move History',          icon: 'ARROW_RIGHT' }
     ];
+
+    var HANDLER_KEY = '__locationTabClickHandler';
 
     // =========================================================================
     // 1. SMALL HELPERS
@@ -283,9 +293,6 @@
     // =========================================================================
     // 3. ACTION-BUTTON HELPERS
     // =========================================================================
-    //
-    // Disabled-with-title pattern: any button whose backing modal is not
-    // loaded renders disabled with an explanatory title.
 
     function _actionBtn(action, label, opts) {
         opts = opts || {};
@@ -309,7 +316,7 @@
     }
 
     function _modalAvailable(fnName) {
-        return (window[fnName] && typeof window[fnName] === 'function');
+        return !!(fnName && window[fnName] && typeof window[fnName] === 'function');
     }
 
     function _disabledForMissingModal(fnName, displayName) {
@@ -321,10 +328,6 @@
     // =========================================================================
     // 4. RELATIONSHIP CIRCLE
     // =========================================================================
-    //
-    // The relationship circle is a small colored dot rendered before the
-    // member's name. Colors come from the CharacterViewModels classification
-    // (spouse / blood / relative / null).
 
     var _CIRCLE_COLORS = {
         spouse:   '#c84a4a',
@@ -418,70 +421,45 @@
 
     // ---------- 5b. Household ----------
 
-    function _bodyHousehold(model, characterId) {
-        var h = model.household || {};
-        var members = Array.isArray(model.householdMembers)
-            ? model.householdMembers : [];
-        var circles = (model.relationshipCircles
-            && model.relationshipCircles.byTargetId)
-            ? model.relationshipCircles.byTargetId : {};
+    /**
+     * Empty-state body: the character is not in a household. Offers
+     * "+ Create Household" and "Transfer" so the user has an action
+     * path instead of a dead message. Both go through the disabled-
+     * with-title pattern, so a build without the backing modal renders
+     * the button disabled with an explanatory title (same discipline
+     * as the populated-state action bar).
+     */
+    function _householdEmptyStateHtml(characterId) {
+        var html = _empty(
+            'Not currently in a household. Create one, or transfer into an existing one.'
+        );
 
-        if (h.available === false) {
-            return _unavailable(h.reason || 'Household data is unavailable.');
-        }
-
-        if (!h.householdId) {
-            return _empty(
-                'Not currently in a household. Use "Transfer" to join one.'
-            );
-        }
-
-        var html = '';
-
-        // Header card.
-        html += '<div class="character-tab-section" style="margin-bottom:0.75rem;">' +
-            '<div class="character-tab-section__body">' +
-                '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">' +
-                    '<div>' +
-                        '<div style="font-size:0.85rem;font-weight:600;">' +
-                            _esc(h.householdName || '(unknown household)') +
-                            (h.danglingReference
-                                ? ' <span class="character-tab-note">(deleted)</span>'
-                                : '') +
-                        '</div>' +
-                        '<div style="font-size:0.6rem;color:var(--dim);margin-top:0.125rem;">' +
-                            (h.role ? _esc(h.role) : 'Member') +
-                            (h.isHead
-                                ? ' · <strong style="color:var(--accent);">Head</strong>'
-                                : '') +
-                            (typeof h.memberCount === 'number'
-                                ? ' · ' + _count(h.memberCount, 'member', 'members')
-                                : '') +
-                            (h.currentLocationName
-                                ? ' · ' + _esc(h.currentLocationName)
-                                : '') +
-                            (typeof h.currentNameSince === 'number'
-                                ? ' · named since ' + _year(h.currentNameSince)
-                                : '') +
-                        '</div>' +
-                    '</div>' +
-                '</div>' +
-            '</div>' +
-        '</div>';
-
-        // Members list.
-        if (members.length === 0) {
-            html += _empty('No other members recorded.');
-        } else {
-            html += '<div class="character-tab-subhead">Members (' +
-                members.length + ')</div>';
-            for (var i = 0; i < members.length; i++) {
-                html += _memberRowHtml(members[i], circles, characterId);
-            }
-        }
-
-        // Action buttons.
         html += '<div class="character-tab-actions">';
+
+        var createDisabled = _disabledForMissingModal(
+            'openCreateHouseholdModal', 'Create Household');
+        html += _actionBtn('create-household', '+ Create Household', {
+            primary: true,
+            disabled: createDisabled !== null,
+            disabledTitle: createDisabled
+        });
+
+        var transferDisabled = _disabledForMissingModal(
+            'openTransferCharacterToHouseholdModal', 'Transfer');
+        html += _actionBtn('transfer-character', 'Transfer', {
+            disabled: transferDisabled !== null,
+            disabledTitle: transferDisabled
+        });
+
+        html += '</div>';
+        return html;
+    }
+
+    /**
+     * Populated-state action bar.
+     */
+    function _householdActionsHtml(h, characterId) {
+        var html = '<div class="character-tab-actions">';
 
         var addDisabled = _disabledForMissingModal(
             'openAddHouseholdMemberModal', 'Add Member');
@@ -547,6 +525,71 @@
         });
 
         html += '</div>';
+        return html;
+    }
+
+    function _bodyHousehold(model, characterId) {
+        var h = model.household || {};
+        var members = Array.isArray(model.householdMembers)
+            ? model.householdMembers : [];
+        var circles = (model.relationshipCircles
+            && model.relationshipCircles.byTargetId)
+            ? model.relationshipCircles.byTargetId : {};
+
+        if (h.available === false) {
+            return _unavailable(h.reason || 'Household data is unavailable.');
+        }
+
+        if (!h.householdId) {
+            return _householdEmptyStateHtml(characterId);
+        }
+
+        var html = '';
+
+        // Header card.
+        html += '<div class="character-tab-section" style="margin-bottom:0.75rem;">' +
+            '<div class="character-tab-section__body">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">' +
+                    '<div>' +
+                        '<div style="font-size:0.85rem;font-weight:600;">' +
+                            _esc(h.householdName || '(unknown household)') +
+                            (h.danglingReference
+                                ? ' <span class="character-tab-note">(deleted)</span>'
+                                : '') +
+                        '</div>' +
+                        '<div style="font-size:0.6rem;color:var(--dim);margin-top:0.125rem;">' +
+                            (h.role ? _esc(h.role) : 'Member') +
+                            (h.isHead
+                                ? ' · <strong style="color:var(--accent);">Head</strong>'
+                                : '') +
+                            (typeof h.memberCount === 'number'
+                                ? ' · ' + _count(h.memberCount, 'member', 'members')
+                                : '') +
+                            (h.currentLocationName
+                                ? ' · ' + _esc(h.currentLocationName)
+                                : '') +
+                            (typeof h.currentNameSince === 'number'
+                                ? ' · named since ' + _year(h.currentNameSince)
+                                : '') +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+
+        // Members list.
+        if (members.length === 0) {
+            html += _empty('No other members recorded.');
+        } else {
+            html += '<div class="character-tab-subhead">Members (' +
+                members.length + ')</div>';
+            for (var i = 0; i < members.length; i++) {
+                html += _memberRowHtml(members[i], circles, characterId);
+            }
+        }
+
+        // Action buttons.
+        html += _householdActionsHtml(h, characterId);
 
         return html;
     }
@@ -577,8 +620,6 @@
 
         var isSelf = member.characterId === subjectId;
 
-        // Clicking another member selects them in the sidebar (identity
-        // switch). Clicking the current character is a no-op.
         var nameLink = isSelf
             ? '<strong>' + _esc(display) + '</strong> <span class="character-tab-note">(you)</span>'
             : '<a href="#" class="character-row__name" ' +
@@ -620,8 +661,6 @@
         var history = Array.isArray(model.householdHistory)
             ? model.householdHistory : [];
 
-        // Exclude the current household (already shown in the Household
-        // section). The current entry has leftYear === null.
         var past = [];
         for (var i = 0; i < history.length; i++) {
             var e = history[i];
@@ -634,7 +673,6 @@
             return _empty('No prior household memberships recorded.');
         }
 
-        // Newest first.
         past.sort(function (a, b) {
             var ja = typeof a.joinedYear === 'number' ? a.joinedYear : -Infinity;
             var jb = typeof b.joinedYear === 'number' ? b.joinedYear : -Infinity;
@@ -701,7 +739,6 @@
             }
         }
 
-        // Footer actions.
         html += '<div class="character-tab-actions">';
 
         var assignDisabled = _disabledForMissingModal(
@@ -794,7 +831,6 @@
         if (moves.length === 0) {
             html += _empty('No moves recorded.');
         } else {
-            // Newest first in the display; the model is ascending.
             for (var i = moves.length - 1; i >= 0; i--) {
                 html += _moveRowHtml(moves[i], characterId);
             }
@@ -943,17 +979,19 @@
     // =========================================================================
 
     function _wire(container, characterId, model) {
-        // Collapsible headers.
         var headers = container.querySelectorAll('.character-tab-section__header');
         for (var i = 0; i < headers.length; i++) {
             headers[i].addEventListener('click', _onToggleSection);
         }
 
-        // Delegated click handler for actions + character links.
-        container.addEventListener('click', function (e) {
+        if (container[HANDLER_KEY]) {
+            container.removeEventListener('click', container[HANDLER_KEY]);
+            container[HANDLER_KEY] = null;
+        }
+
+        var handler = function (e) {
             var target = e.target;
 
-            // Character name link in a member row: re-select.
             var nameLink = target.closest
                 ? target.closest('a.character-row__name[data-character-id]')
                 : null;
@@ -974,12 +1012,15 @@
             var action = btn.getAttribute('data-action');
             if (!action) return;
 
-            if (action === 'toggle-section') return; // handled above
+            if (action === 'toggle-section') return;
             if (btn.disabled) return;
 
             e.preventDefault();
             _dispatchAction(action, btn, characterId, model);
-        });
+        };
+
+        container[HANDLER_KEY] = handler;
+        container.addEventListener('click', handler);
     }
 
     function _onToggleSection(e) {
@@ -1014,7 +1055,8 @@
 
     function _dispatchAction(action, btn, characterId, model) {
         switch (action) {
-            // Household
+            case 'create-household':
+                _onCreateHousehold(); return;
             case 'add-household-member':
                 _onAddHouseholdMember(btn, characterId); return;
             case 'rename-household':
@@ -1029,8 +1071,6 @@
                 _onRemoveHouseholdMember(btn, false); return;
             case 'household-details':
                 _onHouseholdDetails(btn); return;
-
-            // Residences
             case 'view-residence':
                 _onViewResidence(btn); return;
             case 'edit-residence':
@@ -1041,15 +1081,12 @@
                 _onAssignResidence(btn); return;
             case 'create-residence':
                 _onCreateResidence(btn); return;
-
-            // Moves
             case 'add-move':
                 _onAddMove(characterId); return;
             case 'edit-move':
                 _onEditMove(btn, characterId); return;
             case 'delete-move':
                 _onDeleteMove(btn, characterId, model); return;
-
             default:
                 if (typeof console !== 'undefined' && console.warn) {
                     console.warn('[location-tab] unknown action: ' + action);
@@ -1060,6 +1097,16 @@
     // =========================================================================
     // 8. ACTION IMPLEMENTATIONS — HOUSEHOLD
     // =========================================================================
+
+    function _onCreateHousehold() {
+        if (typeof window.openCreateHouseholdModal !== 'function') {
+            _toast('Create Household modal is not available.', 'error');
+            return;
+        }
+        window.openCreateHouseholdModal(function () {
+            _refresh();
+        });
+    }
 
     function _onAddHouseholdMember(btn, characterId) {
         if (typeof window.openAddHouseholdMemberModal !== 'function') {
@@ -1237,7 +1284,6 @@
         var idx = parseInt(btn.getAttribute('data-move-index'), 10);
         if (!Number.isInteger(idx) || idx < 0) return;
 
-        // Look up the move for the confirm message.
         var move = null;
         if (model && Array.isArray(model.moves)) {
             for (var i = 0; i < model.moves.length; i++) {
@@ -1279,7 +1325,6 @@
                 return;
             }
 
-            // Persist once, via the location domain's persist boundary.
             if (typeof window.LocationCommands.persist === 'function') {
                 var persistResult = null;
                 try {
@@ -1296,8 +1341,6 @@
                             ? persistResult.reason
                             : 'unknown'),
                         'warning');
-                    // The in-memory mutation is applied; refresh so the
-                    // tab reflects the current state.
                     _refresh();
                     return;
                 }
