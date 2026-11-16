@@ -81,9 +81,18 @@
  *
  *   This is the same class of bug modals-friendship.js fixed (see its
  *   TITLE / CONFIRM HTML CONTRACT header). Both files now use the
- *   identical pattern: icon raw, text escaped. The body innerHTML
- *   blocks (listHtml, existingHtml, etc.) already interpolate icons
- *   raw — this brings the title into line with them.
+ *   identical pattern: icon raw, text escaped.
+ *
+ * WARNINGS FROM THE COMMAND
+ *
+ *   RomanceCommands no longer refuses underage romance. It warns. The
+ *   success envelope carries warnings: [{ code, message, ... }] for
+ *   underage participants and for age gaps over 5 years. The modal
+ *   reads result.warnings after a successful dispatch and toasts each
+ *   one with type 'warning', BEFORE the success toast — warnings are
+ *   the more important message, and the success toast confirms the
+ *   write. Callers that ignore result.warnings are unaffected;
+ *   callers that read it see [] on the no-warning path.
  *
  * PREVIOUS REVISIONS (FIXED)
  *
@@ -761,6 +770,24 @@
                               'Failed to create relationship';
                     _toast(msg, 'error');
                     return false;
+                }
+
+                // RomanceCommands (and any future command that adopts
+                // the same envelope) may attach non-blocking warnings
+                // to a successful result. Surface each one BEFORE the
+                // success toast — warnings are the more important
+                // message, and the success toast confirms the write.
+                // See WARNINGS FROM THE COMMAND in the module header.
+                if (Array.isArray(result.warnings) && result.warnings.length > 0) {
+                    for (var w = 0; w < result.warnings.length; w++) {
+                        var warning = result.warnings[w];
+                        var warningText = warning && warning.message
+                            ? warning.message
+                            : (warning && warning.code
+                                ? String(warning.code)
+                                : 'Relationship created with a warning.');
+                        _toast(warningText, 'warning');
+                    }
                 }
 
                 _toast('Relationship created', 'success');
