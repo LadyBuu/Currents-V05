@@ -49,8 +49,8 @@
  *   This matches how the modal body already handles icons (see the
  *   listHtml / existingHtml blocks in openFriendshipModal: they
  *   interpolate infoIcon / warningIcon directly into the innerHTML
- *   string, without escaping), and how modals-relationship.js now
- *   builds its title.
+ *   string, without escaping), and how modals-relationship.js builds
+ *   its title.
  *
  * VIEW → EDIT HANDOFF
  *
@@ -83,6 +83,28 @@
  *   to keep the label in sync would violate the module's "UI only,
  *   no direct state access" contract, so the two counts are allowed
  *   to differ; the toast is the truth.
+ *
+ * BATCH FAILURE SURFACING
+ *
+ *   createMutualFriendships is all-or-nothing at preparation time:
+ *   if ANY pair fails validation, NO records are inserted and the
+ *   result is _ok({ created: [], failed: [...], committed: false }).
+ *   That is success: true with an empty created list and a populated
+ *   failed list. The onConfirm below must not conflate that with a
+ *   successful creation of zero pairs (which is the legitimate
+ *   all-pairs-already-friends case). It checks failedCount > 0 and
+ *   toasts the first failure as an error, then returns false to keep
+ *   the modal open so the user can correct their selection.
+ *
+ * EDIT DISPATCH
+ *
+ *   openEditFriendshipModal dispatches through
+ *   FriendshipCommands.updateFriendship(aId, bId, patch), added in
+ *   the same revision as this file. The command validates strength
+ *   against FriendshipRules.isValidStrength, clamps via
+ *   clampStrength, shallow-merges metadata, and delegates to
+ *   RelationshipCommands.update. One commit. The modal no longer
+ *   calls RelationshipCommands.update directly.
  *
  * Load order: after friendship-rules.js, friendship-queries.js,
  * friendship-commands.js, relationship-ui-metadata.js.
@@ -182,40 +204,6 @@
         if (typeof strength !== 'number') return 'unknown';
         if (typeof FR.strengthTier !== 'function') return 'unknown';
         return FR.strengthTier(strength) || 'unknown';
-    }
-
-    /**
-     * Dispatches an update to a friendship record.
-     *
-     * Preferred surface: FriendshipCommands.updateFriendship, when
-     * present. That surface validates strength against
-     * FriendshipRules.isValidStrength and clamps via clampStrength
-     * before delegating to RelationshipCommands.update.
-     *
-     * Fallback: RelationshipCommands.update, the structural primitive.
-     * Used only when the FriendshipCommands method has not landed yet
-     * in this build. The fallback still clamps strength (the caller
-     * already did) but skips the domain-level validation. When the
-     * command lands, delete the fallback branch; no call site changes.
-     *
-     * The bootstrap does not list updateFriendship under
-     * REQUIRED_METHODS.FriendshipCommands, so its absence is not a
-     * load-time failure.
-     */
-    function _updateFriendshipRecord(relationshipId, patch, aId, bId) {
-        if (window.FriendshipCommands &&
-            typeof window.FriendshipCommands.updateFriendship === 'function') {
-            return window.FriendshipCommands.updateFriendship(aId, bId, patch);
-        }
-        if (!window.RelationshipCommands ||
-            typeof window.RelationshipCommands.update !== 'function') {
-            return {
-                success: false,
-                code: 'NO_COMMAND',
-                message: 'No command available to update friendship'
-            };
-        }
-        return window.RelationshipCommands.update(relationshipId, patch);
     }
 
     // -------------------------------------------------------------------------
@@ -355,6 +343,21 @@
 
                 if (!result.success) {
                     _toast(result.message || 'Failed to create friendships', 'error');
+                    return false;
+                }
+
+                // createMutualFriendships is all-or-nothing at
+                // preparation time: any per-pair failure returns
+                // success: true with committed: false and a populated
+                // failed[]. Surface the first failure and keep the
+                // modal open so the user can correct their selection.
+                // See BATCH FAILURE SURFACING in the module header.
+                if (typeof result.failedCount === 'number' && result.failedCount > 0) {
+                    var firstFailure = result.failed && result.failed[0];
+                    var failureMsg = firstFailure && firstFailure.message
+                        ? firstFailure.message
+                        : 'One or more friendship pairs could not be prepared';
+                    _toast(failureMsg, 'error');
                     return false;
                 }
 
@@ -601,19 +604,19 @@
                     return false;
                 }
 
-                // _updateFriendshipRecord prefers FriendshipCommands.updateFriendship
-                // (domain-validated) and falls back to RelationshipCommands.update
-                // (structural) when the command is not present in this build.
-                // See the helper's docblock.
+                // Dispatch through FriendshipCommands.updateFriendship,
+                // added in the same revision as this file. The command
+                // validates strength, clamps via clampStrength,
+                // shallow-merges metadata, and delegates to
+                // RelationshipCommands.update. See EDIT DISPATCH in
+                // the module header.
                 var patch = {
-                    startYear: newYear,
-                    metadata: {
-                        strength: FR.clampStrength(newStrength),
-                        notes: newNotes
-                    }
+                    strength: FR.clampStrength(newStrength),
+                    notes: newNotes,
+                    startYear: newYear
                 };
-                var result = _updateFriendshipRecord(
-                    rel.relationshipId, patch, aId, bId
+                var result = window.FriendshipCommands.updateFriendship(
+                    aId, bId, patch
                 );
 
                 if (!result.success) {
