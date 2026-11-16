@@ -7,32 +7,23 @@
  * Canonical shape of the persisted masterData envelope.
  *
  * CHANGE LOG:
- *   - Previous revision added governmentDepartments / governmentTypes /
- *     governmentHistory to both the default factory and the normalizer
- *     whitelist. Fresh installs no longer crash on the first government
- *     write, and existing saves preserve those arrays across reloads.
+ *   - Previous revisions added governmentDepartments / governmentTypes /
+ *     governmentHistory, religions, and cultures to both the default
+ *     factory and the normalizer whitelist. Each was a fix for the same
+ *     class of bug: the write side was fine, but normalizeMasterData
+ *     dropped the field on load, the orchestrator repaired it to [], and
+ *     the next save wrote [] back to storage, silently erasing every
+ *     record the user created.
  *
- *   - That same revision added religions to both places. Without it,
- *     normalizeMasterData dropped data.religions on every load; the
- *     orchestrator's defensive repair then set it to []; the next save
- *     wrote [] back to storage; every religion the user created was
- *     silently lost on the next page reload.
+ *   - Current revision adds relationships to both places. RelationshipState
+ *     holds every romance, friendship, rivalry, and professional edge in a
+ *     closure and signals mutations via markDataDirty(). The storage layer
+ *     pulls RelationshipState.snapshot() into masterData.data.relationships
+ *     before serializing (see storage.js DOMAIN STATE PULLING). Without
+ *     "relationships" in the default factory and arrayKeys, the load path
+ *     drops the field on every reload, and every relationship is lost.
  *
- *   - Current revision adds cultures to both places, for the exact same
- *     reason. Without it, normalizeMasterData drops data.cultures on
- *     every load; culture-bootstrap's _verifyCanonical repairs it to [];
- *     the next save writes [] back; every culture the user created is
- *     silently lost on the next page reload. The write side was always
- *     fine; the read side was dropping it.
- *
- *     Also adds cultureLocationAssociations as an empty top-level array.
- *     Nothing in the culture subsystem writes to it today; the culture's
- *     own location associations live inline on the culture record
- *     (culture.locations). The field is declared so that if the culture
- *     domain ever promotes associations to a top-level collection, the
- *     storage layer already preserves it. Removing this line is safe if
- *     the association surface never appears; keeping it costs one empty
- *     array on disk.
+ *     Same bug class as religions / cultures. Same fix.
  * =============================================================================
  */
 
@@ -171,6 +162,17 @@
                 educationalInstitutions: [],
                 parentChildEdges: [],
 
+                // ─── Relationship domain collection ───────────────────────
+                // relationships: the canonical top-level array for every
+                // non-family relationship edge (romance, friendship,
+                // rivalry, professional). RelationshipState reads and
+                // writes this array via the save pull in
+                // storage.js::_performSave. Without it here and in
+                // arrayKeys, the normalizer drops the field on load and
+                // every relationship is lost on the next reload — same
+                // class of bug the cultures/religions entries fixed.
+                relationships: [],
+
                 // ─── Children domain collections ──────────────────────────
                 pregnancyRecords: [],
                 surrogacyArrangements: [],
@@ -210,18 +212,19 @@
             'governmentTypes', 'governments', 'households',
             'householdPositions', 'householdAssignments',
             'religions',
-            // FIX: cultures was never in the arrayKeys whitelist.
-            // normalizeMasterData therefore dropped data.cultures on
-            // every load; culture-bootstrap repaired it to []; the next
-            // save wrote [] back; every saved culture was lost on the
-            // next page reload. Same class of bug the religions entry
-            // fixed. See the header.
             'cultures',
             'cultureLocationAssociations',
             'governmentDepartments', 'governmentHistory',
             'enterprises', 'enterpriseTypes',
             'residences', 'disasters', 'eventLog',
             'educationalInstitutions', 'parentChildEdges',
+            // FIX: relationships was never in the arrayKeys whitelist.
+            // normalizeMasterData therefore dropped data.relationships
+            // on every load; the next save wrote [] back; every
+            // relationship the user created was silently lost on the
+            // next page reload. Same class of bug the religions and
+            // cultures entries fixed. See the header.
+            'relationships',
             'pregnancyRecords', 'surrogacyArrangements', 'adoptionRecords'
         ];
         for (var i = 0; i < arrayKeys.length; i++) {
