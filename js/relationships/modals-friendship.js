@@ -27,24 +27,28 @@
  *   prevents cross-modal ID collisions when one modal opens over
  *   another.
  *
- * PREVIOUS REVISION (FIXED IN THIS ONE)
+ * TITLE / CONFIRM HTML CONTRACT
  *
- *   Every call site used `title:` / `content:`. modals-core.js reads
- *   ONLY `titleHtml:` / `contentHtml:`. Result: all four friendship
- *   modals rendered with "Modal" as their title and empty body —
- *   nothing to interact with. This is the same class of bug that
- *   modals-relationship.js, modals-role-select.js, and
- *   modals-apprenticeship.js had; all four were fixed in the same
- *   pass.
+ *   modals-core.js accepts titleHtml / confirmText / cancelText.
+ *   Those fields are inserted as HTML (via innerHTML), not text.
+ *   An SVG icon may be prepended directly. Only the plain-text
+ *   portion of the string may be escaped.
  *
- *   The bulk-create and edit modals used setTimeout(50) +
- *   document.getElementById to wire the strength slider and the "End
- *   Friendship" button. Converted to onMount + modalEl.querySelector.
+ *   The prior revision escaped the WHOLE string (icon + text) with
+ *   _escape(...). escapeHtml turns '<svg>' into '&lt;svg&gt;', and
+ *   modals-core then sets the string as textContent, which surfaced
+ *   the raw SVG markup as literal text in the title bar and on the
+ *   confirm button. See the screenshot in the bug report.
  *
- *   onConfirm handlers used document.getElementById; all scoped to
- *   modalEl.querySelector.
+ *   The current revision prepends the icon raw and escapes only the
+ *   text:
  *
- *   getCurrentYearSafe (deprecated alias in time.js) → getCurrentYear.
+ *       titleHtml: icon + ' ' + _escape('Create Friendships')
+ *
+ *   This matches how the modal body already handles icons (see the
+ *   listHtml / existingHtml blocks in openFriendshipModal: they
+ *   interpolate infoIcon / warningIcon directly into the innerHTML
+ *   string, without escaping).
  *
  * Load order: after friendship-rules.js, friendship-queries.js,
  * friendship-commands.js, relationship-ui-metadata.js.
@@ -134,9 +138,6 @@
 
     // -------------------------------------------------------------------------
     // BULK FRIENDSHIP CREATION
-    //
-    // openFriendshipModal(characters, onSuccess)
-    // characters: array of character projections with { id, name, surname, ... }
     // -------------------------------------------------------------------------
 
     function openFriendshipModal(characters, onSuccess) {
@@ -222,13 +223,14 @@
             '</div>';
 
         _openModal({
-            titleHtml: _escape((infoIcon ? infoIcon + ' ' : '') + 'Create Friendships'),
+            // Icon (SVG) is raw. Text portion is escaped. Modals-core
+            // inserts titleHtml as innerHTML, not textContent. See
+            // TITLE / CONFIRM HTML CONTRACT in the module header.
+            titleHtml: (infoIcon ? infoIcon + ' ' : '') + _escape('Create Friendships'),
             contentHtml: html,
-            confirmText: (checkIcon ? checkIcon + ' ' : '') + 'Create ' + validPairs.length,
+            confirmText: (checkIcon ? checkIcon + ' ' : '') + _escape('Create ' + validPairs.length),
             cancelText: 'Cancel',
             onMount: function(modalEl) {
-                // Scoped to the modal element — not document. See
-                // MODAL LIFECYCLE in the module header.
                 var slider = modalEl.querySelector('#fndStartStrength');
                 var display = modalEl.querySelector('#fndStartStrengthDisplay');
                 if (slider && display) {
@@ -330,7 +332,6 @@
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">' +
                     'Recent Events</label>' +
                 '<div style="max-height:160px;overflow-y:auto;background:var(--bg3);padding:8px;border-radius:6px;">';
-            // Show last 8
             var start = Math.max(0, events.length - 8);
             for (var i = events.length - 1; i >= start; i--) {
                 var e = events[i];
@@ -374,7 +375,7 @@
             notesHtml;
 
         _openModal({
-            titleHtml: _escape((friendshipIcon ? friendshipIcon + ' ' : '') + 'Friendship Details'),
+            titleHtml: (friendshipIcon ? friendshipIcon + ' ' : '') + _escape('Friendship Details'),
             contentHtml: html,
             confirmText: 'Edit',
             cancelText: 'Close',
@@ -455,9 +456,9 @@
             '</div>';
 
         _openModal({
-            titleHtml: _escape((editIcon ? editIcon + ' ' : '') + 'Edit Friendship'),
+            titleHtml: (editIcon ? editIcon + ' ' : '') + _escape('Edit Friendship'),
             contentHtml: html,
-            confirmText: (checkIcon ? checkIcon + ' ' : '') + 'Save',
+            confirmText: (checkIcon ? checkIcon + ' ' : '') + _escape('Save'),
             cancelText: 'Cancel',
             onMount: function(modalEl) {
                 var slider = modalEl.querySelector('#fndEditStrength');
@@ -535,7 +536,6 @@
 
         var currentYear = _getCurrentYear();
 
-        // Reason options built from END_REASONS
         var reasonLabels = {
             drifted_apart:   'Drifted Apart',
             betrayal:        'Betrayal',
@@ -591,9 +591,9 @@
             '</div>';
 
         _openModal({
-            titleHtml: _escape((crossIcon ? crossIcon + ' ' : '') + 'End Friendship'),
+            titleHtml: (crossIcon ? crossIcon + ' ' : '') + _escape('End Friendship'),
             contentHtml: html,
-            confirmText: (crossIcon ? crossIcon + ' ' : '') + 'Confirm End',
+            confirmText: (crossIcon ? crossIcon + ' ' : '') + _escape('Confirm End'),
             cancelText: 'Cancel',
             onConfirm: function(modalEl) {
                 var yearEl = modalEl.querySelector('#fndEndYear');
