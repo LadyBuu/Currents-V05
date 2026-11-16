@@ -34,11 +34,68 @@
  *   onCancel(root)
  *     Called when the modal closes WITHOUT a confirmed outcome.
  *
- * DEPENDENCIES (REQUIRED):
- *   - formatting.js (escapeHtml)
- *   - icons.js      (Icons)
+ * TITLE / BUTTON HTML CONTRACT (CURRENT REVISION):
+ *   titleHtml, contentHtml, confirmText, and cancelText are ALL
+ *   inserted as HTML. They are NOT escaped by this module.
+ *
+ *   Callers who pass user-supplied data must escape the user portions
+ *   themselves via window.escapeHtml (or window._escapeHtml). Callers
+ *   who pass an SVG icon + a plain-text label must NOT escape the
+ *   icon — that would turn "<svg>" into "&lt;svg&gt;" and the icon
+ *   would render as literal text.
+ *
+ *   The correct pattern for a caller that prepends an icon to a
+ *   plain-text label is:
+ *
+ *       confirmText: iconSvg + ' ' + window.escapeHtml('Create 1')
+ *
+ *   NOT:
+ *
+ *       confirmText: window.escapeHtml(iconSvg + ' Create 1')
+ *
+ *   Prior revisions escaped confirmText and cancelText inside this
+ *   module. That broke every caller that prepended an icon: the SVG
+ *   markup was escaped on the way in, and modals-core then inserted
+ *   it into the button's innerHTML where it rendered as text instead
+ *   of as an SVG element. The visible symptom was a raw
+ *   "<svg class="icon-svg"...>...</svg> Create N" string in the
+ *   confirm button. See REFACTOR HISTORY below.
+ *
+ *   titleHtml and contentHtml have always been inserted raw. The
+ *   current revision brings confirmText and cancelText into the same
+ *   contract. Callers that passed plain, trusted strings (e.g.
+ *   "Confirm", "Cancel", "Create 1") are unaffected.
  *
  * ICON POLICY: Uses SVG from icons.js. No emojis.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - confirmText and cancelText are no longer escaped with
+ *       window.escapeHtml before insertion into the footer buttons.
+ *       They are now treated as HTML, matching titleHtml and
+ *       contentHtml. See TITLE / BUTTON HTML CONTRACT above.
+ *
+ *       Prior revisions escaped both. Callers that prepended an SVG
+ *       icon (from icons.js) to a plain-text label saw the raw SVG
+ *       markup in the button, because the escape ran before
+ *       insertion and the browser treated the escaped markup as
+ *       text. This affected every household modal, the friendship
+ *       modal, and the adoption modals that use the
+ *       "icon + escaped-label" pattern.
+ *
+ *     - Added TITLE / BUTTON HTML CONTRACT to the header, documenting
+ *       the pattern so callers know to escape only the plain-text
+ *       portion when prepending an icon.
+ *
+ *     - No behavioural change to the modal stack, escape handling,
+ *       focus management, close semantics, or any dialog helper. The
+ *       only observable difference is that confirmText / cancelText
+ *       containing HTML are now rendered as HTML instead of as
+ *       literal text.
+ *   Earlier revisions:
+ *     - Accept title / content as aliases for titleHtml / contentHtml
+ *       (modals-government-*.js calls the short form).
  * =============================================================================
  */
 
@@ -82,7 +139,7 @@
             throw new Error('openModal: options must be an object');
         }
 
-        // FIX: accept title/content as aliases for titleHtml/contentHtml.
+        // Accept title/content as aliases for titleHtml/contentHtml.
         // Every modals-government-*.js calls with `title` and `content`.
         // Without this alias, the body is always empty and the modal
         // renders as a shell with only the header and footer.
@@ -135,6 +192,11 @@
         var titleId = modalId + '-title';
         modal.setAttribute('aria-labelledby', titleId);
 
+        // titleHtml, contentHtml, confirmText, and cancelText are all
+        // inserted as HTML. See TITLE / BUTTON HTML CONTRACT in the
+        // header. Callers that pass user data must escape the user
+        // portions themselves; callers that prepend an SVG icon must
+        // NOT escape the icon.
         modal.innerHTML =
             '<div class="modal-overlay"></div>' +
             '<div class="modal-container">' +
@@ -148,10 +210,10 @@
                 ((onConfirm || cancelText) ?
                     '<div class="modal-footer">' +
                         (cancelText
-                            ? '<button type="button" class="btn cancel-btn">' + window.escapeHtml(cancelText) + '</button>'
+                            ? '<button type="button" class="btn cancel-btn">' + cancelText + '</button>'
                             : '') +
                         (onConfirm
-                            ? '<button type="button" class="btn primary confirm-btn">' + window.escapeHtml(confirmText) + '</button>'
+                            ? '<button type="button" class="btn primary confirm-btn">' + confirmText + '</button>'
                             : '') +
                     '</div>'
                     : '') +
