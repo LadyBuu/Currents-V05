@@ -12,6 +12,8 @@
  *   - changing strength (increase / decrease)
  *   - recording friendship events (append + apply impact)
  *   - ending friendships
+ *   - updating an existing friendship's strength, notes, and start year
+ *     (updateFriendship — added in this revision; see below)
  *
  * COMMIT SEMANTICS
  *
@@ -25,6 +27,7 @@
  *   recordFriendshipEvent            one commit (single RC.update) when
  *                                    the event does not end the
  *                                    friendship; two commits when it does
+ *   updateFriendship                 one commit (single RC.update)
  *   removeFriendship                 one commit (single RC.end)
  *
  *   The two-commit paths exist because the "ends the friendship" case
@@ -36,6 +39,20 @@
  *   writes target the same record; a crash between them leaves the
  *   friendship at strength 0 but still ongoing, which is recoverable by
  *   calling end() again.
+ *
+ * UPDATEFRIENDSHIP
+ *
+ *   Added in this revision. UI callers (modals-friendship.js) dispatch
+ *   through this method instead of calling RelationshipCommands.update
+ *   directly. The command validates strength against
+ *   FriendshipRules.isValidStrength, clamps via clampStrength, merges
+ *   the strength and notes into metadata (shallow, matching the rest
+ *   of the domain), and delegates to RelationshipCommands.update.
+ *
+ *   The method is not in relationships-bootstrap.js's
+ *   REQUIRED_METHODS.FriendshipCommands, so its absence was never a
+ *   load-time failure. Its presence is now the canonical dispatch path
+ *   for edits.
  *
  * Depends on:
  *   - FriendshipRules for policy
@@ -57,6 +74,24 @@
  * Load order: after relationship-commands.js, friendship-rules.js,
  * friendship-queries.js.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _getCurrentYear: replaced getCurrentYearSafe (stale alias) with
+ *       getCurrentYear. Same fix as relationship-finder-queries.js and
+ *       romance-commands.js; the deprecated alias is not present on
+ *       every build and would have thrown on the first call to any
+ *       command that needs a year.
+ *     - updateFriendship added. Validates strength against
+ *       FriendshipRules.isValidStrength, clamps via clampStrength,
+ *       shallow-merges metadata, delegates to RC.update. One commit.
+ *       Callers (modals-friendship.js) can now dispatch edits through
+ *       this method instead of calling RelationshipCommands.update
+ *       directly, restoring the mutation boundary the rest of the file
+ *       already follows.
+ *     - Header gained UPDATEFRIENDSHIP section.
+ *   Earlier revisions: see the COMMIT SEMANTICS table and the
+ *   two-commit rationale above.
  * =============================================================================
  */
 
@@ -107,11 +142,16 @@
         return c && typeof c.name === 'string' ? c.name : id;
     }
 
+    /**
+     * Current year. time.js exports getCurrentYear (not the deprecated
+     * getCurrentYearSafe alias, which is not present on every build).
+     * Same fix as relationship-finder-queries.js and romance-commands.js.
+     */
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('friendship-commands.js: getCurrentYearSafe required');
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error('friendship-commands.js: getCurrentYear required');
         }
-        return window.getCurrentYearSafe();
+        return window.getCurrentYear();
     }
 
     function _logEvent(category, type, message, subjects) {
@@ -267,6 +307,12 @@
     // If State-level validation rejects the batch (structurally invalid
     // record, duplicate id), NO records are inserted — the batch is
     // all-or-nothing.
+    //
+    // The all-or-nothing failure path returns _ok with committed: false
+    // and a populated failed[] array. Callers MUST check both `success`
+    // and `committed` (or `failedCount > 0`) to surface failures to the
+    // user; the modal does this — see modals-friendship.js's
+    // openFriendshipModal onConfirm.
     //
     // options: { startYear?, strength?, notes? }
     // =========================================================================
@@ -577,7 +623,89 @@
     }
 
     // =========================================================================
-    // 8. REMOVE FRIENDSHIP
+    // 8. UPDATE FRIENDSHIP
+    //
+    // Edits the strength, notes, and start year of an active friendship.
+    // This is the canonical dispatch path for edits (modals-friendship.js
+    // calls this instead of RelationshipCommands.update directly).
+    //
+    // Strength is validated against FriendshipRules.isValidStrength and
+    // clamped via clampStrength. Metadata is a shallow merge, matching
+    // the rest of the domain. startYear is passed through to RC.update
+    // unchanged (RC.update applies the endYear >= startYear check).
+    //
+    // One commit (single RC.update).
+    //
+    // patch: {
+    //   strength?,   number   — clamped via FR.clampStrength
+    //   notes?,      string   — merged into metadata.notes
+    //   startYear?   number   — passed to RC.update as startYear
+    // }
+    // =========================================================================
+
+    /**
+     * updateFriendship(idA, idB, patch)
+     *
+     * Returns { success: true, relationship } on success.
+     * Returns { success: false, code, message } on any domain error.
+     */
+    function updateFriendship(idA, idB, patch) {
+        if (typeof idA !== 'string' || typeof idB !== 'string') {
+            return _fail('MISSING_ID', 'both character ids required');
+        }
+        if (!patch || typeof patch !== 'object') {
+            return _fail('MISSING_PATCH', 'patch object required');
+        }
+
+        var rel = FQ.getActiveFriendshipBetween(idA, idB);
+        if (!rel) return _fail('NOT_FRIENDS', 'no active friendship');
+
+        var rcPatch = {};
+
+        if (patch.strength !== undefined) {
+            if (typeof patch.strength !== 'number' ||
+                !FR.isValidStrength(patch.strength)) {
+                return _fail(
+                    'INVALID_STRENGTH',
+                    'strength must be a number in [' +
+                    FR.STRENGTH_MIN + ', ' + FR.STRENGTH_MAX + ']'
+                );
+            }
+            // Shallow-merge strength into metadata, matching the rest
+            // of the domain (metadata is authoritative for friendship
+            // strength, not a top-level field).
+            rcPatch.metadata = { strength: FR.clampStrength(patch.strength) };
+        }
+
+        if (patch.notes !== undefined) {
+            if (typeof patch.notes !== 'string') {
+                return _fail('INVALID_NOTES', 'notes must be a string');
+            }
+            rcPatch.metadata = Object.assign(
+                {},
+                rcPatch.metadata || {},
+                { notes: patch.notes }
+            );
+        }
+
+        if (patch.startYear !== undefined) {
+            if (typeof patch.startYear !== 'number' ||
+                isNaN(patch.startYear)) {
+                return _fail('INVALID_START_YEAR', 'startYear must be a number');
+            }
+            rcPatch.startYear = patch.startYear;
+        }
+
+        var result = RC.update(rel.relationshipId, rcPatch);
+        if (!result.success) return result;
+
+        return _ok({
+            relationship: FQ.getActiveFriendshipBetween(idA, idB)
+        });
+    }
+
+    // =========================================================================
+    // 9. REMOVE FRIENDSHIP
     //
     // Ends the active friendship. Uses the standard end path with the
     // caller's endYear and reason. Once ended, the record is historical;
@@ -630,7 +758,7 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.FriendshipCommands = {
@@ -639,6 +767,7 @@
         increaseFriendshipStrength: increaseFriendshipStrength,
         decreaseFriendshipStrength: decreaseFriendshipStrength,
         recordFriendshipEvent: recordFriendshipEvent,
+        updateFriendship: updateFriendship,
         removeFriendship: removeFriendship
     };
 
