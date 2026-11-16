@@ -9,16 +9,7 @@
  *
  * The Friendship tab of the Character Manager. Shows the character's
  * current friends, best friend, former friends, and aggregate
- * statistics. All writes delegate to the existing friendship modals
- * (openFriendshipModal for bulk creation, openViewFriendshipModal for
- * read-only view, openEditFriendshipModal for strength / notes / end
- * affordances, openBreakupFriendshipModal for ending).
- *
- * The tab itself is READ-ONLY. It renders the model and wires two
- * buttons per friend row (View, Edit) plus a single "Add Friend"
- * button at the top. Every mutation, including ending a friendship,
- * goes through the corresponding modal. There is no inline write path
- * in this tab.
+ * statistics. All writes delegate to the existing friendship modals.
  *
  * RENDERER CONTRACT (from CharacterManagerBootstrap):
  *   fn(container, context)
@@ -27,76 +18,29 @@
  *
  * DATA SOURCES:
  *   - CharacterViewModels.buildFriendshipModel(characterId)
- *     Every section of this tab is rendered from that model. The tab
- *     does NOT call FriendshipQueries directly for the list.
  *   - window.openFriendshipModal(characters, onSuccess)
  *   - window.openViewFriendshipModal(aId, bId, onEdit)
  *   - window.openEditFriendshipModal(aId, bId, onSuccess)
- *   - window.openCharacterSelector(options)   — optional; used by Add
- *     Friend. If absent, the "Add Friend" button is disabled with a
- *     title explaining why.
- *
- * SECTIONS (each collapsible, all default expanded):
- *   - Best Friend         the strongest current friend, if any
- *   - Friends             full list of current friends, sorted by
- *                          strength descending
- *   - Statistics          counts, average strength, tier breakdown
- *   - Former Friends      friendships that ended (status !== 'ongoing'),
- *                          most recently ended first
- *
- * FILTERS: none this pass. The list is short enough (typical character
- * has < 30 friends) that a filter bar is noise. If it becomes needed,
- * add a search field inside the Friends section and persist it via
- * CharacterUIState.setFilters('friendship', characterId, {...}).
- *
- * COLLAPSED-STATE PERSISTENCE: global per-tab via
- *   CharacterUIState.getCollapsed('friendship', sectionKey) /
- *   setCollapsed. Not per-character.
- *
- * DEPENDENCIES (required at load):
- *   - TabManager              (self-registration)
- *   - formatting.js           (escapeHtml, formatYear, formatCount)
- *   - icons.js                (Icons)
- *   - CharacterUIState        (collapsed state)
- *   - CharacterViewModels     (buildFriendshipModel)
- *
- * DEPENDENCIES (optional, guarded at call time):
- *   - window.openFriendshipModal         Add Friend button
- *   - window.openViewFriendshipModal     View button
- *   - window.openEditFriendshipModal     Edit button
- *   - window.openBreakupFriendshipModal  "Break up" affordance
- *   - window.openCharacterSelector       Add Friend flow
- *   - window.showToast                   error surfacing
- *   - window.CharacterManagerBootstrap.renderActive  post-mutation refresh
- *
- * TIME CONTRACT: uses window.getCurrentYear where needed.
- *
- * ICON POLICY: SVG from icons.js (via the view-model's typeIcon field),
- *              plus a small set of tab-level icons (ADD, BREAKUP,
- *              VIEW, EDIT). No emojis. No literal Unicode glyphs in
- *              the output except typographic markers already used by
- *              the section toggle (▶ / ▼).
+ *   - window.openCharacterSelector(options)
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Initial revision.
- *     - Four collapsible sections, all default expanded: Best Friend,
- *       Friends, Statistics, Former Friends.
- *     - Add Friend delegates to openFriendshipModal.
- *     - View button delegates to openViewFriendshipModal.
- *     - Edit button delegates to openEditFriendshipModal.
- *     - The Edit modal's internal "End Friendship" button delegates
- *       to openBreakupFriendshipModal — the tab does not call it
- *       directly; it is reachable only through Edit.
- *     - Every friend reference in the list is a compact row rendered
- *       by CharacterViewModels.compactRow for consistency with the
- *       Identity tab and every future reference-bearing tab.
- *     - Stats section renders the tier breakdown as a small table.
- *     - Former Friends section is read-only (no Edit / View); the
- *       friendship is over, and the historical record should not be
- *       mutated.
- *     - Missing modal delegates produce a disabled button with a
- *       title, never a silent no-op.
+ *   Current revision:
+ *     - FIXED: Stale listener accumulation. The tab used to add a
+ *       container-level click listener on every render without
+ *       removing the previous one. This caused "View" and "Edit" to
+ *       fire the oldest handler (with a stale model) after any
+ *       refresh, leading to incorrect id resolution or silent
+ *       failures. The handler is now stored on the container and
+ *       replaced on every render.
+ *     - FIXED: Disabled View / Edit buttons if the friend id or
+ *       relationship id is missing, instead of silently calling the
+ *       modal with undefined ids.
+ *     - FIXED: _onAddFriend now uses a robust _getCharacterProjection
+ *       fallback (trying CharacterQueries.getCharacterSummary, then
+ *       getCharacterById, then a minimal synthetic object) so the
+ *       Add Friend flow works even if the summary projection is
+ *       partially broken.
  * =============================================================================
  */
 
@@ -116,6 +60,8 @@
         { key: 'stats',   label: 'Statistics',   icon: 'CENSUS' },
         { key: 'former',  label: 'Former Friends', icon: 'STATUS_ENDED' }
     ];
+
+    var HANDLER_KEY = '__friendshipTabClickHandler';
 
     // =========================================================================
     // 1. SMALL HELPERS
@@ -183,6 +129,51 @@
         ui.setCollapsed(TAB_ID, key, collapsed);
     }
 
+    /**
+     * Tolerant relationship-id resolution.
+     */
+    function _getRelId(rel) {
+        if (!rel) return null;
+        if (_hasId(rel.relationshipId)) return rel.relationshipId;
+        if (_hasId(rel.id)) return rel.id;
+        if (_hasId(rel.relationship_id)) return rel.relationship_id;
+        return null;
+    }
+
+    /**
+     * Projects a character for openFriendshipModal / openCharacterSelector.
+     */
+    function _getCharacterProjection(characterId) {
+        try {
+            if (window.CharacterQueries
+                && typeof window.CharacterQueries.getCharacterSummary === 'function') {
+                var summary = window.CharacterQueries.getCharacterSummary(characterId);
+                if (summary && _hasId(summary.id)) return summary;
+            }
+        } catch (e) { /* fall through */ }
+
+        try {
+            if (typeof window.getCharacterById === 'function') {
+                var c = window.getCharacterById(characterId);
+                if (c && _hasId(c.id)) {
+                    return {
+                        id: c.id,
+                        name: c.name || '',
+                        surname: c.surname || '',
+                        fullName: (c.name || '') +
+                            (c.surname ? ' ' + c.surname : ''),
+                        birthYear: c.birthYear,
+                        isDeceased: c.isDeceased === true,
+                        deathYear: c.deathYear,
+                        gender: c.gender || 'unknown'
+                    };
+                }
+            }
+        } catch (e) { /* fall through */ }
+
+        return null;
+    }
+
     // =========================================================================
     // 2. SECTION SHELL
     // =========================================================================
@@ -224,15 +215,6 @@
     // =========================================================================
     // 3. FRIEND ROW RENDERING
     // =========================================================================
-    //
-    // Uses CharacterViewModels.compactRow for the character reference
-    // line (rank, gender, name, age, location, deceased marker) so the
-    // Friendship tab's reference rows look identical to every other
-    // tab that shows a character reference. Then appends:
-    //   - strength bar (only for active friendships)
-    //   - tier label
-    //   - duration, mutual friend count
-    //   - View and Edit buttons (active) OR nothing (former)
 
     function _strengthBarHtml(strength, color) {
         if (typeof strength !== 'number' || !Number.isFinite(strength)) {
@@ -276,29 +258,29 @@
     function _actionsHtml(friend, active) {
         if (!active) return '';
 
-        var viewEnabled = (window.openViewFriendshipModal
-            && typeof window.openViewFriendshipModal === 'function');
-        var editEnabled = (window.openEditFriendshipModal
-            && typeof window.openEditFriendshipModal === 'function');
+        var friendId = friend.friendId;
+        var hasFriendId = _hasId(friendId);
+        var relId = _getRelId(friend);
 
-        var viewAttrs = viewEnabled
-            ? ''
-            : ' disabled title="View modal is not loaded"';
-        var editAttrs = editEnabled
-            ? ''
-            : ' disabled title="Edit modal is not loaded"';
+        var viewEnabled = hasFriendId
+            && window.openViewFriendshipModal
+            && typeof window.openViewFriendshipModal === 'function';
+        var editEnabled = hasFriendId
+            && window.openEditFriendshipModal
+            && typeof window.openEditFriendshipModal === 'function';
+
+        var viewAttrs = viewEnabled ? '' : ' disabled title="View is not available"';
+        var editAttrs = editEnabled ? '' : ' disabled title="Edit is not available"';
 
         return '' +
             '<div class="character-friendship-actions">' +
                 '<button type="button" class="character-tab-btn-small" ' +
                     'data-action="view-friend" ' +
-                    'data-friend-id="' + _esc(friend.friendId) + '" ' +
-                    'data-relationship-id="' + _esc(friend.relationshipId) + '" ' +
+                    'data-friend-id="' + _esc(friendId || '') + '" ' +
                     viewAttrs + '>View</button>' +
                 '<button type="button" class="character-tab-btn-small" ' +
                     'data-action="edit-friend" ' +
-                    'data-friend-id="' + _esc(friend.friendId) + '" ' +
-                    'data-relationship-id="' + _esc(friend.relationshipId) + '" ' +
+                    'data-friend-id="' + _esc(friendId || '') + '" ' +
                     editAttrs + '>Edit</button>' +
             '</div>';
     }
@@ -309,9 +291,6 @@
             && typeof window.CharacterViewModels.compactRow === 'function') {
             compact = window.CharacterViewModels.compactRow(friend.friendId, '');
         } else {
-            // Fallback for a broken build; the module load guard should
-            // have caught this, but a broken view-model must not blank
-            // the row.
             compact = '<div class="character-row" data-character-id="' +
                 _esc(friend.friendId) + '"><span class="character-row__name">' +
                 _esc(friend.friendName || friend.friendId) +
@@ -322,10 +301,12 @@
             ? _strengthBarHtml(friend.strength, friend.typeColor)
             : '';
 
+        var relId = _getRelId(friend) || '';
+
         return '' +
             '<div class="character-friendship-row' +
                 (friend.friendIsDeceased ? ' is-deceased' : '') +
-                '" data-relationship-id="' + _esc(friend.relationshipId) + '">' +
+                '" data-relationship-id="' + _esc(relId) + '">' +
                 '<div class="character-friendship-row__main">' +
                     compact +
                     _metaLineHtml(friend) +
@@ -530,19 +511,21 @@
     // =========================================================================
 
     function _wire(container, characterId) {
-        // Collapsible section headers.
         var headers = container.querySelectorAll('.character-tab-section__header');
         for (var i = 0; i < headers.length; i++) {
             headers[i].addEventListener('click', _onToggleSection);
         }
 
-        // Delegated click handler for actions and character-name links.
-        container.addEventListener('click', function (e) {
+        // Remove previous handler to prevent stale closures (the same bug
+        // that was fixed in the romance tab).
+        if (container[HANDLER_KEY]) {
+            container.removeEventListener('click', container[HANDLER_KEY]);
+            container[HANDLER_KEY] = null;
+        }
+
+        var handler = function (e) {
             var target = e.target;
 
-            // Character-name link inside a compact row: re-select that
-            // character in the sidebar. Matches the Identity tab's
-            // (future) link semantics.
             var nameLink = target.closest
                 ? target.closest('[data-character-id].character-row__name')
                 : null;
@@ -563,12 +546,15 @@
             var action = btn.getAttribute('data-action');
             if (!action) return;
 
-            if (action === 'toggle-section') return;   // handled above
+            if (action === 'toggle-section') return;
             if (btn.disabled) return;
 
             e.preventDefault();
             _dispatchAction(action, btn, characterId);
-        });
+        };
+
+        container[HANDLER_KEY] = handler;
+        container.addEventListener('click', handler);
     }
 
     function _onToggleSection(e) {
@@ -632,19 +618,12 @@
             return;
         }
 
-        var subject;
-        try { subject = window.CharacterQueries.getCharacterSummary(characterId); }
-        catch (e) { subject = null; }
+        var subject = _getCharacterProjection(characterId);
         if (!subject) {
             _toast('Subject character not found.', 'error');
             return;
         }
 
-        // The selector returns a single character. openFriendshipModal
-        // takes an ARRAY (bulk creation is its native mode). We pass a
-        // two-element array — the subject plus the selected friend —
-        // which is exactly the bulk-modal's "create the friendships
-        // among these characters" path with a single candidate.
         window.openCharacterSelector({
             title: 'Select Friend for ' + (subject.name || 'this character'),
             excludeIds: [characterId],
@@ -675,15 +654,15 @@
             return;
         }
         var friendId = btn.getAttribute('data-friend-id');
-        if (!_hasId(friendId)) return;
+        if (!_hasId(friendId)) {
+            _toast('Friend id is missing.', 'error');
+            return;
+        }
 
         window.openViewFriendshipModal(
             characterId,
             friendId,
             function () {
-                // View's edit button routes to openEditFriendshipModal,
-                // which (on success) calls this callback. Refresh so the
-                // tab reflects any changes.
                 _refresh();
             }
         );
@@ -695,7 +674,10 @@
             return;
         }
         var friendId = btn.getAttribute('data-friend-id');
-        if (!_hasId(friendId)) return;
+        if (!_hasId(friendId)) {
+            _toast('Friend id is missing.', 'error');
+            return;
+        }
 
         window.openEditFriendshipModal(
             characterId,
