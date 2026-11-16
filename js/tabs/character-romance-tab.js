@@ -8,41 +8,110 @@
  * LOCATION: js/tabs/character-romance-tab.js
  *
  * The Romance tab of the Character Manager. Shows the character's
- * current romantic relationships, former (widowed or ended)
- * relationships, and aggregate statistics. All writes delegate to the
- * relationship domain.
+ * current romantic relationships, active affairs, former (widowed or
+ * ended) relationships, and aggregate statistics. All writes delegate
+ * to the relationship domain.
  *
  * WRITE AFFORDANCES
  *
- *   - Add Relationship    → openCharacterSelector then
- *                            openRelationshipModal with
- *                            context.defaultType = 'committed'
+ *   Header
+ *     Add Relationship   openCharacterSelector then
+ *                        openRelationshipModal(defaultType: 'committed')
+ *                        — a legitimate (non-affair) relationship
+ *     Create Affair      openCharacterSelector then
+ *                        AffairCommands.createAffair(...)
+ *                        — an illegitimate (affair) relationship; the
+ *                        SECRET attribute is what makes it an affair
+ *                        (RomanceRules.isAffair is the sole definition)
  *
- *   - Break up            → confirmDialog + RomanceCommands.breakUp
+ *   Current Relationships (committed / casual / one-night, active)
+ *     View               read-only info modal
+ *     Edit               openEditRomanceModal (this file)
+ *     Break up           confirmDialog + RomanceCommands.breakUp
  *
- *   - View                → read-only info modal (openModal)
+ *   Affairs (active affairs — committed + SECRET)
+ *     View               read-only info modal (includes discovery state)
+ *     Edit               openEditRomanceModal (affair-aware: discovery
+ *                        state is read-only, Affair Type + Public
+ *                        Behavior are editable)
+ *     Reveal             draw a roll + AffairCommands.rollDiscovery;
+ *                        hidden once the affair is discovered
+ *     End                confirmDialog + AffairCommands.endAffair
  *
- *   - Edit                → openEditRomanceModal (this file). Edits
- *                            Start Year, Notes, and (for committed
- *                            relationships) Attributes. Dispatches
- *                            through RelationshipCommands.update for
- *                            dates/notes and through
- *                            RomanceCommands.addCommittedAttribute /
- *                            removeCommittedAttribute for attributes,
- *                            so the romance-rules validation and
- *                            cultural gating run on every attribute
- *                            change.
+ *   Former Relationships (widowed / ended — includes ended affairs)
+ *     View               read-only info modal
+ *                        (no Edit / Break up / Reveal / End)
  *
- *                            The edit modal has NO status field.
- *                            Status transitions route through the
- *                            dedicated commands (breakUp,
- *                            deathEndsRelationship, etc.), each of
- *                            which consults its domain's transition
- *                            table. The "End Relationship" button in
- *                            the edit modal hands off to the existing
- *                            break-up confirm flow — same pattern
- *                            modals-friendship.js uses for "End
- *                            Friendship" inside its edit modal.
+ * EDIT DISPATCH
+ *
+ *   The edit modal edits exactly the fields that can be changed
+ *   without a status transition:
+ *
+ *     - Start Year    (all romance archetypes): RelationshipCommands.update
+ *     - Notes         (all romance archetypes): RelationshipCommands.update
+ *     - Attributes    (committed only):         RomanceCommands.addCommittedAttribute
+ *                                               / removeCommittedAttribute,
+ *                                               one call per diff
+ *     - Affair Type   (affair only):            RelationshipCommands.update
+ *                                               (metadata.affairType)
+ *     - Public Behavior (affair only):          RelationshipCommands.update
+ *                                               (metadata.publicBehavior)
+ *
+ *   Discovery state (discovered / discoveryYear / discoveryCircumstances /
+ *   discovererId) is NEVER editable here. It is written only by
+ *   AffairCommands.rollDiscovery, so the affair-rules policy is the
+ *   single source of truth for "was it discovered".
+ *
+ *   Status is never editable here. Status transitions route through the
+ *   dedicated commands (RomanceCommands.breakUp,
+ *   RomanceCommands.deathEndsRelationship, AffairCommands.endAffair,
+ *   etc.), each of which consults its domain's transition table.
+ *
+ * REVEAL DISPATCH
+ *
+ *   The Reveal button draws one roll from window.Random.next (or the
+ *   randomNext fallback) and passes it to AffairCommands.rollDiscovery
+ *   as options.roll. This means the tab controls the RNG stream: the
+ *   roll is deterministic against a fixed seed for playtest, and the
+ *   affair command never implicitly consumes a draw the caller was
+ *   relying on being consumed elsewhere.
+ *
+ *   If window.Random is not loaded, the Reveal button renders disabled
+ *   with an explanatory title. The rest of the tab still works.
+ *
+ * DISCOVERY IN THE UI
+ *
+ *   An active affair renders with:
+ *
+ *     - An "Affair" badge (same as the previous round) so it is
+ *       visually distinct from a legitimate committed relationship
+ *       with the same type label.
+ *     - A discovery status line under the meta line:
+ *
+ *         "Discovery: not yet discovered"        (if !discovered)
+ *         "Discovered: Year N — <circumstances>" (if discovered)
+ *
+ *     - A "Reveal" button when !discovered, an "End" button always.
+ *       The Reveal button is disabled if window.Random is missing.
+ *
+ *   A discovered affair's Reveal button is not rendered; only End is.
+ *   Re-rolling a discovered affair is not supported — that is a
+ *   domain-level decision, not a UI one, and the affair command itself
+ *   returns { alreadyDiscovered: true } if it is reached again.
+ *
+ * SECTION ORDER
+ *
+ *   1. Current Relationships   active legitimate romance
+ *   2. Affairs                 active affairs (committed + SECRET)
+ *   3. Former Relationships    widowed + ended (both legitimate + affairs)
+ *   4. Statistics              counts, institutions
+ *
+ *   The Affairs section is hidden when it would be empty AND the
+ *   subject has no active affairs. It is shown when the subject has
+ *   active affairs, or when the model's affairs list failed to load
+ *   (so the user sees the error, not a silently empty section). An
+ *   empty Affairs section with "No active affairs" is shown when the
+ *   subject has none — the section header's count is 0.
  *
  * RENDERER CONTRACT (from CharacterManagerBootstrap):
  *   fn(container, context)
@@ -51,21 +120,21 @@
  *
  * DATA SOURCES:
  *   - CharacterViewModels.buildRomanceModel(characterId)
- *   - window.RomanceCommands.breakUp(relationshipId, options)
- *   - window.RomanceCommands.addCommittedAttribute / removeCommittedAttribute
- *   - window.RelationshipCommands.update(relationshipId, patch)
- *   - window.RomanceQueries.getById(relationshipId) — for the edit modal's
- *     raw record (needed because the projection carries attributes as a
- *     slice, not the record; the edit modal builds the form from the
- *     projection but confirms against the live record so concurrent
- *     changes are detected via the command's own validation)
- *   - window.openRelationshipModal(subject, selected, onSuccess, context)
- *   - window.openCharacterSelector(options)
- *
- * SECTIONS (each collapsible, all default expanded):
- *   - Current Relationships   active romance
- *   - Former Relationships    widowed + ended (displayLabel distinguishes)
- *   - Statistics              counts, institutions
+ *     (the model now also carries `affairs` and `affairsError`; see
+ *     the view-models one-liner below for the required additive
+ *     change. If the model does not carry affairs, the tab derives
+ *     them from model.current by filtering isAffair === true. This
+ *     fallback means the tab works with the current view-models
+ *     unchanged; the additive view-models change is cosmetic.)
+ *   - window.RomanceCommands.breakUp / addCommittedAttribute /
+ *     removeCommittedAttribute
+ *   - window.AffairCommands.createAffair / rollDiscovery / endAffair
+ *   - window.RelationshipCommands.update
+ *   - window.RomanceQueries / window.RelationshipQueries (live-record
+ *     reads for the edit modal)
+ *   - window.openRelationshipModal / window.openCharacterSelector
+ *   - window.openModal / closeTopModal
+ *   - window.Random.next / window.randomNext (Reveal roll)
  *
  * COLLAPSED-STATE PERSISTENCE: global per-tab via
  *   CharacterUIState.getCollapsed('romance', sectionKey) /
@@ -79,15 +148,21 @@
  *   - CharacterViewModels     (buildRomanceModel)
  *
  * DEPENDENCIES (optional, guarded at call time):
- *   - window.RomanceCommands                  breakUp, addCommittedAttribute,
+ *   - window.RomanceCommands                  breakUp,
+ *                                              addCommittedAttribute,
  *                                              removeCommittedAttribute
- *   - window.RelationshipCommands.update      edit dispatch (dates/notes)
- *   - window.RomanceQueries                   live-record read in edit modal
+ *   - window.AffairCommands                   createAffair, rollDiscovery,
+ *                                              endAffair
+ *   - window.RelationshipCommands.update      edit dispatch
+ *   - window.RelationshipQueries.getById      live-record read in edit modal
+ *   - window.RomanceQueries                   not required (edit modal
+ *                                              uses RelationshipQueries)
+ *   - window.Random / randomNext              Reveal roll
  *   - window.openRelationshipModal            Add Relationship
- *   - window.openCharacterSelector            Add Relationship
+ *   - window.openCharacterSelector            Add Relationship / Create Affair
  *   - window.openModal / closeTopModal        all modals
  *   - window.showToast                        error surfacing
- *   - window.confirmDialog                    Break up confirmation
+ *   - window.confirmDialog                    Break up / End Affair
  *   - window.CharacterManagerBootstrap.renderActive  post-mutation refresh
  *
  * TIME CONTRACT: uses window.getCurrentYear where needed.
@@ -101,69 +176,57 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - Affairs are integrated into the tab. New section between
+ *       Current and Former. New Create Affair header button. Per-affair
+ *       actions: View, Edit, Reveal, End.
+ *
+ *     - Model affairs list: prefers model.affairs if the view model
+ *       exposes it (additive change documented in the view-models
+ *       one-liner below); falls back to filtering model.current by
+ *       isAffair === true, which works with the current view-models
+ *       unchanged. So the tab works in both configurations.
+ *
+ *     - Affair-aware edit modal: editable Affair Type and Public
+ *       Behavior; read-only discovery state (year, circumstances,
+ *       discoverer). Discovery state is written only by
+ *       AffairCommands.rollDiscovery; editable fields dispatch through
+ *       RelationshipCommands.update (metadata) and
+ *       RomanceCommands.addCommittedAttribute / removeCommittedAttribute
+ *       (attributes), same as the non-affair path.
+ *
+ *     - Reveal button draws one roll from window.Random.next (or
+ *       randomNext) and passes it to AffairCommands.rollDiscovery as
+ *       options.roll. This keeps the tab in control of the RNG stream
+ *       (deterministic against a fixed seed for playtest) and prevents
+ *       the affair command from implicitly consuming a draw the caller
+ *       was relying on being consumed elsewhere.
+ *
+ *     - Every affair command is guarded at call time (see
+ *       AFFAIR COMMAND AVAILABILITY). Missing commands render disabled
+ *       buttons with explanatory titles, not silent no-ops. Matches
+ *       the location tab's disabled-with-title discipline.
+ *
+ *     - Statistics section gains "Active affairs" (already present in
+ *       the stats projection as activeAffairs) and a "Discovered
+ *       affairs" count derived from the affair list.
+ *
+ *   Previous revision (this file):
  *     - FIXED: "Relationship not found." toast on View after any
- *       refresh.
- *
- *       The tab used to register a container-level click listener on
- *       every render (`_wire` called `container.addEventListener(
- *       'click', ...)` unconditionally). Each listener closed over the
- *       `model` passed to that particular render. After any
- *       `_refresh()` (add relationship, break up, edit), the tab
- *       rendered again and added ANOTHER listener. Clicking View then
- *       fired the OLDEST listener first. That listener's captured
- *       `model` was the pre-refresh projection, which by then was out
- *       of sync with the DOM (which had been replaced by the newest
- *       render). `_findEntry` on the stale model missed the
- *       relationship and toasted "Relationship not found.", even
- *       though the relationship was visible on screen and present in
- *       the newest model.
- *
- *       `_wire` now removes the previous container handler before
- *       adding the next one, via a per-container handler reference.
- *       The toggle-section listeners are per-button and are destroyed
- *       by `container.innerHTML = body` on every render, so they do
- *       not accumulate and need no cleanup.
- *
+ *       refresh. The tab used to register a container-level click
+ *       listener on every render and never remove it; N listeners
+ *       accumulated, each holding a stale model snapshot. Clicking
+ *       View fired the oldest one first and missed. _wire now removes
+ *       the previous handler before installing the next one.
  *     - Added _getRelId(rel), used by _actionsHtml, _romanceRowHtml,
- *       and _findEntry. Tolerant of `relationshipId` / `id` /
- *       `relationship_id`. The projection (romance-queries.js::_project)
- *       carries `relationshipId: record.id`, so the primary name works
- *       on the current build; the fallbacks are belt-and-braces
- *       against a future _project change and against any
- *       _enrichRomance path that drops the field.
- *
- *     - Added Edit affordance (phase 2 of the header note in prior
- *       revisions):
- *
- *         * New "Edit" button in _actionsHtml next to View and Break
- *           up.
- *         * New _onEditRomance handler.
- *         * New openEditRomanceModal(relationshipId, onSuccess): a real
- *           editable form (Start Year, Notes, Attributes for committed
- *           only, End Relationship secondary button). Dispatches
- *           through RelationshipCommands.update for dates/notes and
- *           RomanceCommands.addCommittedAttribute /
- *           removeCommittedAttribute for attributes (one call per diff,
- *           so the romance-rules validation and cultural gating run on
- *           every attribute change). Reports each sub-result; does not
- *           close on failure.
- *         * View modal footer gains an Edit button alongside Close, so
- *           both entry points reach the edit form.
- *
- *       The edit modal has NO status field by design: status changes
- *       route through the dedicated commands (breakUp,
- *       deathEndsRelationship, etc.), each of which consults its
- *       domain's transition table. See the EDIT MODAL section.
- *
- *     - Header rewritten to document the edit flow, the id resolution,
- *       and the listener-stack fix.
+ *       and _findEntry. Tolerant of relationshipId / id /
+ *       relationship_id.
+ *     - Added Edit affordance: Edit button, _onEditRomance, and
+ *       openEditRomanceModal. Real editable form for Start Year,
+ *       Notes, Attributes (committed only). Status not editable.
+ *     - View modal footer gained an Edit button.
  *
  *   Initial revision (phase 1):
  *     - Three collapsible sections; Add Relationship; Break up; View.
- *     - Read-only view modal (phase 1); phase 2 adds dedicated view /
- *       edit modals (this revision ships phase 2's edit half; the
- *       affairs section and matchmaking affordances remain future
- *       work).
  * =============================================================================
  */
 
@@ -179,6 +242,7 @@
 
     var SECTIONS = [
         { key: 'current', label: 'Current Relationships', icon: 'HEART' },
+        { key: 'affairs', label: 'Affairs',               icon: 'LOCK' },
         { key: 'former',  label: 'Former Relationships',  icon: 'STATUS_ENDED' },
         { key: 'stats',   label: 'Statistics',            icon: 'CENSUS' }
     ];
@@ -187,6 +251,13 @@
         casual_dating:   'Casual',
         one_night_stand: 'One Night',
         committed:       'Committed'
+    };
+
+    var AFFAIR_TYPE_LABEL = {
+        secret:    'Secret',
+        open:      'Open',
+        emotional: 'Emotional',
+        one_night: 'One Night'
     };
 
     // Attribute order for the edit form, matching the create modal's
@@ -285,8 +356,7 @@
      * primary name works. The fallbacks exist for two reasons:
      *
      *   1. Defensive against a future _project change that returns
-     *      `id` instead of `relationshipId`, or that stops returning
-     *      either (the _enrichRomance guard only checks partnerId).
+     *      `id` instead of `relationshipId`.
      *   2. Defensive against any view-model change that reshapes the
      *      entry without re-exporting relationshipId.
      *
@@ -301,14 +371,83 @@
         return null;
     }
 
+    /**
+     * True when the relationship is an affair.
+     *
+     * The model's entry carries isAffair (from the projection). We
+     * prefer that flag; if it is absent we check for the SECRET
+     * attribute, which is the canonical definition per
+     * RomanceRules.isAffair. This keeps the tab working even if the
+     * model's isAffair field is dropped in a future revision.
+     */
+    function _isAffair(rel) {
+        if (!rel) return false;
+        if (rel.isAffair === true) return true;
+        return Array.isArray(rel.attributes)
+            && rel.attributes.indexOf('secret') !== -1;
+    }
+
     // =========================================================================
-    // 2. SECTION SHELL
+    // 2. AFFAIR COMMAND AVAILABILITY
+    // =========================================================================
+    //
+    // Every affair command is optional at load (AffairCommands is not in
+    // relationships-bootstrap.js's REQUIRED_MODULES). The tab guards each
+    // call at call time and renders disabled buttons with explanatory
+    // titles when a command is missing.
+
+    function _affairCommandsAvailable() {
+        return window.AffairCommands
+            && typeof window.AffairCommands === 'object';
+    }
+
+    function _canCreateAffair() {
+        return _affairCommandsAvailable()
+            && typeof window.AffairCommands.createAffair === 'function'
+            && window.openCharacterSelector
+            && typeof window.openCharacterSelector === 'function';
+    }
+
+    function _canRevealAffair() {
+        if (!_affairCommandsAvailable()) return false;
+        if (typeof window.AffairCommands.rollDiscovery !== 'function') return false;
+        if (window.Random && typeof window.Random.next === 'function') return true;
+        if (typeof window.randomNext === 'function') return true;
+        return false;
+    }
+
+    function _canEndAffair() {
+        return _affairCommandsAvailable()
+            && typeof window.AffairCommands.endAffair === 'function';
+    }
+
+    function _canRollRandom() {
+        if (window.Random && typeof window.Random.next === 'function') return true;
+        if (typeof window.randomNext === 'function') return true;
+        return false;
+    }
+
+    function _drawRoll() {
+        if (window.Random && typeof window.Random.next === 'function') {
+            return window.Random.next();
+        }
+        if (typeof window.randomNext === 'function') {
+            return window.randomNext();
+        }
+        throw new Error('randomness service required');
+    }
+
+    // =========================================================================
+    // 3. SECTION SHELL
     // =========================================================================
 
-    function _sectionHtml(section, bodyHtml) {
+    function _sectionHtml(section, bodyHtml, count) {
         var collapsed = _isCollapsed(section.key);
         var cls = 'character-tab-section' + (collapsed ? '' : ' is-expanded');
         var ariaExpanded = collapsed ? 'false' : 'true';
+        var countHtml = (typeof count === 'number')
+            ? '<span class="character-family-section-count">' + count + '</span>'
+            : '';
         return '' +
             '<div class="' + cls + '" data-section="' + _esc(section.key) + '">' +
                 '<button type="button" class="character-tab-section__header" ' +
@@ -324,6 +463,7 @@
                     '<span class="character-tab-section__title">' +
                         _esc(section.label) +
                     '</span>' +
+                    countHtml +
                 '</button>' +
                 '<div class="character-tab-section__body">' +
                     bodyHtml +
@@ -340,7 +480,7 @@
     }
 
     // =========================================================================
-    // 3. ROMANCE ROW RENDERING
+    // 4. ROMANCE ROW RENDERING
     // =========================================================================
 
     function _badgeHtml(text, iconName, color) {
@@ -407,12 +547,11 @@
         '</div>';
     }
 
-    function _actionsHtml(rel, active) {
+    function _actionsHtml(rel, active, options) {
+        options = options || {};
         var relId = _getRelId(rel);
+        var isAffair = _isAffair(rel);
 
-        // View is always available (openModal is a core dependency of
-        // this tab; if it is missing, the tab would not render at all).
-        // The Edit path needs both the id and the commands.
         var viewEnabled = _hasId(relId)
             && window.openModal
             && typeof window.openModal === 'function';
@@ -422,14 +561,28 @@
             && window.RelationshipCommands
             && typeof window.RelationshipCommands.update === 'function';
 
-        var breakEnabled = active
+        var breakEnabled = !isAffair
+            && active
             && _hasId(relId)
             && window.RomanceCommands
             && typeof window.RomanceCommands.breakUp === 'function';
 
+        var revealEnabled = isAffair
+            && active
+            && _hasId(relId)
+            && _canRevealAffair()
+            && (rel.discovered !== true);
+
+        var endAffairEnabled = isAffair
+            && active
+            && _hasId(relId)
+            && _canEndAffair();
+
         var viewAttrs = viewEnabled ? '' : ' disabled title="View is not available"';
         var editAttrs = editEnabled ? '' : ' disabled title="Edit is not available"';
         var breakAttrs = breakEnabled ? '' : ' disabled title="Break up is not available"';
+        var revealAttrs = revealEnabled ? '' : ' disabled title="Reveal is not available"';
+        var endAffairAttrs = endAffairEnabled ? '' : ' disabled title="End Affair is not available"';
 
         var actions = '<div class="character-romance-actions">' +
             '<button type="button" class="character-tab-btn-small" ' +
@@ -441,19 +594,55 @@
             actions += '<button type="button" class="character-tab-btn-small" ' +
                 'data-action="edit-romance" ' +
                 'data-relationship-id="' + _esc(relId || '') + '" ' +
-                editAttrs + '>Edit</button>' +
-                '<button type="button" class="character-tab-btn-small danger" ' +
-                'data-action="break-up" ' +
-                'data-relationship-id="' + _esc(relId || '') + '" ' +
-                'data-partner-id="' + _esc(rel.partnerId || '') + '" ' +
-                breakAttrs + '>Break up</button>';
+                editAttrs + '>Edit</button>';
+
+            if (isAffair) {
+                actions += '<button type="button" class="character-tab-btn-small" ' +
+                    'data-action="reveal-affair" ' +
+                    'data-relationship-id="' + _esc(relId || '') + '" ' +
+                    revealAttrs + '>Reveal</button>' +
+                    '<button type="button" class="character-tab-btn-small danger" ' +
+                    'data-action="end-affair" ' +
+                    'data-relationship-id="' + _esc(relId || '') + '" ' +
+                    endAffairAttrs + '>End</button>';
+            } else {
+                actions += '<button type="button" class="character-tab-btn-small danger" ' +
+                    'data-action="break-up" ' +
+                    'data-relationship-id="' + _esc(relId || '') + '" ' +
+                    'data-partner-id="' + _esc(rel.partnerId || '') + '" ' +
+                    breakAttrs + '>Break up</button>';
+            }
         }
 
         actions += '</div>';
         return actions;
     }
 
-    function _romanceRowHtml(rel, active) {
+    function _discoveryLineHtml(rel) {
+        if (!_isAffair(rel)) return '';
+        if (rel.discovered === true) {
+            var bits = [];
+            if (typeof rel.discoveryYear === 'number') {
+                bits.push('year ' + _year(rel.discoveryYear));
+            }
+            if (rel.discoveryCircumstances) {
+                bits.push(rel.discoveryCircumstances);
+            }
+            if (rel.discovererName) {
+                bits.push('by ' + rel.discovererName);
+            }
+            return '<div class="character-romance-status is-widowed" ' +
+                'style="margin-top:4px;">' +
+                _icon('WARNING') + ' Discovered' +
+                (bits.length > 0 ? ' — ' + _esc(bits.join(' · ')) : '') +
+            '</div>';
+        }
+        return '<div class="character-romance-status" style="margin-top:4px;color:var(--dim);">' +
+            _icon('CIRCLE_DOT') + ' Not yet discovered' +
+        '</div>';
+    }
+
+    function _romanceRowHtml(rel, active, options) {
         var compact = '';
         if (window.CharacterViewModels
             && typeof window.CharacterViewModels.compactRow === 'function') {
@@ -470,19 +659,21 @@
         return '' +
             '<div class="character-romance-row' +
                 (rel.partnerIsDeceased ? ' is-partner-deceased' : '') +
+                (_isAffair(rel) ? ' is-affair' : '') +
                 '" data-relationship-id="' + _esc(relId) + '">' +
                 '<div class="character-romance-row__main">' +
                     compact +
                     _badgesHtml(rel) +
                     _metaLineHtml(rel) +
                     _statusLineHtml(rel) +
+                    _discoveryLineHtml(rel) +
                 '</div>' +
-                _actionsHtml(rel, active) +
+                _actionsHtml(rel, active, options) +
             '</div>';
     }
 
     // =========================================================================
-    // 4. SECTION BODIES
+    // 5. SECTION BODIES
     // =========================================================================
 
     function _bodyCurrent(model) {
@@ -492,12 +683,45 @@
                 : 'unknown error';
             return _unavailable('Current relationships could not be loaded: ' + err);
         }
-        if (model.current.length === 0) {
+        var list = model.current;
+        if (list.length === 0) {
             return _empty('No current romantic relationships. Use "Add Relationship" to create one.');
         }
         var html = '';
-        for (var i = 0; i < model.current.length; i++) {
-            html += _romanceRowHtml(model.current[i], true);
+        for (var i = 0; i < list.length; i++) {
+            html += _romanceRowHtml(list[i], true);
+        }
+        return html;
+    }
+
+    /**
+     * Active affairs.
+     *
+     * Prefers model.affairs when the view model exposes it; otherwise
+     * derives it by filtering model.current for isAffair === true.
+     * The fallback works with the current character-view-models.js
+     * unchanged, so the tab is forward- and backward-compatible.
+     */
+    function _getActiveAffairs(model) {
+        if (Array.isArray(model.affairs)) return model.affairs;
+        var out = [];
+        var list = Array.isArray(model.current) ? model.current : [];
+        for (var i = 0; i < list.length; i++) {
+            if (_isAffair(list[i])) out.push(list[i]);
+        }
+        return out;
+    }
+
+    function _bodyAffairs(model) {
+        var affairs = _getActiveAffairs(model);
+        if (affairs.length === 0) {
+            return _empty(
+                'No active affairs. Use "Create Affair" to start one.'
+            );
+        }
+        var html = '';
+        for (var i = 0; i < affairs.length; i++) {
+            html += _romanceRowHtml(affairs[i], true);
         }
         return html;
     }
@@ -528,6 +752,11 @@
         }
 
         var s = model.stats;
+        var affairs = _getActiveAffairs(model);
+        var discoveredCount = 0;
+        for (var a = 0; a < affairs.length; a++) {
+            if (affairs[a].discovered === true) discoveredCount++;
+        }
 
         var html = '<div class="character-romance-stats">';
 
@@ -537,6 +766,7 @@
         html += _statField('Active casual', String(s.activeCasual || 0));
         html += _statField('Active one-night', String(s.activeOneNight || 0));
         html += _statField('Active affairs', String(s.activeAffairs || 0));
+        html += _statField('Discovered affairs', String(discoveredCount));
 
         html += _statField('Earliest relationship',
             (typeof s.earliestStartYear === 'number')
@@ -572,7 +802,7 @@
     }
 
     // =========================================================================
-    // 5. RENDER
+    // 6. RENDER
     // =========================================================================
 
     function renderRomanceTab(container, context) {
@@ -605,9 +835,14 @@
             && window.openCharacterSelector
             && typeof window.openCharacterSelector === 'function');
 
+        var createAffairEnabled = _canCreateAffair();
+
         var addAttrs = addEnabled
             ? ''
             : ' disabled title="Add Relationship requires the relationship modal and the character selector to be loaded"';
+        var createAffairAttrs = createAffairEnabled
+            ? ''
+            : ' disabled title="Create Affair requires AffairCommands and the character selector to be loaded"';
 
         var polyIndicator = '';
         if (model.identity && model.identity.allowsMultipleSpouses) {
@@ -628,21 +863,28 @@
                         'data-action="add-relationship"' + addAttrs + '>' +
                         _icon('PLUS') + ' Add Relationship' +
                     '</button>' +
+                    '<button type="button" class="character-tab-btn" ' +
+                        'data-action="create-affair"' + createAffairAttrs + '>' +
+                        _icon('LOCK') + ' Create Affair' +
+                    '</button>' +
                 '</div>' +
             '</div>';
+
+        var affairs = _getActiveAffairs(model);
 
         var body = '';
         body += headerHtml;
         body += _sectionHtml(SECTIONS[0], _bodyCurrent(model));
-        body += _sectionHtml(SECTIONS[1], _bodyFormer(model));
-        body += _sectionHtml(SECTIONS[2], _bodyStats(model));
+        body += _sectionHtml(SECTIONS[1], _bodyAffairs(model), affairs.length);
+        body += _sectionHtml(SECTIONS[2], _bodyFormer(model));
+        body += _sectionHtml(SECTIONS[3], _bodyStats(model));
 
         container.innerHTML = body;
         _wire(container, context.characterId, model);
     }
 
     // =========================================================================
-    // 6. WIRING
+    // 7. WIRING
     // =========================================================================
     //
     // The container-level click handler is per-render and captures the
@@ -656,14 +898,11 @@
     var HANDLER_KEY = '__romanceTabClickHandler';
 
     function _wire(container, characterId, model) {
-        // Toggle-section listeners are per-button and are destroyed on
-        // the next `container.innerHTML = body`. They do not accumulate.
         var headers = container.querySelectorAll('.character-tab-section__header');
         for (var i = 0; i < headers.length; i++) {
             headers[i].addEventListener('click', _onToggleSection);
         }
 
-        // Container-level click handler: remove the previous one first.
         if (container[HANDLER_KEY]) {
             container.removeEventListener('click', container[HANDLER_KEY]);
             container[HANDLER_KEY] = null;
@@ -739,12 +978,18 @@
         switch (action) {
             case 'add-relationship':
                 _onAddRelationship(characterId); return;
+            case 'create-affair':
+                _onCreateAffair(characterId); return;
             case 'view-romance':
                 _onViewRomance(btn, model); return;
             case 'edit-romance':
                 _onEditRomance(btn, model); return;
             case 'break-up':
                 _onBreakUp(btn, characterId); return;
+            case 'reveal-affair':
+                _onRevealAffair(btn, model); return;
+            case 'end-affair':
+                _onEndAffair(btn, model); return;
             default:
                 if (typeof console !== 'undefined' && console.warn) {
                     console.warn('[romance-tab] unknown action: ' + action);
@@ -753,7 +998,7 @@
     }
 
     // =========================================================================
-    // 7. ACTION IMPLEMENTATIONS
+    // 8. ACTION IMPLEMENTATIONS — ADD / CREATE
     // =========================================================================
 
     function _onAddRelationship(characterId) {
@@ -798,14 +1043,152 @@
         });
     }
 
+    function _onCreateAffair(characterId) {
+        if (typeof window.openCharacterSelector !== 'function') {
+            _toast('Character selector is not loaded; cannot create an affair.', 'error');
+            return;
+        }
+        if (!_affairCommandsAvailable()
+            || typeof window.AffairCommands.createAffair !== 'function') {
+            _toast('Affair commands are not loaded; cannot create an affair.', 'error');
+            return;
+        }
+
+        var subject = _getCharacterProjection(characterId);
+        if (!subject) {
+            _toast('Subject character not found.', 'error');
+            return;
+        }
+
+        window.openCharacterSelector({
+            title: 'Select Affair Partner for ' + (subject.name || 'this character'),
+            excludeIds: [characterId],
+            filters: {
+                status: 'living',
+                showDeceased: true
+            },
+            onSelect: function (selected) {
+                if (!selected || !_hasId(selected.id)) return;
+                if (selected.id === characterId) {
+                    _toast('A character cannot have an affair with themselves.', 'error');
+                    return;
+                }
+                _promptCreateAffair(subject.id, selected.id);
+            }
+        });
+    }
+
     /**
-     * Projects a character for openRelationshipModal.
+     * Options form for createAffair. Opens a small modal with:
+     *   - Affair Type select (secret | open | emotional | one_night)
+     *   - Start Year
+     *   - Notes
+     *   - "Scandalous if discovered" checkbox (maps to isScandalous)
      *
-     * openRelationshipModal expects at minimum { id, name, surname,
-     * birthYear, isDeceased, deathYear }. CharacterQueries.getCharacterSummary
-     * returns a projection with those fields (fullName / name / surname /
-     * birthYear / isDeceased / deathYear). Try getCharacterSummary first;
-     * fall back to getCharacterById; fall back to a minimal projection.
+     * On confirm dispatches AffairCommands.createAffair and refreshes.
+     */
+    function _promptCreateAffair(idA, idB) {
+        if (typeof window.openModal !== 'function') {
+            _toast('Modal system is not loaded.', 'error');
+            return;
+        }
+
+        var currentYear = 0;
+        try { currentYear = window.getCurrentYear() || 0; } catch (e) { currentYear = 0; }
+
+        var infoIcon = _icon('CIRCLE_DOT');
+        var checkIcon = _icon('CHECK_SIMPLE');
+        var lockIcon = _icon('LOCK');
+
+        var typeOptions = '';
+        var types = ['secret', 'open', 'emotional', 'one_night'];
+        for (var t = 0; t < types.length; t++) {
+            var typeId = types[t];
+            var typeLabel = AFFAIR_TYPE_LABEL[typeId] || typeId;
+            typeOptions += '<option value="' + _esc(typeId) + '"' +
+                (typeId === 'secret' ? ' selected' : '') + '>' +
+                _esc(typeLabel) +
+            '</option>';
+        }
+
+        var content = '' +
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Affair Type</label>' +
+                '<select id="affCreateType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                    typeOptions +
+                '</select>' +
+                '<small style="font-size:0.55rem;color:var(--dim);">' + infoIcon +
+                    ' The relationship will be marked SECRET regardless of the label; the type is metadata for UI display.</small>' +
+            '</div>' +
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Start Year</label>' +
+                '<input type="number" id="affCreateYear" value="' + currentYear + '" ' +
+                    'min="1" max="' + (currentYear + 10) + '" ' +
+                    'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '</div>' +
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+                '<textarea id="affCreateNotes" rows="2" ' +
+                    'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);"></textarea>' +
+            '</div>' +
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:flex;align-items:center;gap:8px;font-size:0.65rem;cursor:pointer;">' +
+                    '<input type="checkbox" id="affCreateScandalous">' +
+                    'Scandalous if discovered' +
+                '</label>' +
+            '</div>';
+
+        window.openModal({
+            titleHtml: (lockIcon ? lockIcon + ' ' : '') + _esc('Create Affair'),
+            contentHtml: content,
+            confirmText: (checkIcon ? checkIcon + ' ' : '') + _esc('Create'),
+            cancelText: 'Cancel',
+            onConfirm: function (modalEl) {
+                var typeEl = modalEl.querySelector('#affCreateType');
+                var yearEl = modalEl.querySelector('#affCreateYear');
+                var notesEl = modalEl.querySelector('#affCreateNotes');
+                var scandalEl = modalEl.querySelector('#affCreateScandalous');
+
+                if (!typeEl || !yearEl) {
+                    _toast('Form missing', 'error');
+                    return false;
+                }
+
+                var startYear = parseInt(yearEl.value, 10);
+                if (isNaN(startYear)) {
+                    _toast('Invalid start year', 'error');
+                    return false;
+                }
+
+                var result = window.AffairCommands.createAffair(idA, idB, {
+                    affairType: typeEl.value,
+                    startYear: startYear,
+                    notes: notesEl ? (notesEl.value || '') : '',
+                    isScandalous: !!(scandalEl && scandalEl.checked)
+                });
+
+                if (!result || result.success !== true) {
+                    var reason = (result && (result.message || result.reason))
+                        ? (result.message || result.reason)
+                        : 'unknown error';
+                    _toast('Failed to create affair: ' + reason, 'error');
+                    return false;
+                }
+
+                _toast('Affair created.', 'success');
+                _refresh();
+                return true;
+            }
+        });
+    }
+
+    /**
+     * Projects a character for openRelationshipModal / openCharacterSelector.
+     *
+     * CharacterQueries.getCharacterSummary returns the projection the
+     * modal needs (id, name, surname, birthYear, isDeceased, deathYear,
+     * gender). We try it first; fall back to getCharacterById; fall back
+     * to null.
      */
     function _getCharacterProjection(characterId) {
         try {
@@ -838,9 +1221,13 @@
         return null;
     }
 
+    // =========================================================================
+    // 9. ACTION IMPLEMENTATIONS — VIEW / EDIT / BREAK UP
+    // =========================================================================
+
     function _findEntry(model, relationshipId) {
         if (!model || !_hasId(relationshipId)) return null;
-        var lists = [model.current, model.former];
+        var lists = [model.current, model.former, model.affairs];
         for (var l = 0; l < lists.length; l++) {
             var list = lists[l];
             if (!Array.isArray(list)) continue;
@@ -848,6 +1235,16 @@
                 if (!list[i]) continue;
                 var entryId = _getRelId(list[i]);
                 if (entryId === relationshipId) return list[i];
+            }
+        }
+        return null;
+    }
+
+    function _findEntryInList(list, relationshipId) {
+        if (!Array.isArray(list) || !_hasId(relationshipId)) return null;
+        for (var i = 0; i < list.length; i++) {
+            if (list[i] && _getRelId(list[i]) === relationshipId) {
+                return list[i];
             }
         }
         return null;
@@ -870,6 +1267,10 @@
             _toast('Relationship not found.', 'error');
             return;
         }
+
+        var isAffair = _isAffair(rel);
+        var isActive = _findEntryInList(model.current, relId) !== null
+            || _findEntryInList(model.affairs, relId) !== null;
 
         var content = '' +
             '<div class="character-modal character-romance-detail">' +
@@ -896,6 +1297,26 @@
                     (typeof rel.durationYears === 'number' && rel.durationYears > 0)
                         ? (rel.durationYears + ' years')
                         : '—') +
+                (isAffair
+                    ? _detailRow('Affair Type',
+                        AFFAIR_TYPE_LABEL[rel.affairType] || rel.affairType || '—')
+                    : '') +
+                (isAffair
+                    ? _detailRow('Discovered',
+                        rel.discovered === true ? 'Yes' : 'No')
+                    : '') +
+                (isAffair && rel.discovered === true && typeof rel.discoveryYear === 'number'
+                    ? _detailRow('Discovery year', _year(rel.discoveryYear))
+                    : '') +
+                (isAffair && rel.discovered === true && rel.discoveryCircumstances
+                    ? _detailRow('Discovery circumstances', rel.discoveryCircumstances)
+                    : '') +
+                (isAffair && rel.discovered === true && rel.discovererName
+                    ? _detailRow('Discovered by', rel.discovererName)
+                    : '') +
+                (isAffair
+                    ? _detailRow('Public behavior', rel.publicBehavior === true ? 'Yes' : 'No')
+                    : '') +
                 _detailRow('Affair', rel.isAffair ? 'Yes' : 'No') +
                 _detailRow('Polyamorous', rel.isPolyamorous ? 'Yes' : 'No') +
                 _detailRow('Secret', rel.isSecret ? 'Yes' : 'No') +
@@ -906,8 +1327,6 @@
                 (rel.notes ? _detailRow('Notes', rel.notes) : '') +
             '</div>';
 
-        var isActive = _findEntry(model, relId)
-            && (_findEntryInList(model.current, relId) !== null);
         var editAvailable = isActive
             && window.RelationshipCommands
             && typeof window.RelationshipCommands.update === 'function';
@@ -919,9 +1338,6 @@
             cancelText: editAvailable ? 'Close' : '',
             onConfirm: function () {
                 if (!editAvailable) return;
-                // Close the view modal and hand off to the edit modal
-                // after the framework teardown (same pattern as
-                // modals-friendship.js's view → edit handoff).
                 setTimeout(function () {
                     _openEditModalForRelationship(relId);
                 }, 0);
@@ -930,106 +1346,12 @@
         });
     }
 
-    function _findEntryInList(list, relationshipId) {
-        if (!Array.isArray(list) || !_hasId(relationshipId)) return null;
-        for (var i = 0; i < list.length; i++) {
-            if (list[i] && _getRelId(list[i]) === relationshipId) {
-                return list[i];
-            }
-        }
-        return null;
-    }
-
     function _detailRow(label, value) {
         return '<div class="character-romance-detail__row">' +
             '<div class="character-tab-field__label">' + _esc(label) + '</div>' +
             '<div class="character-tab-field__value">' + _esc(value) + '</div>' +
         '</div>';
     }
-
-    function _onBreakUp(btn, characterId) {
-        if (!window.RomanceCommands
-            || typeof window.RomanceCommands.breakUp !== 'function') {
-            _toast('Break up is not available.', 'error');
-            return;
-        }
-
-        var relId = btn.getAttribute('data-relationship-id');
-        if (!_hasId(relId)) {
-            _toast('Relationship id is missing.', 'error');
-            return;
-        }
-
-        var partnerId = btn.getAttribute('data-partner-id');
-        var partnerName = '';
-        try {
-            var ps = partnerId ? _getCharacterProjection(partnerId) : null;
-            if (ps) {
-                partnerName = (ps.fullName && ps.fullName.length > 0)
-                    ? ps.fullName
-                    : (ps.name || partnerId);
-            }
-        } catch (e) { /* ignore */ }
-
-        var confirmMessage = partnerName
-            ? 'End the romantic relationship with ' + partnerName + '?'
-            : 'End this romantic relationship?';
-
-        if (typeof window.confirmDialog === 'function') {
-            window.confirmDialog(confirmMessage, 'End Relationship', function () {
-                _performBreakUp(relId, characterId);
-            });
-        } else if (window.confirm && window.confirm(confirmMessage)) {
-            _performBreakUp(relId, characterId);
-        }
-    }
-
-    function _performBreakUp(relationshipId, characterId) {
-        var currentYear = 0;
-        try { currentYear = window.getCurrentYear(); }
-        catch (e) { currentYear = 0; }
-
-        var result = window.RomanceCommands.breakUp(relationshipId, {
-            endYear: currentYear,
-            reason: 'breakup'
-        });
-
-        if (!result || result.success !== true) {
-            var reason = (result && (result.message || result.reason))
-                ? (result.message || result.reason)
-                : 'unknown error';
-            _toast('Failed to end relationship: ' + reason, 'error');
-            return;
-        }
-
-        _toast('Relationship ended.', 'success');
-        _refresh();
-    }
-
-    // =========================================================================
-    // 8. EDIT MODAL
-    // =========================================================================
-    //
-    // The edit modal edits exactly the fields that can be changed
-    // without a status transition:
-    //
-    //   - Start Year (all romance archetypes): RelationshipCommands.update
-    //   - Notes      (all romance archetypes): RelationshipCommands.update
-    //   - Attributes (committed only):         RomanceCommands.addCommittedAttribute
-    //                                          / removeCommittedAttribute, one
-    //                                          call per diff
-    //
-    // Status is deliberately NOT editable here. Status transitions go
-    // through the dedicated commands (RomanceCommands.breakUp,
-    // RomanceCommands.deathEndsRelationship, AffairCommands.endAffair,
-    // etc.), each of which consults its domain's transition table. A
-    // status field in this form would be a second, untested path into
-    // status mutation.
-    //
-    // The "End Relationship" secondary button hands off to the existing
-    // break-up confirm flow (the same flow the row's Break up button
-    // uses). Same pattern modals-friendship.js uses for "End Friendship"
-    // inside its edit modal.
 
     function _onEditRomance(btn, model) {
         var relId = btn.getAttribute('data-relationship-id');
@@ -1044,6 +1366,34 @@
         _openEditModalForRelationship(relId);
     }
 
+    // =========================================================================
+    // 10. EDIT MODAL
+    // =========================================================================
+    //
+    // The edit modal edits exactly the fields that can be changed
+    // without a status transition:
+    //
+    //   - Start Year        (all archetypes):   RelationshipCommands.update
+    //   - Notes             (all archetypes):   RelationshipCommands.update
+    //   - Attributes        (committed only):   RomanceCommands.addCommittedAttribute
+    //                                           / removeCommittedAttribute
+    //   - Affair Type       (affair only):      RelationshipCommands.update
+    //                                           (metadata.affairType)
+    //   - Public Behavior   (affair only):      RelationshipCommands.update
+    //                                           (metadata.publicBehavior)
+    //
+    // Discovery state (discovered / discoveryYear / discoveryCircumstances
+    // / discovererId) is NEVER editable here. It is written only by
+    // AffairCommands.rollDiscovery. The edit modal shows the current
+    // discovery state as read-only text.
+    //
+    // Status is never editable here. Status transitions route through the
+    // dedicated commands (RomanceCommands.breakUp,
+    // RomanceCommands.deathEndsRelationship, AffairCommands.endAffair,
+    // etc.), each of which consults its domain's transition table. The
+    // "End Relationship" / "End Affair" secondary button hands off to
+    // the appropriate command.
+
     function _openEditModalForRelationship(relationshipId) {
         if (typeof window.openModal !== 'function') {
             _toast('Modal system is not loaded.', 'error');
@@ -1054,17 +1404,7 @@
             _toast('Edit is not available (RelationshipCommands.update is missing).', 'error');
             return;
         }
-        if (!window.RomanceQueries
-            || typeof window.RomanceQueries.getRomanticRelationshipsBetween !== 'function') {
-            _toast('Edit is not available (RomanceQueries is missing).', 'error');
-            return;
-        }
 
-        // Live record read so the form and the dispatch work off the
-        // current attributes, not a slice from a possibly-stale model.
-        // We do not use RomanceQueries.getById — it does not exist;
-        // we use the raw record via RelationshipQueries.getById, which
-        // is the primitive the domain exposes for exactly this.
         var rec = null;
         try {
             if (window.RelationshipQueries
@@ -1082,32 +1422,32 @@
             return;
         }
 
-        var partnerId = rec.participantA === relationshipId
-            ? rec.participantB
-            : rec.participantA;
-        // (participantA/B are ids, not the relationship id; the partner
-        // resolution below uses them.)
-        partnerId = (rec.participantA && rec.participantB)
-            ? (rec.participantA === rec.participantB ? null : null)
-            : null;
-        // Resolve the partner relative to the character the tab is
-        // showing. We don't have the subject id here (we're inside a
-        // modal); but for display we only need *a* partner name, and
-        // both participants are characters. Use getCharacterProjection
-        // on both and pick the one that isn't the tab subject.
-        //
-        // The caller (_onViewRomance / _onEditRomance) already found
-        // the entry in the model, so the display name comes from the
-        // model entry. We re-derive here only for the form fields, and
-        // we do not need participant identity for them.
         var startYear = (typeof rec.startYear === 'number') ? rec.startYear : 0;
         var notes = (rec.metadata && typeof rec.metadata.notes === 'string')
             ? rec.metadata.notes
             : '';
         var isCommitted = rec.type === 'committed';
+        var isAffair = Array.isArray(rec.attributes)
+            && rec.attributes.indexOf('secret') !== -1;
+
         var currentAttributes = Array.isArray(rec.attributes)
             ? rec.attributes.slice()
             : [];
+        var currentAffairType = (rec.metadata && typeof rec.metadata.affairType === 'string')
+            ? rec.metadata.affairType
+            : 'secret';
+        var currentPublicBehavior = !!(rec.metadata && rec.metadata.publicBehavior === true);
+        var discovered = !!(rec.metadata && rec.metadata.discovered === true);
+        var discoveryYear = (rec.metadata && typeof rec.metadata.discoveryYear === 'number')
+            ? rec.metadata.discoveryYear
+            : null;
+        var discoveryCircumstances = (rec.metadata && typeof rec.metadata.discoveryCircumstances === 'string')
+            ? rec.metadata.discoveryCircumstances
+            : '';
+        var discovererId = (rec.metadata && typeof rec.metadata.discovererId === 'string')
+            ? rec.metadata.discovererId
+            : null;
+
         var currentYear = 0;
         try { currentYear = window.getCurrentYear() || 0; } catch (e) { currentYear = 0; }
 
@@ -1115,6 +1455,7 @@
         var checkIcon = _icon('CHECK_SIMPLE');
         var editIcon = _icon('EDIT');
         var crossIcon = _icon('X_HEAVY');
+        var warningIcon = _icon('WARNING');
 
         var html = '';
 
@@ -1133,6 +1474,54 @@
                     _esc(notes) +
                 '</textarea>' +
             '</div>';
+
+        // Affair-specific fields
+        if (isAffair) {
+            var typeOptions = '';
+            var types = ['secret', 'open', 'emotional', 'one_night'];
+            for (var t = 0; t < types.length; t++) {
+                var typeId = types[t];
+                var typeLabel = AFFAIR_TYPE_LABEL[typeId] || typeId;
+                typeOptions += '<option value="' + _esc(typeId) + '"' +
+                    (typeId === currentAffairType ? ' selected' : '') + '>' +
+                    _esc(typeLabel) +
+                '</option>';
+            }
+
+            html += '<div style="margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Affair Type</label>' +
+                '<select id="romEditAffairType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                    typeOptions +
+                '</select>' +
+            '</div>' +
+            '<div style="margin-bottom:12px;">' +
+                '<label style="display:flex;align-items:center;gap:8px;font-size:0.65rem;cursor:pointer;">' +
+                    '<input type="checkbox" id="romEditPublicBehavior"' +
+                        (currentPublicBehavior ? ' checked' : '') + '>' +
+                    'Public behavior' +
+                '</label>' +
+            '</div>';
+
+            // Discovery state — read-only
+            html += '<div style="background:var(--bg2);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.65rem;">' +
+                '<div style="color:var(--accent);font-weight:600;margin-bottom:4px;">' + infoIcon + ' Discovery State</div>';
+            if (discovered) {
+                html += '<div>' + warningIcon + ' Discovered' +
+                    (discoveryYear !== null ? ' in ' + _year(discoveryYear) : '') +
+                    (discoveryCircumstances ? ' — ' + _esc(discoveryCircumstances) : '') +
+                    (discovererId ? ' (by ' + _esc(discovererId) + ')' : '') +
+                '</div>' +
+                '<div style="color:var(--dim);margin-top:4px;">' +
+                    'Discovery state cannot be edited. It is written only by the discovery roll.' +
+                '</div>';
+            } else {
+                html += '<div>Not yet discovered.</div>' +
+                '<div style="color:var(--dim);margin-top:4px;">' +
+                    'Use the Reveal button on the row to attempt discovery.' +
+                '</div>';
+            }
+            html += '</div>';
+        }
 
         // Attributes (committed only)
         if (isCommitted) {
@@ -1158,11 +1547,12 @@
             '</div>';
         }
 
-        // End relationship secondary button (hands off to break-up flow)
+        // End relationship / End affair secondary button
+        var endLabel = isAffair ? 'End Affair' : 'End Relationship';
         html += '<div style="display:flex;justify-content:flex-end;margin-top:12px;">' +
             '<button id="romEditEndBtn" type="button" ' +
                 'style="background:#8a3020;color:white;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:0.65rem;">' +
-                (crossIcon ? crossIcon + ' ' : '') + 'End Relationship' +
+                (crossIcon ? crossIcon + ' ' : '') + _esc(endLabel) +
             '</button>' +
         '</div>';
 
@@ -1175,13 +1565,12 @@
                 var endBtn = modalEl.querySelector('#romEditEndBtn');
                 if (!endBtn) return;
                 endBtn.addEventListener('click', function () {
-                    // Close the edit modal and hand off to the existing
-                    // break-up confirm flow, sequenced after teardown.
                     if (typeof window.closeTopModal === 'function') {
                         window.closeTopModal();
                     }
                     setTimeout(function () {
-                        _promptBreakUpByRelationshipId(relationshipId);
+                        if (isAffair) _promptEndAffairById(relationshipId);
+                        else _promptBreakUpById(relationshipId);
                     }, 0);
                 });
             },
@@ -1202,11 +1591,20 @@
                 }
 
                 // 1) Dates + notes via RelationshipCommands.update.
+                var metaPatch = { notes: newNotes };
+
+                if (isAffair) {
+                    var typeEl = modalEl.querySelector('#romEditAffairType');
+                    var pubEl = modalEl.querySelector('#romEditPublicBehavior');
+                    if (typeEl && typeEl.value) metaPatch.affairType = typeEl.value;
+                    metaPatch.publicBehavior = !!(pubEl && pubEl.checked);
+                }
+
                 var updateResult = window.RelationshipCommands.update(
                     relationshipId,
                     {
                         startYear: newYear,
-                        metadata: { notes: newNotes }
+                        metadata: metaPatch
                     }
                 );
                 if (!updateResult || updateResult.success !== true) {
@@ -1217,10 +1615,7 @@
                     return false;
                 }
 
-                // 2) Attributes (committed only). Diff against the
-                // current set and dispatch one command per change so
-                // RomanceRules.canAddAttribute / canRemoveAttribute and
-                // validateAttributesForCulture run on every attribute.
+                // 2) Attributes (committed only).
                 if (isCommitted) {
                     var desired = [];
                     var boxes = modalEl.querySelectorAll('.rom-edit-attr-checkbox:checked');
@@ -1274,11 +1669,6 @@
                     }
 
                     if (failures.length > 0) {
-                        // Report the first failure reason; keep the modal
-                        // open so the user can correct and retry. The
-                        // successful changes are already committed; the
-                        // user will see them reflected on the next
-                        // refresh.
                         var f = failures[0];
                         _toast(
                             'Attribute change rejected (' + f.op + ' ' + f.attribute + '): ' + f.message,
@@ -1296,7 +1686,48 @@
         });
     }
 
-    function _promptBreakUpByRelationshipId(relationshipId) {
+    // =========================================================================
+    // 11. ACTION IMPLEMENTATIONS — BREAK UP / END AFFAIR
+    // =========================================================================
+
+    function _onBreakUp(btn, characterId) {
+        if (!window.RomanceCommands
+            || typeof window.RomanceCommands.breakUp !== 'function') {
+            _toast('Break up is not available.', 'error');
+            return;
+        }
+
+        var relId = btn.getAttribute('data-relationship-id');
+        if (!_hasId(relId)) {
+            _toast('Relationship id is missing.', 'error');
+            return;
+        }
+
+        var partnerId = btn.getAttribute('data-partner-id');
+        var partnerName = '';
+        try {
+            var ps = partnerId ? _getCharacterProjection(partnerId) : null;
+            if (ps) {
+                partnerName = (ps.fullName && ps.fullName.length > 0)
+                    ? ps.fullName
+                    : (ps.name || partnerId);
+            }
+        } catch (e) { /* ignore */ }
+
+        var confirmMessage = partnerName
+            ? 'End the romantic relationship with ' + partnerName + '?'
+            : 'End this romantic relationship?';
+
+        if (typeof window.confirmDialog === 'function') {
+            window.confirmDialog(confirmMessage, 'End Relationship', function () {
+                _performBreakUp(relId, characterId);
+            });
+        } else if (window.confirm && window.confirm(confirmMessage)) {
+            _performBreakUp(relId, characterId);
+        }
+    }
+
+    function _promptBreakUpById(relationshipId) {
         if (!window.RomanceCommands
             || typeof window.RomanceCommands.breakUp !== 'function') {
             _toast('Break up is not available.', 'error');
@@ -1328,10 +1759,160 @@
         }
     }
 
-    /**
-     * Display name for an attribute id. Uses RelationshipUI when
-     * available, falls back to a humanised id.
-     */
+    function _performBreakUp(relationshipId, characterId) {
+        var currentYear = 0;
+        try { currentYear = window.getCurrentYear(); }
+        catch (e) { currentYear = 0; }
+
+        var result = window.RomanceCommands.breakUp(relationshipId, {
+            endYear: currentYear,
+            reason: 'breakup'
+        });
+
+        if (!result || result.success !== true) {
+            var reason = (result && (result.message || result.reason))
+                ? (result.message || result.reason)
+                : 'unknown error';
+            _toast('Failed to end relationship: ' + reason, 'error');
+            return;
+        }
+
+        _toast('Relationship ended.', 'success');
+        _refresh();
+    }
+
+    function _onEndAffair(btn, model) {
+        if (!_canEndAffair()) {
+            _toast('Affair commands are not loaded.', 'error');
+            return;
+        }
+        var relId = btn.getAttribute('data-relationship-id');
+        if (!_hasId(relId)) {
+            _toast('Relationship id is missing.', 'error');
+            return;
+        }
+        var rel = _findEntry(model, relId);
+        var partnerName = rel && rel.partnerName ? rel.partnerName : 'this partner';
+        var message = 'End the affair with ' + partnerName + '?';
+        if (typeof window.confirmDialog === 'function') {
+            window.confirmDialog(message, 'End Affair', function () {
+                _performEndAffair(relId);
+            });
+        } else if (window.confirm && window.confirm(message)) {
+            _performEndAffair(relId);
+        }
+    }
+
+    function _promptEndAffairById(relationshipId) {
+        if (!_canEndAffair()) {
+            _toast('Affair commands are not loaded.', 'error');
+            return;
+        }
+        var message = 'End this affair?';
+        if (typeof window.confirmDialog === 'function') {
+            window.confirmDialog(message, 'End Affair', function () {
+                _performEndAffair(relationshipId);
+            });
+        } else if (window.confirm && window.confirm(message)) {
+            _performEndAffair(relationshipId);
+        }
+    }
+
+    function _performEndAffair(relationshipId) {
+        var currentYear = 0;
+        try { currentYear = window.getCurrentYear(); }
+        catch (e) { currentYear = 0; }
+
+        var result = window.AffairCommands.endAffair(relationshipId, {
+            endYear: currentYear,
+            reason: 'affair ended'
+        });
+
+        if (!result || result.success !== true) {
+            var reason = (result && (result.message || result.reason))
+                ? (result.message || result.reason)
+                : 'unknown error';
+            _toast('Failed to end affair: ' + reason, 'error');
+            return;
+        }
+
+        _toast('Affair ended.', 'success');
+        _refresh();
+    }
+
+    // =========================================================================
+    // 12. ACTION IMPLEMENTATIONS — REVEAL
+    // =========================================================================
+    //
+    // The Reveal button draws one roll from window.Random.next (or the
+    // randomNext fallback) and passes it to AffairCommands.rollDiscovery
+    // as options.roll. The tab controls the RNG stream: the roll is
+    // deterministic against a fixed seed for playtest, and the affair
+    // command never implicitly consumes a draw the caller was relying on
+    // being consumed elsewhere.
+
+    function _onRevealAffair(btn, model) {
+        if (!_canRevealAffair()) {
+            _toast('Reveal is not available (AffairCommands or randomness is missing).', 'error');
+            return;
+        }
+        var relId = btn.getAttribute('data-relationship-id');
+        if (!_hasId(relId)) {
+            _toast('Relationship id is missing.', 'error');
+            return;
+        }
+        var rel = _findEntry(model, relId);
+        if (!rel) {
+            _toast('Relationship not found.', 'error');
+            return;
+        }
+        if (rel.discovered === true) {
+            _toast('This affair has already been discovered.', 'info');
+            _refresh();
+            return;
+        }
+
+        var roll;
+        try { roll = _drawRoll(); }
+        catch (e) {
+            _toast('Randomness service is not available.', 'error');
+            return;
+        }
+
+        var currentYear = 0;
+        try { currentYear = window.getCurrentYear() || 0; } catch (e) { currentYear = 0; }
+
+        var result = window.AffairCommands.rollDiscovery(relId, {
+            roll: roll,
+            year: currentYear
+        });
+
+        if (!result || result.success !== true) {
+            var reason = (result && (result.message || result.reason))
+                ? (result.message || result.reason)
+                : 'unknown error';
+            _toast('Failed to roll discovery: ' + reason, 'error');
+            return;
+        }
+
+        if (result.discovered === true) {
+            var discoveredMsg = 'Affair discovered';
+            if (typeof result.year === 'number') discoveredMsg += ' in ' + result.year;
+            if (result.circumstances) discoveredMsg += ' — ' + result.circumstances;
+            _toast(discoveredMsg, 'warning');
+        } else {
+            var chanceText = (typeof result.chance === 'number')
+                ? ' (chance ' + Math.round(result.chance * 100) + '%)'
+                : '';
+            _toast('Not discovered' + chanceText + '.', 'info');
+        }
+        _refresh();
+    }
+
+    // =========================================================================
+    // 13. ATTRIBUTE HELPERS
+    // =========================================================================
+
     function _attributeDisplayName(attr) {
         if (window.RelationshipUI
             && typeof window.RelationshipUI.attributeName === 'function') {
@@ -1353,7 +1934,7 @@
     }
 
     // =========================================================================
-    // 9. REGISTRATION
+    // 14. REGISTRATION
     // =========================================================================
 
     if (window.TabManager && typeof window.TabManager.register === 'function') {
@@ -1366,7 +1947,7 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 15. EXPORTS
     // =========================================================================
 
     window.CharacterRomanceTab = {
