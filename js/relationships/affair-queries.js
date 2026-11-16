@@ -34,6 +34,24 @@
  * romance-rules.js, affair-rules.js.
  *
  * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _getCurrentYear: replaced getCurrentYearSafe (stale alias) with
+ *       getCurrentYear. This matches the fix applied to
+ *       romance-commands.js and relationship-finder-queries.js; the
+ *       deprecated alias is not present on every build and would have
+ *       thrown on the first call to any function that relies on a
+ *       current year (e.g., getAffairDuration, getDiscoveryRisk).
+ *
+ *     - _projectAffair: added a defensive check. Previously, it
+ *       returned null if the passed romanceProjection did not have
+ *       `isAffair: true`. This made the function brittle: if a future
+ *       RomanceQueries._project refactor dropped that flag (or if a
+ *       synthetic object was passed without it), the entire affair
+ *       list would silently vanish. The function now re-verifies
+ *       against the live record via RR.isAffair(record.attributes)
+ *       regardless of the passed projection's shape.
+ * =============================================================================
  */
 
 (function() {
@@ -69,11 +87,15 @@
         return window.getCharacterById(id);
     }
 
+    /**
+     * Current year. time.js exports getCurrentYear (not the deprecated
+     * getCurrentYearSafe alias, which is not present on every build).
+     */
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('affair-queries.js: getCurrentYearSafe required');
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error('affair-queries.js: getCurrentYear required');
         }
-        return window.getCurrentYearSafe();
+        return window.getCurrentYear();
     }
 
     function _rankPriority(character) {
@@ -123,10 +145,14 @@
 
     function _projectAffair(romanceProjection) {
         if (!romanceProjection) return null;
-        if (!romanceProjection.isAffair) return null;
-
+        
         var record = RQ.getById(romanceProjection.relationshipId);
         if (!record) return null;
+
+        // Defensive: rely on the actual record's attributes rather than
+        // trusting the passed projection to have isAffair set correctly.
+        // This fixes the case where RomanceQueries._project drops the flag.
+        if (!RR.isAffair(record.attributes)) return null;
 
         var meta = record.metadata || {};
         return {
