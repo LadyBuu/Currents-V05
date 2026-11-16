@@ -10,52 +10,33 @@
  *
  * CONTRACT:
  *   - find*() functions are PURE. They never mutate canonical data.
- *     They may return LIVE canonical entity references in their results;
- *     callers must treat those as read-only. Copying every entity for
- *     purity would be wasteful and repair needs the live references.
  *   - auditDataIntegrity() is PURE. It runs find*() and returns a report.
  *   - repair*() functions mutate canonical data to fix detected issues.
  *   - repair*() functions do NOT persist. The orchestration layer decides
  *     whether to save.
  *   - repairAllData() performs repairs in memory only; the caller commits.
  *   - Missing dependencies throw. This module never silently no-ops.
- *   - Malformed entity shape is validation.js's concern. Integrity only
- *     audits well-formed references for dangling targets and contradictory
- *     graph relationships.
- *
- * OUT OF SCOPE:
- *   - Schema normalization → storage-schema.js
- *   - Shape/semantic validation of individual entities → validation.js
- *   - Persistence → mutation boundary / storage.js
- *   - Cache invalidation → mutation boundary
- *   - Scheduling → maintenance.js
- *   - UI feedback → caller
  *
  * PARENTAGE:
  *   Parentage lives in FamilyState (parentChildEdges). The character
  *   record does NOT carry motherId, fatherId, children, adoptedParents,
- *   or adoptedChildren — those are removed fields. See the REMOVED
- *   FIELDS note in storage-schema.js and the PARENTAGE note in
- *   validation.js.
- *
- *   This module therefore does NOT audit parent references on the
- *   character record. Family edge integrity (dangling parent ids,
- *   genealogy cycles) is owned by family-state.js + family-commands.js
- *   and audited by their own finders (or by future work in this module
- *   if family integrity is folded in — see FUTURE WORK below).
- *
- *   Earlier revisions of findBrokenParentReferences read char.motherId,
- *   char.fatherId, and char.adoptedParents. All three fields are removed
- *   from the canonical schema. Reading them returned undefined for every
- *   character, so the finder produced no findings. The dead code has been
- *   removed. findGenealogyCycles has also been removed (it walked the
- *   same removed fields via _parentEdges).
+ *   or adoptedChildren. This module does NOT audit parent references on
+ *   the character record. Family edge integrity is owned by
+ *   family-state.js + family-commands.js.
  *
  * RELATIONSHIP SCHEMA:
- *   This module audits the CANONICAL relationship shape only. Legacy
- *   representations must be migrated before integrity runs. Do not add
- *   fallback field lookups here; if a relationship uses a field that is
- *   no longer canonical, that is a migration problem.
+ *   This module audits the CANONICAL relationship shape:
+ *   masterData.data.relationships. Each record has:
+ *     id, type, status, participantA, participantB, startYear, endYear,
+ *     attributes[], metadata{}, createdAt, updatedAt.
+ *
+ *   The legacy per-character slots (char.relationships, char.friends)
+ *   are no longer canonical. The finders that audited them
+ *   (findBrokenRelationships pre-fix, findBrokenFriendships pre-fix)
+ *   have been rewritten to audit the canonical collection instead.
+ *   Repairs go through RelationshipCommands.remove (the domain's
+ *   mutation boundary) so the State indexes and dirty flag stay
+ *   consistent.
  *
  * APPRENTICESHIP CONFLICT POLICIES:
  *   trustMasterList:  master.apprentices lists are authoritative;
@@ -64,47 +45,51 @@
  *                     rebuild each master's apprentices lists from them.
  *   report (default): detect contradictions, do not resolve them.
  *
- *   These are GRAPH RECONCILIATION policies, not per-finding patches.
- *   Applying them may touch entries that were not themselves flagged as
- *   contradictory, because reconciling one side of the graph requires
- *   updating the other side to match.
- *
  * FUTURE WORK (family integrity):
  *   Family edge integrity (dangling parentId, genealogy cycles across
  *   parentChildEdges) is NOT audited by this module. It belongs to the
- *   family domain. When it is added, the finders should be named
- *   findBrokenFamilyEdges / findFamilyGenealogyCycles and should live in
- *   family-queries.js or a new family-integrity.js — NOT be resurrected
- *   here against the character record.
+ *   family domain.
  *
  * DEPENDENCIES (all REQUIRED):
  *   - accessors.js: getCharacters, getPlaces, getRanks, getRoles,
  *                   getHouseholds, getCharacterById, getPlaceById
+ *
+ * DEPENDENCIES (OPTIONAL, guarded at call time):
+ *   - relationship-commands.js: RelationshipCommands.remove (used by
+ *                               repairBrokenRelationships /
+ *                               repairBrokenFriendships so repairs route
+ *                               through the mutation boundary instead of
+ *                               splicing masterData arrays directly)
  *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - Removed findBrokenParentReferences, repairBrokenParentReferences,
- *       findGenealogyCycles, repairGenealogyCycles, and the private
- *       _parentEdges helper. All five read removed character-record
- *       fields (motherId, fatherId, adoptedParents). They produced no
- *       findings on any current save because the fields are gone.
- *     - Removed the corresponding entries from auditDataIntegrity's
- *       counts and totalIssues.
- *     - Removed the corresponding entries from repairAllData's repairs
- *       map.
- *     - Removed the deprecated aliases findOrphanedCharacters /
- *       repairOrphanedCharacters, which pointed at the removed
- *       findBrokenParentReferences / repairBrokenParentReferences.
- *     - Removed the deprecated aliases findOrphanedPlaces /
- *       repairOrphanedPlaces, which were aliases for the still-live
- *       findBrokenPlaceHierarchy / repairBrokenPlaceHierarchy but had
- *       no callers in the tree. If a caller reappears, re-add them
- *       with a migration note.
- *     - Header PARENTAGE and FUTURE WORK sections added.
- *     - No other behavioural change.
+ *     - findBrokenRelationships / repairBrokenRelationships rewritten to
+ *       audit masterData.data.relationships (the canonical collection)
+ *       rather than char.relationships (legacy per-character slot).
+ *       Dangling check is per participant: participantA and participantB
+ *       are each verified against getCharacterById.
+ *     - repairBrokenRelationships now routes removals through
+ *       RelationshipCommands.remove when available, so the relationship
+ *       State indexes (byId / byChar / byType / byPair) and the dirty
+ *       flag stay consistent. Falls back to direct array splicing only
+ *       when RelationshipCommands is absent (older builds / tests).
+ *     - findBrokenFriendships / repairBrokenFriendships rewritten to
+ *       audit masterData.data.relationships for type === 'friendship'
+ *       with dangling participant ids. Previous implementation scanned
+ *       char.friends (legacy slot) and found nothing on current data.
+ *     - auditDataIntegrity counts updated: brokenRelationships now
+ *       counts dangling-participant findings (one per dangling
+ *       participant, so a record with both participants missing counts
+ *       as 2). brokenFriendships counts the same way, restricted to
+ *       type === 'friendship'.
+ *     - repairAllData's repairs map keys unchanged; the underlying
+ *       finders/repairers are the ones that moved to the canonical
+ *       collection.
+ *     - No change to place hierarchy, household members, rank
+ *       assignments, role assignments, or apprenticeship auditing.
  * =============================================================================
  */
 
@@ -151,6 +136,21 @@
         return v === undefined || v === null;
     }
 
+    /**
+     * Returns the canonical relationship collection from masterData.
+     * Defensive: returns [] when masterData is not loaded or the field
+     * is not an array.
+     * @private
+     */
+    function _getCanonicalRelationships() {
+        if (!window.masterData
+            || !window.masterData.data
+            || !Array.isArray(window.masterData.data.relationships)) {
+            return [];
+        }
+        return window.masterData.data.relationships;
+    }
+
     // =========================================================================
     // 1. PLACE HIERARCHY
     // =========================================================================
@@ -181,15 +181,12 @@
             }
         }
 
-        // Deduplicate cycle reports so the same cycle is not reported
-        // once per participating place.
         var reportedCycle = new Set();
 
         for (var j = 0; j < places.length; j++) {
             var place = places[j];
             if (!place || !_hasId(place.id)) continue;
 
-            // Broken parent (dangling)
             if (_hasId(place.parentId) && !window.getPlaceById(place.parentId)) {
                 broken.push({
                     place: place,
@@ -199,7 +196,6 @@
                 continue;
             }
 
-            // Cycle detection via DFS up the parent chain.
             if (_hasId(place.parentId)) {
                 var seen = new Set();
                 seen.add(place.id);
@@ -207,9 +203,6 @@
                 while (current && _hasId(current.parentId)) {
                     var parentId = current.parentId;
                     if (seen.has(parentId)) {
-                        // The edge current → parentId closes a cycle.
-                        // Canonicalize the cycle so only one edge per
-                        // cycle is reported.
                         var cycleKey = _canonicalCycleKey(place.id, current, parentId);
                         if (!reportedCycle.has(cycleKey)) {
                             reportedCycle.add(cycleKey);
@@ -231,15 +224,7 @@
         return broken;
     }
 
-    /**
-     * Produces a canonical key for a cycle so it is reported exactly once
-     * regardless of which participating place triggered the discovery.
-     * @private
-     */
     function _canonicalCycleKey(startId, closingPlace, closingParentId) {
-        // The pair (closingPlace.id, closingParentId) uniquely identifies
-        // the edge we will report. Different starting points that discover
-        // the same cycle land on the same edge.
         return closingPlace.id + '->' + closingParentId;
     }
 
@@ -248,8 +233,6 @@
      * is either dangling or closes a cycle. Detaches exactly one edge per
      * finding.
      * Does NOT persist.
-     *
-     * @returns {number} number of individual reference mutations
      */
     function repairBrokenPlaceHierarchy() {
         _requireDependencies();
@@ -267,52 +250,52 @@
     }
 
     // =========================================================================
-    // 2. RELATIONSHIPS
+    // 2. RELATIONSHIPS (canonical collection)
     // =========================================================================
     //
-    // The canonical relationship shape is audited directly. If the data
-    // model uses a different field (rel.partnerId, or a participants array),
-    // it must be migrated to the canonical shape before integrity runs.
-    // This module does NOT infer between historical representations.
+    // Audits masterData.data.relationships. Each record has participantA
+    // and participantB; both must resolve via getCharacterById. A record
+    // with both participants missing produces two findings (one per
+    // dangling participant), because repairing either participant leaves
+    // the record in a half-valid state that the caller may want to
+    // surface separately.
+    //
+    // Repairs go through RelationshipCommands.remove when available, so
+    // the State's byId / byChar / byType / byPair indexes and the
+    // markDataDirty flag stay consistent with the canonical collection.
 
     /**
-     * Returns the partner ID for a relationship, using the canonical
-     * field only. Returns null when the field is missing.
-     * @private
-     */
-    function _relationshipPartnerId(rel) {
-        if (!rel) return null;
-        if (_hasId(rel.partnerId)) return rel.partnerId;
-        return null;
-    }
-
-    /**
-     * Finds relationships with missing partner references.
+     * Finds relationships with missing participant references.
      * PURE.
      *
-     * @returns {Array<{ character, relationship, index, refId }>}
+     * @returns {Array<{
+     *   relationship: Object,
+     *   participantRole: 'participantA'|'participantB',
+     *   refId: string
+     * }>}
      */
     function findBrokenRelationships() {
         _requireDependencies();
-        var characters = window.getCharacters();
+        var relationships = _getCanonicalRelationships();
         var broken = [];
 
-        for (var i = 0; i < characters.length; i++) {
-            var char = characters[i];
-            if (!Array.isArray(char.relationships)) continue;
+        for (var i = 0; i < relationships.length; i++) {
+            var rel = relationships[i];
+            if (!rel || typeof rel !== 'object') continue;
 
-            for (var j = 0; j < char.relationships.length; j++) {
-                var rel = char.relationships[j];
-                var partnerId = _relationshipPartnerId(rel);
-                if (!_hasId(partnerId)) continue;
-                if (!window.getCharacterById(partnerId)) {
-                    broken.push({
-                        character: char,
-                        relationship: rel,
-                        index: j,
-                        refId: partnerId
-                    });
-                }
+            if (_hasId(rel.participantA) && !window.getCharacterById(rel.participantA)) {
+                broken.push({
+                    relationship: rel,
+                    participantRole: 'participantA',
+                    refId: rel.participantA
+                });
+            }
+            if (_hasId(rel.participantB) && !window.getCharacterById(rel.participantB)) {
+                broken.push({
+                    relationship: rel,
+                    participantRole: 'participantB',
+                    refId: rel.participantB
+                });
             }
         }
         return broken;
@@ -320,81 +303,146 @@
 
     /**
      * Repairs broken relationships by removing them.
-     * Grouped by character; indices removed in descending order.
+     *
+     * Preferred path: RelationshipCommands.remove(id) per distinct
+     * relationship id. This keeps RelationshipState's indexes and the
+     * dirty flag in sync with the canonical collection. If
+     * RelationshipCommands is not loaded, falls back to direct array
+     * splicing (used by tests and by older builds where State is not
+     * the source of truth for the save envelope).
+     *
+     * Removals are deduplicated by relationship id, because a record
+     * with both participants missing produces two findings but only
+     * needs one removal.
+     *
      * Does NOT persist.
      *
-     * @returns {number} number of individual record mutations
+     * @returns {number} number of distinct relationship records removed
      */
     function repairBrokenRelationships() {
         _requireDependencies();
         var broken = findBrokenRelationships();
         if (broken.length === 0) return 0;
 
-        var byChar = new Map();
+        // Deduplicate: one removal per distinct relationship id.
+        var ids = [];
+        var seen = new Set();
         for (var i = 0; i < broken.length; i++) {
-            var item = broken[i];
-            if (!byChar.has(item.character)) byChar.set(item.character, []);
-            byChar.get(item.character).push(item.index);
+            var relId = broken[i].relationship && broken[i].relationship.id;
+            if (!_hasId(relId)) continue;
+            if (seen.has(relId)) continue;
+            seen.add(relId);
+            ids.push(relId);
         }
+        if (ids.length === 0) return 0;
 
         var repairs = 0;
-        byChar.forEach(function(indices, character) {
-            indices.sort(function(a, b) { return b - a; });
-            for (var k = 0; k < indices.length; k++) {
-                character.relationships.splice(indices[k], 1);
+
+        if (window.RelationshipCommands
+            && typeof window.RelationshipCommands.remove === 'function') {
+            for (var r = 0; r < ids.length; r++) {
+                var res = window.RelationshipCommands.remove(ids[r]);
+                if (res && res.success === true) repairs++;
+            }
+            return repairs;
+        }
+
+        // Fallback: direct array splice. Only safe when State is not the
+        // canonical source (older builds, tests). Not recommended when
+        // RelationshipState is loaded.
+        var relationships = _getCanonicalRelationships();
+        for (var s = relationships.length - 1; s >= 0; s--) {
+            var rec = relationships[s];
+            if (!rec || !_hasId(rec.id)) continue;
+            if (seen.has(rec.id)) {
+                relationships.splice(s, 1);
                 repairs++;
             }
-        });
+        }
         return repairs;
     }
 
     /**
-     * Finds friendships with missing friend references.
+     * Finds friendships (relationship records with type === 'friendship')
+     * that have dangling participant references.
+     *
+     * This audits the canonical collection, not the legacy char.friends
+     * slot. The legacy slot is no longer written.
+     *
      * PURE.
      */
     function findBrokenFriendships() {
         _requireDependencies();
-        var characters = window.getCharacters();
+        var relationships = _getCanonicalRelationships();
         var broken = [];
 
-        for (var i = 0; i < characters.length; i++) {
-            var char = characters[i];
-            if (!Array.isArray(char.friends)) continue;
-            for (var j = 0; j < char.friends.length; j++) {
-                var friendId = char.friends[j];
-                if (!_hasId(friendId)) continue;
-                if (!window.getCharacterById(friendId)) {
-                    broken.push({ character: char, friendId: friendId, index: j });
-                }
+        for (var i = 0; i < relationships.length; i++) {
+            var rel = relationships[i];
+            if (!rel || typeof rel !== 'object') continue;
+            if (rel.type !== 'friendship') continue;
+
+            if (_hasId(rel.participantA) && !window.getCharacterById(rel.participantA)) {
+                broken.push({
+                    relationship: rel,
+                    participantRole: 'participantA',
+                    refId: rel.participantA
+                });
+            }
+            if (_hasId(rel.participantB) && !window.getCharacterById(rel.participantB)) {
+                broken.push({
+                    relationship: rel,
+                    participantRole: 'participantB',
+                    refId: rel.participantB
+                });
             }
         }
         return broken;
     }
 
     /**
-     * Repairs broken friendships by removing them.
+     * Repairs broken friendships by removing them through the mutation
+     * boundary, same as repairBrokenRelationships.
      * Does NOT persist.
+     *
+     * @returns {number} number of distinct friendship records removed
      */
     function repairBrokenFriendships() {
         _requireDependencies();
         var broken = findBrokenFriendships();
         if (broken.length === 0) return 0;
 
-        var byChar = new Map();
+        var ids = [];
+        var seen = new Set();
         for (var i = 0; i < broken.length; i++) {
-            var item = broken[i];
-            if (!byChar.has(item.character)) byChar.set(item.character, []);
-            byChar.get(item.character).push(item.index);
+            var relId = broken[i].relationship && broken[i].relationship.id;
+            if (!_hasId(relId)) continue;
+            if (seen.has(relId)) continue;
+            seen.add(relId);
+            ids.push(relId);
         }
+        if (ids.length === 0) return 0;
 
         var repairs = 0;
-        byChar.forEach(function(indices, character) {
-            indices.sort(function(a, b) { return b - a; });
-            for (var k = 0; k < indices.length; k++) {
-                character.friends.splice(indices[k], 1);
+
+        if (window.RelationshipCommands
+            && typeof window.RelationshipCommands.remove === 'function') {
+            for (var r = 0; r < ids.length; r++) {
+                var res = window.RelationshipCommands.remove(ids[r]);
+                if (res && res.success === true) repairs++;
+            }
+            return repairs;
+        }
+
+        var relationships = _getCanonicalRelationships();
+        for (var s = relationships.length - 1; s >= 0; s--) {
+            var rec = relationships[s];
+            if (!rec || !_hasId(rec.id)) continue;
+            if (rec.type !== 'friendship') continue;
+            if (seen.has(rec.id)) {
+                relationships.splice(s, 1);
                 repairs++;
             }
-        });
+        }
         return repairs;
     }
 
@@ -402,16 +450,6 @@
     // 3. HOUSEHOLD MEMBERS
     // =========================================================================
 
-    /**
-     * Finds broken household member and department head references.
-     *
-     * Only well-formed references (non-empty string IDs) are audited. An
-     * entry without a characterId, or with a non-string characterId, is a
-     * shape problem for validation.js — this finder does not classify it
-     * as a dangling reference.
-     *
-     * PURE.
-     */
     function findBrokenHouseholdMembers() {
         _requireDependencies();
         var households = window.getHouseholds();
@@ -454,10 +492,6 @@
         return broken;
     }
 
-    /**
-     * Repairs broken household members and department heads.
-     * Does NOT persist.
-     */
     function repairBrokenHouseholdMembers() {
         _requireDependencies();
         var broken = findBrokenHouseholdMembers();
@@ -496,10 +530,6 @@
     // 4. RANK & ROLE ASSIGNMENTS
     // =========================================================================
 
-    /**
-     * Finds broken rank assignments and invalid active ranks.
-     * PURE.
-     */
     function findBrokenRankAssignments() {
         _requireDependencies();
         var characters = window.getCharacters();
@@ -541,10 +571,6 @@
         return broken;
     }
 
-    /**
-     * Repairs broken rank assignments and invalid active ranks.
-     * Does NOT persist.
-     */
     function repairBrokenRankAssignments() {
         _requireDependencies();
         var broken = findBrokenRankAssignments();
@@ -582,11 +608,6 @@
         return repairs;
     }
 
-    /**
-     * Finds broken role/profession assignments.
-     * PURE. Audits dangling references only. Malformed assignment shape is
-     * validation.js's concern.
-     */
     function findBrokenRoleAssignments() {
         _requireDependencies();
         var characters = window.getCharacters();
@@ -611,10 +632,6 @@
         return broken;
     }
 
-    /**
-     * Repairs broken role assignments.
-     * Does NOT persist.
-     */
     function repairBrokenRoleAssignments() {
         _requireDependencies();
         var broken = findBrokenRoleAssignments();
@@ -642,15 +659,6 @@
     // 5. APPRENTICESHIPS
     // =========================================================================
 
-    /**
-     * Finds broken apprenticeship references and contradictory references.
-     * PURE.
-     *
-     * Categories:
-     *   - dangling:      masterId or apprentice entry points to a missing
-     *                    character
-     *   - contradictory: two-sided apprenticeship records disagree
-     */
     function findBrokenApprenticeships() {
         _requireDependencies();
         var characters = window.getCharacters();
@@ -697,31 +705,6 @@
 
     var _VALID_APPRENTICESHIP_POLICIES = ['report', 'trustMasterList', 'trustApprenticeId'];
 
-    /**
-     * Repairs broken apprenticeships.
-     *
-     * Dangling references are always removed.
-     *
-     * Contradictions are handled according to `conflictPolicy`:
-     *   - 'report' (default): contradictions are returned to the caller
-     *     unrepaired.
-     *   - 'trustMasterList': master.apprentices lists are authoritative;
-     *     each apprentice's masterId is rebuilt from them.
-     *   - 'trustApprenticeId': apprentice.masterId is authoritative;
-     *     each master's apprentices list is rebuilt from them.
-     *
-     * The trusting policies are GRAPH RECONCILIATION operations. They may
-     * touch entries that were not individually flagged. This is deliberate:
-     * reconciling one side of the apprenticeship graph requires updating
-     * the other side to match, and per-finding patches can make the graph
-     * worse (e.g. nulling an apprentice's masterId while both master lists
-     * still contain that apprentice).
-     *
-     * @param {Object} [options]
-     * @param {string} [options.conflictPolicy] - one of the three above
-     * @returns {{ repairs: number, contradictions: Array }}
-     * @throws {Error} for an invalid conflictPolicy
-     */
     function repairBrokenApprenticeships(options) {
         if (_isMissing(options)) {
             options = {};
@@ -746,7 +729,6 @@
         var byChar = new Map();
         var repairs = 0;
 
-        // Step 1: remove dangling references. Independent of policy.
         for (var i = 0; i < broken.length; i++) {
             var item = broken[i];
 
@@ -769,7 +751,6 @@
             }
         });
 
-        // Step 2: apply reconciliation policy.
         var contradictions = [];
 
         if (policy === 'trustMasterList') {
@@ -777,7 +758,6 @@
         } else if (policy === 'trustApprenticeId') {
             repairs += _reconcileByApprenticeId();
         } else {
-            // 'report': collect contradictions without resolving.
             for (var j = 0; j < broken.length; j++) {
                 if (broken[j].category === 'contradictory') {
                     contradictions.push(broken[j]);
@@ -788,13 +768,6 @@
         return { repairs: repairs, contradictions: contradictions };
     }
 
-    /**
-     * Rebuilds each character's masterId from the union of master
-     * .apprentices lists. If two masters both claim an apprentice, the
-     * last one in iteration order wins (caller must resolve explicitly
-     * if this is possible and meaningful in their data).
-     * @private
-     */
     function _reconcileByMasterList() {
         var characters = window.getCharacters();
         var authoritativeMasterId = new Map();
@@ -823,11 +796,6 @@
         return repairs;
     }
 
-    /**
-     * Rebuilds each character's apprentices list from the union of
-     * apprentice.masterId references.
-     * @private
-     */
     function _reconcileByApprenticeId() {
         var characters = window.getCharacters();
         var authoritativeApprentices = new Map();
@@ -867,25 +835,6 @@
     // 6. COMPREHENSIVE AUDIT — PURE
     // =========================================================================
 
-    /**
-     * Runs all finders and returns a full report.
-     * PURE. Does not mutate canonical data.
-     *
-     * Note: parentage on the character record is no longer audited here.
-     * See PARENTAGE and FUTURE WORK in the module header.
-     *
-     * @returns {{
-     *   ok: boolean,
-     *   error?: string,
-     *   counts?: Object,
-     *   totalIssues?: number,
-     *   totalCharacters?: number,
-     *   totalPlaces?: number,
-     *   totalRanks?: number,
-     *   totalRoles?: number,
-     *   totalHouseholds?: number
-     * }}
-     */
     function auditDataIntegrity() {
         var missing = _missingDependencies();
         if (missing.length > 0) {
@@ -935,22 +884,6 @@
     // 7. COMPREHENSIVE REPAIR
     // =========================================================================
 
-    /**
-     * Runs all repairs in memory only. Does NOT persist. Does NOT invalidate
-     * caches. The caller is responsible for committing the mutation via the
-     * mutation boundary (save + invalidate + notify).
-     *
-     * @param {Object} [options]
-     * @param {string} [options.conflictPolicy] - passed to apprenticeship repair
-     * @returns {{
-     *   repairs: Object,
-     *   contradictions: Array,
-     *   totalRepairs: number,
-     *   changed: boolean,
-     *   before: Object,
-     *   after: Object
-     * }}
-     */
     function repairAllData(options) {
         options = options || {};
 
@@ -1024,39 +957,5 @@
     // Comprehensive
     window.auditDataIntegrity = auditDataIntegrity;
     window.repairAllData = repairAllData;
-
-    // =========================================================================
-    // 9. DEPRECATED ALIASES
-    // =========================================================================
-    //
-    // The family parentage aliases (findOrphanedCharacters,
-    // repairOrphanedCharacters) were removed together with the underlying
-    // findBrokenParentReferences / repairBrokenParentReferences. See
-    // PARENTAGE and FUTURE WORK in the module header.
-    //
-    // The place aliases (findOrphanedPlaces, repairOrphanedPlaces) were
-    // also removed: no caller in the tree referenced them, and keeping
-    // unused aliases invites accidental reintroduction of the deprecation.
-    // If a caller reappears, re-add them with a migration note that names
-    // the specific caller being unblocked.
-
-    // =========================================================================
-    // 10. REMOVED (moved elsewhere)
-    // =========================================================================
-
-    // - findBrokenParentReferences / repairBrokenParentReferences →
-    //   removed. Parentage lives in parentChildEdges; the character-record
-    //   fields they audited (motherId, fatherId, adoptedParents) were
-    //   deleted from the schema. See PARENTAGE in the module header.
-    // - findGenealogyCycles / repairGenealogyCycles → removed. Same reason:
-    //   they walked removed character-record fields.
-    // - requireIntegrityDependencies → private. Callers can preflight with
-    //   auditDataIntegrity() which returns { ok: false, error } for the
-    //   same condition.
-    // - ensureDataIntegrity() → storage-schema.js
-    // - autoAudit() / getTimeSinceLastAudit() → maintenance.js
-    // - _invalidateCaches() → mutation boundary
-    // - saveMasterData() → mutation boundary
-    // - _showToast() → caller
 
 })();
