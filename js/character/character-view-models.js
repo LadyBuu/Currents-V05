@@ -48,30 +48,6 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - _enrichRomance now passes through affair metadata from the
- *       RomanceQueries projection: affairType, discovered,
- *       discoveryYear, discoveryCircumstances, discovererId, and
- *       publicBehavior. This allows the Romance tab to render
- *       discovery state and the edit modal to show affair-specific
- *       fields without a second getById lookup.
- *
- *     - _enrichRomance now defensively resolves relationshipId:
- *       prefers rel.relationshipId, falls back to rel.id or
- *       rel.relationship_id. If none is present, it returns null
- *       (dropping the entry) rather than returning an entry with an
- *       undefined id.
- *
- *     - buildRomanceModel now exposes a dedicated `affairs` array
- *       by filtering `model.current` for isAffair === true. This
- *       makes the Affairs section in the Romance tab model-driven
- *       instead of re-deriving the filter in the UI.
- *
- *     - _resolveRelationshipClass now checks AffairQueries (via
- *       AQ.getActiveAffairs) to correctly classify affair partners
- *       as 'relative' for the relationship circle, matching the
- *       prior behaviour for non-committed romance.
- *
- *   Previous revision:
  *     - _buildIdentityBlock reads religionName / cultureName from the
  *       CharacterQueries summary FIRST (the projection already carries
  *       them), and only falls back to ReligionQueries.getReligion /
@@ -82,8 +58,24 @@
  *       culture domains to resolve the display names. When either
  *       query module was changed to re-derive its name from the
  *       character summary, the call cycled back into
- *       buildIdentityModel and blew the stack. Reading the summary's
- *       pre-resolved fields breaks the cycle at the source.
+ *       buildIdentityModel and blew the stack. The RangeError was
+ *       caught by _safe and recorded under errors.identity, which is
+ *       why the Identity tab reported "Name & Title section could not
+ *       be loaded: too much recursion."
+ *
+ *     - _resolveBirthplaceBlock now safely falls back to the raw
+ *       birthplaceId if the place lookup fails. Previously, if the
+ *       place was missing from PlaceState (e.g., during a partial
+ *       load, or if a place was deleted), resolvePlaceName returned
+ *       the ID, but a secondary check would blank the name out.
+ *       The field now retains the raw ID rather than rendering as
+ *       "None recorded", ensuring the user sees the explicit reference.
+ *
+ *     - _enrichRomance passes through affair metadata from the
+ *       RomanceQueries projection (affairType, discovered, etc.).
+ *
+ *     - buildRomanceModel exposes a dedicated `affairs` array by
+ *       filtering `model.current` for isAffair === true.
  * =============================================================================
  */
 
@@ -333,6 +325,7 @@
 
     function _buildIdentityBlock(summary, errors) {
         return _safe('identity', function () {
+            // 1. Prefer the projection's own resolved names.
             var religionName = (typeof summary.religionName === 'string'
                 && summary.religionName.length > 0)
                 ? summary.religionName : null;
@@ -341,10 +334,11 @@
                 && summary.cultureName.length > 0)
                 ? summary.cultureName : null;
 
-            if (_hasId(summary.religionId)
-                && !religionName
-                && typeof window.ReligionQueries !== 'undefined'
-                && window.ReligionQueries !== null
+            // 2. Fallback: only if the projection did NOT carry the name.
+            // Wrapped individually so a cycling query cannot take down
+            // the whole identity block.
+            if (_hasId(summary.religionId) && !religionName
+                && window.ReligionQueries
                 && typeof window.ReligionQueries.getReligion === 'function') {
                 try {
                     var rel = window.ReligionQueries.getReligion(summary.religionId);
@@ -354,10 +348,8 @@
                 } catch (e) { /* non-fatal */ }
             }
 
-            if (_hasId(summary.cultureId)
-                && !cultureName
-                && typeof window.CultureQueries !== 'undefined'
-                && window.CultureQueries !== null
+            if (_hasId(summary.cultureId) && !cultureName
+                && window.CultureQueries
                 && typeof window.CultureQueries.getCultureById === 'function') {
                 try {
                     var cul = window.CultureQueries.getCultureById(summary.cultureId);
@@ -781,7 +773,6 @@
     function _enrichRomance(rel, subjectId, subjectDeceased, currentYear) {
         if (!rel || !_hasId(rel.partnerId)) return null;
         
-        // Tolerant relationshipId resolution
         var relId = null;
         if (_hasId(rel.relationshipId)) relId = rel.relationshipId;
         else if (_hasId(rel.id)) relId = rel.id;
@@ -1648,9 +1639,18 @@
         if (!summary || !summary.birthplaceId) {
             return { placeId: null, placeName: null };
         }
+        var placeName = null;
+        try {
+            // resolvePlaceName returns the raw ID if the place isn't found.
+            // We explicitly check if the resolution succeeded, but we still
+            // store the ID so the field doesn't disappear.
+            placeName = resolvePlaceName(summary.birthplaceId);
+        } catch (e) {
+            placeName = summary.birthplaceId;
+        }
         return {
             placeId: summary.birthplaceId,
-            placeName: resolvePlaceName(summary.birthplaceId)
+            placeName: placeName || summary.birthplaceId
         };
     }
 
