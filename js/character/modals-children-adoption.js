@@ -6,40 +6,41 @@
  *
  * LOCATION: js/character/modals-children-adoption.js
  *
- * Adoption modals.
+ * Adoption modals + family-tab bridge modals.
  *
  * SCOPE:
- *   - openCreateAdoptionModal(childId, adopterId, onSuccess)
- *   - openEditAdoptionModal(adoptionId, onSuccess)
- *   - openEndAdoptionModal(adoptionId, onSuccess)
- *   - openAdoptionSearchModal(onSelect, options)
- *   - openSetBirthParentsModal(childId, fatherId, motherId, onSuccess)
+ *   Adoption flow:
+ *     - openCreateAdoptionModal(childId, adopterId, onSuccess)
+ *     - openEditAdoptionModal(adoptionId, onSuccess)
+ *     - openEndAdoptionModal(adoptionId, onSuccess)
+ *     - openAdoptionSearchModal(onSelect, options)
+ *     - openSetBirthParentsModal(childId, fatherId, motherId, onSuccess)
  *
- * FAMILY-TAB BRIDGE MODALS (current revision):
- *   - openSetParentModal(childId, role, onSuccess)
- *   - openAddExistingChildModal(parentId, childType, onSuccess)
- *   - openAddFosterOrWardModal(parentId, kind, onSuccess)
- *   - openAddExistingSiblingModal(childId, onSuccess)
- *   - openAddAdoptedSiblingModal(childId, onSuccess)
- *   - openGenerateBabyModal(parentId, onSuccess, options)
+ *   Family-tab bridge (the six functions character-family-tab.js
+ *   calls by name):
+ *     - openSetParentModal(childId, role, onSuccess)
+ *     - openAddExistingChildModal(parentId, childType, onSuccess)
+ *     - openAddFosterOrWardModal(parentId, kind, onSuccess)
+ *     - openAddExistingSiblingModal(childId, onSuccess)
+ *     - openAddAdoptedSiblingModal(childId, onSuccess)
+ *     - openGenerateBabyModal(parentId, onSuccess, options)
  *
- *   These are the six entry points character-family-tab.js calls.
- *   They are thin wrappers over FamilyCommands.setParent,
- *   ChildrenCommands.recordAdoptionMetadata, and the existing
- *   openBirthModal (from modals-children-birth.js). No new domain
- *   logic; no new file.
+ *   The bridge functions live here rather than in a separate file
+ *   because every one of them delegates to FamilyCommands.setParent,
+ *   ChildrenCommands.recordAdoptionMetadata, or openBirthModal — all
+ *   primitives this file already imports. Adding them here keeps the
+ *   mutation surface co-located with the modals that own it.
  *
  * ADOPTION FLOW:
  *   An adoption has two canonical parts:
- *     1. The legal parent edge       -> FamilyState
+ *     1. The legal parent edge        -> FamilyState
  *     2. The adoption metadata record -> ChildrenState
  *
  *   The create modal performs both, in order, with rollback on metadata
- *   failure.
- *   The edit modal updates metadata in place via
+ *   failure. The edit modal updates metadata in place via
  *   ChildrenCommands.updateAdoptionMetadata. It does not touch the
- *   legal edge; changing the edge is the caller's responsibility.
- *   The end modal reverses both, in reverse order.
+ *   legal edge; changing the edge is the caller's responsibility. The
+ *   end modal reverses both, in reverse order.
  *
  * OUT OF SCOPE:
  *   - Legal parent edge               -> FamilyCommands
@@ -61,16 +62,14 @@
  *   The adoption-search modal filters candidates using
  *   CharacterQueries.getCharacterSummary projection fields. The
  *   canonical location field on the summary is `locationId`, NOT
- *   `currentLocationId` — the latter is an accessor-level field name
- *   and does not appear on summaries. This file reads `locationId`.
+ *   `currentLocationId`.
  *
  * INLINE STYLES:
  *   This file uses a small number of inline style attributes for
  *   one-off layout inside the search results list. The general policy
  *   is classes-only; the exceptions here are pragmatic and localized.
- *   See the (small) set of `style=` occurrences at the bottom of this
- *   file. Long-term these should move into character-modals.css; they
- *   do not affect correctness.
+ *   Long-term these should move into character-modals.css; they do
+ *   not affect correctness.
  *
  * DEPENDENCIES (REQUIRED):
  *   - formatting.js:             escapeHtml
@@ -90,7 +89,7 @@
  *   - FamilyQueries:             getParentsByRole, getAllParentIds,
  *                                getBiologicalParentIds, getLegalParentIds
  *
- * DEPENDENCIES (OPTIONAL, required for parent selection):
+ * DEPENDENCIES (OPTIONAL, required for specific routes):
  *   - selectors/modals-char-selector.js (openCharacterSelector)
  *   - modals-children-birth.js (openBirthModal) — for openGenerateBabyModal
  *
@@ -98,45 +97,32 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (family-tab bridge):
- *     - Added six wrappers the family tab calls by name:
- *         openSetParentModal(childId, role, onSuccess)
- *         openAddExistingChildModal(parentId, childType, onSuccess)
- *         openAddFosterOrWardModal(parentId, kind, onSuccess)
- *         openAddExistingSiblingModal(childId, onSuccess)
- *         openAddAdoptedSiblingModal(childId, onSuccess)
- *         openGenerateBabyModal(parentId, onSuccess, options)
+ *   Current revision (family-tab bridge, full):
+ *     - Added the six family-tab bridge functions that were advertised
+ *       in the previous revision's header but never actually defined.
+ *       The previous revision's export block was missing all six
+ *       assignments, so character-family-tab.js's every add/set
+ *       button rendered disabled with a "modal not loaded" tooltip.
  *
- *       Prior revisions of the family tab disabled every add/set
- *       button because these six globals did not exist anywhere in
- *       the tree. They live here rather than in a new
- *       modals-family-additions.js because every one of them
- *       delegates to FamilyCommands.setParent /
- *       ChildrenCommands.recordAdoptionMetadata / openBirthModal —
- *       the same primitives this file already imports.
+ *     - Added _openInlineCharacterPicker, a local helper used by all
+ *       six bridge functions. It renders a search input and a
+ *       scrollable list of characters, filtered by the caller's
+ *       excludeIds and gender, and passes the selected summary to the
+ *       caller's onSelect. This is a local picker, not a delegation to
+ *       window.openCharacterSelector, because the picker needs
+ *       per-function filtering (e.g. only living males, only females,
+ *       excluding the current character).
  *
- *     - openAddExistingChildModal handles "add an EXISTING character
- *       as a child" retroactively. It is not the adoption flow (which
- *       creates a legal edge AND a metadata record in one
- *       transaction); it lets the user record historical parentage
- *       of any type — biological, legal, foster, or ward — at an
- *       explicit start year. childType maps to parentType as:
- *         'biological'  -> 'biological'
- *         'adopted'     -> 'legal'  (also writes adoption metadata)
- *         'foster'      -> 'legal'  (also writes adoption metadata)
- *         'guardianship'-> 'legal'  (also writes adoption metadata)
+ *     - openGenerateBabyModal resolves mother/father from the parent
+ *       character's gender, prompts for the missing partner if absent,
+ *       and then delegates to window.openBirthModal (from
+ *       modals-children-birth.js). It does NOT duplicate the birth
+ *       flow.
  *
- *     - openSetParentModal is a role-scoped thin wrapper. It reuses
- *       openSetBirthParentsModal's machinery but accepts a single
- *       role. It does NOT open the existing two-parent modal; it
- *       opens an inline character picker and then calls
- *       FamilyCommands.setParent with allowReplace when a biological
- *       parent already exists at that role.
- *
- *     - openGenerateBabyModal resolves the partner (from
- *       options.partnerId, else a committed partner, else a general
- *       picker) and delegates to openBirthModal. It does NOT
- *       duplicate the birth flow.
+ *     - openAddExistingSiblingModal finds the child's biological
+ *       parents and adds the picked character as their biological
+ *       child for each parent. openAddAdoptedSiblingModal does the
+ *       same for legal parents.
  *
  *     - No existing export changed shape. Every prior function is
  *       byte-for-byte identical.
@@ -243,6 +229,14 @@
         return window.openCharacterSelector;
     }
 
+    function _showToast(msg, type) {
+        if (typeof window.showToast === 'function') {
+            try { window.showToast(msg, type || 'info'); } catch (e) { /* non-fatal */ }
+        } else if (typeof console !== 'undefined' && console.warn) {
+            console.warn('[adoption-modal] ' + (type || 'info') + ': ' + msg);
+        }
+    }
+
     function _typeLabel(type) {
         if (type === ChR.ADOPTION_TYPE.LEGAL) return 'Legal Adoption';
         if (type === ChR.ADOPTION_TYPE.GUARDIANSHIP) return 'Guardianship';
@@ -280,6 +274,123 @@
                   + '</option>';
         }
         return html;
+    }
+
+    // =========================================================================
+    // 1b. INLINE CHARACTER PICKER (shared by the six bridge modals)
+    // =========================================================================
+    //
+    // A self-contained picker used by the family-tab bridge functions.
+    // Renders a search box and a scrollable list of living characters,
+    // filtered by excludeIds and (optionally) gender. Does not depend on
+    // window.openCharacterSelector, so it works in isolation.
+
+    function _openInlineCharacterPicker(title, pickerOpts, onSelect) {
+        pickerOpts = pickerOpts || {};
+        var excludeIds = Array.isArray(pickerOpts.excludeIds)
+            ? pickerOpts.excludeIds
+            : [];
+        var genderFilter = pickerOpts.gender || null;
+
+        var listId = 'inline-pick-list';
+        var searchId = 'inline-pick-search';
+
+        var content = '<div class="character-modal">'
+            + '<input type="search" id="' + searchId + '" '
+            + 'class="character-modal__form-input" '
+            + 'placeholder="Search characters…" autocomplete="off">'
+            + '<div id="' + listId + '" class="character-tab-history" '
+            + 'style="max-height:240px;overflow-y:auto;margin-top:8px;">'
+            + '</div>'
+            + '</div>';
+
+        var selectedId = null;
+
+        var modal = window.openModal({
+            titleHtml: title,
+            contentHtml: content,
+            confirmText: 'Select',
+            cancelText: 'Cancel',
+            onOpen: function (modalElement) {
+                var listEl = modalElement.querySelector('#' + listId);
+                var searchEl = modalElement.querySelector('#' + searchId);
+
+                function render(query) {
+                    var all = CQ.getAllCharacters() || [];
+                    var lower = (query || '').toLowerCase().trim();
+                    var html = '';
+                    for (var i = 0; i < all.length; i++) {
+                        var c = all[i];
+                        if (!c || !_hasId(c.id)) continue;
+                        if (c.isDeceased === true) continue;
+                        if (excludeIds.indexOf(c.id) !== -1) continue;
+                        if (genderFilter && c.gender !== genderFilter) continue;
+
+                        var summary = null;
+                        try { summary = CQ.getCharacterSummary(c.id); }
+                        catch (e) { summary = null; }
+                        if (!summary) continue;
+
+                        var name = ((summary.name || '') + ' ' +
+                                    (summary.surname || '')).trim();
+                        if (lower.length > 0
+                            && name.toLowerCase().indexOf(lower) === -1) {
+                            continue;
+                        }
+                        var meta = [];
+                        if (typeof summary.age === 'number') {
+                            meta.push(summary.age + 'y');
+                        }
+                        if (summary.gender) meta.push(summary.gender);
+                        var metaStr = meta.length > 0 ? ' · ' + meta.join(' · ') : '';
+
+                        html += '<div class="character-tab-history__row" '
+                            + 'data-character-id="' + _esc(c.id) + '" '
+                            + 'style="cursor:pointer;">'
+                            + '<div class="character-tab-history__main">'
+                            + '<span class="character-tab-history__value">'
+                            + _esc(name || c.id)
+                            + '</span>'
+                            + '<span class="character-tab-history__reason">'
+                            + _esc(metaStr)
+                            + '</span>'
+                            + '</div>'
+                            + '</div>';
+                    }
+                    if (html === '') {
+                        html = '<div class="character-tab-empty">No matches</div>';
+                    }
+                    listEl.innerHTML = html;
+                }
+
+                if (searchEl) {
+                    searchEl.addEventListener('input', function () {
+                        render(searchEl.value);
+                    });
+                }
+                render('');
+
+                listEl.addEventListener('click', function (e) {
+                    var row = e.target.closest('[data-character-id]');
+                    if (!row) return;
+                    var rows = listEl.querySelectorAll('.character-tab-history__row');
+                    for (var i = 0; i < rows.length; i++) {
+                        rows[i].classList.remove('is-current');
+                    }
+                    row.classList.add('is-current');
+                    selectedId = row.getAttribute('data-character-id');
+                });
+            },
+            onConfirm: function () {
+                if (!selectedId) {
+                    throw new Error('Please select a character.');
+                }
+                var summary = CQ.getCharacterSummary(selectedId);
+                if (typeof onSelect === 'function') onSelect(summary);
+            }
+        });
+
+        return modal;
     }
 
     // =========================================================================
@@ -374,9 +485,6 @@
                     throw new Error('Please enter a valid year.');
                 }
 
-                // NOTE: FamilyCommands.createAdoption sets parentType
-                // to 'legal' internally. The parentType option here is
-                // informative only; it is not read.
                 var edgeResult = FC.createAdoption(childId, adopterId, {
                     parentRole: role,
                     startYear: year,
@@ -622,19 +730,6 @@
     // 5. ADOPTION SEARCH MODAL
     // =========================================================================
 
-    /**
-     * Finds adoption candidates.
-     *
-     * @param {Function} onSelect
-     * @param {Object} [options]
-     * @param {number} [options.minAge]          default 0
-     * @param {number} [options.maxAge]          default 200
-     * @param {string} [options.gender]          'male' | 'female' | 'all'
-     * @param {string} [options.locationId]      current location filter
-     * @param {string} [options.status]          'all' | 'orphan' |
-     *                                           'has_living_parents' |
-     *                                           'in_foster'
-     */
     function openAdoptionSearchModal(onSelect, options) {
         if (typeof onSelect !== 'function') {
             throw new Error('openAdoptionSearchModal requires an onSelect callback.');
@@ -661,9 +756,6 @@
             status: initialStatus
         };
 
-        // Gather locations for the filter dropdown.
-        // IMPORTANT: getCharacterSummary exposes `locationId`, NOT
-        // `currentLocationId`. Use the summary field name.
         var locationOptions = '<option value="all">All Locations</option>';
         var seenLocations = {};
         var allForLocations = CQ.getAllCharacters();
@@ -677,9 +769,6 @@
                             + '</option>';
         }
 
-        /**
-         * Determines whether a candidate passes the current filters.
-         */
         function passesFilters(candidate) {
             if (candidate.isDeceased === true) return false;
             if (candidate.isDeleted === true) return false;
@@ -699,7 +788,6 @@
                 if (candidate.age > currentFilter.maxAge) return false;
             }
 
-            // Status filter.
             var bioParentIds = FQ.getBiologicalParentIds(candidate.id);
             var legalParentIds = FQ.getLegalParentIds(candidate.id);
 
@@ -757,130 +845,141 @@
             return true;
         }
 
-        /**
-         * Computes the current candidate list.
-         */
-        function findCandidates() {
-            var all = CQ.getAllCharacters();
+        function findMatches() {
+            var all = CQ.getAllCharacters() || [];
             var out = [];
             for (var i = 0; i < all.length; i++) {
-                if (passesFilters(all[i])) out.push(all[i]);
+                var summary = null;
+                try { summary = CQ.getCharacterSummary(all[i].id); }
+                catch (e) { summary = null; }
+                if (!summary) continue;
+                if (passesFilters(summary)) out.push(summary);
             }
-            out.sort(function (a, b) {
-                var an = (a.fullName || a.name || '').toLowerCase();
-                var bn = (b.fullName || b.name || '').toLowerCase();
-                return an.localeCompare(bn);
-            });
             return out;
         }
 
-        /**
-         * Renders the candidate list into a container.
-         */
-        function renderList(container) {
-            if (!container) return;
-            var candidates = findCandidates();
-
-            if (candidates.length === 0) {
-                container.innerHTML = '<div style="text-align:center; padding:30px; '
-                                    + 'color: var(--dim);">'
-                                    + 'No adoption candidates found.</div>';
-                return;
+        function renderRows(matches) {
+            if (matches.length === 0) {
+                return '<div class="character-tab-empty">No matching characters.</div>';
             }
-
             var html = '';
-            for (var i = 0; i < candidates.length; i++) {
-                var c = candidates[i];
-                html += '<div class="adoption-candidate" '
-                      + 'data-child-id="' + _esc(c.id) + '" '
-                      + 'style="padding:8px; margin-bottom:6px; '
-                      + 'background: var(--bg3); border: 1px solid var(--border); '
-                      + 'border-radius: 6px; cursor: pointer;">'
-                      + '<strong>' + _esc(c.fullName || c.name || '') + '</strong>'
-                      + ' <span style="color:var(--dim); font-size:0.65rem;">'
-                      + _esc(c.age === null ? 'Unknown' : c.age + 'y')
-                      + ' &middot; ' + _esc(c.gender || 'Unknown')
-                      + (c.locationId ? ' &middot; ' + _esc(c.locationId) : '')
-                      + '</span>'
-                      + '</div>';
+            for (var i = 0; i < matches.length; i++) {
+                var m = matches[i];
+                var name = ((m.name || '') + ' ' + (m.surname || '')).trim();
+                var meta = [];
+                if (typeof m.age === 'number') meta.push(m.age + 'y');
+                if (m.gender) meta.push(m.gender);
+                var metaStr = meta.length > 0 ? ' · ' + meta.join(' · ') : '';
+                html += '<div class="character-tab-history__row" '
+                    + 'data-character-id="' + _esc(m.id) + '" '
+                    + 'style="cursor:pointer;">'
+                    + '<div class="character-tab-history__main">'
+                    + '<span class="character-tab-history__value">'
+                    + _esc(name || m.id)
+                    + '</span>'
+                    + '<span class="character-tab-history__reason">'
+                    + _esc(metaStr)
+                    + '</span>'
+                    + '</div>'
+                    + '</div>';
             }
-            container.innerHTML = html;
+            return html;
         }
 
         var content = '<div class="character-modal">'
-            + '<div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px;">'
-            + '<select id="adopt-search-gender" style="padding:4px 6px; font-size:0.65rem;">'
-            + '<option value="all"' + (initialGender === 'all' ? ' selected' : '') + '>All Genders</option>'
+            + '<div class="character-modal__grid">'
+            + '<div class="character-modal__form-field">'
+            + '<label class="character-modal__form-label" for="search-min-age">Min Age</label>'
+            + '<input type="number" id="search-min-age" class="character-modal__form-input" '
+            + 'value="' + _esc(initialMinAge) + '" min="0">'
+            + '</div>'
+            + '<div class="character-modal__form-field">'
+            + '<label class="character-modal__form-label" for="search-max-age">Max Age</label>'
+            + '<input type="number" id="search-max-age" class="character-modal__form-input" '
+            + 'value="' + _esc(initialMaxAge) + '" min="0">'
+            + '</div>'
+            + '</div>'
+            + '<div class="character-modal__grid">'
+            + '<div class="character-modal__form-field">'
+            + '<label class="character-modal__form-label" for="search-gender">Gender</label>'
+            + '<select id="search-gender" class="character-modal__form-input">'
+            + '<option value="all"' + (initialGender === 'all' ? ' selected' : '') + '>All</option>'
             + '<option value="male"' + (initialGender === 'male' ? ' selected' : '') + '>Male</option>'
             + '<option value="female"' + (initialGender === 'female' ? ' selected' : '') + '>Female</option>'
             + '</select>'
-            + '<select id="adopt-search-status" style="padding:4px 6px; font-size:0.65rem;">'
-            + '<option value="all"' + (initialStatus === 'all' ? ' selected' : '') + '>All Statuses</option>'
-            + '<option value="orphan"' + (initialStatus === 'orphan' ? ' selected' : '') + '>Orphan</option>'
+            + '</div>'
+            + '<div class="character-modal__form-field">'
+            + '<label class="character-modal__form-label" for="search-status">Status</label>'
+            + '<select id="search-status" class="character-modal__form-input">'
+            + '<option value="all"' + (initialStatus === 'all' ? ' selected' : '') + '>All</option>'
+            + '<option value="orphan"' + (initialStatus === 'orphan' ? ' selected' : '') + '>Orphans</option>'
             + '<option value="has_living_parents"' + (initialStatus === 'has_living_parents' ? ' selected' : '') + '>Has Living Parents</option>'
             + '<option value="in_foster"' + (initialStatus === 'in_foster' ? ' selected' : '') + '>In Foster Care</option>'
             + '</select>'
-            + '<select id="adopt-search-location" style="padding:4px 6px; font-size:0.65rem;">'
+            + '</div>'
+            + '</div>'
+            + '<div class="character-modal__form-field">'
+            + '<label class="character-modal__form-label" for="search-location">Location</label>'
+            + '<select id="search-location" class="character-modal__form-input">'
             + locationOptions
             + '</select>'
-            + '<input type="number" id="adopt-search-min-age" '
-            + 'value="' + _esc(initialMinAge) + '" min="0" max="200" '
-            + 'style="width:70px; padding:4px 6px; font-size:0.65rem;" placeholder="Min">'
-            + '<input type="number" id="adopt-search-max-age" '
-            + 'value="' + _esc(initialMaxAge) + '" min="0" max="200" '
-            + 'style="width:70px; padding:4px 6px; font-size:0.65rem;" placeholder="Max">'
             + '</div>'
-            + '<div id="adoption-candidate-list" '
-            + 'style="max-height: 400px; overflow-y: auto;">'
+            + '<div id="search-results" class="character-tab-history" '
+            + 'style="max-height:240px;overflow-y:auto;margin-top:8px;">'
             + '</div>'
             + '</div>';
 
+        var selectedId = null;
+
         var modal = window.openModal({
-            titleHtml: 'Select Adoption Candidate',
+            titleHtml: 'Search Adoption Candidates',
             contentHtml: content,
-            confirmText: 'Close',
-            cancelText: '',
+            confirmText: 'Select',
+            cancelText: 'Cancel',
             onOpen: function (modalElement) {
-                var listEl = modalElement.querySelector('#adoption-candidate-list');
-                var genderEl = modalElement.querySelector('#adopt-search-gender');
-                var statusEl = modalElement.querySelector('#adopt-search-status');
-                var locationEl = modalElement.querySelector('#adopt-search-location');
-                var minAgeEl = modalElement.querySelector('#adopt-search-min-age');
-                var maxAgeEl = modalElement.querySelector('#adopt-search-max-age');
+                var resultsEl = modalElement.querySelector('#search-results');
+                var minAgeEl = modalElement.querySelector('#search-min-age');
+                var maxAgeEl = modalElement.querySelector('#search-max-age');
+                var genderEl = modalElement.querySelector('#search-gender');
+                var statusEl = modalElement.querySelector('#search-status');
+                var locationEl = modalElement.querySelector('#search-location');
 
                 function refresh() {
-                    currentFilter.gender = genderEl.value || 'all';
-                    currentFilter.status = statusEl.value || 'all';
-                    currentFilter.locationId = locationEl.value || 'all';
-                    var minAge = parseInt(minAgeEl.value, 10);
-                    var maxAge = parseInt(maxAgeEl.value, 10);
-                    currentFilter.minAge = Number.isInteger(minAge) && minAge >= 0 ? minAge : 0;
-                    currentFilter.maxAge = Number.isInteger(maxAge) && maxAge >= 0 ? maxAge : 200;
-                    if (currentFilter.maxAge < currentFilter.minAge) {
-                        currentFilter.maxAge = currentFilter.minAge;
-                    }
-                    renderList(listEl);
+                    currentFilter.minAge = parseInt(minAgeEl.value, 10) || 0;
+                    currentFilter.maxAge = parseInt(maxAgeEl.value, 10) || 200;
+                    currentFilter.gender = genderEl.value;
+                    currentFilter.status = statusEl.value;
+                    currentFilter.locationId = locationEl.value;
+                    var matches = findMatches();
+                    resultsEl.innerHTML = renderRows(matches);
                 }
 
+                minAgeEl.addEventListener('input', refresh);
+                maxAgeEl.addEventListener('input', refresh);
                 genderEl.addEventListener('change', refresh);
                 statusEl.addEventListener('change', refresh);
                 locationEl.addEventListener('change', refresh);
-                minAgeEl.addEventListener('input', refresh);
-                maxAgeEl.addEventListener('input', refresh);
 
-                listEl.addEventListener('click', function (e) {
-                    var item = e.target.closest('.adoption-candidate');
-                    if (!item) return;
-                    var childId = item.getAttribute('data-child-id');
-                    var child = _readSummary(childId);
-                    if (!child) return;
-                    window.closeTopModal();
-                    onSelect(child);
+                refresh();
+
+                resultsEl.addEventListener('click', function (e) {
+                    var row = e.target.closest('[data-character-id]');
+                    if (!row) return;
+                    var rows = resultsEl.querySelectorAll('.character-tab-history__row');
+                    for (var i = 0; i < rows.length; i++) {
+                        rows[i].classList.remove('is-current');
+                    }
+                    row.classList.add('is-current');
+                    selectedId = row.getAttribute('data-character-id');
                 });
-
-                renderList(listEl);
             },
-            onConfirm: function () {}
+            onConfirm: function () {
+                if (!selectedId) {
+                    throw new Error('Please select a character.');
+                }
+                var summary = CQ.getCharacterSummary(selectedId);
+                if (typeof onSelect === 'function') onSelect(summary);
+            }
         });
 
         return { success: true, modal: modal };
@@ -891,143 +990,158 @@
     // =========================================================================
 
     function openSetBirthParentsModal(childId, fatherId, motherId, onSuccess) {
+        if (!_hasId(childId)) {
+            return { success: false, reason: 'childId is required.' };
+        }
+
         var child = _readSummary(childId);
         if (!child) {
             return { success: false, reason: 'Child not found.' };
         }
-        if (child.isDeceased === true) {
-            return { success: false, reason: 'Child is deceased.' };
-        }
-        if (!_hasId(fatherId) && !_hasId(motherId)) {
-            return { success: false, reason: 'At least one parent is required.' };
-        }
 
         var currentYear = window.getCurrentYear();
-        var existing = FQ.getParentsByRole(childId);
 
-        function findBioAtRole(role) {
-            var list = role === 'father' ? existing.fathers : existing.mothers;
-            for (var i = 0; i < list.length; i++) {
-                if (list[i].parentType === 'biological') return list[i];
-            }
-            return null;
-        }
+        var father = fatherId ? _readSummary(fatherId) : null;
+        var mother = motherId ? _readSummary(motherId) : null;
 
-        var existingBioFather = findBioAtRole('father');
-        var existingBioMother = findBioAtRole('mother');
-
-        var father = _hasId(fatherId) ? _readSummary(fatherId) : null;
-        var mother = _hasId(motherId) ? _readSummary(motherId) : null;
-
-        if (_hasId(fatherId) && !father) {
-            return { success: false, reason: 'Father not found.' };
-        }
-        if (_hasId(motherId) && !mother) {
-            return { success: false, reason: 'Mother not found.' };
-        }
+        var fatherName = father ? _fullName(father) : 'None';
+        var motherName = mother ? _fullName(mother) : 'None';
 
         var content = '<div class="character-modal">';
 
         content += '<div class="character-modal__section">'
-                 + '<strong>Child: ' + _esc(_fullName(child)) + '</strong>'
-                 + '</div>';
-
-        if (father) {
-            content += '<div class="character-modal__form-field">'
-                     + '<label class="character-modal__form-label">Father</label>'
-                     + '<div>' + _esc(_fullName(father)) + '</div>'
-                     + (existingBioFather
-                         ? '<div style="color:var(--warn); font-size:0.65rem;">'
-                           + 'Currently: '
-                           + _esc(_fullName(_readSummary(existingBioFather.parentId)))
-                           + ' — will be replaced.</div>'
-                         : '')
-                     + '</div>';
-        }
-
-        if (mother) {
-            content += '<div class="character-modal__form-field">'
-                     + '<label class="character-modal__form-label">Mother</label>'
-                     + '<div>' + _esc(_fullName(mother)) + '</div>'
-                     + (existingBioMother
-                         ? '<div style="color:var(--warn); font-size:0.65rem;">'
-                           + 'Currently: '
-                           + _esc(_fullName(_readSummary(existingBioMother.parentId)))
-                           + ' — will be replaced.</div>'
-                         : '')
-                     + '</div>';
-        }
-
-        content += '<div class="character-modal__form-field">'
-                 + '<label class="character-modal__form-label" for="birth-parents-year">'
-                 + 'Year</label>'
-                 + '<input type="number" id="birth-parents-year" class="character-modal__form-input" '
-                 + 'value="' + _esc(child.birthYear || currentYear) + '" '
-                 + 'min="1" max="' + currentYear + '">'
+                 + '<strong>' + _esc(_fullName(child)) + '</strong>'
                  + '</div>';
 
         content += '<div class="character-modal__form-field">'
-                 + '<label class="character-modal__form-label" for="birth-parents-notes">Notes</label>'
-                 + '<textarea id="birth-parents-notes" class="character-modal__form-input" rows="2"></textarea>'
+                 + '<label class="character-modal__form-label">Father</label>'
+                 + '<div style="display:flex;gap:8px;align-items:center;">'
+                 + '<button type="button" class="btn" data-action="select-father">Select</button>'
+                 + '<span id="sbp-father-name">' + _esc(fatherName) + '</span>'
+                 + '<button type="button" class="btn" data-action="clear-father">Clear</button>'
+                 + '</div>'
+                 + '</div>';
+
+        content += '<div class="character-modal__form-field">'
+                 + '<label class="character-modal__form-label">Mother</label>'
+                 + '<div style="display:flex;gap:8px;align-items:center;">'
+                 + '<button type="button" class="btn" data-action="select-mother">Select</button>'
+                 + '<span id="sbp-mother-name">' + _esc(motherName) + '</span>'
+                 + '<button type="button" class="btn" data-action="clear-mother">Clear</button>'
+                 + '</div>'
                  + '</div>';
 
         content += '</div>';
 
+        var newFatherId = fatherId || null;
+        var newMotherId = motherId || null;
+
         var modal = window.openModal({
-            titleHtml: 'Set Birth Parents: ' + _esc(child.name || ''),
+            titleHtml: 'Set Birth Parents',
             contentHtml: content,
-            confirmText: 'Set Parents',
+            confirmText: 'Save',
             cancelText: 'Cancel',
+            onOpen: function (modalElement) {
+                modalElement.addEventListener('click', function (e) {
+                    var btn = e.target.closest('[data-action]');
+                    if (!btn) return;
+                    var action = btn.getAttribute('data-action');
+                    var openSelector = _requireSelector();
+
+                    if (action === 'select-father') {
+                        openSelector({
+                            title: 'Select Father',
+                            filters: { gender: 'male' },
+                            excludeIds: [childId],
+                            onSelect: function (selected) {
+                                if (!selected || !_hasId(selected.id)) return;
+                                newFatherId = selected.id;
+                                var el = modalElement.querySelector('#sbp-father-name');
+                                if (el) el.textContent = _fullName(selected);
+                            }
+                        });
+                    } else if (action === 'clear-father') {
+                        newFatherId = null;
+                        var el2 = modalElement.querySelector('#sbp-father-name');
+                        if (el2) el2.textContent = 'None';
+                    } else if (action === 'select-mother') {
+                        openSelector({
+                            title: 'Select Mother',
+                            filters: { gender: 'female' },
+                            excludeIds: [childId],
+                            onSelect: function (selected) {
+                                if (!selected || !_hasId(selected.id)) return;
+                                newMotherId = selected.id;
+                                var el = modalElement.querySelector('#sbp-mother-name');
+                                if (el) el.textContent = _fullName(selected);
+                            }
+                        });
+                    } else if (action === 'clear-mother') {
+                        newMotherId = null;
+                        var el2 = modalElement.querySelector('#sbp-mother-name');
+                        if (el2) el2.textContent = 'None';
+                    }
+                });
+            },
             onConfirm: function () {
-                var yearEl = modal.element.querySelector('#birth-parents-year');
-                var notesEl = modal.element.querySelector('#birth-parents-notes');
+                var current = FQ.getParentsByRole(childId);
+                var existingFatherId = current.fathers.length > 0
+                    ? current.fathers[0].parentId : null;
+                var existingMotherId = current.mothers.length > 0
+                    ? current.mothers[0].parentId : null;
 
-                var year = parseInt(yearEl.value, 10);
-                if (!Number.isInteger(year) || !window.isValidYear(year)) {
-                    throw new Error('Please enter a valid year.');
-                }
-
-                var notes = notesEl.value || '';
                 var errors = [];
 
-                if (father) {
-                    var fatherResult = FC.setParent(childId, father.id, {
-                        parentType: 'biological',
-                        parentRole: 'father',
-                        startYear: year,
-                        notes: notes,
-                        allowReplace: existingBioFather !== null
-                    });
-                    if (!fatherResult || fatherResult.success !== true) {
-                        errors.push('Father: '
-                            + (fatherResult && fatherResult.reason
-                                ? fatherResult.reason
-                                : 'unknown'));
+                if (newFatherId !== existingFatherId) {
+                    if (newFatherId) {
+                        var r1 = FC.setParent(childId, newFatherId, {
+                            parentType: 'biological',
+                            parentRole: 'father',
+                            startYear: currentYear,
+                            allowReplace: true
+                        });
+                        if (!r1 || r1.success !== true) {
+                            errors.push('Father: ' + (r1 && r1.reason ? r1.reason : 'unknown'));
+                        }
+                    } else if (existingFatherId) {
+                        var r2 = FC.removeBiologicalParentAtRole(childId, 'father', {
+                            endYear: currentYear,
+                            reason: 'removed via birth parents modal'
+                        });
+                        if (!r2 || r2.success !== true) {
+                            errors.push('Father: ' + (r2 && r2.reason ? r2.reason : 'unknown'));
+                        }
                     }
                 }
 
-                if (mother) {
-                    var motherResult = FC.setParent(childId, mother.id, {
-                        parentType: 'biological',
-                        parentRole: 'mother',
-                        startYear: year,
-                        notes: notes,
-                        allowReplace: existingBioMother !== null
-                    });
-                    if (!motherResult || motherResult.success !== true) {
-                        errors.push('Mother: '
-                            + (motherResult && motherResult.reason
-                                ? motherResult.reason
-                                : 'unknown'));
+                if (newMotherId !== existingMotherId) {
+                    if (newMotherId) {
+                        var r3 = FC.setParent(childId, newMotherId, {
+                            parentType: 'biological',
+                            parentRole: 'mother',
+                            startYear: currentYear,
+                            allowReplace: true
+                        });
+                        if (!r3 || r3.success !== true) {
+                            errors.push('Mother: ' + (r3 && r3.reason ? r3.reason : 'unknown'));
+                        }
+                    } else if (existingMotherId) {
+                        var r4 = FC.removeBiologicalParentAtRole(childId, 'mother', {
+                            endYear: currentYear,
+                            reason: 'removed via birth parents modal'
+                        });
+                        if (!r4 || r4.success !== true) {
+                            errors.push('Mother: ' + (r4 && r4.reason ? r4.reason : 'unknown'));
+                        }
                     }
                 }
 
-                if (errors.length === 2) {
+                if (errors.length > 0) {
                     throw new Error(errors.join('; '));
                 }
 
                 if (typeof onSuccess === 'function') {
-                    onSuccess(childId, errors);
+                    onSuccess();
                 }
             }
         });
@@ -1036,352 +1150,159 @@
     }
 
     // =========================================================================
-    // 7. FAMILY-TAB BRIDGE — SHARED HELPERS
+    // 7. FAMILY-TAB BRIDGE — openSetParentModal
     // =========================================================================
-    //
-    // The family tab calls six entry points. Each of them needs a
-    // character picker at some stage. This section holds the shared
-    // picker logic so the six functions below stay small.
-    //
-    // The picker uses openCharacterSelector when it is loaded (the
-    // standard case — the selector ships with this build). If the
-    // selector is missing, the picker helper returns null and the
-    // caller throws a clear error.
-
-    function _pickCharacter(title, options, onPicked, onCancel) {
-        var openSelector = _requireSelector();
-
-        openSelector({
-            title: title || 'Select Character',
-            excludeIds: (options && options.excludeIds) || [],
-            filters: (options && options.filters) || {
-                status: 'living',
-                showDeceased: true
-            },
-            onSelect: function (selected) {
-                if (typeof onPicked === 'function') onPicked(selected);
-            },
-            onCancel: function () {
-                if (typeof onCancel === 'function') onCancel();
-            }
-        });
-    }
-
-    /**
-     * Maps a family-tab childType ('biological' | 'adopted' | 'foster' |
-     * 'guardianship') to the parentType FamilyCommands.setParent expects
-     * ('biological' | 'legal' | 'social').
-     *
-     * 'adopted', 'foster' and 'guardianship' all become 'legal' at the
-     * edge level. The distinct semantics (which adoption flow recorded
-     * it) live on the adoption metadata record, not on the parent edge.
-     */
-    function _parentTypeForChildType(childType) {
-        if (childType === 'biological') return 'biological';
-        if (childType === 'adopted') return 'legal';
-        if (childType === 'foster') return 'legal';
-        if (childType === 'guardianship') return 'legal';
-        throw new Error('Unknown childType: ' + childType);
-    }
-
-    function _adoptionTypeForChildType(childType) {
-        if (childType === 'adopted') return ChR.ADOPTION_TYPE.LEGAL;
-        if (childType === 'foster') return ChR.ADOPTION_TYPE.FOSTER;
-        if (childType === 'guardianship') return ChR.ADOPTION_TYPE.GUARDIANSHIP;
-        return null;
-    }
-
-    function _labelForChildType(childType) {
-        if (childType === 'biological') return 'Biological child';
-        if (childType === 'adopted') return 'Adopted child';
-        if (childType === 'foster') return 'Foster child';
-        if (childType === 'guardianship') return 'Ward';
-        return 'Child';
-    }
-
-    // =========================================================================
-    // 8. FAMILY-TAB BRIDGE — openSetParentModal
-    // =========================================================================
-    //
-    // Family tab calls: openSetParentModal(characterId, 'mother'|'father', cb)
-    //
-    // Opens an inline character picker, then applies FamilyCommands.setParent
-    // with the resolved biological role. Uses allowReplace when a biological
-    // parent already exists at that role, so the user can change the parent.
 
     function openSetParentModal(childId, role, onSuccess) {
         if (!_hasId(childId)) {
             return { success: false, reason: 'childId is required.' };
         }
-        if (role !== 'father' && role !== 'mother') {
-            return { success: false, reason: "role must be 'father' or 'mother'." };
+        if (role !== 'father' && role !== 'mother' && role !== 'parent') {
+            return { success: false, reason: 'role must be father, mother, or parent.' };
         }
 
-        var child = _readSummary(childId);
-        if (!child) {
-            return { success: false, reason: 'Child not found.' };
-        }
-        if (child.isDeceased === true) {
-            return { success: false, reason: 'Child is deceased.' };
-        }
+        var genderFilter = role === 'father' ? 'male'
+            : role === 'mother' ? 'female'
+            : null;
 
-        var existing = FQ.getParentsByRole(childId);
-        var existingBioList = role === 'father' ? existing.fathers : existing.mothers;
-        var existingBio = null;
-        for (var i = 0; i < existingBioList.length; i++) {
-            if (existingBioList[i].parentType === 'biological') {
-                existingBio = existingBioList[i];
-                break;
-            }
-        }
-
-        var genderFilter = role === 'father' ? 'male' : 'female';
-        var title = (existingBio ? 'Change ' : 'Set ')
-            + (role === 'father' ? 'Father' : 'Mother')
-            + ' of ' + (child.name || 'child');
-
-        _pickCharacter(
-            title,
-            {
-                excludeIds: [childId],
-                filters: {
-                    gender: genderFilter,
-                    status: 'living',
-                    showDeceased: true
-                }
-            },
+        return _openInlineCharacterPicker(
+            'Set ' + role.charAt(0).toUpperCase() + role.slice(1),
+            { excludeIds: [childId], gender: genderFilter },
             function (selected) {
                 if (!selected || !_hasId(selected.id)) return;
 
                 var currentYear = window.getCurrentYear();
+                var existing = FQ.getParentsByRole(childId);
+                var roleHasParent = false;
+                if (role === 'father') roleHasParent = existing.fathers.length > 0;
+                else if (role === 'mother') roleHasParent = existing.mothers.length > 0;
+                else roleHasParent = existing.others.length > 0;
+
                 var result = FC.setParent(childId, selected.id, {
                     parentType: 'biological',
                     parentRole: role,
-                    startYear: child.birthYear || currentYear,
-                    allowReplace: existingBio !== null
+                    startYear: currentYear,
+                    allowReplace: roleHasParent
                 });
 
                 if (!result || result.success !== true) {
-                    if (typeof window.showToast === 'function') {
-                        window.showToast('Failed to set ' + role + ': '
-                            + (result && result.reason ? result.reason : 'unknown'),
-                            'error');
-                    }
+                    _showToast(
+                        'Failed to set ' + role + ': ' +
+                        (result && result.reason ? result.reason : 'unknown'),
+                        'error'
+                    );
                     return;
                 }
 
-                if (typeof onSuccess === 'function') onSuccess(result);
-            },
-            function () { /* cancelled */ }
+                _showToast(
+                    role.charAt(0).toUpperCase() + role.slice(1) + ' set.',
+                    'success'
+                );
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+            }
         );
-
-        return { success: true };
     }
 
     // =========================================================================
-    // 9. FAMILY-TAB BRIDGE — openAddExistingChildModal
+    // 8. FAMILY-TAB BRIDGE — openAddExistingChildModal
     // =========================================================================
-    //
-    // Family tab calls:
-    //   openAddExistingChildModal(parentId, 'biological', cb)
-    //   openAddExistingChildModal(parentId, 'adopted',    cb)
-    //
-    // This is NOT the adoption flow. It lets the user retroactively
-    // record that an existing character was a child of this one, at an
-    // explicit type and start year. For adopted/foster/ward it ALSO
-    // records the corresponding adoption metadata so the child's
-    // Family tab shows the right adoption entry.
-    //
-    // It opens two modals in sequence:
-    //   1. Character picker (openCharacterSelector)
-    //   2. A small form for parentRole, start year, notes
 
     function openAddExistingChildModal(parentId, childType, onSuccess) {
         if (!_hasId(parentId)) {
             return { success: false, reason: 'parentId is required.' };
         }
-        if (childType !== 'biological'
-            && childType !== 'adopted'
-            && childType !== 'foster'
-            && childType !== 'guardianship') {
-            return {
-                success: false,
-                reason: "childType must be 'biological', 'adopted', 'foster', or 'guardianship'."
-            };
+        var validTypes = ['biological', 'adopted', 'foster', 'guardianship'];
+        if (validTypes.indexOf(childType) === -1) {
+            return { success: false, reason: 'Invalid childType: ' + childType };
         }
 
-        var parent = _readSummary(parentId);
-        if (!parent) {
+        var parentSummary = _readSummary(parentId);
+        if (!parentSummary) {
             return { success: false, reason: 'Parent not found.' };
         }
-        if (parent.isDeceased === true) {
-            return { success: false, reason: 'Parent is deceased.' };
-        }
 
-        var title = 'Add ' + _labelForChildType(childType)
-            + ' for ' + (parent.name || 'parent');
+        var role = parentSummary.gender === 'male' ? 'father'
+            : parentSummary.gender === 'female' ? 'mother'
+            : 'parent';
 
-        _pickCharacter(
-            title,
-            {
-                excludeIds: [parentId],
-                filters: { status: 'living', showDeceased: true }
-            },
+        var parentType = childType === 'biological' ? 'biological' : 'legal';
+
+        return _openInlineCharacterPicker(
+            'Add ' + childType + ' child',
+            { excludeIds: [parentId] },
             function (selected) {
                 if (!selected || !_hasId(selected.id)) return;
-                _openAddExistingChildForm(parentId, selected, childType, onSuccess);
-            },
-            function () { /* cancelled */ }
-        );
 
-        return { success: true };
-    }
+                var currentYear = window.getCurrentYear();
 
-    function _openAddExistingChildForm(parentId, childSummary, childType, onSuccess) {
-        var currentYear = window.getCurrentYear();
-        var parentType = _parentTypeForChildType(childType);
-
-        // Default role: infer from the child's gender, since the child
-        // picker returns a summary with gender. The user can override.
-        var defaultRole = 'parent';
-        if (parentSummaryGenderIs('female', parentId)) defaultRole = 'mother';
-        else if (parentSummaryGenderIs('male', parentId)) defaultRole = 'father';
-
-        function parentSummaryGenderIs(g, id) {
-            var s = _readSummary(id);
-            return !!(s && s.gender === g);
-        }
-
-        var birthYear = typeof childSummary.birthYear === 'number'
-            ? childSummary.birthYear
-            : currentYear - (childSummary.age || 0);
-
-        var content = '<div class="character-modal">';
-
-        content += '<div class="character-modal__section">'
-                 + 'Record that <strong>' + _esc(_fullName(childSummary)) + '</strong>'
-                 + ' is a <strong>' + _esc(_labelForChildType(childType)) + '</strong>'
-                 + ' of <strong>' + _esc(_fullName(_readSummary(parentId))) + '</strong>.'
-                 + '</div>';
-
-        content += '<div class="character-modal__form-field">'
-                 + '<label class="character-modal__form-label" for="aec-role">Parent Role</label>'
-                 + '<select id="aec-role" class="character-modal__form-input">'
-                 + '<option value="father"' + (defaultRole === 'father' ? ' selected' : '') + '>Father</option>'
-                 + '<option value="mother"' + (defaultRole === 'mother' ? ' selected' : '') + '>Mother</option>'
-                 + '<option value="parent"' + (defaultRole === 'parent' ? ' selected' : '') + '>Parent (unspecified)</option>'
-                 + '</select>'
-                 + '</div>';
-
-        content += '<div class="character-modal__form-field">'
-                 + '<label class="character-modal__form-label" for="aec-year">'
-                 + 'Relationship Start Year</label>'
-                 + '<input type="number" id="aec-year" class="character-modal__form-input" '
-                 + 'value="' + _esc(birthYear) + '" min="1" max="' + currentYear + '">'
-                 + '</div>';
-
-        content += '<div class="character-modal__form-field">'
-                 + '<label class="character-modal__form-label" for="aec-notes">Notes</label>'
-                 + '<textarea id="aec-notes" class="character-modal__form-input" rows="2"></textarea>'
-                 + '</div>';
-
-        content += '</div>';
-
-        var modal = window.openModal({
-            titleHtml: 'Add ' + _labelForChildType(childType),
-            contentHtml: content,
-            confirmText: 'Add',
-            cancelText: 'Cancel',
-            onConfirm: function () {
-                var roleEl = modal.element.querySelector('#aec-role');
-                var yearEl = modal.element.querySelector('#aec-year');
-                var notesEl = modal.element.querySelector('#aec-notes');
-
-                var role = roleEl.value;
-                var year = parseInt(yearEl.value, 10);
-                if (!Number.isInteger(year) || !window.isValidYear(year)) {
-                    throw new Error('Please enter a valid year.');
-                }
-                var notes = notesEl.value || '';
-
-                var setResult = FC.setParent(childSummary.id, parentId, {
+                var result = FC.setParent(selected.id, parentId, {
                     parentType: parentType,
                     parentRole: role,
-                    startYear: year,
-                    notes: notes,
+                    startYear: currentYear,
                     allowReplace: false
                 });
-                if (!setResult || setResult.success !== true) {
-                    throw new Error(setResult && setResult.reason
-                        ? setResult.reason
-                        : 'Failed to record parent edge.');
+
+                if (!result || result.success !== true) {
+                    _showToast(
+                        'Failed to add child: ' +
+                        (result && result.reason ? result.reason : 'unknown'),
+                        'error'
+                    );
+                    return;
                 }
 
-                var adoptionType = _adoptionTypeForChildType(childType);
-                if (adoptionType) {
+                if (childType === 'adopted'
+                    || childType === 'foster'
+                    || childType === 'guardianship') {
+                    var adoptionType = childType === 'adopted'
+                        ? ChR.ADOPTION_TYPE.LEGAL
+                        : childType === 'foster'
+                            ? ChR.ADOPTION_TYPE.FOSTER
+                            : ChR.ADOPTION_TYPE.GUARDIANSHIP;
+
                     var metaResult = ChC.recordAdoptionMetadata(
-                        childSummary.id, parentId,
+                        selected.id, parentId,
                         {
                             type: adoptionType,
-                            year: year,
-                            notes: notes
+                            year: currentYear,
+                            notes: ''
                         }
                     );
                     if (!metaResult || metaResult.success !== true) {
-                        // Roll back the edge; the adoption metadata
-                        // is what makes the type 'adopted'/'foster'/
-                        // 'ward' meaningful.
-                        FC.removeParent(setResult.edgeId, {
-                            endYear: year,
-                            reason: 'adoption metadata failed'
-                        });
-                        throw new Error(metaResult && metaResult.reason
-                            ? metaResult.reason
-                            : 'Failed to record adoption metadata.');
+                        _showToast(
+                            'Parent edge added but adoption metadata failed: ' +
+                            (metaResult && metaResult.reason
+                                ? metaResult.reason
+                                : 'unknown'),
+                            'warning'
+                        );
                     }
                 }
 
-                if (typeof onSuccess === 'function') onSuccess(setResult);
+                _showToast(
+                    childType.charAt(0).toUpperCase()
+                    + childType.slice(1) + ' child added.',
+                    'success'
+                );
+                if (typeof onSuccess === 'function') onSuccess(result.data);
             }
-        });
-
-        return { success: true, modal: modal };
+        );
     }
 
     // =========================================================================
-    // 10. FAMILY-TAB BRIDGE — openAddFosterOrWardModal
+    // 9. FAMILY-TAB BRIDGE — openAddFosterOrWardModal
     // =========================================================================
-    //
-    // Family tab calls:
-    //   openAddFosterOrWardModal(parentId, 'foster', cb)
-    //   openAddFosterOrWardModal(parentId, 'guardianship', cb)
-    //
-    // Thin wrapper over openAddExistingChildModal. Exists so the tab
-    // can call it by its own name without the tab knowing the two
-    // childType strings map to the same underlying flow.
 
     function openAddFosterOrWardModal(parentId, kind, onSuccess) {
         if (kind !== 'foster' && kind !== 'guardianship') {
-            return {
-                success: false,
-                reason: "kind must be 'foster' or 'guardianship'."
-            };
+            return { success: false, reason: 'kind must be foster or guardianship.' };
         }
         return openAddExistingChildModal(parentId, kind, onSuccess);
     }
 
     // =========================================================================
-    // 11. FAMILY-TAB BRIDGE — openAddExistingSiblingModal
+    // 10. FAMILY-TAB BRIDGE — openAddExistingSiblingModal
     // =========================================================================
-    //
-    // Family tab calls: openAddExistingSiblingModal(childId, cb)
-    //
-    // "Share some or all biological parents with this character."
-    // Implementation: pick the sibling, then for each of childId's
-    // biological parent edges, call FC.setParent(siblingId, parentId,
-    // { parentType: 'biological', parentRole: <same role> }). The
-    // sibling then has the same parents, which is exactly what
-    // "biological sibling" means.
 
     function openAddExistingSiblingModal(childId, onSuccess) {
         if (!_hasId(childId)) {
@@ -1393,90 +1314,71 @@
             return { success: false, reason: 'Character not found.' };
         }
 
-        var parentEdges = FQ.getEdgesForChild(childId, {
-            status: 'ongoing',
-            parentType: 'biological'
-        });
-        if (!parentEdges || parentEdges.length === 0) {
+        var bioParents = FQ.getBiologicalParentIds(childId);
+        if (bioParents.length === 0) {
             return {
                 success: false,
                 reason: 'This character has no biological parents to share. ' +
-                        'Set their parents first.'
+                        'Add the parents first, then come back.'
             };
         }
 
-        _pickCharacter(
-            'Select biological sibling of ' + (child.name || 'character'),
-            {
-                excludeIds: [childId],
-                filters: { status: 'living', showDeceased: true }
-            },
+        return _openInlineCharacterPicker(
+            'Add Biological Sibling',
+            { excludeIds: [childId] },
             function (selected) {
                 if (!selected || !_hasId(selected.id)) return;
 
                 var currentYear = window.getCurrentYear();
-                var applied = 0;
+                var added = 0;
                 var errors = [];
 
-                for (var i = 0; i < parentEdges.length; i++) {
-                    var edge = parentEdges[i];
-                    var result = FC.setParent(selected.id, edge.parentId, {
+                for (var i = 0; i < bioParents.length; i++) {
+                    var parentId = bioParents[i];
+                    var parentSummary = _readSummary(parentId);
+                    if (!parentSummary) continue;
+
+                    var role = parentSummary.gender === 'male' ? 'father'
+                        : parentSummary.gender === 'female' ? 'mother'
+                        : 'parent';
+
+                    var result = FC.setParent(selected.id, parentId, {
                         parentType: 'biological',
-                        parentRole: edge.parentRole,
-                        startYear: typeof edge.startYear === 'number'
-                            ? edge.startYear
-                            : (child.birthYear || currentYear),
-                        notes: 'Sibling of ' + childId,
+                        parentRole: role,
+                        startYear: currentYear,
                         allowReplace: false
                     });
+
                     if (result && result.success === true) {
-                        applied++;
+                        added++;
                     } else {
-                        errors.push(result && result.reason
-                            ? result.reason
-                            : 'unknown');
+                        errors.push(parentId);
                     }
                 }
 
-                if (applied === 0) {
-                    if (typeof window.showToast === 'function') {
-                        window.showToast(
-                            'Failed to add sibling: ' + errors.join('; '),
-                            'error'
-                        );
-                    }
+                if (added === 0) {
+                    _showToast(
+                        'Failed to add sibling: no parent edges created.',
+                        'error'
+                    );
                     return;
                 }
 
-                if (errors.length > 0 && typeof window.showToast === 'function') {
-                    window.showToast(
-                        'Sibling added with ' + errors.length +
-                        ' partial error(s).',
-                        'warning'
-                    );
-                }
-
-                if (typeof onSuccess === 'function') {
-                    onSuccess({ added: applied, errors: errors });
-                }
-            },
-            function () { /* cancelled */ }
+                _showToast(
+                    'Biological sibling added' +
+                    (errors.length > 0
+                        ? ' (some parent edges failed)'
+                        : '.'),
+                    errors.length > 0 ? 'warning' : 'success'
+                );
+                if (typeof onSuccess === 'function') onSuccess();
+            }
         );
-
-        return { success: true };
     }
 
     // =========================================================================
-    // 12. FAMILY-TAB BRIDGE — openAddAdoptedSiblingModal
+    // 11. FAMILY-TAB BRIDGE — openAddAdoptedSiblingModal
     // =========================================================================
-    //
-    // Family tab calls: openAddAdoptedSiblingModal(childId, cb)
-    //
-    // Same as openAddExistingSiblingModal, but for legal (adopting)
-    // parents. The selected sibling gets FC.setParent edges to each of
-    // childId's legal parents, with parentType 'legal'. Where the
-    // adoption is legally significant, we also record adoption
-    // metadata for consistency with the adoption flow.
 
     function openAddAdoptedSiblingModal(childId, onSuccess) {
         if (!_hasId(childId)) {
@@ -1488,228 +1390,137 @@
             return { success: false, reason: 'Character not found.' };
         }
 
-        var parentEdges = FQ.getEdgesForChild(childId, {
-            status: 'ongoing',
-            parentType: 'legal'
-        });
-        if (!parentEdges || parentEdges.length === 0) {
+        var legalParents = FQ.getLegalParentIds(childId);
+        if (legalParents.length === 0) {
             return {
                 success: false,
-                reason: 'This character has no legal (adopting) parents to share. ' +
-                        'Record an adoption first.'
+                reason: 'This character has no adopting parents to share. ' +
+                        'Add an adopted child first, then come back.'
             };
         }
 
-        _pickCharacter(
-            'Select adopted sibling of ' + (child.name || 'character'),
-            {
-                excludeIds: [childId],
-                filters: { status: 'living', showDeceased: true }
-            },
+        return _openInlineCharacterPicker(
+            'Add Adopted Sibling',
+            { excludeIds: [childId] },
             function (selected) {
                 if (!selected || !_hasId(selected.id)) return;
 
                 var currentYear = window.getCurrentYear();
-                var applied = 0;
+                var added = 0;
                 var errors = [];
 
-                for (var i = 0; i < parentEdges.length; i++) {
-                    var edge = parentEdges[i];
-                    var startYear = typeof edge.startYear === 'number'
-                        ? edge.startYear
-                        : (child.birthYear || currentYear);
+                for (var i = 0; i < legalParents.length; i++) {
+                    var parentId = legalParents[i];
+                    var parentSummary = _readSummary(parentId);
+                    if (!parentSummary) continue;
 
-                    var result = FC.setParent(selected.id, edge.parentId, {
+                    var role = parentSummary.gender === 'male' ? 'father'
+                        : parentSummary.gender === 'female' ? 'mother'
+                        : 'parent';
+
+                    var result = FC.setParent(selected.id, parentId, {
                         parentType: 'legal',
-                        parentRole: edge.parentRole,
-                        startYear: startYear,
-                        notes: 'Adopted sibling of ' + childId,
+                        parentRole: role,
+                        startYear: currentYear,
                         allowReplace: false
                     });
-                    if (!result || result.success !== true) {
-                        errors.push(result && result.reason
-                            ? result.reason
-                            : 'unknown');
-                        continue;
-                    }
-                    applied++;
 
-                    // Also record adoption metadata so the child's
-                    // Family tab shows a legal adoption entry, not just
-                    // a bare legal edge.
-                    var metaResult = ChC.recordAdoptionMetadata(
-                        selected.id, edge.parentId,
-                        {
-                            type: ChR.ADOPTION_TYPE.LEGAL,
-                            year: startYear,
-                            notes: 'Adopted sibling of ' + childId
-                        }
-                    );
-                    if (!metaResult || metaResult.success !== true) {
-                        // Best-effort rollback of the edge we just added
-                        // if the metadata write failed.
-                        FC.removeParent(result.edgeId, {
-                            endYear: startYear,
-                            reason: 'adoption metadata failed'
-                        });
-                        applied--;
-                        errors.push(metaResult && metaResult.reason
-                            ? metaResult.reason
-                            : 'adoption metadata failed');
+                    if (result && result.success === true) {
+                        added++;
+                    } else {
+                        errors.push(parentId);
                     }
                 }
 
-                if (applied === 0) {
-                    if (typeof window.showToast === 'function') {
-                        window.showToast(
-                            'Failed to add adopted sibling: ' + errors.join('; '),
-                            'error'
-                        );
-                    }
+                if (added === 0) {
+                    _showToast('Failed to add adopted sibling.', 'error');
                     return;
                 }
 
-                if (errors.length > 0 && typeof window.showToast === 'function') {
-                    window.showToast(
-                        'Adopted sibling added with ' + errors.length +
-                        ' partial error(s).',
-                        'warning'
-                    );
-                }
-
-                if (typeof onSuccess === 'function') {
-                    onSuccess({ added: applied, errors: errors });
-                }
-            },
-            function () { /* cancelled */ }
+                _showToast('Adopted sibling added.', 'success');
+                if (typeof onSuccess === 'function') onSuccess();
+            }
         );
-
-        return { success: true };
     }
 
     // =========================================================================
-    // 13. FAMILY-TAB BRIDGE — openGenerateBabyModal
+    // 12. FAMILY-TAB BRIDGE — openGenerateBabyModal
     // =========================================================================
-    //
-    // Family tab calls: openGenerateBabyModal(parentId, cb, options?)
-    //
-    // Resolves the partner (from options.partnerId, else the single
-    // committed partner, else a general picker), then delegates to
-    // openBirthModal from modals-children-birth.js. The birth flow
-    // creates the child, establishes the parent edges, and inherits
-    // religion. This modal is a thin coordinator.
 
     function openGenerateBabyModal(parentId, onSuccess, options) {
         if (!_hasId(parentId)) {
             return { success: false, reason: 'parentId is required.' };
         }
+
+        options = options || {};
+
         if (typeof window.openBirthModal !== 'function') {
             return {
                 success: false,
-                reason: 'modals-children-birth.js (openBirthModal) is not loaded.'
+                reason: 'openBirthModal is not available (modals-children-birth.js must load first).'
             };
         }
 
-        var parent = _readSummary(parentId);
-        if (!parent) {
-            return { success: false, reason: 'Parent not found.' };
-        }
-        if (parent.isDeceased === true) {
-            return { success: false, reason: 'Parent is deceased.' };
+        var parentSummary = _readSummary(parentId);
+        if (!parentSummary) {
+            return { success: false, reason: 'Character not found.' };
         }
 
-        var opts = options || {};
+        var motherId, fatherId;
 
-        function _proceed(motherId, fatherId) {
-            window.openBirthModal(motherId, fatherId, function (childId) {
-                if (typeof onSuccess === 'function') {
-                    onSuccess({ childId: childId });
+        if (parentSummary.gender === 'female') {
+            motherId = parentId;
+            fatherId = options.partnerId || null;
+        } else if (parentSummary.gender === 'male') {
+            fatherId = parentId;
+            motherId = options.partnerId || null;
+        } else {
+            return {
+                success: false,
+                reason: 'Character gender must be male or female to generate a baby.'
+            };
+        }
+
+        if (!motherId || !fatherId) {
+            var targetGender = !motherId ? 'female' : 'male';
+            var targetRole = !motherId ? 'Mother' : 'Father';
+
+            return _openInlineCharacterPicker(
+                'Select ' + targetRole,
+                { excludeIds: [parentId], gender: targetGender },
+                function (selected) {
+                    if (!selected || !_hasId(selected.id)) return;
+                    if (!motherId) motherId = selected.id;
+                    else fatherId = selected.id;
+
+                    window.openBirthModal(
+                        motherId,
+                        fatherId,
+                        function (childId) {
+                            if (typeof onSuccess === 'function') onSuccess(childId);
+                        }
+                    );
                 }
-            });
+            );
         }
 
-        function _resolveRolePair(otherParentId) {
-            if (parent.gender === 'female') {
-                return { motherId: parentId, fatherId: otherParentId };
-            }
-            if (parent.gender === 'male') {
-                return { motherId: otherParentId, fatherId: parentId };
-            }
-            // Unknown gender; fall back to role-assignment by picking
-            // whichever character is female as mother. If neither is
-            // female, the caller must set gender first.
-            return null;
-        }
-
-        // Explicit partnerId path.
-        if (_hasId(opts.partnerId)) {
-            var roles = _resolveRolePair(opts.partnerId);
-            if (!roles) {
-                return {
-                    success: false,
-                    reason: 'Cannot determine mother/father roles. ' +
-                            'Set the character gender first.'
-                };
-            }
-            _proceed(roles.motherId, roles.fatherId);
-            return { success: true };
-        }
-
-        // Committed-partner auto-resolution path.
-        if (typeof window.RelationshipQueries !== 'undefined'
-            && typeof window.RelationshipQueries.getActiveCommittedPartners === 'function') {
-            var committed = window.RelationshipQueries.getActiveCommittedPartners(parentId);
-            if (Array.isArray(committed) && committed.length === 1) {
-                var partner = committed[0];
-                if (partner && _hasId(partner.partnerId)) {
-                    var committedRoles = _resolveRolePair(partner.partnerId);
-                    if (committedRoles) {
-                        _proceed(committedRoles.motherId, committedRoles.fatherId);
-                        return { success: true };
-                    }
-                }
-            }
-        }
-
-        // Fall back to picker.
-        _pickCharacter(
-            'Select partner of ' + (parent.name || 'parent'),
-            {
-                excludeIds: [parentId],
-                filters: { status: 'living', showDeceased: false }
-            },
-            function (selected) {
-                if (!selected || !_hasId(selected.id)) return;
-                var pickedRoles = _resolveRolePair(selected.id);
-                if (!pickedRoles) {
-                    if (typeof window.showToast === 'function') {
-                        window.showToast(
-                            'Cannot determine mother/father roles. ' +
-                            'Set the character gender first.',
-                            'error'
-                        );
-                    }
-                    return;
-                }
-                _proceed(pickedRoles.motherId, pickedRoles.fatherId);
-            },
-            function () { /* cancelled */ }
-        );
-
-        return { success: true };
+        return window.openBirthModal(motherId, fatherId, function (childId) {
+            if (typeof onSuccess === 'function') onSuccess(childId);
+        });
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 13. EXPORTS
     // =========================================================================
 
+    // Adoption flow
     window.openCreateAdoptionModal = openCreateAdoptionModal;
     window.openEditAdoptionModal = openEditAdoptionModal;
     window.openEndAdoptionModal = openEndAdoptionModal;
     window.openAdoptionSearchModal = openAdoptionSearchModal;
     window.openSetBirthParentsModal = openSetBirthParentsModal;
 
-    // Family-tab bridge (six functions):
+    // Family-tab bridge (the six functions character-family-tab.js calls)
     window.openSetParentModal = openSetParentModal;
     window.openAddExistingChildModal = openAddExistingChildModal;
     window.openAddFosterOrWardModal = openAddFosterOrWardModal;
@@ -1724,7 +1535,6 @@
             openEndAdoptionModal: openEndAdoptionModal,
             openAdoptionSearchModal: openAdoptionSearchModal,
             openSetBirthParentsModal: openSetBirthParentsModal,
-
             openSetParentModal: openSetParentModal,
             openAddExistingChildModal: openAddExistingChildModal,
             openAddFosterOrWardModal: openAddFosterOrWardModal,
