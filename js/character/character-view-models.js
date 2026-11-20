@@ -48,20 +48,28 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - _buildChildGroups: fixed the foster/ward/adopted overlap. Prior
+ *       revisions bucketed every legal child as "adopted" and then also
+ *       bucketed any child with an adoption metadata record (foster or
+ *       guardianship) as foster/ward. That meant a foster child appeared
+ *       under BOTH "Adopted" and "Foster", and a ward appeared under
+ *       BOTH "Adopted" and "Wards". The fix: bucket children by their
+ *       adoption metadata type. Legal children with no adoption record
+ *       are bucketed as adopted (legacy fallback). Foster children only
+ *       appear in foster. Wards only appear in guardianship. Biological
+ *       children are excluded from all adoption buckets.
+ *
+ *     - _enrichFamilyMember: age is now computed from birthYear at the
+ *       current year, correctly handling deceased characters
+ *       (age = deathYear - birthYear). Prior revisions read summary.age
+ *       directly, which is unreliable for deceased characters and drifts
+ *       if the current year changes between modal opens.
+ *
  *     - _buildIdentityBlock reads religionName / cultureName from the
  *       CharacterQueries summary FIRST (the projection already carries
  *       them), and only falls back to ReligionQueries.getReligion /
  *       CultureQueries.getCultureById when the projection did not
  *       resolve them. Each fallback is individually try/caught.
- *
- *       Prior revisions unconditionally re-queried the religion and
- *       culture domains to resolve the display names. When either
- *       query module was changed to re-derive its name from the
- *       character summary, the call cycled back into
- *       buildIdentityModel and blew the stack. The RangeError was
- *       caught by _safe and recorded under errors.identity, which is
- *       why the Identity tab reported "Name & Title section could not
- *       be loaded: too much recursion."
  *
  *     - _resolveBirthplaceBlock now safely falls back to the raw
  *       birthplaceId if the place lookup fails. Previously, if the
@@ -166,6 +174,34 @@
         var ay = typeof a.birthYear === 'number' ? a.birthYear : Infinity;
         var by = typeof b.birthYear === 'number' ? b.birthYear : Infinity;
         return ay - by;
+    }
+
+    /**
+     * Computes age at the current year from birthYear.
+     * Deceased characters: age is frozen at death.
+     * Returns null if birthYear is missing.
+     */
+    function _computeAgeFromBirthYear(birthYear, isDeceased, deathYear, currentYear) {
+        if (typeof birthYear !== 'number') return null;
+        var endYear;
+        if (isDeceased === true && typeof deathYear === 'number') {
+            endYear = deathYear;
+        } else {
+            endYear = (typeof currentYear === 'number') ? currentYear : new Date().getFullYear();
+        }
+        var age = endYear - birthYear;
+        if (age < 0) return 0;
+        return age;
+    }
+
+    function _getCurrentYear() {
+        if (typeof window.getCurrentYear === 'function') {
+            try {
+                var y = window.getCurrentYear();
+                if (typeof y === 'number' && isFinite(y)) return y;
+            } catch (e) { /* fall through */ }
+        }
+        return null;
     }
 
     // =========================================================================
@@ -996,13 +1032,29 @@
             ? summary.fullName
             : (summary.name || targetId);
 
+        // Compute age from birthYear at the current year. Falls back to
+        // summary.age only if birthYear is missing (which is unusual but
+        // possible for imported characters with no birth data).
+        var computedAge = null;
+        if (typeof summary.birthYear === 'number') {
+            var now = _getCurrentYear();
+            computedAge = _computeAgeFromBirthYear(
+                summary.birthYear,
+                summary.isDeceased === true,
+                summary.deathYear,
+                now
+            );
+        } else if (typeof summary.age === 'number') {
+            computedAge = summary.age;
+        }
+
         var out = {
             id: targetId,
             name: name,
             firstName: summary.name || '',
             surname: summary.surname || '',
             gender: summary.gender || 'unknown',
-            age: (typeof summary.age === 'number') ? summary.age : null,
+            age: computedAge,
             birthYear: _isMissing(summary.birthYear) ? null : summary.birthYear,
             deathYear: _isMissing(summary.deathYear) ? null : summary.deathYear,
             isDeceased: summary.isDeceased === true,
@@ -1140,6 +1192,23 @@
         return 'unknown';
     }
 
+    /**
+     * Builds child group buckets.
+     *
+     * Classification is by adoption metadata type, NOT by legal parent
+     * edge alone. Prior revisions bucketed every legal child as
+     * "adopted", which caused foster children and wards to appear in
+     * BOTH the Adopted and Foster/Ward sections. Fixed here.
+     *
+     * Bucketing rules:
+     *   - biological children     → biological bucket (never in others)
+     *   - legal edge + adoption.type='legal'          → adopted
+     *   - legal edge + adoption.type='foster'         → foster
+     *   - legal edge + adoption.type='guardianship'   → guardianship
+     *   - legal edge + NO adoption record             → adopted (fallback)
+     *
+     * A child appears in exactly one bucket.
+     */
     function _buildChildGroups(parentId, errors) {
         return _safe('children', function () {
             var biologicalIds = FQ.getBiologicalChildIds(parentId);
@@ -1150,13 +1219,25 @@
                 if (_hasId(biologicalIds[i])) bioSet[biologicalIds[i]] = true;
             }
 
-            var adoptedSet = {};
-            for (var l = 0; l < legalIds.length; l++) {
-                var cid = legalIds[l];
-                if (!_hasId(cid)) continue;
-                if (bioSet[cid]) continue;
-                adoptedSet[cid] = true;
-            }
+            // Build adoption-type map from adoption records.
+            var adoptionTypeByChild = {};
+            var adoptionYearByChild = {};
+            try {
+                if (typeof ChQ.getActiveAdoptionsForAdopter === 'function') {
+                    var adoptions = ChQ.getActiveAdoptionsForAdopter(parentId);
+                    if (Array.isArray(adoptions)) {
+                        for (var a = 0; a < adoptions.length; a++) {
+                            var rec = adoptions[a];
+                            if (!rec || !_hasId(rec.childId)) continue;
+                            var t = typeof rec.type === 'string' ? rec.type : 'legal';
+                            adoptionTypeByChild[rec.childId] = t;
+                            if (typeof rec.year === 'number') {
+                                adoptionYearByChild[rec.childId] = rec.year;
+                            }
+                        }
+                    }
+                }
+            } catch (e) { /* fall through */ }
 
             var biological = [];
             for (var b = 0; b < biologicalIds.length; b++) {
@@ -1171,47 +1252,59 @@
             }
 
             var adopted = [];
-            for (var l2 = 0; l2 < legalIds.length; l2++) {
-                var cid2 = legalIds[l2];
-                if (!_hasId(cid2)) continue;
-                if (bioSet[cid2]) continue;
-                var adoptedEntry = _enrichFamilyMember(
-                    cid2,
-                    'Adopted child',
-                    'child-legal',
-                    { childType: 'legal', parentCoverage: 'adopted' }
-                );
-                if (adoptedEntry) adopted.push(adoptedEntry);
-            }
-
             var foster = [];
             var guardianship = [];
-            try {
-                var adoptions = ChQ.getActiveAdoptionsForAdopter(parentId);
-                if (Array.isArray(adoptions)) {
-                    for (var a = 0; a < adoptions.length; a++) {
-                        var rec = adoptions[a];
-                        if (!rec || !_hasId(rec.childId)) continue;
-                        if (rec.type === 'foster') {
-                            var fosterEntry = _enrichFamilyMember(
-                                rec.childId,
-                                'Foster child',
-                                'child-foster',
-                                { childType: 'foster', adoptionYear: rec.year }
-                            );
-                            if (fosterEntry) foster.push(fosterEntry);
-                        } else if (rec.type === 'guardianship') {
-                            var wardEntry = _enrichFamilyMember(
-                                rec.childId,
-                                'Ward',
-                                'child-guardianship',
-                                { childType: 'guardianship', adoptionYear: rec.year }
-                            );
-                            if (wardEntry) guardianship.push(wardEntry);
+
+            for (var l = 0; l < legalIds.length; l++) {
+                var cid = legalIds[l];
+                if (!_hasId(cid)) continue;
+                // Biological children are never in the adoption buckets,
+                // regardless of adoption metadata. (A child can be both
+                // biological and adopted in edge-case data; the biological
+                // classification wins for UI display.)
+                if (bioSet[cid]) continue;
+
+                var adoptionType = adoptionTypeByChild[cid];
+                var adoptionYear = adoptionYearByChild[cid];
+
+                if (adoptionType === 'foster') {
+                    var fosterEntry = _enrichFamilyMember(
+                        cid,
+                        'Foster child',
+                        'child-foster',
+                        {
+                            childType: 'foster',
+                            adoptionYear: adoptionYear !== undefined ? adoptionYear : null
                         }
-                    }
+                    );
+                    if (fosterEntry) foster.push(fosterEntry);
+                } else if (adoptionType === 'guardianship') {
+                    var wardEntry = _enrichFamilyMember(
+                        cid,
+                        'Ward',
+                        'child-guardianship',
+                        {
+                            childType: 'guardianship',
+                            adoptionYear: adoptionYear !== undefined ? adoptionYear : null
+                        }
+                    );
+                    if (wardEntry) guardianship.push(wardEntry);
+                } else {
+                    // 'legal' adoption, or no adoption record.
+                    // Bucket as adopted (the canonical fallback).
+                    var adoptedEntry = _enrichFamilyMember(
+                        cid,
+                        'Adopted child',
+                        'child-legal',
+                        {
+                            childType: 'legal',
+                            parentCoverage: 'adopted',
+                            adoptionYear: adoptionYear !== undefined ? adoptionYear : null
+                        }
+                    );
+                    if (adoptedEntry) adopted.push(adoptedEntry);
                 }
-            } catch (e) { /* defensive */ }
+            }
 
             var allIds = biological.concat(adopted).concat(foster).concat(guardianship);
             allIds.sort(_sortByBirthYearAsc);
