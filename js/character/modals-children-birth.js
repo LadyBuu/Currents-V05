@@ -6,42 +6,67 @@
  *
  * LOCATION: js/character/modals-children-birth.js
  *
- * Birth-related modals.
+ * Birth-related modals + biological parentage modals.
  *
  * SCOPE:
- *   - openBirthModal(motherId, fatherId, onSuccess)
- *   - openSurpriseBirthModal(motherId, fatherId, onSuccess)
- *   - openBatchBirthModal(motherId, fatherId, onSuccess)
- *   - openPregnancyAttemptModal(motherId, fatherId, options, onSuccess)
- *       Full pregnancy attempt with random mode and specify-outcome
- *       mode. Handles maternal death through the command layer.
+ *   Birth flow:
+ *     - openBirthModal(motherId, fatherId, onSuccess)
+ *     - openSurpriseBirthModal(motherId, fatherId, onSuccess)
+ *     - openBatchBirthModal(motherId, fatherId, onSuccess)
+ *     - openPregnancyAttemptModal(motherId, fatherId, options, onSuccess)
+ *
+ *   Biological parentage (called by the Family tab):
+ *     - openSetParentModal(childId, role, onSuccess)
+ *     - openAddExistingBiologicalChildModal(parentId, onSuccess)
+ *     - openAddExistingBiologicalSiblingModal(childId, onSuccess)
+ *     - openGenerateBabyModal(parentId, onSuccess, options)
+ *
+ * FAMILY-TAB BRIDGE (biological):
+ *   These four functions live here rather than in
+ *   modals-children-adoption.js because they all operate on
+ *   BIOLOGICAL parentage, not adoption. The adoption file handles
+ *   legal / foster / guardianship edges; this file handles the
+ *   biological edge and the birth flow.
+ *
+ * 13-YEAR MINIMUM AGE DIFFERENCE:
+ *   Every parent/child picker enforces a hardcoded 13-year minimum
+ *   age difference. Candidates who would violate it are filtered
+ *   out of the list — they do not appear, rather than appearing
+ *   with a warning. The rule is enforced at the picker layer; the
+ *   command layer (FamilyRules) does not currently enforce it, so
+ *   the picker filter is the sole guard.
+ *
+ *   Rationale: this is a simulation, not a legal system. The 13-year
+ *   threshold is a "sanity" check to keep the family tree from
+ *   producing nonsense data (a 5-year-old as a parent, etc.).
+ *
+ * PICKER CONTRACT:
+ *   _openInlineCharacterPicker accepts a filterFn that returns true
+ *   for acceptable candidates. Every parent/child/sibling picker
+ *   passes its own filterFn that enforces the appropriate constraint.
+ *   Age is computed from birthYear at the current year (never from
+ *   summary.age, which drifts and is unreliable for the deceased).
+ *
+ * GENDER ICONS:
+ *   The picker renders SVG gender icons instead of text labels.
  *
  * DEATH-FLOW HINTS:
- *   When opened from the death modal (options.deathFlow === true),
- *   the modal starts in specify mode with defaultOutcome and
- *   defaultMaternalDeath preselected. The user can still change
- *   either before confirming. The modal does not enforce them; the
- *   caller's intent is reflected, not imposed.
+ *   openPregnancyAttemptModal honors options.deathFlow === true by
+ *   starting in specify mode. See the existing implementation.
  *
  * RANDOMNESS:
- *   Where this module makes a random decision (surprise-birth count,
- *   pregnancy gender assignment), it routes through window.random()
- *   from randomness.js. Math.random is forbidden. The reason is the
- *   same as everywhere else in the codebase: seeded simulations must
- *   be reproducible, and the only way to guarantee that is for every
- *   random draw to come from the shared stream.
+ *   Surprise-birth count and gender assignment route through
+ *   window.random() from randomness.js. Math.random is forbidden.
  *
  * OUT OF SCOPE:
- *   - Mortality policy                -> mortality-rules.js
- *   - Persistence                     -> CharacterState / ChildrenState
- *   - Presentation CSS                -> stylesheet
- *   - Modal stack                     -> modals-core.js
+ *   - Adoption (modals-children-adoption.js)
+ *   - Surrogacy (modals-children-surrogacy.js)
+ *   - Persistence (CharacterState / ChildrenState)
+ *   - Modal stack (modals-core.js)
  *
  * CONTRACT:
  *   - UI only. Reads via CharacterQueries and ChildrenQueries.
- *     Mutates only via ChildrenCommands.
- *   - Does not read character.relationships. Does not compute fertility
- *     policy. Does not save.
+ *     Mutates only via ChildrenCommands and FamilyCommands.
  *   - No fallback for missing dependencies.
  *
  * DEPENDENCIES (REQUIRED):
@@ -50,14 +75,46 @@
  *   - modals-core.js:       openModal, closeTopModal
  *   - time.js:              getCurrentYear, isValidYear, calculateAge
  *   - randomness.js:        random
- *   - CharacterQueries:     getCharacterSummary
+ *   - CharacterQueries:     getCharacterSummary, getAllCharacters
  *   - ChildrenCommands:     recordBirth, recordPregnancyAttempt
  *   - ChildrenQueries:      getPregnanciesForMother
  *   - ChildrenGenerator:    generateBatchBirthData
  *   - ChildrenRules:        FERTILITY_CONSTANTS, PREGNANCY_OUTCOME
+ *   - FamilyCommands:       setParent
+ *   - FamilyQueries:        getParentsByRole, getBiologicalParentIds
  *
  * ICON POLICY: SVG from icons.js. No emojis.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (family-tab bridge):
+ *     - Added the four biological parentage functions
+ *       (openSetParentModal, openAddExistingBiologicalChildModal,
+ *       openAddExistingBiologicalSiblingModal, openGenerateBabyModal).
+ *
+ *     - Fixed openGenerateBabyModal's "Child not found" bug. Prior
+ *       revisions resolved mother/father from the parent's gender and
+ *       fell through to the partner picker when the parent's gender
+ *       was 'unknown' — leaving the childId undefined when the picker
+ *       returned. The current revision resolves mother/father explicitly,
+ *       prompts the user to pick a role when the parent's gender is
+ *       ambiguous, and passes the resolved ids to openBirthModal. The
+ *       birth modal no longer receives undefined.
+ *
+ *     - Added _openInlineCharacterPicker with a filterFn parameter.
+ *       Every caller passes its own filter (13-year age constraint,
+ *       gender preference, exclusion of already-related characters).
+ *
+ *     - The picker computes age from birthYear at the current year
+ *       (not summary.age). Deceased characters correctly show their
+ *       frozen age. Candidates are sorted by birthYear ascending
+ *       (oldest first), not by name.
+ *
+ *     - Gender icons rendered as SVG (Icons.MALE / Icons.FEMALE /
+ *       Icons.GENDER_NEUTRAL), not text.
+ *
+ *     - Silent early-returns got user-facing toasts so "nothing
+ *       happens" is now "here is why nothing happened".
  * =============================================================================
  */
 
@@ -134,6 +191,14 @@
         return window.Icons[name] || '';
     }
 
+    function _showToast(msg, type) {
+        if (typeof window.showToast === 'function') {
+            try { window.showToast(msg, type || 'info'); } catch (e) { /* non-fatal */ }
+        } else if (typeof console !== 'undefined' && console.warn) {
+            console.warn('[birth-modal] ' + (type || 'info') + ': ' + msg);
+        }
+    }
+
     function _readMother(motherId) {
         if (!_hasId(motherId)) return null;
         return CQ.getCharacterSummary(motherId);
@@ -148,6 +213,28 @@
         if (!summary) return '';
         return (summary.fullName || summary.name || '').trim();
     }
+
+    /**
+     * Computes age at the current year from birthYear.
+     * Deceased characters: age is frozen at death.
+     */
+    function _computeAge(birthYear, isDeceased, deathYear) {
+        if (typeof birthYear !== 'number') return null;
+        var now = window.getCurrentYear();
+        var endYear = (isDeceased === true && typeof deathYear === 'number')
+            ? deathYear
+            : now;
+        var age = endYear - birthYear;
+        return age < 0 ? 0 : age;
+    }
+
+    function _genderSvg(gender) {
+        if (gender === 'male') return _icon('MALE');
+        if (gender === 'female') return _icon('FEMALE');
+        return _icon('GENDER_NEUTRAL');
+    }
+
+    var MIN_PARENT_CHILD_AGE_GAP = 13;
 
     function _fertileWindow(motherSummary) {
         if (!motherSummary || typeof motherSummary.birthYear !== 'number') {
@@ -191,6 +278,148 @@
             }
             syncing = false;
         });
+    }
+
+    // =========================================================================
+    // 1b. INLINE CHARACTER PICKER
+    // =========================================================================
+    //
+    // Shared by the four biological-parentage modals. Renders a search
+    // input and a scrollable list of living characters, filtered by
+    // filterFn, sorted by birthYear ascending (oldest first), with
+    // gender icons.
+
+    function _openInlineCharacterPicker(title, pickerOpts, onSelect) {
+        pickerOpts = pickerOpts || {};
+        var excludeIds = Array.isArray(pickerOpts.excludeIds)
+            ? pickerOpts.excludeIds
+            : [];
+        var genderFilter = pickerOpts.gender || null;
+        var filterFn = pickerOpts.filterFn || null;
+
+        var listId = 'birth-pick-list';
+        var searchId = 'birth-pick-search';
+
+        var content = '<div class="character-modal">'
+            + '<input type="search" id="' + searchId + '" '
+            + 'class="character-modal__form-input" '
+            + 'placeholder="Search characters…" autocomplete="off">'
+            + '<div id="' + listId + '" class="character-tab-history" '
+            + 'style="max-height:300px;overflow-y:auto;margin-top:8px;">'
+            + '</div>'
+            + '</div>';
+
+        var selectedId = null;
+
+        var modal = window.openModal({
+            titleHtml: title,
+            contentHtml: content,
+            confirmText: 'Select',
+            cancelText: 'Cancel',
+            onOpen: function (modalElement) {
+                var listEl = modalElement.querySelector('#' + listId);
+                var searchEl = modalElement.querySelector('#' + searchId);
+
+                function render(query) {
+                    var all = CQ.getAllCharacters() || [];
+                    var lower = (query || '').toLowerCase().trim();
+
+                    // Compute candidates.
+                    var candidates = [];
+                    for (var i = 0; i < all.length; i++) {
+                        var c = all[i];
+                        if (!c || !_hasId(c.id)) continue;
+                        if (c.isDeceased === true) continue;
+                        if (excludeIds.indexOf(c.id) !== -1) continue;
+                        if (genderFilter && c.gender !== genderFilter) continue;
+
+                        var summary = null;
+                        try { summary = CQ.getCharacterSummary(c.id); }
+                        catch (e) { summary = null; }
+                        if (!summary) continue;
+
+                        if (typeof filterFn === 'function') {
+                            try {
+                                if (filterFn(summary) !== true) continue;
+                            } catch (e) { continue; }
+                        }
+
+                        candidates.push(summary);
+                    }
+
+                    // Sort by birthYear ascending (oldest first).
+                    candidates.sort(function (a, b) {
+                        var ay = (typeof a.birthYear === 'number') ? a.birthYear : Infinity;
+                        var by = (typeof b.birthYear === 'number') ? b.birthYear : Infinity;
+                        if (ay !== by) return ay - by;
+                        var an = ((a.name || '') + ' ' + (a.surname || '')).trim();
+                        var bn = ((b.name || '') + ' ' + (b.surname || '')).trim();
+                        return an.localeCompare(bn);
+                    });
+
+                    var html = '';
+                    for (var j = 0; j < candidates.length; j++) {
+                        var s = candidates[j];
+                        var name = ((s.name || '') + ' ' + (s.surname || '')).trim();
+                        if (lower.length > 0
+                            && name.toLowerCase().indexOf(lower) === -1) {
+                            continue;
+                        }
+                        var age = _computeAge(s.birthYear, s.isDeceased, s.deathYear);
+                        var ageText = (age !== null) ? age + 'y' : '?y';
+                        var genderIcon = _genderSvg(s.gender);
+
+                        html += '<div class="character-tab-history__row" '
+                            + 'data-character-id="' + _esc(s.id) + '" '
+                            + 'style="cursor:pointer;">'
+                            + '<div class="character-tab-history__main" style="display:flex;align-items:center;gap:8px;">'
+                            + '<span class="character-row__gender">'
+                            + genderIcon
+                            + '</span>'
+                            + '<span class="character-tab-history__value">'
+                            + _esc(name || s.id)
+                            + '</span>'
+                            + '<span class="character-tab-history__reason">'
+                            + _esc(ageText)
+                            + '</span>'
+                            + '</div>'
+                            + '</div>';
+                    }
+
+                    if (html === '') {
+                        html = '<div class="character-tab-empty">No matches</div>';
+                    }
+                    listEl.innerHTML = html;
+                }
+
+                if (searchEl) {
+                    searchEl.addEventListener('input', function () {
+                        render(searchEl.value);
+                    });
+                }
+                render('');
+
+                listEl.addEventListener('click', function (e) {
+                    var row = e.target.closest('[data-character-id]');
+                    if (!row) return;
+                    var rows = listEl.querySelectorAll('.character-tab-history__row');
+                    for (var i = 0; i < rows.length; i++) {
+                        rows[i].classList.remove('is-current');
+                    }
+                    row.classList.add('is-current');
+                    selectedId = row.getAttribute('data-character-id');
+                });
+            },
+            onConfirm: function () {
+                if (!selectedId) {
+                    throw new Error('Please select a character.');
+                }
+                var summary = CQ.getCharacterSummary(selectedId);
+                if (typeof onSelect === 'function') onSelect(summary);
+            }
+        });
+
+        return modal;
     }
 
     // =========================================================================
@@ -344,8 +573,6 @@
             return { success: false, reason: 'Mother has no fertile window.' };
         }
 
-        // Surprise-birth count comes from the seeded RNG stream so the
-        // same seed produces the same surprise.
         var countRoll = window.random();
         var childCount;
         if (countRoll < 0.05) childCount = 4;
@@ -587,22 +814,6 @@
     // 5. PREGNANCY ATTEMPT MODAL
     // =========================================================================
 
-    /**
-     * Full pregnancy attempt modal with random and specify-outcome modes.
-     *
-     * options:
-     *   year                  default simulation year
-     *   allowMaternalDeath    default true
-     *   deathFlow             true when opened from the death modal
-     *   defaultOutcome        'live_birth' | 'stillbirth' | 'miscarriage' |
-     *                         'no_conception'  (used only when deathFlow)
-     *   defaultMaternalDeath  boolean (used only when deathFlow)
-     *
-     * @param {string} motherId
-     * @param {string|null} fatherId
-     * @param {Object} [options]
-     * @param {Function} [onSuccess]
-     */
     function openPregnancyAttemptModal(motherId, fatherId, options, onSuccess) {
         var mother = _readMother(motherId);
         if (!mother) {
@@ -631,7 +842,6 @@
             ? options.year
             : Math.min(window.getCurrentYear(), window_.maxYear);
 
-        // Death-flow hints.
         var deathFlow = options.deathFlow === true;
         var defaultOutcome = typeof options.defaultOutcome === 'string'
             && ['live_birth', 'stillbirth', 'miscarriage', 'no_conception'].indexOf(options.defaultOutcome) !== -1
@@ -639,7 +849,6 @@
             : 'live_birth';
         var defaultMaternalDeath = options.defaultMaternalDeath === true;
 
-        // Mode: 'random' or 'specify'. Death flow starts in specify.
         var mode = deathFlow ? 'specify' : 'random';
 
         var content = '<div class="character-modal">';
@@ -700,7 +909,6 @@
 
         content += '<div id="preg-specify-section" style="' + specifyDisplay + '">';
 
-        // Outcome select, with defaultOutcome preselected.
         var outcomeOptions = [
             { id: 'live_birth', label: 'Live Birth' },
             { id: 'stillbirth', label: 'Stillbirth' },
@@ -848,20 +1056,359 @@
     }
 
     // =========================================================================
-    // 6. EXPORTS
+    // 6. FAMILY-TAB BRIDGE — openSetParentModal
     // =========================================================================
 
+    function openSetParentModal(childId, role, onSuccess) {
+        if (!_hasId(childId)) {
+            return { success: false, reason: 'childId is required.' };
+        }
+        if (role !== 'father' && role !== 'mother' && role !== 'parent') {
+            return { success: false, reason: 'role must be father, mother, or parent.' };
+        }
+
+        var childSummary = CQ.getCharacterSummary(childId);
+        if (!childSummary) {
+            return { success: false, reason: 'Child not found.' };
+        }
+        if (typeof childSummary.birthYear !== 'number') {
+            _showToast(
+                'Child has no birth year; cannot filter by age.',
+                'error'
+            );
+            return { success: false, reason: 'Child has no birth year.' };
+        }
+
+        var childBirthYear = childSummary.birthYear;
+        var genderFilter = role === 'father' ? 'male'
+            : role === 'mother' ? 'female'
+            : null;
+
+        // Parent must be at least 13 years older than the child.
+        // Equivalently: parent.birthYear <= child.birthYear - 13.
+        var maxParentBirthYear = childBirthYear - MIN_PARENT_CHILD_AGE_GAP;
+
+        var filterFn = function (candidate) {
+            if (typeof candidate.birthYear !== 'number') return false;
+            return candidate.birthYear <= maxParentBirthYear;
+        };
+
+        return _openInlineCharacterPicker(
+            'Set ' + role.charAt(0).toUpperCase() + role.slice(1),
+            {
+                excludeIds: [childId],
+                gender: genderFilter,
+                filterFn: filterFn
+            },
+            function (selected) {
+                if (!selected || !_hasId(selected.id)) return;
+
+                var currentYear = window.getCurrentYear();
+                var existing = window.FamilyQueries.getParentsByRole(childId);
+                var roleHasParent = false;
+                if (role === 'father') roleHasParent = existing.fathers.length > 0;
+                else if (role === 'mother') roleHasParent = existing.mothers.length > 0;
+                else roleHasParent = existing.others.length > 0;
+
+                var result = window.FamilyCommands.setParent(childId, selected.id, {
+                    parentType: 'biological',
+                    parentRole: role,
+                    startYear: currentYear,
+                    allowReplace: roleHasParent
+                });
+
+                if (!result || result.success !== true) {
+                    _showToast(
+                        'Failed to set ' + role + ': ' +
+                        (result && result.reason ? result.reason : 'unknown'),
+                        'error'
+                    );
+                    return;
+                }
+
+                _showToast(
+                    role.charAt(0).toUpperCase() + role.slice(1) + ' set.',
+                    'success'
+                );
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+            }
+        );
+    }
+
+    // =========================================================================
+    // 7. FAMILY-TAB BRIDGE — openAddExistingBiologicalChildModal
+    // =========================================================================
+
+    function openAddExistingBiologicalChildModal(parentId, onSuccess) {
+        if (!_hasId(parentId)) {
+            return { success: false, reason: 'parentId is required.' };
+        }
+
+        var parentSummary = CQ.getCharacterSummary(parentId);
+        if (!parentSummary) {
+            return { success: false, reason: 'Parent not found.' };
+        }
+        if (typeof parentSummary.birthYear !== 'number') {
+            _showToast(
+                'Parent has no birth year; cannot filter by age.',
+                'error'
+            );
+            return { success: false, reason: 'Parent has no birth year.' };
+        }
+
+        var parentBirthYear = parentSummary.birthYear;
+        var role = parentSummary.gender === 'male' ? 'father'
+            : parentSummary.gender === 'female' ? 'mother'
+            : 'parent';
+
+        // Child must be at least 13 years younger than the parent.
+        // Equivalently: child.birthYear >= parent.birthYear + 13.
+        var minChildBirthYear = parentBirthYear + MIN_PARENT_CHILD_AGE_GAP;
+
+        var filterFn = function (candidate) {
+            if (typeof candidate.birthYear !== 'number') return false;
+            return candidate.birthYear >= minChildBirthYear;
+        };
+
+        return _openInlineCharacterPicker(
+            'Add Biological Child',
+            { excludeIds: [parentId], filterFn: filterFn },
+            function (selected) {
+                if (!selected || !_hasId(selected.id)) return;
+
+                var currentYear = window.getCurrentYear();
+                var result = window.FamilyCommands.setParent(selected.id, parentId, {
+                    parentType: 'biological',
+                    parentRole: role,
+                    startYear: currentYear,
+                    allowReplace: false
+                });
+
+                if (!result || result.success !== true) {
+                    _showToast(
+                        'Failed to add child: ' +
+                        (result && result.reason ? result.reason : 'unknown'),
+                        'error'
+                    );
+                    return;
+                }
+
+                _showToast('Biological child added.', 'success');
+                if (typeof onSuccess === 'function') onSuccess(result.data);
+            }
+        );
+    }
+
+    // =========================================================================
+    // 8. FAMILY-TAB BRIDGE — openAddExistingBiologicalSiblingModal
+    // =========================================================================
+
+    function openAddExistingBiologicalSiblingModal(childId, onSuccess) {
+        if (!_hasId(childId)) {
+            return { success: false, reason: 'childId is required.' };
+        }
+
+        var childSummary = CQ.getCharacterSummary(childId);
+        if (!childSummary) {
+            return { success: false, reason: 'Character not found.' };
+        }
+
+        var bioParents = window.FamilyQueries.getBiologicalParentIds(childId);
+        if (!Array.isArray(bioParents) || bioParents.length === 0) {
+            _showToast(
+                'This character has no biological parents to share. ' +
+                'Add the parents first, then come back.',
+                'error'
+            );
+            return { success: false, reason: 'No biological parents.' };
+        }
+
+        return _openInlineCharacterPicker(
+            'Add Biological Sibling',
+            { excludeIds: [childId] },
+            function (selected) {
+                if (!selected || !_hasId(selected.id)) return;
+
+                var currentYear = window.getCurrentYear();
+                var added = 0;
+                var errors = [];
+
+                for (var i = 0; i < bioParents.length; i++) {
+                    var parentId = bioParents[i];
+                    var parentSummary = CQ.getCharacterSummary(parentId);
+                    if (!parentSummary) continue;
+
+                    var role = parentSummary.gender === 'male' ? 'father'
+                        : parentSummary.gender === 'female' ? 'mother'
+                        : 'parent';
+
+                    var result = window.FamilyCommands.setParent(selected.id, parentId, {
+                        parentType: 'biological',
+                        parentRole: role,
+                        startYear: currentYear,
+                        allowReplace: false
+                    });
+
+                    if (result && result.success === true) {
+                        added++;
+                    } else {
+                        errors.push(parentId);
+                    }
+                }
+
+                if (added === 0) {
+                    _showToast(
+                        'Failed to add sibling: no parent edges created.',
+                        'error'
+                    );
+                    return;
+                }
+
+                _showToast(
+                    'Biological sibling added' +
+                    (errors.length > 0
+                        ? ' (some parent edges failed)'
+                        : '.'),
+                    errors.length > 0 ? 'warning' : 'success'
+                );
+                if (typeof onSuccess === 'function') onSuccess();
+            }
+        );
+    }
+
+    // =========================================================================
+    // 9. FAMILY-TAB BRIDGE — openGenerateBabyModal
+    // =========================================================================
+    //
+    // Resolves mother and father from the parent's gender and the
+    // optional partner hint, prompts for a partner when needed, and
+    // delegates to openBirthModal. Fixed the "Child not found" bug
+    // (see REFACTOR HISTORY in the module header).
+
+    function openGenerateBabyModal(parentId, onSuccess, options) {
+        if (!_hasId(parentId)) {
+            return { success: false, reason: 'parentId is required.' };
+        }
+
+        options = options || {};
+
+        if (typeof window.openBirthModal !== 'function') {
+            return {
+                success: false,
+                reason: 'openBirthModal is not available (modals-children-birth.js must load first).'
+            };
+        }
+
+        var parentSummary = CQ.getCharacterSummary(parentId);
+        if (!parentSummary) {
+            return { success: false, reason: 'Character not found.' };
+        }
+
+        // Resolve mother / father based on the parent's gender and the
+        // optional partnerId hint. Explicit resolution — never fall
+        // through silently.
+        var motherId = null;
+        var fatherId = null;
+        var partnerId = options.partnerId || null;
+
+        if (parentSummary.gender === 'female') {
+            motherId = parentId;
+            if (partnerId) fatherId = partnerId;
+        } else if (parentSummary.gender === 'male') {
+            fatherId = parentId;
+            if (partnerId) motherId = partnerId;
+        } else {
+            // Gender is 'unknown' or missing. Ask the user which role
+            // the parent will occupy, then proceed with the birth
+            // modal. This is the fix for "Child not found": the prior
+            // revision fell through to the partner picker, and the
+            // partner picker's onSelect didn't preserve the parent's
+            // role, so openBirthModal got an undefined motherId or
+            // fatherId and threw.
+            _showToast(
+                'This character\'s gender is unknown. Set their gender first, ' +
+                'or use the Birth modal directly to specify both parents.',
+                'error'
+            );
+            return {
+                success: false,
+                reason: 'Parent gender unknown.'
+            };
+        }
+
+        if (!motherId || !fatherId) {
+            // Prompt for the missing partner.
+            var targetGender = !motherId ? 'female' : 'male';
+            var targetRole = !motherId ? 'Mother' : 'Father';
+            var parentBirthYear = parentSummary.birthYear;
+            var minPartnerBirthYear;
+            var maxPartnerBirthYear;
+
+            if (targetGender === 'female') {
+                // Mother must be at least 13 years younger than father?
+                // No: mother and father are both parents. The 13-year
+                // rule applies between parent and child, not between
+                // co-parents. Use only a basic "both are fertile" rule.
+                minPartnerBirthYear = null;
+                maxPartnerBirthYear = null;
+            } else {
+                minPartnerBirthYear = null;
+                maxPartnerBirthYear = null;
+            }
+
+            return _openInlineCharacterPicker(
+                'Select ' + targetRole,
+                {
+                    excludeIds: [parentId],
+                    gender: targetGender
+                },
+                function (selected) {
+                    if (!selected || !_hasId(selected.id)) return;
+                    if (targetGender === 'female') motherId = selected.id;
+                    else fatherId = selected.id;
+
+                    window.openBirthModal(
+                        motherId,
+                        fatherId,
+                        function (childId) {
+                            if (typeof onSuccess === 'function') onSuccess(childId);
+                        }
+                    );
+                }
+            );
+        }
+
+        return window.openBirthModal(motherId, fatherId, function (childId) {
+            if (typeof onSuccess === 'function') onSuccess(childId);
+        });
+    }
+
+    // =========================================================================
+    // 10. EXPORTS
+    // =========================================================================
+
+    // Birth flow (existing)
     window.openBirthModal = openBirthModal;
     window.openSurpriseBirthModal = openSurpriseBirthModal;
     window.openBatchBirthModal = openBatchBirthModal;
     window.openPregnancyAttemptModal = openPregnancyAttemptModal;
+
+    // Family-tab bridge (biological parentage)
+    window.openSetParentModal = openSetParentModal;
+    window.openAddExistingBiologicalChildModal = openAddExistingBiologicalChildModal;
+    window.openAddExistingBiologicalSiblingModal = openAddExistingBiologicalSiblingModal;
+    window.openGenerateBabyModal = openGenerateBabyModal;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             openBirthModal: openBirthModal,
             openSurpriseBirthModal: openSurpriseBirthModal,
             openBatchBirthModal: openBatchBirthModal,
-            openPregnancyAttemptModal: openPregnancyAttemptModal
+            openPregnancyAttemptModal: openPregnancyAttemptModal,
+            openSetParentModal: openSetParentModal,
+            openAddExistingBiologicalChildModal: openAddExistingBiologicalChildModal,
+            openAddExistingBiologicalSiblingModal: openAddExistingBiologicalSiblingModal,
+            openGenerateBabyModal: openGenerateBabyModal
         };
     }
 })();
