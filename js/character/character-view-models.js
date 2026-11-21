@@ -6,93 +6,42 @@
  *
  * LOCATION: js/character/character-view-models.js
  *
- * Per-tab model builders for the Character Manager. Every tab reads from
- * this module; no tab re-derives the same shapes.
- *
- * SCOPE (this revision):
- *   - resolveName / resolvePlaceName / resolveRankDisplay / skillTierLabel
- *   - compactRow(targetId, detail)
- *   - buildIdentityModel(id)
- *   - buildFriendshipModel(id)
- *   - buildRomanceModel(id)
- *   - buildFamilyModel(id)          EXPANDED
- *   - buildLocationModel(id)
- *
- * SCOPE (future revisions, as tabs are built):
- *   - buildSkillsModel, buildOverviewModel
- *
- * OUT OF SCOPE:
- *   - Any DOM writes, mutations, localStorage, new query logic
- *
- * CONTRACT:
- *   - Builders return null for a missing character.
- *   - Builders NEVER throw. Per-section failures recorded under `errors`.
- *   - Builders NEVER mutate canonical state.
- *   - Builders return plain objects. Tabs render.
- *
- * REQUIRED DEPENDENCIES (load-time):
- *   - CharacterState, CharacterQueries, CharacterCommands
- *   - FamilyQueries, ChildrenQueries, MortalityQueries
- *   - RomanceQueries, FriendshipQueries, AffairQueries
- *   - RelationshipUI
- *   - formatting.js, icons.js
- *   - HouseholdQueries, ResidenceSystem, LocationQueries, FamilyRules
- *
- * OPTIONAL DEPENDENCIES (guarded at call time):
- *   - window.getRankById, window.getPlaceById
- *   - ReligionQueries, CultureQueries, RelationshipQueries
- *   - world.getCurrentLocationId
- *
- * ICON POLICY: Uses SVG from icons.js. No emojis.
- *
- * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - _buildChildGroups: fixed the foster/ward/adopted overlap. Prior
- *       revisions bucketed every legal child as "adopted" and then also
- *       bucketed any child with an adoption metadata record (foster or
- *       guardianship) as foster/ward. That meant a foster child appeared
- *       under BOTH "Adopted" and "Foster", and a ward appeared under
- *       BOTH "Adopted" and "Wards". The fix: bucket children by their
- *       adoption metadata type. Legal children with no adoption record
- *       are bucketed as adopted (legacy fallback). Foster children only
- *       appear in foster. Wards only appear in guardianship. Biological
- *       children are excluded from all adoption buckets.
+ *     - _buildIdentityBlock: removed the fallback calls to
+ *       ReligionQueries.getReligion and CultureQueries.getCultureById.
+ *       Those calls cycle back into CharacterQueries.getCharacterSummary,
+ *       which re-enters buildIdentityModel, which re-enters
+ *       _buildIdentityBlock, blowing the stack. The Identity tab now
+ *       reads religionName / cultureName ONLY from the summary
+ *       projection. If the projection does not carry them, the fields
+ *       are null and the tab renders the raw ids — no recursion.
  *
- *     - _enrichFamilyMember: age is now computed from birthYear at the
- *       current year, correctly handling deceased characters
- *       (age = deathYear - birthYear). Prior revisions read summary.age
- *       directly, which is unreliable for deceased characters and drifts
- *       if the current year changes between modal opens.
+ *     - _enrichFamilyMember: age is computed from birthYear at the
+ *       current year (or the death year, for the deceased), not from
+ *       summary.age. Prior revisions read summary.age directly, which
+ *       drifts and is unreliable for deceased characters.
  *
- *     - _buildIdentityBlock reads religionName / cultureName from the
- *       CharacterQueries summary FIRST (the projection already carries
- *       them), and only falls back to ReligionQueries.getReligion /
- *       CultureQueries.getCultureById when the projection did not
- *       resolve them. Each fallback is individually try/caught.
+ *     - _buildChildGroups: children are bucketed by their adoption
+ *       metadata type. Foster children only in foster, wards only in
+ *       guardianship, adopted only in adopted. Biological children
+ *       never appear in any adoption bucket. Prior revisions bucketed
+ *       every legal child as "adopted", causing foster children and
+ *       wards to appear under both Adopted and their real bucket.
  *
- *     - _resolveBirthplaceBlock now safely falls back to the raw
- *       birthplaceId if the place lookup fails. Previously, if the
- *       place was missing from PlaceState (e.g., during a partial
- *       load, or if a place was deleted), resolvePlaceName returned
- *       the ID, but a secondary check would blank the name out.
- *       The field now retains the raw ID rather than rendering as
- *       "None recorded", ensuring the user sees the explicit reference.
+ *     - _resolveBirthplaceBlock: falls back to the raw birthplaceId if
+ *       the place lookup fails, so the birthplace field never blanks.
  *
- *     - _enrichRomance passes through affair metadata from the
- *       RomanceQueries projection (affairType, discovered, etc.).
+ *     - _enrichRomance: passes through affair metadata from the
+ *       RomanceQueries projection.
  *
- *     - buildRomanceModel exposes a dedicated `affairs` array by
+ *     - buildRomanceModel: exposes a dedicated `affairs` array by
  *       filtering `model.current` for isAffair === true.
  * =============================================================================
  */
 
 (function () {
     'use strict';
-
-    // =========================================================================
-    // 0. DEPENDENCY GUARDS
-    // =========================================================================
 
     function _requireDeps() {
         var required = [
@@ -134,10 +83,6 @@
     var AQ  = window.AffairQueries;
     var RUI = window.RelationshipUI;
 
-    // =========================================================================
-    // 1. SMALL HELPERS
-    // =========================================================================
-
     function _isMissing(v) {
         return v === undefined || v === null;
     }
@@ -176,11 +121,6 @@
         return ay - by;
     }
 
-    /**
-     * Computes age at the current year from birthYear.
-     * Deceased characters: age is frozen at death.
-     * Returns null if birthYear is missing.
-     */
     function _computeAgeFromBirthYear(birthYear, isDeceased, deathYear, currentYear) {
         if (typeof birthYear !== 'number') return null;
         var endYear;
@@ -190,8 +130,7 @@
             endYear = (typeof currentYear === 'number') ? currentYear : new Date().getFullYear();
         }
         var age = endYear - birthYear;
-        if (age < 0) return 0;
-        return age;
+        return age < 0 ? 0 : age;
     }
 
     function _getCurrentYear() {
@@ -205,7 +144,7 @@
     }
 
     // =========================================================================
-    // 2. RESOLVERS
+    // RESOLVERS
     // =========================================================================
 
     function resolveName(id) {
@@ -245,14 +184,10 @@
         if (!rank || typeof rank !== 'object') return null;
 
         return {
-            rankId: typeof rank.id === 'string' && rank.id.length > 0
-                ? rank.id : rankId,
-            name: typeof rank.name === 'string' && rank.name.length > 0
-                ? rank.name : rankId,
-            symbol: typeof rank.symbol === 'string' && rank.symbol.length > 0
-                ? rank.symbol : null,
-            priority: (typeof rank.priority === 'number'
-                && Number.isFinite(rank.priority))
+            rankId: typeof rank.id === 'string' && rank.id.length > 0 ? rank.id : rankId,
+            name: typeof rank.name === 'string' && rank.name.length > 0 ? rank.name : rankId,
+            symbol: typeof rank.symbol === 'string' && rank.symbol.length > 0 ? rank.symbol : null,
+            priority: (typeof rank.priority === 'number' && Number.isFinite(rank.priority))
                 ? rank.priority : null,
             numbered: rank.numbered === true,
             numberingType: (rank.numberingType === 'reign'
@@ -276,7 +211,7 @@
     }
 
     // =========================================================================
-    // 3. COMPACT ROW
+    // COMPACT ROW
     // =========================================================================
 
     function compactRow(targetId, detailText) {
@@ -290,61 +225,41 @@
         var rankDisplay = resolveRankDisplay(summary.rankId);
         var rankHtml = (rankDisplay && rankDisplay.symbol)
             ? '<span class="character-row__rank" title="' +
-                _esc(rankDisplay.name) + '">' +
-                _esc(rankDisplay.symbol) +
-              '</span> '
+                _esc(rankDisplay.name) + '">' + _esc(rankDisplay.symbol) + '</span> '
             : '';
 
         var genderHtml = '<span class="character-row__gender">' +
             _genderIcon(summary.gender) + '</span> ';
 
-        var name = (typeof summary.fullName === 'string'
-            && summary.fullName.length > 0)
+        var name = (typeof summary.fullName === 'string' && summary.fullName.length > 0)
             ? summary.fullName
             : (summary.name || targetId);
 
         var deceasedMark = (summary.isDeceased === true)
-            ? ' <span class="character-row__deceased-mark" title="Deceased">' +
-                _esc('\u2020') +
-              '</span>'
+            ? ' <span class="character-row__deceased-mark" title="Deceased">'
+              + _esc('\u2020') + '</span>'
             : '';
 
         var ageText = (typeof summary.age === 'number' && summary.age >= 0)
             ? (summary.age + 'y')
             : '';
 
-        var locationText = summary.locationId
-            ? resolvePlaceName(summary.locationId)
-            : '';
+        var locationText = summary.locationId ? resolvePlaceName(summary.locationId) : '';
 
         var detailHtml = (_hasId(detailText))
-            ? ' <span class="character-row__detail">' +
-                _esc(detailText) +
-              '</span>'
+            ? ' <span class="character-row__detail">' + _esc(detailText) + '</span>'
             : '';
 
-        return '<div class="character-row" data-character-id="' +
-                _esc(targetId) + '">' +
-            rankHtml +
-            genderHtml +
+        return '<div class="character-row" data-character-id="' + _esc(targetId) + '">' +
+            rankHtml + genderHtml +
             '<a href="#" class="character-row__name" data-character-id="' +
                 _esc(targetId) + '">' + _esc(name) + '</a>' +
             deceasedMark +
-            (ageText
-                ? ' <span class="character-row__age">(' + _esc(ageText) + ')</span>'
-                : '') +
-            (locationText
-                ? ' <span class="character-row__location">' +
-                    _esc(locationText) +
-                  '</span>'
-                : '') +
+            (ageText ? ' <span class="character-row__age">(' + _esc(ageText) + ')</span>' : '') +
+            (locationText ? ' <span class="character-row__location">' + _esc(locationText) + '</span>' : '') +
             detailHtml +
         '</div>';
     }
-
-    // =========================================================================
-    // 4. SECTION-WRAPPED BUILDER HELPER
-    // =========================================================================
 
     function _safe(label, fn, errors) {
         try {
@@ -356,12 +271,15 @@
     }
 
     // =========================================================================
-    // 5. IDENTITY — SECTION BUILDERS
+    // IDENTITY
     // =========================================================================
 
     function _buildIdentityBlock(summary, errors) {
         return _safe('identity', function () {
-            // 1. Prefer the projection's own resolved names.
+            // Read ONLY from the summary projection. Do NOT re-query
+            // ReligionQueries.getReligion or CultureQueries.getCultureById
+            // — both cycle back into CharacterQueries.getCharacterSummary,
+            // which re-enters buildIdentityModel and blows the stack.
             var religionName = (typeof summary.religionName === 'string'
                 && summary.religionName.length > 0)
                 ? summary.religionName : null;
@@ -369,31 +287,6 @@
             var cultureName = (typeof summary.cultureName === 'string'
                 && summary.cultureName.length > 0)
                 ? summary.cultureName : null;
-
-            // 2. Fallback: only if the projection did NOT carry the name.
-            // Wrapped individually so a cycling query cannot take down
-            // the whole identity block.
-            if (_hasId(summary.religionId) && !religionName
-                && window.ReligionQueries
-                && typeof window.ReligionQueries.getReligion === 'function') {
-                try {
-                    var rel = window.ReligionQueries.getReligion(summary.religionId);
-                    if (rel && typeof rel.name === 'string' && rel.name.length > 0) {
-                        religionName = rel.name;
-                    }
-                } catch (e) { /* non-fatal */ }
-            }
-
-            if (_hasId(summary.cultureId) && !cultureName
-                && window.CultureQueries
-                && typeof window.CultureQueries.getCultureById === 'function') {
-                try {
-                    var cul = window.CultureQueries.getCultureById(summary.cultureId);
-                    if (cul && typeof cul.name === 'string' && cul.name.length > 0) {
-                        cultureName = cul.name;
-                    }
-                } catch (e) { /* non-fatal */ }
-            }
 
             return {
                 id: summary.id,
@@ -431,8 +324,7 @@
                     surname: typeof e.surname === 'string' ? e.surname : '',
                     year: _isMissing(e.year) ? null : e.year,
                     reason: typeof e.reason === 'string' ? e.reason : 'custom',
-                    previousSurname: _isMissing(e.previousSurname)
-                        ? null : e.previousSurname,
+                    previousSurname: _isMissing(e.previousSurname) ? null : e.previousSurname,
                     spouseId: _isMissing(e.spouseId) ? null : e.spouseId,
                     notes: typeof e.notes === 'string' ? e.notes : ''
                 });
@@ -455,9 +347,7 @@
                 return {
                     available: false,
                     reason: 'religionHistory projection is not structured ' +
-                            'in this build (character-state.js::_project ' +
-                            'not amended). The tab cannot display ' +
-                            'conversion details.',
+                            'in this build. The tab cannot display conversion details.',
                     entries: []
                 };
             }
@@ -489,9 +379,7 @@
 
     function _buildBirthBlock(summary, errors) {
         return _safe('birth', function () {
-            var placeName = summary.birthplaceId
-                ? resolvePlaceName(summary.birthplaceId)
-                : null;
+            var placeName = summary.birthplaceId ? resolvePlaceName(summary.birthplaceId) : null;
             return {
                 year: _isMissing(summary.birthYear) ? null : summary.birthYear,
                 placeId: summary.birthplaceId || null,
@@ -616,7 +504,7 @@
     }
 
     // =========================================================================
-    // 6. FRIENDSHIP — SECTION BUILDERS + PUBLIC BUILDER
+    // FRIENDSHIP
     // =========================================================================
 
     function _enrichFriend(friendProjection, subjectId, currentYear) {
@@ -778,7 +666,7 @@
     }
 
     // =========================================================================
-    // 7. ROMANCE — SECTION BUILDERS + PUBLIC BUILDER
+    // ROMANCE
     // =========================================================================
 
     function _romanceDisplayLabel(rel, subjectDeceased, partnerDeceased) {
@@ -808,19 +696,17 @@
 
     function _enrichRomance(rel, subjectId, subjectDeceased, currentYear) {
         if (!rel || !_hasId(rel.partnerId)) return null;
-        
         var relId = null;
         if (_hasId(rel.relationshipId)) relId = rel.relationshipId;
         else if (_hasId(rel.id)) relId = rel.id;
         else if (_hasId(rel.relationship_id)) relId = rel.relationship_id;
-        
         if (!relId) return null;
 
         var partnerSummary = null;
         try { partnerSummary = CQ.getCharacterSummary(rel.partnerId); }
         catch (e) { partnerSummary = null; }
         if (!partnerSummary) return null;
-        
+
         var partnerName = (typeof partnerSummary.fullName === 'string'
             && partnerSummary.fullName.length > 0)
             ? partnerSummary.fullName
@@ -863,8 +749,7 @@
             isPolyamorous: rel.isPolyamorous === true,
             isSecret: rel.isSecret === true,
             isScandalous: rel.isScandalous === true,
-            isWidowed: rel.status === 'widowed'
-                || (rel.status === 'ongoing' && partnerDeceased),
+            isWidowed: rel.status === 'widowed' || (rel.status === 'ongoing' && partnerDeceased),
             isEnded: rel.status === 'ended',
             durationYears: durationYears,
             typeName: typeName,
@@ -874,8 +759,6 @@
             statusIcon: statusIcon,
             displayLabel: _romanceDisplayLabel(rel, subjectDeceased, partnerDeceased),
             notes: rel.notes || '',
-            
-            // Affair-specific metadata (additive)
             affairType: rel.affairType || null,
             discovered: rel.discovered === true,
             discoveryYear: _isMissing(rel.discoveryYear) ? null : rel.discoveryYear,
@@ -998,7 +881,7 @@
                 allowsMultipleSpouses: allowsMultiple
             };
         }, errors);
-        
+
         var currentBlock = _buildRomanceCurrentBlock(characterId, subjectDeceased, currentYear, errors) || [];
         var affairsBlock = [];
         for (var i = 0; i < currentBlock.length; i++) {
@@ -1017,7 +900,7 @@
     }
 
     // =========================================================================
-    // 8. FAMILY — HELPERS
+    // FAMILY
     // =========================================================================
 
     function _enrichFamilyMember(targetId, relType, relClass, extra) {
@@ -1027,14 +910,10 @@
         catch (e) { summary = null; }
         if (!summary) return null;
 
-        var name = (typeof summary.fullName === 'string'
-            && summary.fullName.length > 0)
+        var name = (typeof summary.fullName === 'string' && summary.fullName.length > 0)
             ? summary.fullName
             : (summary.name || targetId);
 
-        // Compute age from birthYear at the current year. Falls back to
-        // summary.age only if birthYear is missing (which is unusual but
-        // possible for imported characters with no birth data).
         var computedAge = null;
         if (typeof summary.birthYear === 'number') {
             var now = _getCurrentYear();
@@ -1066,9 +945,7 @@
 
         if (extra && typeof extra === 'object') {
             for (var k in extra) {
-                if (Object.prototype.hasOwnProperty.call(extra, k)) {
-                    out[k] = extra[k];
-                }
+                if (Object.prototype.hasOwnProperty.call(extra, k)) out[k] = extra[k];
             }
         }
         return out;
@@ -1078,17 +955,11 @@
         return _safe('parents', function () {
             var parentEdges = FQ.getParents(childId);
             var grouped = {
-                biological: [],
-                legal: [],
-                social: [],
-                all: [],
-                father: null,
-                mother: null,
+                biological: [], legal: [], social: [], all: [],
+                father: null, mother: null,
                 counts: { biological: 0, legal: 0, social: 0 }
             };
-            if (!Array.isArray(parentEdges) || parentEdges.length === 0) {
-                return grouped;
-            }
+            if (!Array.isArray(parentEdges) || parentEdges.length === 0) return grouped;
             var seen = {};
             for (var i = 0; i < parentEdges.length; i++) {
                 var edge = parentEdges[i];
@@ -1104,12 +975,8 @@
                 var relClass = _parentRelClass(parentType, parentRole);
                 var relType  = _parentRelLabel(parentType, parentRole);
 
-                var entry = _enrichFamilyMember(
-                    edge.parentId,
-                    relType,
-                    relClass,
-                    { parentType: parentType, parentRole: parentRole }
-                );
+                var entry = _enrichFamilyMember(edge.parentId, relType, relClass,
+                    { parentType: parentType, parentRole: parentRole });
                 if (!entry) continue;
 
                 if (parentType === 'biological') grouped.biological.push(entry);
@@ -1119,11 +986,8 @@
                 grouped.all.push(entry);
 
                 if (parentType === 'biological') {
-                    if (parentRole === 'father' && !grouped.father) {
-                        grouped.father = entry;
-                    } else if (parentRole === 'mother' && !grouped.mother) {
-                        grouped.mother = entry;
-                    }
+                    if (parentRole === 'father' && !grouped.father) grouped.father = entry;
+                    else if (parentRole === 'mother' && !grouped.mother) grouped.mother = entry;
                 }
             }
             grouped.counts.biological = grouped.biological.length;
@@ -1144,9 +1008,7 @@
             if (parentRole === 'father') return 'parent-legal-father';
             return 'parent-legal-parent';
         }
-        if (parentType === 'social') {
-            return 'parent-social';
-        }
+        if (parentType === 'social') return 'parent-social';
         return 'parent-other';
     }
 
@@ -1156,27 +1018,20 @@
         else if (parentType === 'legal') typeName = 'Adoptive';
         else if (parentType === 'social') typeName = 'Guardian';
         else typeName = 'Parent';
-
         var roleName;
         if (parentRole === 'mother') roleName = 'mother';
         else if (parentRole === 'father') roleName = 'father';
         else roleName = 'parent';
-
         return typeName + ' ' + roleName;
     }
 
     function _classifyChildCoverage(childId, adoptedBySubject) {
         if (adoptedBySubject) return 'adopted';
-
         var bioParents;
         try { bioParents = FQ.getBiologicalParentIds(childId); }
         catch (e) { bioParents = []; }
-        if (!Array.isArray(bioParents) || bioParents.length === 0) {
-            return 'unknown';
-        }
-
-        var hasMother = false;
-        var hasFather = false;
+        if (!Array.isArray(bioParents) || bioParents.length === 0) return 'unknown';
+        var hasMother = false, hasFather = false;
         for (var i = 0; i < bioParents.length; i++) {
             var summary = null;
             try { summary = CQ.getCharacterSummary(bioParents[i]); }
@@ -1185,30 +1040,12 @@
             if (summary.gender === 'female') hasMother = true;
             else if (summary.gender === 'male') hasFather = true;
         }
-
         if (hasMother && hasFather) return 'both';
         if (hasMother) return 'mother-only';
         if (hasFather) return 'father-only';
         return 'unknown';
     }
 
-    /**
-     * Builds child group buckets.
-     *
-     * Classification is by adoption metadata type, NOT by legal parent
-     * edge alone. Prior revisions bucketed every legal child as
-     * "adopted", which caused foster children and wards to appear in
-     * BOTH the Adopted and Foster/Ward sections. Fixed here.
-     *
-     * Bucketing rules:
-     *   - biological children     → biological bucket (never in others)
-     *   - legal edge + adoption.type='legal'          → adopted
-     *   - legal edge + adoption.type='foster'         → foster
-     *   - legal edge + adoption.type='guardianship'   → guardianship
-     *   - legal edge + NO adoption record             → adopted (fallback)
-     *
-     * A child appears in exactly one bucket.
-     */
     function _buildChildGroups(parentId, errors) {
         return _safe('children', function () {
             var biologicalIds = FQ.getBiologicalChildIds(parentId);
@@ -1219,7 +1056,6 @@
                 if (_hasId(biologicalIds[i])) bioSet[biologicalIds[i]] = true;
             }
 
-            // Build adoption-type map from adoption records.
             var adoptionTypeByChild = {};
             var adoptionYearByChild = {};
             try {
@@ -1242,12 +1078,8 @@
             var biological = [];
             for (var b = 0; b < biologicalIds.length; b++) {
                 var coverage = _classifyChildCoverage(biologicalIds[b], false);
-                var bioEntry = _enrichFamilyMember(
-                    biologicalIds[b],
-                    'Biological child',
-                    'child-bio',
-                    { childType: 'biological', parentCoverage: coverage }
-                );
+                var bioEntry = _enrichFamilyMember(biologicalIds[b], 'Biological child', 'child-bio',
+                    { childType: 'biological', parentCoverage: coverage });
                 if (bioEntry) biological.push(bioEntry);
             }
 
@@ -1258,50 +1090,22 @@
             for (var l = 0; l < legalIds.length; l++) {
                 var cid = legalIds[l];
                 if (!_hasId(cid)) continue;
-                // Biological children are never in the adoption buckets,
-                // regardless of adoption metadata. (A child can be both
-                // biological and adopted in edge-case data; the biological
-                // classification wins for UI display.)
                 if (bioSet[cid]) continue;
 
                 var adoptionType = adoptionTypeByChild[cid];
                 var adoptionYear = adoptionYearByChild[cid];
 
                 if (adoptionType === 'foster') {
-                    var fosterEntry = _enrichFamilyMember(
-                        cid,
-                        'Foster child',
-                        'child-foster',
-                        {
-                            childType: 'foster',
-                            adoptionYear: adoptionYear !== undefined ? adoptionYear : null
-                        }
-                    );
+                    var fosterEntry = _enrichFamilyMember(cid, 'Foster child', 'child-foster',
+                        { childType: 'foster', adoptionYear: adoptionYear !== undefined ? adoptionYear : null });
                     if (fosterEntry) foster.push(fosterEntry);
                 } else if (adoptionType === 'guardianship') {
-                    var wardEntry = _enrichFamilyMember(
-                        cid,
-                        'Ward',
-                        'child-guardianship',
-                        {
-                            childType: 'guardianship',
-                            adoptionYear: adoptionYear !== undefined ? adoptionYear : null
-                        }
-                    );
+                    var wardEntry = _enrichFamilyMember(cid, 'Ward', 'child-guardianship',
+                        { childType: 'guardianship', adoptionYear: adoptionYear !== undefined ? adoptionYear : null });
                     if (wardEntry) guardianship.push(wardEntry);
                 } else {
-                    // 'legal' adoption, or no adoption record.
-                    // Bucket as adopted (the canonical fallback).
-                    var adoptedEntry = _enrichFamilyMember(
-                        cid,
-                        'Adopted child',
-                        'child-legal',
-                        {
-                            childType: 'legal',
-                            parentCoverage: 'adopted',
-                            adoptionYear: adoptionYear !== undefined ? adoptionYear : null
-                        }
-                    );
+                    var adoptedEntry = _enrichFamilyMember(cid, 'Adopted child', 'child-legal',
+                        { childType: 'legal', parentCoverage: 'adopted', adoptionYear: adoptionYear !== undefined ? adoptionYear : null });
                     if (adoptedEntry) adopted.push(adoptedEntry);
                 }
             }
@@ -1333,18 +1137,14 @@
             }
 
             var bioParents = FQ.getBiologicalParentIds(childId);
-            var bioFatherId = null;
-            var bioMotherId = null;
+            var bioFatherId = null, bioMotherId = null;
             for (var bp = 0; bp < bioParents.length; bp++) {
                 var parent = null;
                 try { parent = CQ.getCharacterSummary(bioParents[bp]); }
                 catch (e) { parent = null; }
                 if (!parent) continue;
-                if (parent.gender === 'female' && bioMotherId === null) {
-                    bioMotherId = bioParents[bp];
-                } else if (parent.gender === 'male' && bioFatherId === null) {
-                    bioFatherId = bioParents[bp];
-                }
+                if (parent.gender === 'female' && bioMotherId === null) bioMotherId = bioParents[bp];
+                else if (parent.gender === 'male' && bioFatherId === null) bioFatherId = bioParents[bp];
             }
 
             var entries = [];
@@ -1354,89 +1154,45 @@
                 var w = wrappers[i];
                 if (!w || !_hasId(w.siblingId)) continue;
 
-                var sharedBio = Array.isArray(w.sharedBiologicalParents)
-                    ? w.sharedBiologicalParents : [];
-                var sharedLegal = Array.isArray(w.sharedLegalParents)
-                    ? w.sharedLegalParents : [];
-                var sharedSocial = Array.isArray(w.sharedSocialParents)
-                    ? w.sharedSocialParents : [];
+                var sharedBio = Array.isArray(w.sharedBiologicalParents) ? w.sharedBiologicalParents : [];
+                var sharedLegal = Array.isArray(w.sharedLegalParents) ? w.sharedLegalParents : [];
+                var sharedSocial = Array.isArray(w.sharedSocialParents) ? w.sharedSocialParents : [];
 
-                var siblingType;
-                var relLabel;
-                var relClass;
-                var countKey;
+                var siblingType, relLabel, relClass, countKey;
 
                 if (sharedBio.length >= 2) {
-                    siblingType = 'full';
-                    relLabel = 'Full sibling';
-                    relClass = 'sibling-full';
-                    countKey = 'full';
+                    siblingType = 'full'; relLabel = 'Full sibling'; relClass = 'sibling-full'; countKey = 'full';
                 } else if (sharedBio.length === 1) {
                     var sharedId = sharedBio[0];
                     if (bioMotherId && sharedId === bioMotherId) {
-                        siblingType = 'half-mother';
-                        relLabel = 'Half-sibling (same mother)';
-                        relClass = 'sibling-half-mother';
-                        countKey = 'halfMother';
+                        siblingType = 'half-mother'; relLabel = 'Half-sibling (same mother)';
+                        relClass = 'sibling-half-mother'; countKey = 'halfMother';
                     } else if (bioFatherId && sharedId === bioFatherId) {
-                        siblingType = 'half-father';
-                        relLabel = 'Half-sibling (same father)';
-                        relClass = 'sibling-half-father';
-                        countKey = 'halfFather';
+                        siblingType = 'half-father'; relLabel = 'Half-sibling (same father)';
+                        relClass = 'sibling-half-father'; countKey = 'halfFather';
                     } else {
-                        siblingType = 'half-parent';
-                        relLabel = 'Half-sibling';
-                        relClass = 'sibling-half';
-                        countKey = 'halfMother';
+                        siblingType = 'half-parent'; relLabel = 'Half-sibling';
+                        relClass = 'sibling-half'; countKey = 'halfMother';
                     }
                 } else if (sharedLegal.length > 0) {
-                    siblingType = 'adoptive';
-                    relLabel = 'Adoptive sibling';
-                    relClass = 'sibling-adoptive';
-                    countKey = 'adoptive';
+                    siblingType = 'adoptive'; relLabel = 'Adoptive sibling'; relClass = 'sibling-adoptive'; countKey = 'adoptive';
                 } else if (sharedSocial.length > 0) {
-                    siblingType = 'step';
-                    relLabel = 'Step sibling';
-                    relClass = 'sibling-step';
-                    countKey = 'step';
+                    siblingType = 'step'; relLabel = 'Step sibling'; relClass = 'sibling-step'; countKey = 'step';
                 } else {
                     var pt = w.primaryType;
-                    if (pt === 'full') {
-                        siblingType = 'full';
-                        relLabel = 'Full sibling';
-                        relClass = 'sibling-full';
-                        countKey = 'full';
-                    } else if (pt === 'half') {
-                        siblingType = 'half-parent';
-                        relLabel = 'Half-sibling';
-                        relClass = 'sibling-half';
-                        countKey = 'halfMother';
-                    } else if (pt === 'adoptive') {
-                        siblingType = 'adoptive';
-                        relLabel = 'Adoptive sibling';
-                        relClass = 'sibling-adoptive';
-                        countKey = 'adoptive';
-                    } else if (pt === 'step') {
-                        siblingType = 'step';
-                        relLabel = 'Step sibling';
-                        relClass = 'sibling-step';
-                        countKey = 'step';
-                    } else {
-                        continue;
-                    }
+                    if (pt === 'full') { siblingType = 'full'; relLabel = 'Full sibling'; relClass = 'sibling-full'; countKey = 'full'; }
+                    else if (pt === 'half') { siblingType = 'half-parent'; relLabel = 'Half-sibling'; relClass = 'sibling-half'; countKey = 'halfMother'; }
+                    else if (pt === 'adoptive') { siblingType = 'adoptive'; relLabel = 'Adoptive sibling'; relClass = 'sibling-adoptive'; countKey = 'adoptive'; }
+                    else if (pt === 'step') { siblingType = 'step'; relLabel = 'Step sibling'; relClass = 'sibling-step'; countKey = 'step'; }
+                    else { continue; }
                 }
 
-                var entry = _enrichFamilyMember(
-                    w.siblingId,
-                    relLabel,
-                    relClass,
-                    {
-                        siblingType: siblingType,
-                        sharedBiologicalParents: sharedBio.slice(),
-                        sharedLegalParents: sharedLegal.slice(),
-                        sharedSocialParents: sharedSocial.slice()
-                    }
-                );
+                var entry = _enrichFamilyMember(w.siblingId, relLabel, relClass, {
+                    siblingType: siblingType,
+                    sharedBiologicalParents: sharedBio.slice(),
+                    sharedLegalParents: sharedLegal.slice(),
+                    sharedSocialParents: sharedSocial.slice()
+                });
                 if (!entry) continue;
                 entries.push(entry);
                 counts[countKey] = (counts[countKey] || 0) + 1;
@@ -1453,12 +1209,7 @@
             if (!Array.isArray(ids) || ids.length === 0) return [];
             var enriched = [];
             for (var i = 0; i < ids.length; i++) {
-                var entry = _enrichFamilyMember(
-                    ids[i],
-                    'Grandchild',
-                    'grandchild',
-                    { generation: 1 }
-                );
+                var entry = _enrichFamilyMember(ids[i], 'Grandchild', 'grandchild', { generation: 1 });
                 if (entry) enriched.push(entry);
             }
             enriched.sort(_sortByBirthYearAsc);
@@ -1472,12 +1223,7 @@
             if (!Array.isArray(ids) || ids.length === 0) return [];
             var enriched = [];
             for (var i = 0; i < ids.length; i++) {
-                var entry = _enrichFamilyMember(
-                    ids[i],
-                    'Child (via surrogacy)',
-                    'child-surrogacy',
-                    { childType: 'surrogacy' }
-                );
+                var entry = _enrichFamilyMember(ids[i], 'Child (via surrogacy)', 'child-surrogacy', { childType: 'surrogacy' });
                 if (entry) enriched.push(entry);
             }
             enriched.sort(_sortByBirthYearAsc);
@@ -1488,17 +1234,12 @@
     function _buildAdoptedParentsGroup(childId, errors) {
         return _safe('adoptedParents', function () {
             var records = [];
-            try {
-                records = ChQ.getActiveAdoptionsForChild(childId);
-            } catch (e) { records = []; }
+            try { records = ChQ.getActiveAdoptionsForChild(childId); }
+            catch (e) { records = []; }
             if (!Array.isArray(records) || records.length === 0) {
                 return { all: [], adopted: [], guardianship: [], foster: [] };
             }
-            var adopted = [];
-            var guardianship = [];
-            var foster = [];
-            var all = [];
-            var seen = {};
+            var adopted = [], guardianship = [], foster = [], all = [], seen = {};
             for (var i = 0; i < records.length; i++) {
                 var rec = records[i];
                 if (!rec || !_hasId(rec.adopterId)) continue;
@@ -1506,27 +1247,14 @@
                 if (seen[key]) continue;
                 seen[key] = true;
 
-                var relType;
-                var relClass;
-                if (rec.type === 'legal') {
-                    relType = 'Adoptive parent';
-                    relClass = 'adoptive-parent-legal';
-                } else if (rec.type === 'guardianship') {
-                    relType = 'Guardian';
-                    relClass = 'adoptive-parent-guardianship';
-                } else if (rec.type === 'foster') {
-                    relType = 'Foster parent';
-                    relClass = 'adoptive-parent-foster';
-                } else {
-                    continue;
-                }
+                var relType, relClass;
+                if (rec.type === 'legal') { relType = 'Adoptive parent'; relClass = 'adoptive-parent-legal'; }
+                else if (rec.type === 'guardianship') { relType = 'Guardian'; relClass = 'adoptive-parent-guardianship'; }
+                else if (rec.type === 'foster') { relType = 'Foster parent'; relClass = 'adoptive-parent-foster'; }
+                else continue;
 
-                var entry = _enrichFamilyMember(
-                    rec.adopterId,
-                    relType,
-                    relClass,
-                    { adoptionType: rec.type, adoptionYear: rec.year }
-                );
+                var entry = _enrichFamilyMember(rec.adopterId, relType, relClass,
+                    { adoptionType: rec.type, adoptionYear: rec.year });
                 if (!entry) continue;
 
                 all.push(entry);
@@ -1534,12 +1262,7 @@
                 else if (rec.type === 'guardianship') guardianship.push(entry);
                 else if (rec.type === 'foster') foster.push(entry);
             }
-            return {
-                all: all,
-                adopted: adopted,
-                guardianship: guardianship,
-                foster: foster
-            };
+            return { all: all, adopted: adopted, guardianship: guardianship, foster: foster };
         }, errors);
     }
 
@@ -1548,13 +1271,9 @@
             var records = [];
             try { records = ChQ.getActiveAdoptionsForChild(childId); }
             catch (e) { records = []; }
-            if (!Array.isArray(records)) {
-                return { fosterParents: [], guardians: [] };
-            }
+            if (!Array.isArray(records)) return { fosterParents: [], guardians: [] };
 
-            var fosterParents = [];
-            var guardians = [];
-            var seen = {};
+            var fosterParents = [], guardians = [], seen = {};
 
             for (var i = 0; i < records.length; i++) {
                 var rec = records[i];
@@ -1566,22 +1285,15 @@
                 seen[key] = true;
 
                 var relType = rec.type === 'foster' ? 'Foster parent' : 'Guardian';
-                var relClass = rec.type === 'foster'
-                    ? 'adoptive-parent-foster'
-                    : 'adoptive-parent-guardianship';
+                var relClass = rec.type === 'foster' ? 'adoptive-parent-foster' : 'adoptive-parent-guardianship';
 
-                var entry = _enrichFamilyMember(
-                    rec.adopterId,
-                    relType,
-                    relClass,
-                    { adoptionType: rec.type, adoptionYear: rec.year }
-                );
+                var entry = _enrichFamilyMember(rec.adopterId, relType, relClass,
+                    { adoptionType: rec.type, adoptionYear: rec.year });
                 if (!entry) continue;
 
                 if (rec.type === 'foster') fosterParents.push(entry);
                 else guardians.push(entry);
             }
-
             return { fosterParents: fosterParents, guardians: guardians };
         }, errors);
     }
@@ -1607,13 +1319,8 @@
         }, errors);
     }
 
-    // =========================================================================
-    // 9. FAMILY — PUBLIC BUILDER
-    // =========================================================================
-
     function buildFamilyModel(characterId) {
         if (!_hasId(characterId)) return null;
-
         var summary;
         try { summary = CQ.getCharacterSummary(characterId); }
         catch (e) { return null; }
@@ -1633,8 +1340,7 @@
 
         var parents = _buildParentGroups(characterId, errors) || {
             biological: [], legal: [], social: [], all: [],
-            father: null, mother: null,
-            counts: { biological: 0, legal: 0, social: 0 }
+            father: null, mother: null, counts: { biological: 0, legal: 0, social: 0 }
         };
 
         var children = _buildChildGroups(characterId, errors) || {
@@ -1643,8 +1349,7 @@
         };
 
         var siblings = _buildSiblingGroup(characterId, errors) || {
-            all: [],
-            counts: { full: 0, halfMother: 0, halfFather: 0, adoptive: 0, step: 0 }
+            all: [], counts: { full: 0, halfMother: 0, halfFather: 0, adoptive: 0, step: 0 }
         };
 
         var grandchildren = _buildGrandchildrenGroup(characterId, errors) || [];
@@ -1666,9 +1371,7 @@
                 };
                 isOrphan = FQ.isOrphan(characterId, livingIds) === true;
             }
-        } catch (e) {
-            isOrphan = false;
-        }
+        } catch (e) { isOrphan = false; }
 
         return {
             characterId: characterId,
@@ -1679,26 +1382,20 @@
             grandchildren: grandchildren,
             surrogacyChildren: surrogacyChildren,
             adoptedParents: adoptedParents,
-
             fosterAsChild: asChildFG.fosterParents,
             wardAsChild: asChildFG.guardians,
-
             partnerForBaby: partnerForBaby,
-
             isOrphan: isOrphan,
             errors: errors
         };
     }
 
     // =========================================================================
-    // 10. LOCATION — SUB-BLOCK BUILDERS
+    // LOCATION
     // =========================================================================
 
     function _resolveCurrentLocationBlock(summary, characterId) {
-        var raw = (summary && typeof summary.locationId === 'string')
-            ? summary.locationId
-            : null;
-
+        var raw = (summary && typeof summary.locationId === 'string') ? summary.locationId : null;
         var resolved = raw;
         var source = raw ? 'explicit' : 'none';
 
@@ -1706,13 +1403,8 @@
             try {
                 var semantic = window.getCurrentLocationId(summary);
                 if (typeof semantic === 'string' && semantic.length > 0) {
-                    if (semantic === raw) {
-                        resolved = raw;
-                        source = 'explicit';
-                    } else {
-                        resolved = semantic;
-                        source = raw ? 'explicit' : 'move';
-                    }
+                    if (semantic === raw) { resolved = raw; source = 'explicit'; }
+                    else { resolved = semantic; source = raw ? 'explicit' : 'move'; }
                 }
             } catch (e) { /* fall through */ }
         }
@@ -1729,22 +1421,11 @@
     }
 
     function _resolveBirthplaceBlock(summary) {
-        if (!summary || !summary.birthplaceId) {
-            return { placeId: null, placeName: null };
-        }
+        if (!summary || !summary.birthplaceId) return { placeId: null, placeName: null };
         var placeName = null;
-        try {
-            // resolvePlaceName returns the raw ID if the place isn't found.
-            // We explicitly check if the resolution succeeded, but we still
-            // store the ID so the field doesn't disappear.
-            placeName = resolvePlaceName(summary.birthplaceId);
-        } catch (e) {
-            placeName = summary.birthplaceId;
-        }
-        return {
-            placeId: summary.birthplaceId,
-            placeName: placeName || summary.birthplaceId
-        };
+        try { placeName = resolvePlaceName(summary.birthplaceId); }
+        catch (e) { placeName = summary.birthplaceId; }
+        return { placeId: summary.birthplaceId, placeName: placeName || summary.birthplaceId };
     }
 
     function _resolveMovesBlock(characterId, errors) {
@@ -1766,10 +1447,8 @@
                     locationName: _isMissing(m.locationName)
                         ? (m.locationId ? resolvePlaceName(m.locationId) : null)
                         : m.locationName,
-                    fromLocationId: _isMissing(m.fromLocationId)
-                        ? null : m.fromLocationId,
-                    fromLocationName: _isMissing(m.fromLocationName)
-                        ? null : m.fromLocationName,
+                    fromLocationId: _isMissing(m.fromLocationId) ? null : m.fromLocationId,
+                    fromLocationName: _isMissing(m.fromLocationName) ? null : m.fromLocationName,
                     note: _isMissing(m.note) ? null : m.note,
                     isBirthMove: m.isBirthMove === true,
                     timestamp: _isMissing(m.timestamp) ? null : m.timestamp
@@ -1787,39 +1466,23 @@
 
     function _resolveHouseholdBlock(summary, errors) {
         return _safe('household', function () {
-            if (typeof window.HouseholdQueries === 'undefined'
-                || window.HouseholdQueries === null) {
+            if (typeof window.HouseholdQueries === 'undefined' || window.HouseholdQueries === null) {
                 return {
-                    available: false,
-                    reason: 'HouseholdQueries is not loaded',
-                    householdId: null,
-                    householdName: null,
-                    role: null,
-                    isHead: false,
-                    memberCount: 0,
-                    currentNameSince: null,
-                    currentLocationName: null
+                    available: false, reason: 'HouseholdQueries is not loaded',
+                    householdId: null, householdName: null, role: null, isHead: false,
+                    memberCount: 0, currentNameSince: null, currentLocationName: null
                 };
             }
 
-            var householdId = (summary && typeof summary.householdId === 'string'
-                && summary.householdId.length > 0)
+            var householdId = (summary && typeof summary.householdId === 'string' && summary.householdId.length > 0)
                 ? summary.householdId
-                : (summary && typeof summary.household === 'string'
-                    && summary.household.length > 0
-                    ? summary.household
-                    : null);
+                : (summary && typeof summary.household === 'string' && summary.household.length > 0
+                    ? summary.household : null);
 
             if (!householdId) {
                 return {
-                    available: true,
-                    householdId: null,
-                    householdName: null,
-                    role: null,
-                    isHead: false,
-                    memberCount: 0,
-                    currentNameSince: null,
-                    currentLocationName: null
+                    available: true, householdId: null, householdName: null, role: null, isHead: false,
+                    memberCount: 0, currentNameSince: null, currentLocationName: null
                 };
             }
 
@@ -1829,44 +1492,28 @@
 
             if (!h) {
                 return {
-                    available: true,
-                    householdId: householdId,
-                    householdName: null,
-                    role: null,
-                    isHead: false,
-                    memberCount: 0,
-                    currentNameSince: null,
-                    currentLocationName: null,
-                    danglingReference: true
+                    available: true, householdId: householdId, householdName: null, role: null, isHead: false,
+                    memberCount: 0, currentNameSince: null, currentLocationName: null, danglingReference: true
                 };
             }
 
-            var role = null;
-            var isHead = false;
+            var role = null, isHead = false;
             if (Array.isArray(summary.householdHistory)) {
                 for (var i = summary.householdHistory.length - 1; i >= 0; i--) {
                     var entry = summary.householdHistory[i];
                     if (!entry || entry.householdId !== householdId) continue;
-                    if (entry.leftYear !== null && entry.leftYear !== undefined) {
-                        continue;
-                    }
-                    if (typeof entry.role === 'string' && entry.role.length > 0) {
-                        role = entry.role;
-                    }
+                    if (entry.leftYear !== null && entry.leftYear !== undefined) continue;
+                    if (typeof entry.role === 'string' && entry.role.length > 0) role = entry.role;
                     isHead = entry.isHead === true;
                     break;
                 }
             }
 
             return {
-                available: true,
-                householdId: householdId,
-                householdName: h.name || null,
-                role: role,
-                isHead: isHead,
+                available: true, householdId: householdId, householdName: h.name || null,
+                role: role, isHead: isHead,
                 memberCount: typeof h.memberCount === 'number' ? h.memberCount : 0,
-                currentNameSince: _isMissing(h.currentNameSince)
-                    ? null : h.currentNameSince,
+                currentNameSince: _isMissing(h.currentNameSince) ? null : h.currentNameSince,
                 currentLocationName: h.locationName || null
             };
         }, errors);
@@ -1875,18 +1522,12 @@
     function _resolveHouseholdMembersBlock(householdId, errors) {
         return _safe('householdMembers', function () {
             if (!_hasId(householdId)) return [];
-            if (typeof window.HouseholdQueries === 'undefined'
-                || window.HouseholdQueries === null) {
-                return [];
-            }
-            if (typeof window.HouseholdQueries.getHouseholdMembers !== 'function') {
-                return [];
-            }
+            if (typeof window.HouseholdQueries === 'undefined' || window.HouseholdQueries === null) return [];
+            if (typeof window.HouseholdQueries.getHouseholdMembers !== 'function') return [];
             var members = [];
             try { members = window.HouseholdQueries.getHouseholdMembers(householdId); }
             catch (e) { members = []; }
             if (!Array.isArray(members)) return [];
-
             var out = [];
             for (var i = 0; i < members.length; i++) {
                 var m = members[i];
@@ -1919,18 +1560,13 @@
 
     function _resolveHouseholdHistoryBlock(summary, errors) {
         return _safe('householdHistory', function () {
-            var raw = summary && Array.isArray(summary.householdHistory)
-                ? summary.householdHistory
-                : [];
-
+            var raw = summary && Array.isArray(summary.householdHistory) ? summary.householdHistory : [];
             var structured = true;
             var out = [];
             for (var i = 0; i < raw.length; i++) {
                 var e = raw[i];
                 if (!e || typeof e !== 'object') {
-                    if (typeof e === 'string') {
-                        structured = false;
-                    }
+                    if (typeof e === 'string') structured = false;
                     continue;
                 }
                 out.push({
@@ -1945,66 +1581,45 @@
                     isCurrent: (e.leftYear === null || e.leftYear === undefined)
                 });
             }
-
             out.sort(function (a, b) {
                 var ja = typeof a.joinedYear === 'number' ? a.joinedYear : -Infinity;
                 var jb = typeof b.joinedYear === 'number' ? b.joinedYear : -Infinity;
                 return ja - jb;
             });
-
-            return {
-                entries: out,
-                structured: structured
-            };
+            return { entries: out, structured: structured };
         }, errors);
     }
 
     function _resolveResidencesBlock(householdId, errors) {
         return _safe('residences', function () {
-            if (typeof window.ResidenceSystem === 'undefined'
-                || window.ResidenceSystem === null) {
-                return {
-                    available: false,
-                    reason: 'ResidenceSystem is not loaded',
-                    entries: []
-                };
+            if (typeof window.ResidenceSystem === 'undefined' || window.ResidenceSystem === null) {
+                return { available: false, reason: 'ResidenceSystem is not loaded', entries: [] };
             }
-
-            if (!_hasId(householdId)) {
-                return { available: true, entries: [] };
-            }
-
+            if (!_hasId(householdId)) return { available: true, entries: [] };
             var residences = [];
-            try {
-                residences = window.ResidenceSystem
-                    .getResidencesByHousehold(householdId) || [];
-            } catch (e) { residences = []; }
+            try { residences = window.ResidenceSystem.getResidencesByHousehold(householdId) || []; }
+            catch (e) { residences = []; }
             if (!Array.isArray(residences)) residences = [];
 
             var entries = [];
             for (var i = 0; i < residences.length; i++) {
                 var r = residences[i];
                 if (!r || !_hasId(r.id)) continue;
-
-                var unitNumber = null;
-                var unitId = null;
+                var unitNumber = null, unitId = null;
                 try {
                     var units = window.ResidenceSystem.getUnits(r.id) || [];
                     for (var u = 0; u < units.length; u++) {
                         var unit = units[u];
-                        if (unit && unit.householdId === householdId
-                            && !unit.isDemolished) {
+                        if (unit && unit.householdId === householdId && !unit.isDemolished) {
                             unitNumber = unit.unitNumber;
                             unitId = unit.id;
                             break;
                         }
                     }
                 } catch (e) { /* leave null */ }
-
                 var unitStats = null;
                 try { unitStats = window.ResidenceSystem.getUnitStats(r.id); }
                 catch (e) { unitStats = null; }
-
                 entries.push({
                     id: r.id,
                     name: r.name || r.id,
@@ -2019,15 +1634,12 @@
                     occupiedUnitNumber: unitNumber,
                     occupiedUnitId: unitId,
                     unitStats: unitStats,
-                    estimatedValue: _isMissing(r.estimatedValue)
-                        ? null : r.estimatedValue,
+                    estimatedValue: _isMissing(r.estimatedValue) ? null : r.estimatedValue,
                     builtYear: _isMissing(r.builtYear) ? null : r.builtYear
                 });
             }
             entries.sort(function (a, b) {
-                if (a.isDemolished !== b.isDemolished) {
-                    return a.isDemolished ? 1 : -1;
-                }
+                if (a.isDemolished !== b.isDemolished) return a.isDemolished ? 1 : -1;
                 return (a.name || '').localeCompare(b.name || '');
             });
             return { available: true, entries: entries };
@@ -2043,16 +1655,14 @@
                 var committed = RQm.getActiveCommittedPartners(subjectId);
                 if (Array.isArray(committed)) {
                     for (var i = 0; i < committed.length; i++) {
-                        var p = committed[i];
-                        if (p && p.partnerId === targetId) return 'spouse';
+                        if (committed[i] && committed[i].partnerId === targetId) return 'spouse';
                     }
                 }
             }
         } catch (e) { /* skip */ }
 
         try {
-            if (typeof window.FamilyRules !== 'undefined'
-                && window.FamilyRules !== null
+            if (typeof window.FamilyRules !== 'undefined' && window.FamilyRules !== null
                 && typeof FQ.classifyKinship === 'function') {
                 var k = FQ.classifyKinship(subjectId, targetId);
                 if (k && k.type
@@ -2064,35 +1674,28 @@
         } catch (e) { /* skip */ }
 
         try {
-            if (typeof FrQ.isFriends === 'function' && FrQ.isFriends(subjectId, targetId)) {
-                return 'relative';
-            }
+            if (typeof FrQ.isFriends === 'function' && FrQ.isFriends(subjectId, targetId)) return 'relative';
         } catch (e) { /* skip */ }
+
         try {
             if (RQm && typeof RQm.getActiveRomanticRelationships === 'function') {
                 var active = RQm.getActiveRomanticRelationships(subjectId);
                 if (Array.isArray(active)) {
                     for (var j = 0; j < active.length; j++) {
                         var rel = active[j];
-                        if (rel && rel.partnerId === targetId
-                            && rel.isCommitted !== true) {
-                            return 'relative';
-                        }
+                        if (rel && rel.partnerId === targetId && rel.isCommitted !== true) return 'relative';
                     }
                 }
             }
         } catch (e) { /* skip */ }
 
-        // Check affairs
         try {
             if (AQ && typeof AQ.getActiveAffairs === 'function') {
                 var affairs = AQ.getActiveAffairs(subjectId);
                 if (Array.isArray(affairs)) {
                     for (var k = 0; k < affairs.length; k++) {
                         var a = affairs[k];
-                        if (a.participantA === targetId || a.participantB === targetId) {
-                            return 'relative';
-                        }
+                        if (a.participantA === targetId || a.participantB === targetId) return 'relative';
                     }
                 }
             }
@@ -2104,9 +1707,7 @@
     function _resolveRelationshipCirclesBlock(subjectId, memberIds, errors) {
         return _safe('relationshipCircles', function () {
             var byTargetId = {};
-            if (!_hasId(subjectId) || !Array.isArray(memberIds)) {
-                return { byTargetId: byTargetId };
-            }
+            if (!_hasId(subjectId) || !Array.isArray(memberIds)) return { byTargetId: byTargetId };
             for (var i = 0; i < memberIds.length; i++) {
                 var targetId = memberIds[i];
                 if (!_hasId(targetId)) continue;
@@ -2117,13 +1718,8 @@
         }, errors);
     }
 
-    // =========================================================================
-    // 11. LOCATION — PUBLIC BUILDER
-    // =========================================================================
-
     function buildLocationModel(characterId) {
         if (!_hasId(characterId)) return null;
-
         var summary;
         try { summary = CQ.getCharacterSummary(characterId); }
         catch (e) { return null; }
@@ -2141,50 +1737,30 @@
             };
         }, errors);
 
-        var currentLocationBlock = _safe(
-            'currentLocation',
-            function () { return _resolveCurrentLocationBlock(summary, characterId); },
-            errors
-        ) || {
-            locationId: null,
-            locationName: null,
-            source: 'none',
-            rawCurrentLocationId: null,
-            resolvedDiffersFromRaw: false
-        };
+        var currentLocationBlock = _safe('currentLocation',
+            function () { return _resolveCurrentLocationBlock(summary, characterId); }, errors)
+            || { locationId: null, locationName: null, source: 'none', rawCurrentLocationId: null, resolvedDiffersFromRaw: false };
 
-        var birthplaceBlock = _safe(
-            'birthplace',
-            function () { return _resolveBirthplaceBlock(summary); },
-            errors
-        ) || { placeId: null, placeName: null };
+        var birthplaceBlock = _safe('birthplace',
+            function () { return _resolveBirthplaceBlock(summary); }, errors)
+            || { placeId: null, placeName: null };
 
         var movesBlock = _resolveMovesBlock(characterId, errors) || [];
 
         var householdBlock = _resolveHouseholdBlock(summary, errors) || {
-            available: false,
-            reason: 'household block failed',
-            householdId: null,
-            householdName: null,
-            role: null,
-            isHead: false,
-            memberCount: 0,
-            currentNameSince: null,
-            currentLocationName: null
+            available: false, reason: 'household block failed',
+            householdId: null, householdName: null, role: null, isHead: false,
+            memberCount: 0, currentNameSince: null, currentLocationName: null
         };
 
         var householdMembersBlock = householdBlock.householdId
             ? (_resolveHouseholdMembersBlock(householdBlock.householdId, errors) || [])
             : [];
 
-        var householdHistoryBlock = _resolveHouseholdHistoryBlock(summary, errors) || {
-            entries: [],
-            structured: true
-        };
+        var householdHistoryBlock = _resolveHouseholdHistoryBlock(summary, errors) || { entries: [], structured: true };
 
-        var residencesBlock = _resolveResidencesBlock(
-            householdBlock.householdId, errors
-        ) || { available: false, reason: 'residences block failed', entries: [] };
+        var residencesBlock = _resolveResidencesBlock(householdBlock.householdId, errors)
+            || { available: false, reason: 'residences block failed', entries: [] };
 
         var memberIds = [];
         for (var m = 0; m < householdMembersBlock.length; m++) {
@@ -2192,9 +1768,8 @@
                 memberIds.push(householdMembersBlock[m].characterId);
             }
         }
-        var relationshipCirclesBlock = _resolveRelationshipCirclesBlock(
-            characterId, memberIds, errors
-        ) || { byTargetId: {} };
+        var relationshipCirclesBlock = _resolveRelationshipCirclesBlock(characterId, memberIds, errors)
+            || { byTargetId: {} };
 
         return {
             characterId: characterId,
@@ -2213,17 +1788,12 @@
         };
     }
 
-    // =========================================================================
-    // 12. EXPORTS
-    // =========================================================================
-
     window.CharacterViewModels = {
         resolveName: resolveName,
         resolvePlaceName: resolvePlaceName,
         resolveRankDisplay: resolveRankDisplay,
         skillTierLabel: skillTierLabel,
         compactRow: compactRow,
-
         buildIdentityModel: buildIdentityModel,
         buildFriendshipModel: buildFriendshipModel,
         buildRomanceModel: buildRomanceModel,
