@@ -606,8 +606,12 @@
         if (!LS.getLocationTypeById(input.typeId)) {
             return _fail('createPlace: location type not found: ' + input.typeId);
         }
-        if (input.parentId && !LS.getPlaceById(input.parentId)) {
-            return _fail('createPlace: parent place not found: ' + input.parentId);
+        var hierarchyCheck = LH.validateNewPlace(
+            input.typeId,
+            input.parentId || null
+        );
+        if (!hierarchyCheck.valid) {
+            return _fail('createPlace: ' + hierarchyCheck.reason);
         }
 
         if (input.cultureId) {
@@ -668,18 +672,27 @@
             );
         }
 
-        if (updates.parentId !== undefined &&
-            updates.parentId !== place.parentId) {
-            var check = LH.validateHierarchy(placeId, updates.parentId);
-            if (!check.valid) {
-                return _fail('updatePlace: ' + check.reason);
-            }
+        if (updates.typeId !== undefined &&
+            !LS.getLocationTypeById(updates.typeId)) {
+            return _fail(
+                'updatePlace: location type not found: ' + updates.typeId
+            );
         }
-        if (updates.typeId !== undefined) {
-            if (!LS.getLocationTypeById(updates.typeId)) {
-                return _fail(
-                    'updatePlace: location type not found: ' + updates.typeId
-                );
+
+        if (updates.parentId !== undefined || updates.typeId !== undefined) {
+            var proposedParentId = updates.parentId !== undefined
+                ? (updates.parentId || null)
+                : place.parentId;
+            var proposedTypeId = updates.typeId !== undefined
+                ? updates.typeId
+                : place.typeId;
+            var structureCheck = LH.validatePlaceStructure(
+                placeId,
+                proposedParentId,
+                proposedTypeId
+            );
+            if (!structureCheck.valid) {
+                return _fail('updatePlace: ' + structureCheck.reason);
             }
         }
         if (updates.displayName !== undefined) {
