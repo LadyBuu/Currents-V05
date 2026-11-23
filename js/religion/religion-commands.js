@@ -1775,30 +1775,11 @@
     }
 
     function collectTithes(placeId, year) {
-        var place = _state()._getPlaceOfWorshipCanonical(placeId);
+        var place = _state().getPlaceOfWorshipById(placeId);
         if (!place) return _deny('Place of worship not found');
-        if (place.isActive === false) return _deny('Inactive places of worship cannot collect tithes');
-        if (place.producesIncome === false) return _deny('This place of worship does not collect tithes');
 
-        var income = calculateTitheIncome(placeId);
         var resolvedYear = _resolveYear(year, _getCurrentYear());
-        var candidate = _clone(place);
-        candidate.annualIncome = (candidate.annualIncome || 0) + income;
-        candidate.collectedThisYear = (candidate.collectedThisYear || 0) + income;
-        candidate.updatedAt = Date.now();
-
-        try {
-            _state()._updatePlaceOfWorship(placeId, candidate);
-        } catch (e) {
-            return _deny(e && e.message ? e.message : String(e));
-        }
-
-        _commit('religionPlaceOfWorshipTithesCollected', {
-            religionId: candidate.religionId,
-            placeId: placeId,
-            year: resolvedYear,
-            amount: income
-        });
+        var income = calculateTitheIncome(placeId);
 
         return {
             success: true,
