@@ -1002,6 +1002,27 @@
                         worshipPlace.religionId + '.'
                 });
             }
+            // Owner-domain lifecycle is deliberately restricted until
+            // corresponding domains expose stable lookup/deletion hooks.
+            // Legacy ID-only placeholders are incomplete by definition and
+            // remain repairable through the explicit reconstruction flow.
+            if (worshipPlace.legacyUnresolved !== true) {
+                if (worshipPlace.ownerType !== 'state') {
+                    findings.push({
+                        level: 'error',
+                        message: 'Worship place ' + worshipPlace.id +
+                            ' has unsupported owner type ' + String(worshipPlace.ownerType) +
+                            '; only state ownership is currently supported.'
+                    });
+                } else if (worshipPlace.ownerId !== undefined &&
+                    worshipPlace.ownerId !== null && worshipPlace.ownerId !== '') {
+                    findings.push({
+                        level: 'error',
+                        message: 'State-owned worship place ' + worshipPlace.id +
+                            ' must not reference owner ID ' + worshipPlace.ownerId + '.'
+                    });
+                }
+            }
             if (worshipPlace.locationId &&
                 typeof window.getPlaceById === 'function' &&
                 !window.getPlaceById(worshipPlace.locationId)) {
