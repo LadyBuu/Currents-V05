@@ -144,9 +144,13 @@
             typeof locationQueries.getAllSubLocationIds !== 'function') {
             return null;
         }
-        if (!locationQueries.getPlace(locationId)) return null;
-
-        var ids = locationQueries.getAllSubLocationIds(locationId);
+        var ids;
+        try {
+            if (!locationQueries.getPlace(locationId)) return null;
+            ids = locationQueries.getAllSubLocationIds(locationId);
+        } catch (e) {
+            return null;
+        }
         // getAllSubLocationIds includes the root. An empty or incomplete
         // result is a hierarchy failure, not permission to report an
         // own-location-only population as if it were a subtree total.
@@ -159,7 +163,11 @@
         for (var i = 0; i < ids.length; i++) {
             var id = ids[i];
             if (typeof id !== 'string' || !id || seen[id]) continue;
-            if (!locationQueries.getPlace(id)) return null;
+            try {
+                if (!locationQueries.getPlace(id)) return null;
+            } catch (e) {
+                return null;
+            }
             seen[id] = true;
             unique.push(id);
         }
