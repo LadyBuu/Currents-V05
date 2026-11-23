@@ -165,7 +165,8 @@
      */
     function getLocationIdsByRank(rankId) {
         _ensureBuilt();
-        return _indexes.byRank.get(rankId) || [];
+        var ids = _indexes.byRank.get(rankId);
+        return ids ? ids.slice() : [];
     }
 
     /**
@@ -175,7 +176,8 @@
      */
     function getLocationIdsByGovernment(governmentType) {
         _ensureBuilt();
-        return _indexes.byGovernment.get(governmentType) || [];
+        var ids = _indexes.byGovernment.get(governmentType);
+        return ids ? ids.slice() : [];
     }
 
     /**
@@ -186,7 +188,8 @@
      */
     function getLocationIdsBySpecialization(specializationRoleId) {
         _ensureBuilt();
-        return _indexes.bySpecialization.get(specializationRoleId) || [];
+        var ids = _indexes.bySpecialization.get(specializationRoleId);
+        return ids ? ids.slice() : [];
     }
 
     /**
@@ -197,7 +200,8 @@
      */
     function getLocationIdsByFeature(featureId) {
         _ensureBuilt();
-        return _indexes.byFeature.get(featureId) || [];
+        var ids = _indexes.byFeature.get(featureId);
+        return ids ? ids.slice() : [];
     }
 
     // =========================================================================
@@ -267,6 +271,30 @@
     // If a caller needs to force a rebuild — for example, after loading a
     // save file — it calls rebuildIndexes() directly.
     //
+
+    /**
+     * Keep derived indexes synchronized after imports, resets, and
+     * cross-tab master-data replacement. The canonical store remains the
+     * source of truth; this handler only rebuilds indexes and notifies
+     * subscribers that a reload occurred.
+     */
+    function _handleMasterDataUpdated() {
+        try {
+            rebuildIndexes();
+            publish({ type: 'stateReloaded' });
+        } catch (err) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'SettlementState: reload from masterDataUpdated failed:',
+                    err
+                );
+            }
+        }
+    }
+
+    if (typeof window.addEventListener === 'function') {
+        window.addEventListener('masterDataUpdated', _handleMasterDataUpdated);
+    }
 
     // =========================================================================
     // 7. EXPORTS
