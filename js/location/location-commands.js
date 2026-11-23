@@ -810,10 +810,12 @@
         var governmentDepartments = window.masterData && window.masterData.data
             ? window.masterData.data.governmentDepartments
             : [];
+        // If the Government command layer is unavailable, any existing
+        // department data may contain a descendant reference to a deleted
+        // location's department. Fail closed rather than guessing from only
+        // direct location assignments.
         var hasGovernmentReferences = Array.isArray(governmentDepartments) &&
-            governmentDepartments.some(function(department) {
-                return department && toRemove[department.locationId];
-            });
+            governmentDepartments.length > 0;
         if (hasGovernmentReferences &&
             (!window.GovernmentCommands ||
              typeof window.GovernmentCommands.reconcileDeletedLocations !== 'function')) {
