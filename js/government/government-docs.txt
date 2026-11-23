@@ -2137,6 +2137,49 @@ PART 7 — KNOWN HAZARDS
     only saveMasterData call site is Commands.persist.
 
 
+
+================================================================================
+PART 8 — DEPARTMENT LOCATION AND JURISDICTION CONTRACT
+================================================================================
+
+Department locationId is the department's JURISDICTION ROOT. It is not a
+physical headquarters address.
+
+- A department applies to its assigned location and every descendant location.
+  For example, a department assigned to a country is included when viewing
+  departments for any province, city, or settlement beneath that country.
+- A department assigned to a province applies to that province and its
+  descendants, but not to its parent country or sibling provinces.
+- A location view includes departments rooted at that location and at each
+  ancestor in its location hierarchy. Results are de-duplicated by department
+  ID. Deprecated departments remain excluded unless includeDeprecated is true.
+- GovernmentQueries.getDepartmentsByLocation(locationId) implements this
+  inherited jurisdiction lookup. It validates the complete location chain
+  before returning results; an unavailable, missing, or malformed hierarchy
+  returns an empty list rather than applying a partial jurisdiction chain.
+- GovernmentQueries.getDepartments({ locationId }) remains an exact
+  location filter for general catalogue/tree filtering. Do not confuse it
+  with the jurisdiction-aware getDepartmentsByLocation(locationId).
+- Location-scoped department lists, location government summaries, and
+  location salary requirements use the jurisdiction-aware query. Thus a
+  parent-level department contributes to descendant location views and
+  salary requirements.
+- parentDepartmentId is an organizational reporting relationship only. It
+  does not establish geographical jurisdiction, move a department's
+  jurisdiction root, or imply that the child department shares its parent's
+  location.
+- Deleting a jurisdiction-root location removes departments assigned to that
+  location and their organizational descendants, preserving the existing
+  location-deletion reconciliation contract.
+- The management UI labels this field "Jurisdiction Root" and explains that
+  it applies to sub-locations.
+
+There is no separate physical headquarters field. If the application later
+needs to record where a department's offices are physically based, add a
+separate headquartersLocationId with its own validation, indexing, queries,
+UI, and location-deletion lifecycle. Do not overload locationId or silently
+treat headquarters as jurisdiction.
+
 ================================================================================
 END OF DOCUMENT
 ================================================================================
