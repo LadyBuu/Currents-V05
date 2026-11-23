@@ -2199,5 +2199,34 @@ PART 7 — KNOWN HAZARDS
 
 
 ================================================================================
+OFFICIAL STATE RELIGION UI AND GOVERNMENT POLICY
+================================================================================
+
+The Settlement Religion tab exposes official recognition separately from
+religious demographics and explicit religious presence.
+
+- The state-religion selector lists non-deprecated religions only.
+- An existing unresolved or deprecated state religion remains visible as a
+  warning and can be replaced. It is not silently cleared.
+- Saving recognition calls SettlementGovernmentCommands.setStateReligion.
+- Clearing official recognition is not permitted while governmentType is
+  'theocracy'. The UI disables the empty option, and the command independently
+  rejects the change.
+- A theocracy requires a resolvable, non-deprecated state religion when its
+  government type is assigned. A stale stateReligionId is not sufficient.
+- The religious-laws-as-civil policy is separately editable for non-theocratic
+  governments. A theocracy requires this policy to remain enabled; both the UI
+  and command enforce that constraint.
+- Recognition is local to the selected settlement. It is not inherited from
+  parent locations and is not inferred from dominant religion, presence,
+  worship places, or follower counts.
+- The UI writes only through SettlementGovernmentCommands and refreshes the
+  active Religion tab after a successful command.
+
+The official state religion, demographic dominant religion, and explicit
+religious presence are distinct facts. Do not collapse them into a single
+"settlement religion" field.
+
+================================================================================
 END OF DOCUMENT
 ================================================================================
