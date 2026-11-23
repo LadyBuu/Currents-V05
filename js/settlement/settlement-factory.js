@@ -163,6 +163,8 @@
             governmentTypeId: null,
             justiceSeverity: 'medium',
             useReligiousLawsAsCivil: false,
+            // Official religion is a political designation, not a demographic calculation.
+            stateReligionId: null,
             hasWatch: false,
             watchSize: 0,
             watchFounded: null,
