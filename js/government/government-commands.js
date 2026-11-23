@@ -77,8 +77,12 @@
         if (!rankQueries || typeof rankQueries.getRank !== 'function') {
             return 'Rank queries are unavailable; cannot validate the required rank';
         }
-        if (!rankQueries.getRank(rankId)) {
-            return 'Required rank "' + rankId + '" does not exist';
+        try {
+            if (!rankQueries.getRank(rankId)) {
+                return 'Required rank "' + rankId + '" does not exist';
+            }
+        } catch (e) {
+            return 'Required rank could not be verified; rank queries failed';
         }
         return null;
     }
@@ -324,7 +328,7 @@
         var dept = State._getDepartmentCanonical(departmentId);
         if (!dept) return _fail('Department not found', C.CODES.NOT_FOUND);
 
-        var rankError = _validateRequiredRankReference(data.requiredRankId);
+        var rankError = _validateRequiredRankReference(data && data.requiredRankId);
         if (rankError) return _fail(rankError, C.CODES.VALIDATION);
 
         var v = Rules.validatePosition(data, false);
