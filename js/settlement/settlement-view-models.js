@@ -284,9 +284,11 @@
             governmentType: settlement.governmentType || null,
             governmentTypeName: _governmentName(settlement.governmentType),
             stateReligionId: settlement.stateReligionId || null,
-            stateReligion: settlement.stateReligionId
-                ? _getReligionQueries().getReligion(settlement.stateReligionId)
+            stateReligion: settlement.stateReligionId && window.ReligionQueries &&
+                typeof window.ReligionQueries.getReligion === 'function'
+                ? window.ReligionQueries.getReligion(settlement.stateReligionId)
                 : null,
+            religiousPresence: _getReligionQueries().getReligiousPresence(locationId),
             useReligiousLawsAsCivil: settlement.useReligiousLawsAsCivil === true,
             justiceSeverity: settlement.justiceSeverity || null,
             justiceSeverityName: _justiceSeverityName(settlement.justiceSeverity),
