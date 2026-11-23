@@ -181,20 +181,6 @@
         window.masterData.data.placesOfWorship = newArray;
     }
 
-    function _clone(value) {
-        if (value === null || typeof value !== 'object') return value;
-        if (Array.isArray(value)) {
-            var arrayCopy = new Array(value.length);
-            for (var i = 0; i < value.length; i++) arrayCopy[i] = _clone(value[i]);
-            return arrayCopy;
-        }
-        var copy = {};
-        for (var key in value) {
-            if (Object.prototype.hasOwnProperty.call(value, key)) copy[key] = _clone(value[key]);
-        }
-        return copy;
-    }
-
     /**
      * One-time compatibility migration for legacy religion.placesOfWorship
      * ID arrays. The old implementation never persisted the full objects,
@@ -603,6 +589,45 @@
         hydrateFromMasterData();
         _markDirty();
         return place;
+    }
+
+    function _clearDeletedWorshipPlaceLocations(locationIds) {
+        var removed = Object.create(null);
+        if (Array.isArray(locationIds)) {
+            for (var i = 0; i < locationIds.length; i++) {
+                if (locationIds[i]) removed[locationIds[i]] = true;
+            }
+        }
+        var current = _getCanonicalPlacesOfWorshipArray();
+        if (!current) throw new Error('Canonical worship-place store is unavailable.');
+        var places = current.slice();
+        var changed = 0;
+        var now = Date.now();
+
+        for (var p = 0; p < places.length; p++) {
+            var place = places[p];
+            if (!place || !removed[place.locationId]) continue;
+            var candidate = _clone(place);
+            candidate.history = Array.isArray(candidate.history) ? candidate.history.slice() : [];
+            candidate.history.push({
+                type: 'locationRemoved',
+                locationId: candidate.locationId,
+                locationName: candidate.locationName || '',
+                date: now
+            });
+            candidate.locationId = null;
+            candidate.locationName = '';
+            candidate.updatedAt = now;
+            places[p] = candidate;
+            changed++;
+        }
+
+        if (changed > 0) {
+            _setCanonicalPlacesOfWorshipArray(places);
+            hydrateFromMasterData();
+            _markDirty();
+        }
+        return changed;
     }
 
     function _removePlaceOfWorship(placeId) {
@@ -1088,6 +1113,7 @@
         _addPlaceOfWorship: _addPlaceOfWorship,
         _updatePlaceOfWorship: _updatePlaceOfWorship,
         _removePlaceOfWorship: _removePlaceOfWorship,
+        _clearDeletedWorshipPlaceLocations: _clearDeletedWorshipPlaceLocations,
 
         // ---- Subscriptions ----
         subscribe: subscribe,
