@@ -83,7 +83,6 @@
     function _getSettlementQueries() { return window.SettlementQueries; }
     function _getRankRules()        { return window.SettlementRankRules; }
     function _getCommit()           { return window.SettlementCommandCommit; }
-    function _getPlaceQueries()     { return window.PlaceQueries; }
 
     function _failure(code, details) {
         return { success: false, code: code, details: details || {} };
