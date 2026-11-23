@@ -2260,7 +2260,7 @@
             confirmText: 'Delete',
             cancelText: 'Cancel',
             onConfirm: function(root) {
-                var result = window.ReligionCommands.deletePlaceOfWorship(placeId);
+                var result = window.ReligionCommands.deletePlaceOfWorship(placeId, religionId);
                 return _handleCommandResult(
                     result,
                     'Place of worship removed: ' + placeName,
