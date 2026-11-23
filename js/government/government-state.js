@@ -781,6 +781,14 @@
                 if (!pos.id) { warnings.push('position in dept ' + dept.id + ' missing id'); continue; }
                 if (positionIds.has(pos.id)) warnings.push('duplicate position id in dept ' + dept.id + ': ' + pos.id);
                 positionIds.add(pos.id);
+                if (pos.requiredRankId) {
+                    var rankQueries = window.RankQueries;
+                    if (!rankQueries || typeof rankQueries.getRank !== 'function') {
+                        warnings.push('position ' + pos.id + ' requiredRankId could not be validated: RankQueries unavailable');
+                    } else if (!rankQueries.getRank(pos.requiredRankId)) {
+                        warnings.push('position ' + pos.id + ' references missing requiredRankId ' + pos.requiredRankId);
+                    }
+                }
                 if (pos.parentPositionId && !positionIds.has(pos.parentPositionId)) {
                     // parent may be defined later; only flag dangling on final pass
                 }
