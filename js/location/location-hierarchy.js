@@ -181,7 +181,8 @@
         var LQ = _queries();
         var parentPrio = LQ.getLocationTypePriority(parentTypeId);
         var childPrio = LQ.getLocationTypePriority(childTypeId);
-        if (parentPrio === null || childPrio === null) return false;
+        if (typeof parentPrio !== 'number' || !isFinite(parentPrio) ||
+            typeof childPrio !== 'number' || !isFinite(childPrio)) return false;
         return parentPrio <= childPrio;
     }
 
@@ -321,6 +322,63 @@
                     reason: 'New location type would be incompatible with child "' +
                         (child.displayName || child.id) + '"'
                 };
+            }
+        }
+
+        return { valid: true, reason: 'Valid hierarchy' };
+    }
+
+    /**
+     * Validate a proposed priority change for a location type against every
+     * existing parent/child edge that uses that type. This prevents changing
+     * a type's priority from silently invalidating many places at once.
+     */
+    function validateLocationTypePriority(typeId, proposedPriority) {
+        if (!typeId || !LS.getLocationTypeById(typeId)) {
+            return { valid: false, reason: 'Location type not found' };
+        }
+        if (typeof proposedPriority !== 'number' ||
+            !isFinite(proposedPriority)) {
+            return { valid: false, reason: 'Location type priority must be numeric' };
+        }
+
+        var LQ = _queries();
+        var places = LS.getPlacesByTypeId(typeId) || [];
+        for (var i = 0; i < places.length; i++) {
+            var place = places[i];
+            if (!place) continue;
+
+            if (place.parentId) {
+                var parent = LS.getPlaceById(place.parentId);
+                if (parent) {
+                    var parentPriority = LQ.getLocationTypePriority(parent.typeId);
+                    if (typeof parentPriority !== 'number' ||
+                        parentPriority > proposedPriority) {
+                        return {
+                            valid: false,
+                            reason: 'Priority change would make "' +
+                                (place.displayName || place.id) +
+                                '" incompatible with its parent'
+                        };
+                    }
+                }
+            }
+
+            var children = LQ.getPlaceChildren(place.id, false) || [];
+            for (var j = 0; j < children.length; j++) {
+                var child = children[j];
+                if (!child) continue;
+                var childPriority = LQ.getLocationTypePriority(child.typeId);
+                if (typeof childPriority !== 'number' ||
+                    proposedPriority > childPriority) {
+                    return {
+                        valid: false,
+                        reason: 'Priority change would make "' +
+                            (place.displayName || place.id) +
+                            '" incompatible with child "' +
+                            (child.displayName || child.id) + '"'
+                    };
+                }
             }
         }
 
@@ -619,6 +677,7 @@
         validateHierarchy: validateHierarchy,
         validateNewPlace: validateNewPlace,
         validatePlaceStructure: validatePlaceStructure,
+        validateLocationTypePriority: validateLocationTypePriority,
         isValidParentType: isValidParentType,
 
         // Ancestry
