@@ -267,7 +267,30 @@
     }
 
     // =========================================================================
-    // 3. PLACES OF WORSHIP
+    // 3. EXPLICIT RELIGIOUS PRESENCE
+    // =========================================================================
+
+    /**
+     * Explicit religion presence associations across this settlement's
+     * location subtree. These records do not imply official recognition,
+     * population dominance or legal jurisdiction.
+     *
+     * Returns null when the settlement or its location hierarchy is
+     * unavailable; an empty array means no explicit associations exist.
+     */
+    function getReligiousPresence(locationId) {
+        var settlement = _getSettlementQueries().getSettlementData(locationId);
+        if (!settlement) return null;
+        var religionQueries = _getReligionQueries();
+        if (!religionQueries ||
+            typeof religionQueries.getReligionsInLocationSubtree !== 'function') {
+            return null;
+        }
+        return religionQueries.getReligionsInLocationSubtree(locationId);
+    }
+
+    // =========================================================================
+    // 4. PLACES OF WORSHIP
     // =========================================================================
 
     function getPlacesOfWorship(locationId) {
@@ -481,6 +504,9 @@
     // =========================================================================
 
     window.SettlementReligionQueries = Object.freeze({
+        // Explicit presence associations
+        getReligiousPresence: getReligiousPresence,
+
         // Places of worship
         getPlacesOfWorship: getPlacesOfWorship,
         getPlaceOfWorshipCount: getPlaceOfWorshipCount,
