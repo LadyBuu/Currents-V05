@@ -316,8 +316,9 @@
      *
      * This is used by LocationCommands when deleting a place. The location
      * command owns the cross-domain transaction and therefore passes
-     * { persist: false }; its normal persist() boundary saves both domains
-     * together. Standalone callers persist by default.
+     * { persist: false, publish: false }; its normal persist() boundary saves
+     * both domains together, then it publishes the returned event. Standalone
+     * callers persist and publish by default.
      *
      * @param {string[]} locationIds
      * @param {Object} event
