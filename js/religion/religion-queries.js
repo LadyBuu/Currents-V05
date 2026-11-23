@@ -997,36 +997,18 @@
     }
 
     function getPlacesOfWorshipByReligion(religionId) {
-        var religion = getReligion(religionId);
-        if (!religion) return [];
-        return Array.isArray(religion.placesOfWorship) ? religion.placesOfWorship.slice() : [];
+        if (!religionId) return [];
+        return _getState().getPlacesOfWorshipByReligion(religionId);
     }
 
     function getPlacesOfWorshipByLocation(locationId) {
         if (!locationId) return [];
-
-        var religions = getReligionsByLocation(locationId);
-        var result = [];
-
-        for (var i = 0; i < religions.length; i++) {
-            var religion = religions[i];
-            if (!Array.isArray(religion.placesOfWorship)) continue;
-            for (var j = 0; j < religion.placesOfWorship.length; j++) {
-                result.push({
-                    id: religion.placesOfWorship[j],
-                    religionId: religion.id,
-                    religionName: religion.name
-                });
-            }
-        }
-
-        return result;
+        return _getState().getPlacesOfWorshipByLocation(locationId);
     }
 
     function getPlaceOfWorshipCount(religionId) {
-        var religion = getReligion(religionId);
-        if (!religion) return 0;
-        return Array.isArray(religion.placesOfWorship) ? religion.placesOfWorship.length : 0;
+        if (!religionId) return 0;
+        return getPlacesOfWorshipByReligion(religionId).length;
     }
 
     // =========================================================================
