@@ -353,6 +353,7 @@
                 if (parent) {
                     var parentPriority = LQ.getLocationTypePriority(parent.typeId);
                     if (typeof parentPriority !== 'number' ||
+                        !isFinite(parentPriority) ||
                         parentPriority > proposedPriority) {
                         return {
                             valid: false,
@@ -370,6 +371,7 @@
                 if (!child) continue;
                 var childPriority = LQ.getLocationTypePriority(child.typeId);
                 if (typeof childPriority !== 'number' ||
+                    !isFinite(childPriority) ||
                     proposedPriority > childPriority) {
                     return {
                         valid: false,
