@@ -1774,9 +1774,12 @@
         };
     }
 
-    function deletePlaceOfWorship(placeId) {
+    function deletePlaceOfWorship(placeId, expectedReligionId) {
         var current = _state()._getPlaceOfWorshipCanonical(placeId);
         if (!current) return _deny('Place of worship not found');
+        if (expectedReligionId && current.religionId !== expectedReligionId) {
+            return _deny('Place of worship does not belong to the specified religion');
+        }
 
         var removed;
         try {
