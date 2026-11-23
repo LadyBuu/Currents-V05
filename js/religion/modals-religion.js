@@ -2183,6 +2183,12 @@
             '<input type="text" id="placeNotes" value="' + _escapeHtml(place.notes || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
             '</div>' +
 
+            (place.legacyUnresolved === true
+                ? '<div style="padding:8px 12px;background:rgba(181,164,74,0.1);border:1px solid #c87040;border-radius:4px;font-size:0.6rem;color:#c87040;">' +
+                  'Legacy record: only its ID was saved by the previous version. Its original details cannot be recovered. Supply a verified name, type and location to complete this record.' +
+                  '</div>'
+                : '') +
+
             '</div>';
 
         var modal = _openModal({
