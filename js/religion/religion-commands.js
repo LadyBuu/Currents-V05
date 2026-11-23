@@ -1508,77 +1508,93 @@
     // resolves this in a future phase. Operations documented as partial.
 
     function createPlaceOfWorship(data) {
-        if (!data || !data.name || data.name.trim() === '') {
+        if (!data || typeof data !== 'object' ||
+            typeof data.name !== 'string' || data.name.trim() === '') {
             return _deny('Place name is required');
         }
 
-        var canonical = _state()._getReligionCanonical(data.religionId);
-        if (!canonical) {
-            return _deny('Religion not found');
-        }
+        var religion = _state()._getReligionCanonical(data.religionId);
+        if (!religion) return _deny('Religion not found');
+
         if (data.locationId && !_getPlaceById(data.locationId)) {
             return _deny('Place of worship location not found');
         }
         if (data.headClergyId && !_getCharacterById(data.headClergyId)) {
             return _deny('Head clergy character not found');
         }
-        if (Array.isArray(data.clergy)) {
-            for (var clergyIndex = 0; clergyIndex < data.clergy.length; clergyIndex++) {
-                var clergyEntry = data.clergy[clergyIndex];
-                var clergyId = typeof clergyEntry === 'string'
-                    ? clergyEntry
-                    : (clergyEntry && (clergyEntry.characterId || clergyEntry.id));
-                if (clergyId && !_getCharacterById(clergyId)) {
-                    return _deny('Clergy character not found: ' + clergyId);
-                }
+        if (data.ownerType !== undefined && typeof data.ownerType !== 'string') {
+            return _deny('Owner type must be a string');
+        }
+        if (data.ownerId !== undefined && data.ownerId !== null &&
+            typeof data.ownerId !== 'string') {
+            return _deny('Owner id must be a string or null');
+        }
+        if (data.clergy !== undefined && !Array.isArray(data.clergy)) {
+            return _deny('Clergy must be an array');
+        }
+
+        var clergy = Array.isArray(data.clergy) ? _clone(data.clergy) : [];
+        for (var clergyIndex = 0; clergyIndex < clergy.length; clergyIndex++) {
+            var clergyEntry = clergy[clergyIndex];
+            var clergyId = typeof clergyEntry === 'string'
+                ? clergyEntry
+                : (clergyEntry && (clergyEntry.characterId || clergyEntry.id));
+            if (clergyId && !_getCharacterById(clergyId)) {
+                return _deny('Clergy character not found: ' + clergyId);
             }
         }
 
+        var baseTithe = data.baseTithe !== undefined ? Number(data.baseTithe) : 1;
+        var wealth = data.wealth !== undefined ? Number(data.wealth) : 0;
+        if (!Number.isFinite(baseTithe) || baseTithe < 0) {
+            return _deny('Base tithe must be a finite non-negative number');
+        }
+        if (!Number.isFinite(wealth) || wealth < 0) {
+            return _deny('Wealth must be a finite non-negative number');
+        }
+
+        var now = Date.now();
+        var location = data.locationId ? _getPlaceById(data.locationId) : null;
         var place = {
             id: _generateId('temple'),
             name: data.name.trim(),
-            religionId: data.religionId,
-            religionName: canonical.name,
+            religionId: religion.id,
+            religionName: religion.name,
             locationId: data.locationId || null,
-            locationName: data.locationName || 'Unknown',
+            locationName: data.locationName ||
+                (location ? (location.displayName || location.name || '') : ''),
             ownerType: data.ownerType || 'state',
             ownerId: data.ownerId || null,
             ownerName: data.ownerName || '',
             type: data.type || 'temple',
-            isActive: true,
+            isActive: data.isActive !== false,
             foundedYear: _resolveYear(data.foundedYear, _getCurrentYear()),
             headClergyId: data.headClergyId || null,
-            clergy: data.clergy || [],
-            producesIncome: data.producesIncome !== undefined ? data.producesIncome : true,
-            baseTithe: data.baseTithe !== undefined ? data.baseTithe : 1,
+            clergy: clergy,
+            producesIncome: data.producesIncome !== false,
+            baseTithe: baseTithe,
             currentFollowers: 0,
             annualIncome: 0,
-            wealth: data.wealth !== undefined ? data.wealth : 0,
+            wealth: wealth,
             collectedThisYear: 0,
-            features: data.features || [],
-            history: [],
-            notes: data.notes || '',
-            createdAt: Date.now(),
-            updatedAt: Date.now()
+            features: Array.isArray(data.features) ? _clone(data.features) : [],
+            history: Array.isArray(data.history) ? _clone(data.history) : [],
+            notes: typeof data.notes === 'string' ? data.notes : '',
+            legacyUnresolved: false,
+            createdAt: now,
+            updatedAt: now
         };
 
-        var candidate = _clone(canonical);
-        var placesOfWorship = Array.isArray(candidate.placesOfWorship)
-            ? candidate.placesOfWorship.slice()
-            : [];
-        placesOfWorship.push(place.id);
-        candidate.placesOfWorship = placesOfWorship;
-        candidate.updatedAt = Date.now();
-
         try {
-            _state()._updateReligion(canonical.id, candidate);
+            _state()._addPlaceOfWorship(religion.id, place);
         } catch (e) {
-            return _deny(e.message);
+            return _deny(e && e.message ? e.message : String(e));
         }
 
         _commit('religionPlaceOfWorshipCreated', {
-            religionId: canonical.id,
-            placeId: place.id
+            religionId: religion.id,
+            placeId: place.id,
+            place: _clone(place)
         });
 
         return {
@@ -1589,30 +1605,117 @@
     }
 
     function updatePlaceOfWorship(placeId, updates) {
-        var ownerInfo = _state().getPlaceOfWorshipById(placeId);
-        if (!ownerInfo) {
-            return _deny('Place of worship not found');
+        if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+            return _deny('Place updates are required');
         }
 
-        var canonical = _state()._getReligionCanonical(ownerInfo.religionId);
-        if (!canonical) {
-            return _deny('Owning religion not found');
+        var current = _state()._getPlaceOfWorshipCanonical(placeId);
+        if (!current) return _deny('Place of worship not found');
+
+        var candidate = _clone(current);
+        var stringFields = [
+            'name', 'type', 'locationName', 'ownerType', 'ownerName', 'notes'
+        ];
+        for (var i = 0; i < stringFields.length; i++) {
+            var field = stringFields[i];
+            if (updates[field] === undefined) continue;
+            if (typeof updates[field] !== 'string' ||
+                (field === 'name' && updates[field].trim() === '')) {
+                return _deny(field + ' must be a valid string');
+            }
+            candidate[field] = field === 'name' ? updates[field].trim() : updates[field];
         }
 
-        // Partial: updates cannot be applied until places have a canonical
-        // store. See ADR Decision 2.
-        var candidate = _clone(canonical);
+        if (updates.locationId !== undefined) {
+            if (updates.locationId !== null &&
+                (typeof updates.locationId !== 'string' || !_getPlaceById(updates.locationId))) {
+                return _deny('Place of worship location not found');
+            }
+            candidate.locationId = updates.locationId || null;
+            if (updates.locationName === undefined) {
+                var location = candidate.locationId ? _getPlaceById(candidate.locationId) : null;
+                candidate.locationName = location
+                    ? (location.displayName || location.name || '')
+                    : '';
+            }
+        }
+
+        if (updates.ownerId !== undefined) {
+            if (updates.ownerId !== null && typeof updates.ownerId !== 'string') {
+                return _deny('Owner id must be a string or null');
+            }
+            candidate.ownerId = updates.ownerId;
+        }
+
+        if (updates.headClergyId !== undefined) {
+            if (updates.headClergyId !== null &&
+                (typeof updates.headClergyId !== 'string' || !_getCharacterById(updates.headClergyId))) {
+                return _deny('Head clergy character not found');
+            }
+            candidate.headClergyId = updates.headClergyId || null;
+        }
+
+        if (updates.clergy !== undefined) {
+            if (!Array.isArray(updates.clergy)) return _deny('Clergy must be an array');
+            var clergy = _clone(updates.clergy);
+            for (var c = 0; c < clergy.length; c++) {
+                var entry = clergy[c];
+                var characterId = typeof entry === 'string'
+                    ? entry
+                    : (entry && (entry.characterId || entry.id));
+                if (characterId && !_getCharacterById(characterId)) {
+                    return _deny('Clergy character not found: ' + characterId);
+                }
+            }
+            candidate.clergy = clergy;
+        }
+
+        var numericFields = ['baseTithe', 'wealth', 'currentFollowers', 'annualIncome', 'collectedThisYear'];
+        for (var n = 0; n < numericFields.length; n++) {
+            var numericField = numericFields[n];
+            if (updates[numericField] === undefined) continue;
+            var numericValue = Number(updates[numericField]);
+            if (!Number.isFinite(numericValue) || numericValue < 0) {
+                return _deny(numericField + ' must be a finite non-negative number');
+            }
+            candidate[numericField] = numericValue;
+        }
+
+        if (updates.foundedYear !== undefined) {
+            if (typeof updates.foundedYear !== 'number' ||
+                !Number.isFinite(updates.foundedYear) ||
+                !Number.isInteger(updates.foundedYear)) {
+                return _deny('Founded year must be a finite integer');
+            }
+            candidate.foundedYear = updates.foundedYear;
+        }
+
+        if (updates.isActive !== undefined) {
+            if (typeof updates.isActive !== 'boolean') return _deny('isActive must be a boolean');
+            candidate.isActive = updates.isActive;
+        }
+        if (updates.producesIncome !== undefined) {
+            if (typeof updates.producesIncome !== 'boolean') return _deny('producesIncome must be a boolean');
+            candidate.producesIncome = updates.producesIncome;
+        }
+        if (updates.features !== undefined) {
+            if (!Array.isArray(updates.features)) return _deny('Features must be an array');
+            candidate.features = _clone(updates.features);
+        }
+
+        candidate.legacyUnresolved = false;
         candidate.updatedAt = Date.now();
 
         try {
-            _state()._updateReligion(canonical.id, candidate);
+            _state()._updatePlaceOfWorship(placeId, candidate);
         } catch (e) {
-            return _deny(e.message);
+            return _deny(e && e.message ? e.message : String(e));
         }
 
         _commit('religionPlaceOfWorshipUpdated', {
-            religionId: canonical.id,
-            placeId: placeId
+            religionId: candidate.religionId,
+            placeId: placeId,
+            place: _clone(candidate)
         });
 
         return {
@@ -1623,56 +1726,62 @@
     }
 
     function deletePlaceOfWorship(placeId) {
-        var ownerInfo = _state().getPlaceOfWorshipById(placeId);
-        if (!ownerInfo) {
-            return _deny('Place of worship not found');
-        }
+        var current = _state()._getPlaceOfWorshipCanonical(placeId);
+        if (!current) return _deny('Place of worship not found');
 
-        var canonical = _state()._getReligionCanonical(ownerInfo.religionId);
-        if (!canonical) {
-            return _deny('Owning religion not found');
-        }
-
-        var candidate = _clone(canonical);
-        var placesOfWorship = Array.isArray(candidate.placesOfWorship)
-            ? candidate.placesOfWorship.slice()
-            : [];
-        var index = placesOfWorship.indexOf(placeId);
-        if (index === -1) {
-            return _deny('Place of worship not associated with religion');
-        }
-        placesOfWorship.splice(index, 1);
-        candidate.placesOfWorship = placesOfWorship;
-        candidate.updatedAt = Date.now();
-
+        var removed;
         try {
-            _state()._updateReligion(canonical.id, candidate);
+            removed = _state()._removePlaceOfWorship(placeId);
         } catch (e) {
-            return _deny(e.message);
+            return _deny(e && e.message ? e.message : String(e));
         }
 
         _commit('religionPlaceOfWorshipDeleted', {
-            religionId: canonical.id,
+            religionId: current.religionId,
             placeId: placeId
         });
 
         return {
             success: true,
+            data: _clone(removed),
             reason: 'Place of worship deleted successfully'
         };
     }
 
     function calculateTitheIncome(placeId) {
-        var ownerInfo = _state().getPlaceOfWorshipById(placeId);
-        if (!ownerInfo) return 0;
+        var place = _state().getPlaceOfWorshipById(placeId);
+        if (!place || place.isActive === false || place.producesIncome === false) return 0;
 
-        var followers = _queries().getFollowerCount(ownerInfo.religionId);
-        return followers * 1;
+        var followers = _queries().getFollowerCount(place.religionId);
+        var tithe = typeof place.baseTithe === 'number' ? place.baseTithe : 0;
+        return followers * tithe;
     }
 
     function collectTithes(placeId, year) {
+        var place = _state()._getPlaceOfWorshipCanonical(placeId);
+        if (!place) return _deny('Place of worship not found');
+        if (place.isActive === false) return _deny('Inactive places of worship cannot collect tithes');
+        if (place.producesIncome === false) return _deny('This place of worship does not collect tithes');
+
         var income = calculateTitheIncome(placeId);
         var resolvedYear = _resolveYear(year, _getCurrentYear());
+        var candidate = _clone(place);
+        candidate.annualIncome = (candidate.annualIncome || 0) + income;
+        candidate.collectedThisYear = (candidate.collectedThisYear || 0) + income;
+        candidate.updatedAt = Date.now();
+
+        try {
+            _state()._updatePlaceOfWorship(placeId, candidate);
+        } catch (e) {
+            return _deny(e && e.message ? e.message : String(e));
+        }
+
+        _commit('religionPlaceOfWorshipTithesCollected', {
+            religionId: candidate.religionId,
+            placeId: placeId,
+            year: resolvedYear,
+            amount: income
+        });
 
         return {
             success: true,
