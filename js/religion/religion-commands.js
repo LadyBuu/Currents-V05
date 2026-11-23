@@ -1716,7 +1716,7 @@
             candidate.ownerType,
             candidate.ownerId
         );
-        if (ownerError && current.legacyUnresolved !== true) {
+        if (ownerError && candidate.legacyUnresolved !== true) {
             return _deny(ownerError);
         }
 
