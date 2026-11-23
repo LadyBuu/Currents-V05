@@ -491,6 +491,7 @@
             '<div class="st-row">' +
             '<label><input type="checkbox" id="settlementReligiousLawsToggle"' +
             (settlement.useReligiousLawsAsCivil === true ? ' checked' : '') +
+            (isTheocracy ? ' disabled' : '') +
             '> Apply recognised religion\'s laws as civil laws</label>' +
             '</div>' +
             '<button type="button" class="st-btn" data-action="save-religious-law-policy">Save law policy</button>' +
