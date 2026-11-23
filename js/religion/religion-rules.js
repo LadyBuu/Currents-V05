@@ -300,6 +300,14 @@
                          ' followers. Deprecate it instead.');
         }
 
+        if (Array.isArray(religion.placesOfWorship) &&
+            religion.placesOfWorship.length > 0) {
+            return _deny(
+                'Cannot delete a religion that still owns places of worship. ' +
+                'Remove or transfer those records first, or deprecate the religion.'
+            );
+        }
+
         // An active religious leader is an external character reference.
         // Deleting the religion would leave that character's office/history
         // without an owning religion. End the term or deprecate the religion.
