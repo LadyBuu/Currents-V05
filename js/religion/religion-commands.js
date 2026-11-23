@@ -1524,6 +1524,25 @@
     // Full records are stored in masterData.data.placesOfWorship.
     // ReligionState owns the collection and keeps religion ID links in sync.
 
+    /**
+     * Ownership contract is intentionally narrow until owner domains
+     * expose stable lookup and deletion lifecycle APIs. A state-owned
+     * worship place has no entity owner ID. Do not accept opaque IDs that
+     * cannot be validated or reconciled when their owner is deleted.
+     */
+    function _validateWorshipPlaceOwner(ownerType, ownerId) {
+        if (typeof ownerType !== 'string' || ownerType.trim() === '') {
+            return 'Owner type is required';
+        }
+        if (ownerType !== 'state') {
+            return 'Unsupported worship-place owner type: ' + ownerType + '. Only state ownership is currently supported.';
+        }
+        if (ownerId !== undefined && ownerId !== null && ownerId !== '') {
+            return 'State-owned worship places must not reference an owner ID';
+        }
+        return null;
+    }
+
     function createPlaceOfWorship(data) {
         if (!data || typeof data !== 'object' ||
             typeof data.name !== 'string' || data.name.trim() === '') {
@@ -1571,13 +1590,11 @@
         if (data.history !== undefined && !Array.isArray(data.history)) {
             return _deny('History must be an array');
         }
-        if (data.ownerType !== undefined && typeof data.ownerType !== 'string') {
-            return _deny('Owner type must be a string');
-        }
-        if (data.ownerId !== undefined && data.ownerId !== null &&
-            typeof data.ownerId !== 'string') {
-            return _deny('Owner id must be a string or null');
-        }
+        var ownerError = _validateWorshipPlaceOwner(
+            data.ownerType !== undefined ? data.ownerType : 'state',
+            data.ownerId
+        );
+        if (ownerError) return _deny(ownerError);
         if (data.clergy !== undefined && !Array.isArray(data.clergy)) {
             return _deny('Clergy must be an array');
         }
@@ -1690,10 +1707,17 @@
         }
 
         if (updates.ownerId !== undefined) {
-            if (updates.ownerId !== null && typeof updates.ownerId !== 'string') {
-                return _deny('Owner id must be a string or null');
-            }
             candidate.ownerId = updates.ownerId;
+        }
+
+        // Validate the final pair, not each field in isolation. This also
+        // prevents changing ownerType while silently retaining a stale ID.
+        var ownerError = _validateWorshipPlaceOwner(
+            candidate.ownerType,
+            candidate.ownerId
+        );
+        if (ownerError && current.legacyUnresolved !== true) {
+            return _deny(ownerError);
         }
 
         if (updates.headClergyId !== undefined) {
