@@ -164,6 +164,107 @@
         window.masterData.data.religions = newArray;
     }
 
+    function _getCanonicalPlacesOfWorshipArray() {
+        if (!window.masterData || !window.masterData.data) return null;
+        return Array.isArray(window.masterData.data.placesOfWorship)
+            ? window.masterData.data.placesOfWorship
+            : null;
+    }
+
+    function _setCanonicalPlacesOfWorshipArray(newArray) {
+        if (!window.masterData || !window.masterData.data) {
+            throw new Error(
+                'ReligionState: masterData.data is not available. ' +
+                'Cannot write canonical places of worship.'
+            );
+        }
+        window.masterData.data.placesOfWorship = newArray;
+    }
+
+    function _clone(value) {
+        if (value === null || typeof value !== 'object') return value;
+        if (Array.isArray(value)) {
+            var arrayCopy = new Array(value.length);
+            for (var i = 0; i < value.length; i++) arrayCopy[i] = _clone(value[i]);
+            return arrayCopy;
+        }
+        var copy = {};
+        for (var key in value) {
+            if (Object.prototype.hasOwnProperty.call(value, key)) copy[key] = _clone(value[key]);
+        }
+        return copy;
+    }
+
+    /**
+     * One-time compatibility migration for legacy religion.placesOfWorship
+     * ID arrays. The old implementation never persisted the full objects,
+     * so only an explicitly incomplete placeholder can be created.
+     */
+    function _migrateLegacyWorshipPlaces(religions) {
+        var places = _getCanonicalPlacesOfWorshipArray();
+        if (places === null) {
+            throw new Error(
+                'ReligionState: masterData.data.placesOfWorship is missing. ' +
+                'Run storage-schema normalization before ReligionState hydration.'
+            );
+        }
+
+        var byId = Object.create(null);
+        for (var i = 0; i < places.length; i++) {
+            var existing = places[i];
+            if (existing && existing.id) byId[existing.id] = existing;
+        }
+
+        var migrated = 0;
+        for (var r = 0; r < religions.length; r++) {
+            var religion = religions[r];
+            if (!religion || !Array.isArray(religion.placesOfWorship)) continue;
+            for (var p = 0; p < religion.placesOfWorship.length; p++) {
+                var placeId = religion.placesOfWorship[p];
+                if (typeof placeId !== 'string' || !placeId) continue;
+                if (byId[placeId]) continue;
+
+                var placeholder = {
+                    id: placeId,
+                    religionId: religion.id,
+                    religionName: religion.name || '',
+                    name: 'Unrecorded place of worship',
+                    locationId: null,
+                    locationName: '',
+                    ownerType: null,
+                    ownerId: null,
+                    ownerName: '',
+                    type: null,
+                    isActive: false,
+                    foundedYear: null,
+                    headClergyId: null,
+                    clergy: [],
+                    producesIncome: false,
+                    baseTithe: 0,
+                    currentFollowers: 0,
+                    annualIncome: 0,
+                    wealth: 0,
+                    collectedThisYear: 0,
+                    features: [],
+                    history: [],
+                    notes: 'Legacy ID retained. Original place details were never stored and must be reconstructed.',
+                    legacyUnresolved: true,
+                    createdAt: null,
+                    updatedAt: Date.now()
+                };
+                places.push(placeholder);
+                byId[placeId] = placeholder;
+                migrated++;
+            }
+        }
+
+        if (migrated > 0) {
+            _setCanonicalPlacesOfWorshipArray(places);
+            _markDirty();
+        }
+        return migrated;
+    }
+
     function _markDirty() {
         if (typeof window.markDataDirty === 'function') {
             try { window.markDataDirty(); return; } catch (e) { /* fall through */ }
@@ -226,6 +327,9 @@
             // and let the caller decide when to retry.
             return false;
         }
+
+        _migrateLegacyWorshipPlaces(religions);
+        var canonicalWorshipPlaces = _getCanonicalPlacesOfWorshipArray();
 
         _indexes.byId = new Map();
         _indexes.byTrait = new Map();
@@ -292,17 +396,28 @@
                 }
             }
 
-            if (Array.isArray(religion.placesOfWorship)) {
-                for (var m = 0; m < religion.placesOfWorship.length; m++) {
-                    var placeId = religion.placesOfWorship[m];
-                    if (placeId) {
-                        _indexes.placesOfWorshipById.set(placeId, {
-                            religionId: religion.id,
-                            religionName: religion.name
-                        });
-                    }
-                }
+        }
+
+        // Worship-place records are canonical in their own collection.
+        // Religion's ID array remains a compatibility/ownership index.
+        var seenWorshipPlaceIds = Object.create(null);
+        for (var w = 0; w < canonicalWorshipPlaces.length; w++) {
+            var worshipPlace = canonicalWorshipPlaces[w];
+            if (!worshipPlace || !worshipPlace.id) continue;
+            if (seenWorshipPlaceIds[worshipPlace.id]) {
+                throw new Error(
+                    'ReligionState.hydrateFromMasterData: duplicate worship-place id "' +
+                    worshipPlace.id + '". Canonical data is corrupted.'
+                );
             }
+            seenWorshipPlaceIds[worshipPlace.id] = true;
+            _indexes.placesOfWorshipById.set(worshipPlace.id, worshipPlace);
+        }
+
+        _buildFollowersIndex();
+
+        return true;
+    }
         }
 
         _buildFollowersIndex();
@@ -402,6 +517,119 @@
         if (!placeId) return null;
         var rec = _indexes.placesOfWorshipById.get(placeId);
         return rec ? _clone(rec) : null;
+    }
+
+    function getPlacesOfWorshipByReligion(religionId) {
+        if (!religionId) return [];
+        var religion = _indexes.byId.get(religionId);
+        if (!religion || !Array.isArray(religion.placesOfWorship)) return [];
+        var result = [];
+        for (var i = 0; i < religion.placesOfWorship.length; i++) {
+            var place = _indexes.placesOfWorshipById.get(religion.placesOfWorship[i]);
+            if (place) result.push(_clone(place));
+        }
+        return result;
+    }
+
+    function getPlacesOfWorshipByLocation(locationId) {
+        if (!locationId) return [];
+        var result = [];
+        _indexes.placesOfWorshipById.forEach(function (place) {
+            if (place && place.locationId === locationId) result.push(_clone(place));
+        });
+        return result;
+    }
+
+    function _getPlaceOfWorshipCanonical(placeId) {
+        if (!placeId) return null;
+        return _indexes.placesOfWorshipById.get(placeId) || null;
+    }
+
+    function _addPlaceOfWorship(religionId, place) {
+        if (!religionId || !place || !place.id) {
+            throw new Error('ReligionState._addPlaceOfWorship requires religionId and a place with id.');
+        }
+        if (_indexes.placesOfWorshipById.has(place.id)) {
+            throw new Error('ReligionState._addPlaceOfWorship: place id already exists: ' + place.id);
+        }
+        var religion = _indexes.byId.get(religionId);
+        if (!religion) throw new Error('ReligionState._addPlaceOfWorship: religion not found: ' + religionId);
+        if (place.religionId !== religionId) {
+            throw new Error('ReligionState._addPlaceOfWorship: place religionId mismatch.');
+        }
+
+        var religions = _buildWorkingCopy();
+        var religionIndex = -1;
+        for (var i = 0; i < religions.length; i++) {
+            if (religions[i] && religions[i].id === religionId) { religionIndex = i; break; }
+        }
+        if (religionIndex === -1) throw new Error('ReligionState._addPlaceOfWorship: religion not found.');
+
+        var religionCopy = _clone(religions[religionIndex]);
+        var ids = Array.isArray(religionCopy.placesOfWorship)
+            ? religionCopy.placesOfWorship.slice()
+            : [];
+        ids.push(place.id);
+        religionCopy.placesOfWorship = ids;
+        religionCopy.updatedAt = Date.now();
+        religions[religionIndex] = religionCopy;
+
+        var places = _getCanonicalPlacesOfWorshipArray().slice();
+        places.push(_clone(place));
+        _setCanonicalReligionsArray(religions);
+        _setCanonicalPlacesOfWorshipArray(places);
+        hydrateFromMasterData();
+        _markDirty();
+        return place;
+    }
+
+    function _updatePlaceOfWorship(placeId, place) {
+        if (!placeId || !place || place.id !== placeId) {
+            throw new Error('ReligionState._updatePlaceOfWorship requires a matching place id.');
+        }
+        var current = _indexes.placesOfWorshipById.get(placeId);
+        if (!current) throw new Error('ReligionState._updatePlaceOfWorship: place not found: ' + placeId);
+        if (place.religionId !== current.religionId) {
+            throw new Error('ReligionState._updatePlaceOfWorship: religion ownership cannot be changed.');
+        }
+        var places = _getCanonicalPlacesOfWorshipArray().slice();
+        var index = -1;
+        for (var i = 0; i < places.length; i++) {
+            if (places[i] && places[i].id === placeId) { index = i; break; }
+        }
+        if (index === -1) throw new Error('ReligionState._updatePlaceOfWorship: canonical record missing.');
+        places[index] = _clone(place);
+        _setCanonicalPlacesOfWorshipArray(places);
+        hydrateFromMasterData();
+        _markDirty();
+        return place;
+    }
+
+    function _removePlaceOfWorship(placeId) {
+        if (!placeId) throw new Error('ReligionState._removePlaceOfWorship requires an id.');
+        var current = _indexes.placesOfWorshipById.get(placeId);
+        if (!current) throw new Error('ReligionState._removePlaceOfWorship: place not found: ' + placeId);
+
+        var religions = _buildWorkingCopy();
+        var religionIndex = -1;
+        for (var i = 0; i < religions.length; i++) {
+            if (religions[i] && religions[i].id === current.religionId) { religionIndex = i; break; }
+        }
+        if (religionIndex === -1) throw new Error('ReligionState._removePlaceOfWorship: owning religion not found.');
+        var religionCopy = _clone(religions[religionIndex]);
+        religionCopy.placesOfWorship = (Array.isArray(religionCopy.placesOfWorship)
+            ? religionCopy.placesOfWorship : []).filter(function (id) { return id !== placeId; });
+        religionCopy.updatedAt = Date.now();
+        religions[religionIndex] = religionCopy;
+
+        var places = _getCanonicalPlacesOfWorshipArray().filter(function (place) {
+            return !place || place.id !== placeId;
+        });
+        _setCanonicalReligionsArray(religions);
+        _setCanonicalPlacesOfWorshipArray(places);
+        hydrateFromMasterData();
+        _markDirty();
+        return _clone(current);
     }
 
     function getIndexes() {
@@ -695,6 +923,45 @@
             }
         }
 
+        var worshipPlaces = _getCanonicalPlacesOfWorshipArray() || [];
+        var seenPlaceIds = Object.create(null);
+        for (var wp = 0; wp < worshipPlaces.length; wp++) {
+            var worshipPlace = worshipPlaces[wp];
+            if (!worshipPlace || !worshipPlace.id) {
+                findings.push({ level: 'error', message: 'Worship-place record at index ' + wp + ' has no id.' });
+                continue;
+            }
+            if (seenPlaceIds[worshipPlace.id]) {
+                findings.push({ level: 'error', message: 'Duplicate worship-place id: ' + worshipPlace.id + '.' });
+            }
+            seenPlaceIds[worshipPlace.id] = true;
+            if (!knownReligionIds[worshipPlace.religionId]) {
+                findings.push({
+                    level: 'error',
+                    message: 'Worship place ' + worshipPlace.id + ' references missing religion ' +
+                        worshipPlace.religionId + '.'
+                });
+            }
+            if (worshipPlace.locationId &&
+                typeof window.getPlaceById === 'function' &&
+                !window.getPlaceById(worshipPlace.locationId)) {
+                findings.push({
+                    level: 'error',
+                    message: 'Worship place ' + worshipPlace.id + ' references missing location ' +
+                        worshipPlace.locationId + '.'
+                });
+            }
+            if (worshipPlace.headClergyId &&
+                typeof window.getCharacterById === 'function' &&
+                !window.getCharacterById(worshipPlace.headClergyId)) {
+                findings.push({
+                    level: 'error',
+                    message: 'Worship place ' + worshipPlace.id + ' references missing head clergy ' +
+                        worshipPlace.headClergyId + '.'
+                });
+            }
+        }
+
         // Character records own religionId. Diagnose dangling references
         // without attempting to repair or rewrite character data here.
         var characters;
@@ -802,6 +1069,8 @@
         getGodById: getGodById,
         getLawById: getLawById,
         getPlaceOfWorshipById: getPlaceOfWorshipById,
+        getPlacesOfWorshipByReligion: getPlacesOfWorshipByReligion,
+        getPlacesOfWorshipByLocation: getPlacesOfWorshipByLocation,
 
         // ---- Deprecated: raw index access ----
         getIndexes: getIndexes,
@@ -810,11 +1079,15 @@
         _getReligionCanonical: _getReligionCanonical,
         _getGodCanonical: _getGodCanonical,
         _getLawCanonical: _getLawCanonical,
+        _getPlaceOfWorshipCanonical: _getPlaceOfWorshipCanonical,
 
         // ---- Mutation primitives (commands only) ----
         _addReligion: _addReligion,
         _updateReligion: _updateReligion,
         _removeReligion: _removeReligion,
+        _addPlaceOfWorship: _addPlaceOfWorship,
+        _updatePlaceOfWorship: _updatePlaceOfWorship,
+        _removePlaceOfWorship: _removePlaceOfWorship,
 
         // ---- Subscriptions ----
         subscribe: subscribe,
