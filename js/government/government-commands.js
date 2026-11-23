@@ -290,7 +290,7 @@
         }
         if (removed.size === 0) return _ok({ removedDepartmentIds: [] });
         removed.forEach(function(id) { State._removeDepartment(id); });
-        _commit(C.EVENTS.DEPARTMENT_DELETED, {
+        _commit('governmentDepartmentsReconciled', {
             departmentIds: Array.from(removed),
             reason: 'location_deleted'
         });
@@ -784,9 +784,13 @@
         var type = State._getGovernmentTypeCanonical(typeId);
         if (!type) return _fail('Government type not found', C.CODES.NOT_FOUND);
 
-        var usage = _LocationQueries.getPlacesUsingGovernmentType
-            ? _LocationQueries.getPlacesUsingGovernmentType(typeId)
-            : [];
+        if (typeof _LocationQueries.getPlacesUsingGovernmentType !== 'function') {
+            return _fail(
+                'Cannot verify government type usage: LocationQueries.getPlacesUsingGovernmentType unavailable',
+                C.CODES.DEPENDENCY
+            );
+        }
+        var usage = _LocationQueries.getPlacesUsingGovernmentType(typeId);
         if (usage && usage.length > 0) {
             return _fail('Cannot delete: used by ' + usage.length +
                 ' location(s)', C.CODES.IN_USE);
