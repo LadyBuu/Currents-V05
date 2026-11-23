@@ -531,6 +531,34 @@
         return ids;
     }
 
+    // Settlements may be attached only to inhabited location levels:
+    // priority 4 (town/village) and priority 5 (locality/compound).
+    // The settlement store is read directly because LocationCommands
+    // loads before the Settlement domain; no reverse module dependency
+    // or load-order coupling is introduced.
+    var _SETTLEMENT_LOCATION_PRIORITIES = { 4: true, 5: true };
+
+    function _hasSettlementAtLocation(locationId) {
+        var data = window.masterData && window.masterData.data;
+        var store = data && data.settlementData;
+        return !!(store && typeof store === 'object' &&
+            Object.prototype.hasOwnProperty.call(store, locationId) &&
+            store[locationId]);
+    }
+
+    function _hasSettlementUsingLocationType(typeId, places) {
+        var data = window.masterData && window.masterData.data;
+        var store = data && data.settlementData;
+        if (!store || typeof store !== 'object') return false;
+        for (var i = 0; i < places.length; i++) {
+            var place = places[i];
+            if (place && place.id &&
+                Object.prototype.hasOwnProperty.call(store, place.id) &&
+                store[place.id]) return true;
+        }
+        return false;
+    }
+
     // =========================================================================
     // 8. FIELD ALLOWLISTS
     // =========================================================================
@@ -677,6 +705,18 @@
             return _fail(
                 'updatePlace: location type not found: ' + updates.typeId
             );
+        }
+
+        if (updates.typeId !== undefined &&
+            _hasSettlementAtLocation(placeId)) {
+            var settlementLocationType = LS.getLocationTypeById(updates.typeId);
+            if (!settlementLocationType ||
+                !_SETTLEMENT_LOCATION_PRIORITIES[settlementLocationType.priority]) {
+                return _fail(
+                    'updatePlace: a location with a settlement must remain ' +
+                    'at priority 4 or 5 (town/village or locality/compound)'
+                );
+            }
         }
 
         if (updates.parentId !== undefined || updates.typeId !== undefined) {
@@ -1296,6 +1336,16 @@
             if (typeof updates.priority !== 'number' ||
                 updates.priority < 1 || updates.priority > 5) {
                 return _fail('updateLocationType: priority must be 1..5');
+            }
+            if (!_SETTLEMENT_LOCATION_PRIORITIES[updates.priority] &&
+                _hasSettlementUsingLocationType(
+                    typeId,
+                    LS._getPlacesByTypeIdCanonical(typeId)
+                )) {
+                return _fail(
+                    'updateLocationType: this type is used by one or more ' +
+                    'settlements; its priority must remain 4 or 5'
+                );
             }
             if (updates.priority !== type.priority) {
                 var priorityCheck = LH.validateLocationTypePriority(
