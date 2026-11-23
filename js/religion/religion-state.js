@@ -342,7 +342,6 @@
         _indexes.followersByReligion = new Map();
 
         var seenIds = Object.create(null);
-        var worshipPlaceOwners = Object.create(null);
 
         for (var i = 0; i < religions.length; i++) {
             var religion = religions[i];
@@ -882,6 +881,7 @@
 
         var seenIds = Object.create(null);
         var knownReligionIds = Object.create(null);
+        var worshipPlaceOwners = Object.create(null);
 
         for (var i = 0; i < religions.length; i++) {
             var r = religions[i];
