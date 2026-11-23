@@ -787,7 +787,7 @@
         if (typeof _LocationQueries.getPlacesUsingGovernmentType !== 'function') {
             return _fail(
                 'Cannot verify government type usage: LocationQueries.getPlacesUsingGovernmentType unavailable',
-                C.CODES.DEPENDENCY
+                C.CODES.VALIDATION
             );
         }
         var usage = _LocationQueries.getPlacesUsingGovernmentType(typeId);
