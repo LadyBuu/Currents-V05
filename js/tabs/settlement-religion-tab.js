@@ -436,6 +436,103 @@
             '</div>';
     }
 
+
+    function _buildStateReligionSection(context) {
+        var settlement = context.data || {};
+        var currentId = settlement.stateReligionId || '';
+        var isTheocracy = settlement.governmentType === 'theocracy';
+        var religions = _activeReligions();
+        var RQ = _getReligionQueries();
+        var currentReligion = currentId && RQ ? RQ.getReligion(currentId) : null;
+        var currentIsListed = false;
+        var options = '<option value="">No official state religion</option>';
+
+        for (var i = 0; i < religions.length; i++) {
+            var religion = religions[i];
+            if (!religion || !religion.id) continue;
+            if (religion.id === currentId) currentIsListed = true;
+            options += '<option value="' + esc(religion.id) + '"' +
+                (religion.id === currentId ? ' selected' : '') + '>' +
+                esc(religion.name || religion.id) + '</option>';
+        }
+
+        if (currentId && !currentIsListed) {
+            options += '<option value="' + esc(currentId) + '" selected>' +
+                esc(currentReligion ? (currentReligion.name || currentId) :
+                    'Unresolved religion (' + currentId + ')') +
+                ' [not active]</option>';
+        }
+
+        var stateLabel = currentId
+            ? esc(currentReligion ? (currentReligion.name || currentId) : currentId)
+            : 'None';
+        var warning = currentId && (!currentReligion || currentReligion.isDeprecated === true)
+            ? '<div class="st-row st-row--warn"><div class="st-row__body">' +
+                'The current state religion is missing or deprecated. ' +
+                'Select an active religion to replace it.</div></div>'
+            : '';
+
+        return '<div class="st-section">' +
+            '<div class="st-section__title">' + icon('SCALE') +
+            ' Official State Religion</div>' +
+            '<div class="st-row"><div class="st-row__body">' +
+            '<div class="st-row__title">Recognised religion</div>' +
+            '<div class="st-row__meta">Current: ' + stateLabel +
+            (isTheocracy ? ' · Required by theocracy' : '') + '</div>' +
+            '</div></div>' + warning +
+            '<div class="st-filters"><div class="st-filters__field">' +
+            '<label class="st-filters__label" for="settlementStateReligionSelect">Set official religion</label>' +
+            '<select class="st-filters__select" id="settlementStateReligionSelect">' +
+            options + '</select></div></div>' +
+            '<button type="button" class="st-btn st-btn--accent" ' +
+            'data-action="save-state-religion">Save recognition</button>' +
+            '<div class="st-row__meta">Official recognition is local to this settlement. ' +
+            'It is not inherited from parent locations and does not follow the demographic majority.</div>' +
+            '<div class="st-row">' +
+            '<label><input type="checkbox" id="settlementReligiousLawsToggle"' +
+            (settlement.useReligiousLawsAsCivil === true ? ' checked' : '') +
+            '> Apply recognised religion\'s laws as civil laws</label>' +
+            '</div>' +
+            '<button type="button" class="st-btn" data-action="save-religious-law-policy">Save law policy</button>' +
+            (isTheocracy ? '<div class="st-row__meta">A theocracy must retain an official state religion. Change the government type before clearing it.</div>' : '') +
+            '</div>';
+    }
+
+    function _saveStateReligion(container, locationId) {
+        var select = container.querySelector('#settlementStateReligionSelect');
+        var commands = window.SettlementGovernmentCommands;
+        if (!select || !commands || typeof commands.setStateReligion !== 'function') {
+            H().toast('State religion controls are unavailable.', 'error');
+            return;
+        }
+        var result = commands.setStateReligion(locationId, select.value || null);
+        if (!result || result.success !== true) {
+            H().toast('Could not change state religion: ' +
+                (result && result.code ? result.code : 'UNKNOWN_ERROR'), 'error');
+            return;
+        }
+        H().toast('Official state religion updated.', 'success');
+        refresh();
+    }
+
+    function _saveReligiousLawPolicy(container, locationId) {
+        var checkbox = container.querySelector('#settlementReligiousLawsToggle');
+        var commands = window.SettlementGovernmentCommands;
+        if (!checkbox || !commands ||
+            typeof commands.setUseReligiousLawsAsCivil !== 'function') {
+            H().toast('Religious law policy controls are unavailable.', 'error');
+            return;
+        }
+        var result = commands.setUseReligiousLawsAsCivil(locationId, checkbox.checked);
+        if (!result || result.success !== true) {
+            H().toast('Could not update religious law policy: ' +
+                (result && result.code ? result.code : 'UNKNOWN_ERROR'), 'error');
+            return;
+        }
+        H().toast('Religious law policy updated.', 'success');
+        refresh();
+    }
+
     function _buildPlacesSection(context) {
         var locationId = context.locationId;
         var SQ = _getSettlementReligionQueries();
@@ -543,9 +640,17 @@
     // Wiring
     // -------------------------------------------------------------------
 
-    function _handleAction(action, btn, locationId) {
+    function _handleAction(action, btn, locationId, container) {
         if (action === 'refresh') {
             refresh();
+            return;
+        }
+        if (action === 'save-state-religion') {
+            _saveStateReligion(container, locationId);
+            return;
+        }
+        if (action === 'save-religious-law-policy') {
+            _saveReligiousLawPolicy(container, locationId);
             return;
         }
         if (action === 'create-place') {
@@ -567,7 +672,7 @@
             if (!btn || !container.contains(btn)) return;
             if (btn.disabled) return;
             event.preventDefault();
-            _handleAction(btn.dataset.action, btn, locationId);
+            _handleAction(btn.dataset.action, btn, locationId, container);
         });
     }
 
@@ -596,6 +701,7 @@
         var html = '<div class="st-tab">' +
             _buildHeader(context, placeCount) +
             _buildBreakdownSection(context) +
+            _buildStateReligionSection(context) +
             _buildPlacesSection(context) +
             _buildFooter() +
             '</div>';
