@@ -146,6 +146,9 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - getSettlementData and getAllSettlements now return defensive deep
+ *       clones, including nested arrays and objects. This closes the public
+ *       mutation path into canonical settlement records.
  *     - Added getSettlementRoleStats(locationId). Provides the role-skill
  *       tier distribution (total professions, unique roles, by-category
  *       counts, top roles, per-role holders, masters/apprentices by
