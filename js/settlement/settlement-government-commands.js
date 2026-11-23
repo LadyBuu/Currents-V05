@@ -172,6 +172,12 @@
             return _failure('SETTLEMENT_NOT_FOUND', { locationId: locationId });
         }
 
+        if (settlement.governmentType === 'theocracy' && enabled !== true) {
+            return _failure('THEOCRACY_REQUIRES_RELIGIOUS_LAWS', {
+                reason: 'A theocracy must apply its recognised religion laws as civil law.'
+            });
+        }
+
         var candidate = _copyWith(settlement, {
             useReligiousLawsAsCivil: enabled
         });
