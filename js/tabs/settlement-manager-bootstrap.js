@@ -336,6 +336,45 @@
     }
 
     // =========================================================================
+    // 8. CROSS-DOMAIN REFRESH
+    // =========================================================================
+
+    var _locationRefreshWired = false;
+    var _settlementRefreshUnsubscribe = null;
+
+    function _refreshAfterLocationChange() {
+        _renderSidebar();
+
+        // A deleted selected location may no longer have a settlement
+        // context. Rendering through the normal context builder handles
+        // that state without leaving stale tab content on screen.
+        if (window.TabManager &&
+            typeof window.TabManager.renderActive === 'function') {
+            window.TabManager.renderActive(SCOPE);
+        }
+    }
+
+    function _wireCrossDomainRefresh() {
+        if (_locationRefreshWired) return;
+        _locationRefreshWired = true;
+
+        if (typeof window.addEventListener === 'function') {
+            ['placeCreated', 'placeUpdated', 'placeDeleted',
+             'masterDataUpdated'].forEach(function (eventName) {
+                window.addEventListener(eventName, _refreshAfterLocationChange);
+            });
+        }
+
+        if (window.SettlementState &&
+            typeof window.SettlementState.subscribe === 'function') {
+            _settlementRefreshUnsubscribe =
+                window.SettlementState.subscribe(function () {
+                    _refreshAfterLocationChange();
+                });
+        }
+    }
+
+    // =========================================================================
     // 8. INIT
     // =========================================================================
 
@@ -413,6 +452,7 @@
         }
 
         _wireTopbar();
+        _wireCrossDomainRefresh();
 
         var initial = uiState.getSelectedLocationId() || _pickInitialLocation();
         if (initial) uiState.setSelectedLocationId(initial);
