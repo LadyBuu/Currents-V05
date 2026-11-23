@@ -790,7 +790,7 @@
                         placeId: placeId,
                         mode: mode
                     },
-                    { persist: false }
+                    { persist: false, publish: false }
                 );
             } catch (settlementError) {
                 return _fail(
@@ -809,6 +809,13 @@
         for (var rid in toRemove) {
             if (!Object.prototype.hasOwnProperty.call(toRemove, rid)) continue;
             if (LS._removePlace(rid)) removed.push(rid);
+        }
+
+        // Publish the settlement-side change only after the location records
+        // have also been removed, so subscribers observe a coherent graph.
+        if (settlementCleanup.event && window.SettlementState &&
+            typeof window.SettlementState.publish === 'function') {
+            window.SettlementState.publish(settlementCleanup.event);
         }
 
         window.markDataDirty();
