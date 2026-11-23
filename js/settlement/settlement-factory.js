@@ -116,16 +116,28 @@
             };
         }
 
-        var place = queries.getPlace(locationId);
-        if (!place) {
+        var place;
+        var priority;
+        try {
+            place = queries.getPlace(locationId);
+            if (!place) {
+                return {
+                    success: false,
+                    code: 'LOCATION_NOT_FOUND',
+                    details: { locationId: locationId }
+                };
+            }
+            priority = queries.getLocationTypePriority(place.typeId);
+        } catch (err) {
             return {
                 success: false,
-                code: 'LOCATION_NOT_FOUND',
-                details: { locationId: locationId }
+                code: 'LOCATION_VALIDATION_FAILED',
+                details: {
+                    locationId: locationId,
+                    message: err && err.message ? err.message : String(err)
+                }
             };
         }
-
-        var priority = queries.getLocationTypePriority(place.typeId);
         if (priority !== 4 && priority !== 5) {
             return {
                 success: false,
