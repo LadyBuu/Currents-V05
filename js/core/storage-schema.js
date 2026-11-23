@@ -134,6 +134,7 @@
 
                 // ─── Religion collections ─────────────────────────────────
                 religions: [],
+                placesOfWorship: [],
 
                 // ─── Culture collections ──────────────────────────────────
                 // cultures: the top-level array the culture subsystem
@@ -211,7 +212,7 @@
             'characters', 'places', 'ranks', 'roles', 'locationTypes',
             'governmentTypes', 'governments', 'households',
             'householdPositions', 'householdAssignments',
-            'religions',
+            'religions', 'placesOfWorship',
             'cultures',
             'cultureLocationAssociations',
             'governmentDepartments', 'governmentHistory',
