@@ -234,6 +234,16 @@
         var out = [];
         for (var i = 0; i < placeIds.length; i++) {
             var id = placeIds[i];
+            if (id && typeof id === 'object' && typeof id.id === 'string') {
+                var recordCopy = {};
+                for (var recordKey in id) {
+                    if (Object.prototype.hasOwnProperty.call(id, recordKey)) {
+                        recordCopy[recordKey] = id[recordKey];
+                    }
+                }
+                out.push(recordCopy);
+                continue;
+            }
             if (typeof id !== 'string' || id.length === 0) continue;
 
             var rec = null;
@@ -353,8 +363,10 @@
         _state.status = saved.status;
         _state.sortBy = saved.sortBy;
 
-        var placeIds = RQ.getPlacesOfWorshipByReligion(religion.id) || [];
-        var places = _resolvePlacesForRender(placeIds);
+        var placeRecords = typeof RQ.getPlaceRecordsByReligion === 'function'
+            ? RQ.getPlaceRecordsByReligion(religion.id)
+            : (RQ.getPlacesOfWorshipByReligion(religion.id) || []);
+        var places = _resolvePlacesForRender(placeRecords);
         var isDeprecated = religion.isDeprecated === true;
 
         var typeSet = Object.create(null);
