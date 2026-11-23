@@ -76,22 +76,24 @@
             return civilLaws;
         }
 
-        // The applicable religion is the dominant religion at this exact
-        // settlement location. Do not inherit a parent's religion or use
-        // a settlement-subtree aggregate: civil jurisdiction is local.
+        // Religious civil law follows the explicitly recognised state
+        // religion, never the largest demographic group. No state religion
+        // means no religious laws are incorporated. The designation is local
+        // to this settlement and is not inherited from a parent location.
+        var stateReligionId = settlement.stateReligionId || null;
+        if (!stateReligionId) return civilLaws;
+
         var religionQueries = window.ReligionQueries;
         if (!religionQueries ||
-            typeof religionQueries.getDominantReligion !== 'function' ||
+            typeof religionQueries.getReligion !== 'function' ||
             typeof religionQueries.getLawsByReligion !== 'function') {
             return null;
         }
 
-        var dominantReligion = religionQueries.getDominantReligion(locationId);
-        if (!dominantReligion || !dominantReligion.id) {
-            return civilLaws;
-        }
+        var stateReligion = religionQueries.getReligion(stateReligionId);
+        if (!stateReligion) return null;
 
-        var religiousLaws = religionQueries.getLawsByReligion(dominantReligion.id);
+        var religiousLaws = religionQueries.getLawsByReligion(stateReligionId);
         if (!Array.isArray(religiousLaws)) return null;
 
         // Civil laws take precedence when an id collision exists. Religious
@@ -112,7 +114,7 @@
             }
             projected.source = 'religion';
             projected.isReligiousLaw = true;
-            projected.religionId = dominantReligion.id;
+            projected.religionId = stateReligionId;
             civilLaws.push(projected);
             seenIds[law.id] = true;
         }
