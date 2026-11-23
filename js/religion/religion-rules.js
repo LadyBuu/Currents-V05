@@ -310,6 +310,25 @@
             );
         }
 
+        // A settlement's official stateReligionId is also an external
+        // reference. Do not delete a religion while a settlement recognises it.
+        var settlementQueries = window.SettlementQueries;
+        if (!settlementQueries || typeof settlementQueries.getAllSettlements !== 'function') {
+            return _deny('Cannot verify state religion references: SettlementQueries unavailable');
+        }
+        var settlements = settlementQueries.getAllSettlements();
+        for (var settlementIndex = 0; settlementIndex < settlements.length; settlementIndex++) {
+            var settlementEntry = settlements[settlementIndex];
+            var settlementData = settlementEntry && settlementEntry.data;
+            if (settlementData && settlementData.stateReligionId === religionId) {
+                return _deny(
+                    'Cannot delete a religion recognised as the state religion of ' +
+                    (settlementEntry.locationId || 'a settlement') +
+                    '. Remove that designation first, or deprecate the religion instead.'
+                );
+            }
+        }
+
         // An active religious leader is an external character reference.
         // Deleting the religion would leave that character's office/history
         // without an owning religion. End the term or deprecate the religion.
