@@ -739,6 +739,56 @@
             toRemove[placeId] = true;
         }
 
+        // A settlement is owned by its location. Reconcile settlement
+        // records before removing the place so no orphaned settlement can
+        // survive a simple or cascade delete. This is coordinated through
+        // the settlement commit boundary, but persistence remains owned by
+        // LocationCommands.persist() so both domains are saved together.
+        var settlementCleanup = { removedLocationIds: [], event: null };
+        var settlementStore = window.masterData && window.masterData.data
+            ? window.masterData.data.settlementData
+            : null;
+        var settlementIdsToRemove = [];
+        for (var settlementLocationId in toRemove) {
+            if (!Object.prototype.hasOwnProperty.call(toRemove, settlementLocationId)) {
+                continue;
+            }
+            if (settlementStore &&
+                Object.prototype.hasOwnProperty.call(settlementStore, settlementLocationId) &&
+                settlementStore[settlementLocationId]) {
+                settlementIdsToRemove.push(settlementLocationId);
+            }
+        }
+
+        if (settlementIdsToRemove.length > 0) {
+            if (!window.SettlementCommandCommit ||
+                typeof window.SettlementCommandCommit.removeMany !== 'function') {
+                return _fail(
+                    'deletePlace: SettlementCommandCommit.removeMany is required ' +
+                    'to safely delete locations that have settlements'
+                );
+            }
+            try {
+                settlementCleanup = window.SettlementCommandCommit.removeMany(
+                    settlementIdsToRemove,
+                    {
+                        type: 'settlementsRemovedWithLocations',
+                        cause: 'locationDeleted',
+                        placeId: placeId,
+                        mode: mode
+                    },
+                    { persist: false }
+                );
+            } catch (settlementError) {
+                return _fail(
+                    'deletePlace: settlement cleanup failed: ' +
+                    (settlementError && settlementError.message
+                        ? settlementError.message
+                        : String(settlementError))
+                );
+            }
+        }
+
         var characterCleanup = _cleanupCharactersAtPlaces(toRemove);
         var householdCleanup = _cleanupHouseholdsAtPlaces(toRemove);
 
@@ -753,6 +803,7 @@
             placeId: placeId,
             mode: mode,
             removedCount: removed.length,
+            settlementsRemoved: settlementCleanup.removedLocationIds.length,
             characterReconciled: characterCleanup.reconciled,
             characterFailed: characterCleanup.failed,
             householdCleared: householdCleanup.clearedCount,
@@ -763,6 +814,7 @@
             placeId: placeId,
             mode: mode,
             removedCount: removed.length,
+            settlementsRemoved: settlementCleanup.removedLocationIds.length,
             charactersReconciled: characterCleanup.reconciled,
             charactersFailed: characterCleanup.failed,
             charactersFailedIds: characterCleanup.failedIds,
