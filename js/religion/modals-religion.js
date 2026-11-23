@@ -2103,15 +2103,6 @@
     // =========================================================================
     // 19. EDIT PLACE OF WORSHIP MODAL
     // =========================================================================
-    //
-    // Partial: ReligionCommands.updatePlaceOfWorship is a documented
-    // no-op stub (see religion-commands.js §13). This modal is wired
-    // correctly against the command's signature, so when the command
-    // starts applying updates, this modal starts persisting them. Until
-    // then, submitting it will toast success and change nothing — same
-    // as calling updatePlaceOfWorship directly. Callers should gate
-    // this modal behind the same PLACES_EDITABLE flag the places tab
-    // uses.
 
     function openEditPlaceOfWorshipModal(religionId, placeId, options) {
         options = options || {};
@@ -2124,8 +2115,8 @@
         }
 
         var place = window.ReligionQueries.getPlaceOfWorship(placeId);
-        if (!place) {
-            _showToast('Place of worship not found', 'error');
+        if (!place || place.religionId !== religionId) {
+            _showToast('Place of worship not found in this religion', 'error');
             return null;
         }
 
@@ -2192,9 +2183,6 @@
             '<input type="text" id="placeNotes" value="' + _escapeHtml(place.notes || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
             '</div>' +
 
-            '<div style="padding:8px 12px;background:rgba(181,164,74,0.1);border:1px solid #c87040;border-radius:4px;font-size:0.6rem;color:#c87040;">' +
-            'Note: place records are not fully persisted yet. Edits submitted here will be accepted by the command but not applied to canonical storage until the canonical place store lands.' +
-            '</div>' +
             '</div>';
 
         var modal = _openModal({
