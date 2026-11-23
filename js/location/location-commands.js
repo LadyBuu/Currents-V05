@@ -1212,6 +1212,17 @@
                 updates.priority < 1 || updates.priority > 5) {
                 return _fail('updateLocationType: priority must be 1..5');
             }
+            if (updates.priority !== type.priority) {
+                var priorityCheck = LH.validateLocationTypePriority(
+                    typeId,
+                    updates.priority
+                );
+                if (!priorityCheck.valid) {
+                    return _fail(
+                        'updateLocationType: ' + priorityCheck.reason
+                    );
+                }
+            }
         }
         if (updates.displayName !== undefined) {
             if (!_validString(updates.displayName)) {
