@@ -546,7 +546,7 @@
             store[locationId]);
     }
 
-    function _hasSettlementUsingLocationType(typeId, places) {
+    function _hasSettlementUsingLocationType(places) {
         var data = window.masterData && window.masterData.data;
         var store = data && data.settlementData;
         if (!store || typeof store !== 'object') return false;
@@ -1339,7 +1339,6 @@
             }
             if (!_SETTLEMENT_LOCATION_PRIORITIES[updates.priority] &&
                 _hasSettlementUsingLocationType(
-                    typeId,
                     LS._getPlacesByTypeIdCanonical(typeId)
                 )) {
                 return _fail(
