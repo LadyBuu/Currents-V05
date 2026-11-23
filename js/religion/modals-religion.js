@@ -874,7 +874,7 @@
             '<div><span style="color:var(--dim);">Leader:</span> ' + _escapeHtml(leaderName) + (leaderTitle ? ' (' + _escapeHtml(leaderTitle) + ')' : '') + '</div>' +
             '</div>' +
 
-            (locationNames.length > 0 ? '<div style="font-size:0.65rem;color:var(--dim);">Locations: ' + locationNames.join(', ') + '</div>' : '') +
+            (locationNames.length > 0 ? '<div style="font-size:0.65rem;color:var(--dim);">Explicit presence associations: ' + locationNames.join(', ') + '</div>' : '') +
 
             '<div style="display:flex;flex-wrap:wrap;gap:6px;padding-top:8px;border-top:1px solid var(--border-light);">';
 
