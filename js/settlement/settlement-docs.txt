@@ -2227,6 +2227,39 @@ The official state religion, demographic dominant religion, and explicit
 religious presence are distinct facts. Do not collapse them into a single
 "settlement religion" field.
 
+
+================================================================================
+PART 8 — GOVERNMENT OWNERSHIP BOUNDARY
+================================================================================
+
+Settlement and Location store different government concepts. They are not
+duplicate representations of the same value.
+
+- Settlement.governmentType is the Settlement-owned political-system
+  classification (for example, the supported settlement government forms).
+  SettlementGovernmentCommands.setGovernmentType is its only write path.
+  It drives Settlement policy, including theocracy restrictions and the
+  relationship between official state religion and civil law.
+- Location.governmentTypeId and Location.governmentStyle are Location-owned
+  political administration details. governmentTypeId references the
+  Government module's configurable government-type catalogue;
+  governmentStyle is the Location's descriptive style. They are written
+  only through LocationCommands.assignGovernment.
+- Settlement records must not contain governmentTypeId or governmentStyle.
+  SettlementFactory does not create these fields, and
+  SettlementGovernmentCommands.setGovernmentType does not accept or write
+  them. Do not add them back as optional overrides.
+- No migration is required. The duplicate Settlement fields were not in use
+  as a supported data contract. New Settlement records omit them.
+- A Settlement's governmentType must not be inferred from Location's
+  governmentTypeId, nor should changing one silently update the other.
+  The two fields answer different questions and have independent owners.
+
+If a future feature needs to link a Settlement political-system classification
+to a configurable Government catalogue entry, introduce an explicit mapping
+with a defined owner and validation contract. Do not reuse either field or
+reintroduce duplicate storage.
+
 ================================================================================
 END OF DOCUMENT
 ================================================================================
