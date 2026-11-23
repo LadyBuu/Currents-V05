@@ -283,6 +283,11 @@
             industryTaxRate: _isFiniteNumber(settlement.industryTaxRate) ? settlement.industryTaxRate : null,
             governmentType: settlement.governmentType || null,
             governmentTypeName: _governmentName(settlement.governmentType),
+            stateReligionId: settlement.stateReligionId || null,
+            stateReligion: settlement.stateReligionId
+                ? _getReligionQueries().getReligion(settlement.stateReligionId)
+                : null,
+            useReligiousLawsAsCivil: settlement.useReligiousLawsAsCivil === true,
             justiceSeverity: settlement.justiceSeverity || null,
             justiceSeverityName: _justiceSeverityName(settlement.justiceSeverity),
             hasWatch: settlement.hasWatch === true,
