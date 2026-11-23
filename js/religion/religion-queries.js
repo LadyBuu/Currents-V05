@@ -56,6 +56,12 @@
  *          currentLocationId field, the moves-based fallback, and the
  *          birthplace fallback.
  *
+ *   RELIGION LOCATION ASSOCIATIONS:
+ *     getReligionsByLocation(locationId) returns direct associations only.
+ *     getReligionsInLocationSubtree(locationId) aggregates explicit
+ *     associations at the root and descendants, retaining each source
+ *     location. Neither query implies recognition or jurisdiction.
+ *
  *     2. CharacterQueries.getCurrentLocationId(characterId)
  *          The raw currentLocationId FIELD. Fallback for bare harnesses.
  *
@@ -99,7 +105,8 @@
  *   - time.js:             getCurrentYear
  *
  * DEPENDENCIES (required at call time, guarded per-call):
- *   - location-queries.js: LocationQueries.getCurrentLocationId
+ *   - location-queries.js: LocationQueries.getCurrentLocationId,
+ *     getPlace, getAllSubLocationIds (hierarchical presence query)
  *   - character-queries.js: CharacterQueries.getCurrentLocationId
  *
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
