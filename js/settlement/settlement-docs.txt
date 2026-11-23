@@ -573,7 +573,7 @@ rules module.
   js/settlement/settlement-government-commands.js
     Owns window.SettlementGovernmentCommands
       ({ setGovernmentType, setUseReligiousLawsAsCivil,
-         setJusticeSeverity, setWatch }).
+         setStateReligion, setJusticeSeverity, setWatch }).
     Reads at call:
       window.SettlementQueries,
       window.SettlementGovernmentRules,
@@ -589,6 +589,14 @@ rules module.
       - setGovernmentType applies consequence patches from
         SettlementGovernmentRules.evaluateGovernmentChange
         (theocracy implies useReligiousLawsAsCivil = true).
+      - setStateReligion writes the explicit settlement.stateReligionId
+        designation. It is independent of demographic dominance; null
+        clears official recognition. Deprecated or unknown religions are
+        rejected.
+      - When useReligiousLawsAsCivil is enabled, settlement-law-queries.js
+        composes laws from stateReligionId only. It never infers a state
+        religion from the dominant religion. No designation means civil
+        laws remain settlement-only.
 
   js/settlement/settlement-law-commands.js
     Owns window.SettlementLawCommands
