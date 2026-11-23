@@ -79,10 +79,9 @@
  * Missing data:
  *
  *   A missing settlement record returns null. It does not return a
- *   fabricated default. A settlement that exists is always returned as
- *   either the live canonical object (getSettlementData) or a shallow
- *   copy of it (getAllSettlements). If callers need to modify it, they
- *   go through a command.
+ *   fabricated default. A settlement that exists is returned as a
+ *   defensive deep clone by getSettlementData and getAllSettlements.
+ *   If callers need to modify canonical data, they go through a command.
  *
  * TIME DEPENDENCY:
  *
