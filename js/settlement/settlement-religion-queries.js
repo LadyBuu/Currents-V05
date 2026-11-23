@@ -138,9 +138,32 @@
     // =========================================================================
 
     function _getLocationIdsForSettlement(locationId) {
-        var ids = _getLocationQueries().getAllSubLocationIds(locationId);
-        if (ids && ids.length > 0) return ids;
-        return [locationId];
+        var locationQueries = _getLocationQueries();
+        if (!locationQueries ||
+            typeof locationQueries.getPlace !== 'function' ||
+            typeof locationQueries.getAllSubLocationIds !== 'function') {
+            return null;
+        }
+        if (!locationQueries.getPlace(locationId)) return null;
+
+        var ids = locationQueries.getAllSubLocationIds(locationId);
+        // getAllSubLocationIds includes the root. An empty or incomplete
+        // result is a hierarchy failure, not permission to report an
+        // own-location-only population as if it were a subtree total.
+        if (!Array.isArray(ids) || ids.length === 0 || ids.indexOf(locationId) === -1) {
+            return null;
+        }
+
+        var seen = Object.create(null);
+        var unique = [];
+        for (var i = 0; i < ids.length; i++) {
+            var id = ids[i];
+            if (typeof id !== 'string' || !id || seen[id]) continue;
+            if (!locationQueries.getPlace(id)) return null;
+            seen[id] = true;
+            unique.push(id);
+        }
+        return unique;
     }
 
     function _isActivePlace(place) {
@@ -252,6 +275,7 @@
         if (!settlement) return null;
 
         var locationIds = _getLocationIdsForSettlement(locationId);
+        if (!locationIds) return null;
         var religionQueries = _getReligionQueries();
         var result = [];
 
@@ -305,6 +329,7 @@
         if (!settlement) return null;
 
         var locationIds = _getLocationIdsForSettlement(locationId);
+        if (!locationIds) return null;
         var religionQueries = _getReligionQueries();
 
         if (typeof religionQueries.getReligiousBreakdownForLocations !== 'function') {
