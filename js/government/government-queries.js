@@ -114,10 +114,15 @@
     function getDepartmentDescendants(departmentId) {
         var out = [];
         var queue = [departmentId];
+        var visited = new Set();
         while (queue.length > 0) {
             var current = queue.shift();
+            if (!current || visited.has(current)) continue;
+            visited.add(current);
             var children = State.getDepartmentsByParentId(current);
             for (var i = 0; i < children.length; i++) {
+                if (visited.has(children[i].id)) continue;
+                visited.add(children[i].id);
                 out.push(_projectDepartment(children[i]));
                 queue.push(children[i].id);
             }
@@ -147,17 +152,23 @@
             sortOrder: options.sortOrder
         }).filter(function(d) { return !d.parentDepartmentId; });
 
-        function _attach(node) {
+        function _attach(node, ancestors) {
+            ancestors = ancestors || new Set();
+            if (ancestors.has(node.id)) {
+                node.children = [];
+                return node;
+            }
+            var nextAncestors = new Set(ancestors);
+            nextAncestors.add(node.id);
             var children = getDepartmentChildren(node.id);
             node.children = [];
             for (var i = 0; i < children.length; i++) {
-                children[i].children = _attach(children[i]).children;
-                node.children.push(children[i]);
+                node.children.push(_attach(children[i], nextAncestors));
             }
             return node;
         }
 
-        for (var i = 0; i < roots.length; i++) _attach(roots[i]);
+        for (var i = 0; i < roots.length; i++) _attach(roots[i], new Set());
         return roots;
     }
 
