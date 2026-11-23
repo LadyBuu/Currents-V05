@@ -17,6 +17,7 @@
  *
  * It does NOT own:
  *   - religion records                  (masterData.data.religions)
+ *   - worship-place records             (masterData.data.placesOfWorship)
  *   - persistence                      (ReligionCommands.persist is the
  *                                        single save site)
  *   - mutation policy                  (ReligionCommands; the primitives here
@@ -29,13 +30,13 @@
  *
  * CANONICAL ARRAY OWNERSHIP
  * -------------------------
- *   masterData.data.religions is the canonical store. This module DOES
- *   NOT hold a permanent reference to that array. Every mutation
- *   primitive reassigns masterData.data.religions to a NEW array
- *   (built via slice of the freshly-mutated working copy). Callers
- *   that captured the array reference before a mutation see a stale
- *   array, not a mutated one — same guarantee role-state.js provides
- *   via `masterData.data.roles = _roles.slice()`.
+ *   masterData.data.religions and masterData.data.placesOfWorship are
+ *   canonical stores. Religion and worship-place mutation primitives
+ *   reassign their respective arrays rather than mutating the arrays
+ *   held by callers. Derived indexes are rebuilt after every write.
+ *
+ *   religion.placesOfWorship remains an ID list linking each religion
+ *   to its canonical place records; it is not the place-record store.
  *
  *   Prior revisions called religions.push(religion) / religions.splice()
  *   on the live array. A caller holding `masterData.data.religions` and
@@ -108,8 +109,9 @@
     // No canonical religion records held here. Only subscribers.
     var _subscribers = [];
 
-    // Derived indexes. Rebuildable from masterData.data.religions and
-    // character records. Never persisted as canonical data.
+    // Derived indexes. Rebuildable from masterData.data.religions,
+    // masterData.data.placesOfWorship, and character records. Never
+    // persisted as canonical data.
     var _indexes = {
         byId: new Map(),
         byTrait: new Map(),
