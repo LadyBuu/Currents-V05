@@ -47,8 +47,7 @@
         return window.getCurrentYear();
     }
 
-    function setGovernmentType(locationId, governmentType, options) {
-        options = options || {};
+    function setGovernmentType(locationId, governmentType) {
 
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) {
@@ -93,13 +92,6 @@
         for (var key in consequence.patch) {
             if (!Object.prototype.hasOwnProperty.call(consequence.patch, key)) continue;
             overrides[key] = consequence.patch[key];
-        }
-
-        if (options.governmentStyle !== undefined) {
-            overrides.governmentStyle = options.governmentStyle;
-        }
-        if (options.governmentTypeId !== undefined) {
-            overrides.governmentTypeId = options.governmentTypeId;
         }
 
         var candidate = _copyWith(settlement, overrides);
