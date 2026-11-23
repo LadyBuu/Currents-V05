@@ -300,6 +300,19 @@
                          ' followers. Deprecate it instead.');
         }
 
+        // An active religious leader is an external character reference.
+        // Deleting the religion would leave that character's office/history
+        // without an owning religion. End the term or deprecate the religion.
+        if (religion.leader &&
+            religion.leader.characterId &&
+            religion.leader.isActive !== false) {
+            return _deny(
+                'Cannot delete religion while ' +
+                (religion.leader.characterName || 'its religious leader') +
+                ' holds an active leadership term. End the term or deprecate it instead.'
+            );
+        }
+
         return _allow();
     }
 
