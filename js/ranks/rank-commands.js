@@ -434,6 +434,38 @@
         var rank = RS.getRank(rankId);
         if (!rank) return _fail('Rank not found.');
 
+        // Government positions are an external policy reference. Rank deletion
+        // must not silently invalidate their eligibility requirements, even
+        // when the caller requests force deletion of character assignments.
+        var governmentQueries = window.GovernmentQueries;
+        var governmentPositions = [];
+        if (governmentQueries) {
+            if (typeof governmentQueries.getPositionsByRankRequirement !== 'function') {
+                return _fail('Government rank references cannot be checked; deletion is blocked.');
+            }
+            governmentPositions = governmentQueries.getPositionsByRankRequirement(rankId);
+            if (!Array.isArray(governmentPositions)) {
+                return _fail('Government rank references could not be read; deletion is blocked.');
+            }
+        } else {
+            var master = window.masterData && window.masterData.data;
+            var departments = master && master.governmentDepartments;
+            if (Array.isArray(departments) && departments.length > 0) {
+                return _fail('Government queries are unavailable; cannot verify rank references. Deletion is blocked.');
+            }
+        }
+        if (governmentPositions.length > 0) {
+            var examples = governmentPositions.slice(0, 3).map(function(position) {
+                return '"' + (position.name || position.id) + '"';
+            });
+            return _fail(
+                'Cannot delete rank referenced by ' + governmentPositions.length +
+                ' Government position(s): ' + examples.join(', ') +
+                (governmentPositions.length > 3 ? ', and others' : '') +
+                '. Update those positions first. Force deletion does not remove Government requirements.'
+            );
+        }
+
         var holders = RQ.getCharactersWithRank(rankId, false);
         var force = options.force === true;
 
