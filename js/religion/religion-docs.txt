@@ -1793,3 +1793,29 @@ PART 7 — KNOWN HAZARDS
 ================================================================================
 END OF DOCUMENT
 ================================================================================
+
+
+--------------------------------------------------------------------------------
+WORSHIP-PLACE OWNERSHIP CONTRACT
+--------------------------------------------------------------------------------
+
+Worship-place ownership is currently supported only as state ownership:
+
+  ownerType = "state"
+  ownerId   = null (or omitted)
+
+The previous command layer accepted arbitrary ownerType strings and unchecked
+ownerId strings. That created references without a known target domain, lookup
+contract, or deletion reconciliation path. Commands now reject unsupported
+owner types and reject entity IDs on state-owned records. Updates validate the
+final ownerType/ownerId pair, so changing one field cannot leave a stale pair.
+
+Legacy unresolved placeholders are exempt from this rule until explicitly
+reconstructed. Integrity diagnostics report unsupported owner configurations
+on all other canonical records. No automatic conversion is performed because
+there is no reliable basis for inferring the intended owner.
+
+Character, household, organization, and other private ownership types must not
+be enabled until each has a canonical resolver and a deletion/reassignment
+policy. This remains an explicit cross-domain design task, not a free-text
+field.
