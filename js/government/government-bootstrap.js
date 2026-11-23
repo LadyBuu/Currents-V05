@@ -56,6 +56,7 @@
         _require('LocationQueries',   function() { return window.LocationQueries; });
         _require('LocationCommands',  function() { return window.LocationCommands; });
         _require('RoleQueries',       function() { return window.RoleQueries; });
+        _require('RankQueries',       function() { return window.RankQueries; });
         _require('SettlementQueries', function() { return window.SettlementQueries; });
         _require('SettlementProsperityQueries', function() { return window.SettlementProsperityQueries; });
         _require('SettlementGovernmentCommands', function() { return window.SettlementGovernmentCommands; });
@@ -76,7 +77,7 @@
         // FIX: role-queries.js exports getRankSummary, not getRoleSummary.
         // The original guard asked for a method that has never existed on
         // RoleQueries, which caused every Government bootstrap to throw.
-        _requireMethod('RoleQueries',       window.RoleQueries,       'getRankSummary');
+        _requireMethod('RankQueries',       window.RankQueries,       'getRankSummary');
 
         _requireMethod('SettlementQueries', window.SettlementQueries, 'getIndustryTaxRate');
 
