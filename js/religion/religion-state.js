@@ -195,6 +195,8 @@
             places = [];
             _setCanonicalPlacesOfWorshipArray(places);
             _markDirty();
+        } else {
+            places = places.slice();
         }
 
         var byId = Object.create(null);
@@ -219,8 +221,13 @@
                         );
                     }
                     if (!byId[placeId].religionId) {
-                        byId[placeId].religionId = religion.id;
-                        byId[placeId].religionName = religion.name || '';
+                        var repaired = _clone(byId[placeId]);
+                        repaired.religionId = religion.id;
+                        repaired.religionName = religion.name || '';
+                        var repairedIndex = places.indexOf(byId[placeId]);
+                        if (repairedIndex !== -1) places[repairedIndex] = repaired;
+                        byId[placeId] = repaired;
+                        migrated++;
                     }
                     continue;
                 }
