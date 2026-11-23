@@ -615,11 +615,10 @@
                 level: 'info',
                 message: 'No religions defined. This is a valid initial state.'
             });
-            return findings;
         }
 
         var seenIds = Object.create(null);
-        var orphanLeaders = 0;
+        var knownReligionIds = Object.create(null);
 
         for (var i = 0; i < religions.length; i++) {
             var r = religions[i];
@@ -635,21 +634,93 @@
                 findings.push({ level: 'error', message: 'Duplicate religion id: ' + r.id });
             }
             seenIds[r.id] = true;
+            knownReligionIds[r.id] = true;
 
             if (typeof r.name !== 'string' || r.name.length === 0) {
                 findings.push({ level: 'warn', message: 'Religion ' + r.id + ' has no name' });
             }
 
-            if (r.leader && !r.leader.characterId) {
-                orphanLeaders++;
+            var seenLocations = Object.create(null);
+            if (Array.isArray(r.locations)) {
+                for (var j = 0; j < r.locations.length; j++) {
+                    var locationId = r.locations[j];
+                    if (!locationId) {
+                        findings.push({
+                            level: 'warn',
+                            message: 'Religion ' + r.id + ' has an empty location association.'
+                        });
+                        continue;
+                    }
+                    if (seenLocations[locationId]) {
+                        findings.push({
+                            level: 'warn',
+                            message: 'Religion ' + r.id + ' has duplicate location association ' + locationId + '.'
+                        });
+                    }
+                    seenLocations[locationId] = true;
+                    if (typeof window.getPlaceById === 'function' &&
+                        !window.getPlaceById(locationId)) {
+                        findings.push({
+                            level: 'error',
+                            message: 'Religion ' + r.id + ' references missing location ' + locationId + '.'
+                        });
+                    }
+                }
+            }
+
+            if (r.leader && r.leader.characterId &&
+                r.leader.isActive !== false &&
+                typeof window.getCharacterById === 'function' &&
+                !window.getCharacterById(r.leader.characterId)) {
+                findings.push({
+                    level: 'error',
+                    message: 'Religion ' + r.id + ' has an active leader referencing missing character ' +
+                        r.leader.characterId + '.'
+                });
+            }
+
+            var seenWorshipIds = Object.create(null);
+            if (Array.isArray(r.placesOfWorship)) {
+                for (var w = 0; w < r.placesOfWorship.length; w++) {
+                    var worshipId = r.placesOfWorship[w];
+                    if (!worshipId) continue;
+                    if (seenWorshipIds[worshipId]) {
+                        findings.push({
+                            level: 'warn',
+                            message: 'Religion ' + r.id + ' has duplicate place-of-worship id ' + worshipId + '.'
+                        });
+                    }
+                    seenWorshipIds[worshipId] = true;
+                }
             }
         }
 
-        if (orphanLeaders > 0) {
+        // Character records own religionId. Diagnose dangling references
+        // without attempting to repair or rewrite character data here.
+        var characters;
+        try {
+            characters = _getCharacters();
+        } catch (characterError) {
             findings.push({
                 level: 'warn',
-                message: orphanLeaders + ' religion(s) have a leader record with no characterId.'
+                message: 'Could not inspect character religion references: ' +
+                    (characterError && characterError.message
+                        ? characterError.message
+                        : String(characterError))
             });
+            characters = [];
+        }
+
+        for (var c = 0; c < characters.length; c++) {
+            var character = characters[c];
+            if (!character || !character.religionId) continue;
+            if (!knownReligionIds[character.religionId]) {
+                findings.push({
+                    level: 'error',
+                    message: 'Character ' + (character.id || c) +
+                        ' references missing religion ' + character.religionId + '.'
+                });
+            }
         }
 
         return findings;
