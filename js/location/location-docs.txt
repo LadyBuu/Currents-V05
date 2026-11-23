@@ -1877,5 +1877,31 @@ PART 6 — KNOWN HAZARDS
 
 
 ================================================================================
+SETTLEMENT LOCATION COMPATIBILITY
+================================================================================
+
+Location is the canonical owner of geographical identity and Location Type.
+Settlement is attached to a Location by locationId. Only Location Types at
+priority 4 (town/village) or priority 5 (locality/compound) may host a
+Settlement. This is based on type priority, so custom type names at either
+priority remain eligible.
+
+LocationCommands enforces the cross-domain lifecycle without loading the
+Settlement subsystem (Location loads first):
+  - updatePlace refuses to change a Settlement-bearing place to priority
+    1–3.
+  - updateLocationType refuses to change a used type to priority 1–3 when
+    any place using that type has a Settlement.
+  - deletePlace continues to reconcile Settlement records before removing
+    the place.
+
+The canonical settlementData store is inspected for these guards. Do not
+add a load-time dependency from LocationCommands to Settlement modules.
+SettlementFactory independently validates eligibility when creating or
+ensuring a Settlement, and fails closed if LocationQueries is unavailable.
+Settlement Rank is a separate population/status tier and does not affect
+Location Type eligibility.
+
+================================================================================
 END OF DOCUMENT
 ================================================================================
