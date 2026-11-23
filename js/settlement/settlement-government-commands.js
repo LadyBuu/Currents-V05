@@ -55,6 +55,12 @@
             return _failure('SETTLEMENT_NOT_FOUND', { locationId: locationId });
         }
 
+        if (governmentType === 'theocracy' && !settlement.stateReligionId) {
+            return _failure('STATE_RELIGION_REQUIRED', {
+                reason: 'Assign an official state religion before establishing a theocracy.'
+            });
+        }
+
         var validation = _getGovernmentRules().validateGovernmentType(governmentType);
         if (!validation.valid) {
             return _failure('INVALID_GOVERNMENT_TYPE', { reason: validation.reason });
@@ -113,6 +119,12 @@
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) {
             return _failure('SETTLEMENT_NOT_FOUND', { locationId: locationId });
+        }
+
+        if (religionId === null && settlement.governmentType === 'theocracy') {
+            return _failure('STATE_RELIGION_REQUIRED', {
+                reason: 'A theocracy must retain an official state religion. Change its government type first.'
+            });
         }
 
         if (religionId !== null) {
