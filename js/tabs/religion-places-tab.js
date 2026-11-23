@@ -12,7 +12,7 @@
  *   - Sort by name, type, founded year
  *   - Add place (delegates to window.openCreatePlaceOfWorshipModal)
  *   - Edit place (delegates to window.openEditPlaceOfWorshipModal;
- *     gated behind PLACES_EDITABLE — see PLACES ARE PARTIAL below)
+ *     enabled through the PLACES_EDITABLE feature gate)
  *   - Remove place (delegates to window.openDeletePlaceOfWorshipModal)
  *   - Collect tithes (direct call to ReligionCommands.collectTithes)
  *
