@@ -94,14 +94,60 @@
         return out;
     }
 
+    /**
+     * Returns departments whose jurisdiction root is this location or
+     * one of its ancestors. A department assigned to a country therefore
+     * applies when viewing any province/city beneath that country.
+     *
+     * locationId remains the canonical jurisdiction-root field. It is
+     * not a physical headquarters address.
+     */
     function getDepartmentsByLocation(locationId, options) {
         options = options || {};
-        var all = State.getDepartmentsByLocationId(locationId);
-        var out = [];
-        for (var i = 0; i < all.length; i++) {
-            if (!options.includeDeprecated && all[i].isDeprecated) continue;
-            out.push(_projectDepartment(all[i]));
+        if (!locationId ||
+            typeof _LocationQueries.getPlace !== 'function' ||
+            typeof _LocationQueries.getPlaceHierarchy !== 'function') {
+            return [];
         }
+
+        var place = _LocationQueries.getPlace(locationId);
+        if (!place) return [];
+
+        var hierarchy = _LocationQueries.getPlaceHierarchy(locationId);
+        if (!Array.isArray(hierarchy) || hierarchy.length === 0 ||
+            hierarchy[hierarchy.length - 1].id !== locationId) {
+            return [];
+        }
+
+        // Do not apply a partial jurisdiction chain if the location
+        // hierarchy is corrupt or a parent is missing.
+        var seenLocations = new Set();
+        for (var h = 0; h < hierarchy.length; h++) {
+            var node = hierarchy[h];
+            if (!node || !node.id || seenLocations.has(node.id)) return [];
+            seenLocations.add(node.id);
+            if (h === 0) {
+                if (node.parentId) return [];
+            } else if (node.parentId !== hierarchy[h - 1].id) {
+                return [];
+            }
+        }
+
+        var byId = new Map();
+        for (var i = 0; i < hierarchy.length; i++) {
+            var exact = State.getDepartmentsByLocationId(hierarchy[i].id);
+            for (var j = 0; j < exact.length; j++) {
+                var dept = exact[j];
+                if (!dept || !dept.id || byId.has(dept.id)) continue;
+                if (!options.includeDeprecated && dept.isDeprecated) continue;
+                byId.set(dept.id, dept);
+            }
+        }
+
+        var out = [];
+        byId.forEach(function(dept) {
+            out.push(_projectDepartment(dept));
+        });
         _sortDepartments(out, options.sortBy, options.sortOrder);
         return out;
     }
