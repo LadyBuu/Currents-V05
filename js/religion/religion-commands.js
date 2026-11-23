@@ -1752,7 +1752,18 @@
             candidate.features = _clone(updates.features);
         }
 
-        candidate.legacyUnresolved = false;
+        if (current.legacyUnresolved === true) {
+            // An ID-only legacy record is only considered reconstructed
+            // when the user explicitly supplies its name, type and
+            // location field (including an intentional null location).
+            candidate.legacyUnresolved = !(
+                updates.name !== undefined &&
+                updates.type !== undefined &&
+                updates.locationId !== undefined
+            );
+        } else {
+            candidate.legacyUnresolved = false;
+        }
         candidate.updatedAt = Date.now();
 
         try {
