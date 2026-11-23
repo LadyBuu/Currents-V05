@@ -128,14 +128,6 @@
  *     - Multi-record removal also restores deleted records when its own
  *       persistence boundary fails.
  *     - No public signature change.
- *   Current revision:
- *     - Header CANDIDATE-WRITE ORDERING section added. Documents that
- *       the candidate is written to the in-memory store BEFORE persist
- *       runs, so on persist failure the in-memory state is ahead of
- *       storage until the caller reloads, retries, or re-commits the
- *       prior record. Correct-by-design; previously undocumented.
- *     - No behavioural change. The commit sequence, the persist
- *       inspection, and the throw-on-failure semantics are unchanged.
  *   Previous revision:
  *     - _saveMasterData() now inspects the boolean return from
  *       window.saveMasterData() and throws on false, using
@@ -376,8 +368,8 @@
         } catch (removeError) {
             // Standalone removal is atomic with respect to memory and
             // persistence. The coordinated location-delete path uses
-            // persist:false and is rolled back by its owning batch boundary
-            // if that boundary is explicitly retried/reloaded.
+            // persist:false and remains part of LocationCommands' combined
+            // persistence boundary.
             for (var restoreIndex = 0; restoreIndex < removed.length; restoreIndex++) {
                 var restoreId = removed[restoreIndex];
                 // The records are captured below before deletion.
