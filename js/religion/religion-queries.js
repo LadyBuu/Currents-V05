@@ -378,9 +378,64 @@
         });
     }
 
+    /**
+     * Religions explicitly associated with a location and each descendant.
+     *
+     * `religion.locations` records direct presence associations only. They
+     * are not inherited by child locations and confer no recognition or
+     * jurisdiction. This hierarchy query aggregates explicit associations
+     * recorded at the requested location or anywhere below it, preserving
+     * the exact location that owns each association.
+     *
+     * Returns null when the root location or hierarchy query is unavailable;
+     * an empty array means the valid subtree has no explicit associations.
+     */
     function getReligionsByLocation(locationId) {
         if (!locationId) return [];
         return _getState().getByLocation(locationId);
+    }
+
+    function getReligionsInLocationSubtree(locationId) {
+        if (!locationId) return null;
+        var locationQueries = window.LocationQueries;
+        if (!locationQueries ||
+            typeof locationQueries.getPlace !== 'function' ||
+            typeof locationQueries.getAllSubLocationIds !== 'function') {
+            return null;
+        }
+
+        var root = locationQueries.getPlace(locationId);
+        if (!root) return null;
+
+        var locationIds = locationQueries.getAllSubLocationIds(locationId);
+        if (!Array.isArray(locationIds) || locationIds.indexOf(locationId) === -1) {
+            return null;
+        }
+
+        var seenLocations = Object.create(null);
+        var result = [];
+        for (var i = 0; i < locationIds.length; i++) {
+            var currentLocationId = locationIds[i];
+            if (typeof currentLocationId !== 'string' || !currentLocationId ||
+                seenLocations[currentLocationId]) continue;
+            seenLocations[currentLocationId] = true;
+
+            var place = locationQueries.getPlace(currentLocationId);
+            if (!place) return null;
+            var religions = _getState().getByLocation(currentLocationId);
+            for (var j = 0; j < religions.length; j++) {
+                var religion = religions[j];
+                if (!religion || !religion.id) continue;
+                result.push({
+                    religionId: religion.id,
+                    religionName: religion.displayName || religion.name || religion.id,
+                    locationId: currentLocationId,
+                    locationName: place.displayName || place.name || currentLocationId,
+                    isAtRootLocation: currentLocationId === locationId
+                });
+            }
+        }
+        return result;
     }
 
     function getReligionsByTrait(trait) {
@@ -1120,6 +1175,7 @@
         getActiveReligions: getActiveReligions,
         getDeprecatedReligions: getDeprecatedReligions,
         getReligionsByLocation: getReligionsByLocation,
+        getReligionsInLocationSubtree: getReligionsInLocationSubtree,
         getReligionsByTrait: getReligionsByTrait,
         getReligionByLeader: getReligionByLeader,
 
