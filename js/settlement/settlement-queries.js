@@ -344,6 +344,13 @@
         return s ? s.useReligiousLawsAsCivil : null;
     }
 
+    // Explicitly selected political designation. Never infer this from
+    // the settlement's dominant religion or religious population breakdown.
+    function getStateReligionId(locationId) {
+        var s = getSettlementData(locationId);
+        return s ? (s.stateReligionId || null) : null;
+    }
+
     function getHasWatch(locationId) {
         var s = getSettlementData(locationId);
         return s ? s.hasWatch : null;
@@ -1127,6 +1134,7 @@
         getGovernmentType: getGovernmentType,
         getJusticeSeverity: getJusticeSeverity,
         getUseReligiousLawsAsCivil: getUseReligiousLawsAsCivil,
+        getStateReligionId: getStateReligionId,
         getHasWatch: getHasWatch,
         getWatchSize: getWatchSize,
 
