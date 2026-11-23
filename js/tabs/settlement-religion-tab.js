@@ -445,7 +445,7 @@
         var RQ = _getReligionQueries();
         var currentReligion = currentId && RQ ? RQ.getReligion(currentId) : null;
         var currentIsListed = false;
-        var options = '<option value="">No official state religion</option>';
+        var options = '<option value=""' + (isTheocracy ? ' disabled' : '') + '>No official state religion</option>';
 
         for (var i = 0; i < religions.length; i++) {
             var religion = religions[i];
