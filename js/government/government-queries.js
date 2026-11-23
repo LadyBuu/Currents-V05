@@ -20,6 +20,7 @@
     var _CharacterQueries = window.CharacterQueries;
     var _LocationQueries = window.LocationQueries;
     var _RoleQueries = window.RoleQueries;
+    var _RankQueries = window.RankQueries;
     var _SettlementQueries = window.SettlementQueries;
     var _SettlementProsperity = window.SettlementProsperityQueries;
     var _IndustryQueries = window.IndustryQueries;
@@ -30,6 +31,7 @@
     if (!_CharacterQueries) throw new Error('government-queries.js requires CharacterQueries');
     if (!_LocationQueries) throw new Error('government-queries.js requires LocationQueries');
     if (!_RoleQueries) throw new Error('government-queries.js requires RoleQueries');
+    if (!_RankQueries) throw new Error('government-queries.js requires RankQueries');
     if (!_SettlementQueries) throw new Error('government-queries.js requires SettlementQueries');
     if (!_SettlementProsperity) throw new Error('government-queries.js requires SettlementProsperityQueries');
     if (!_IndustryQueries) throw new Error('government-queries.js requires IndustryQueries');
@@ -56,7 +58,7 @@
 
     function _rankSummary(rankId) {
         if (!rankId) return null;
-        return _RoleQueries.getRankSummary ? _RoleQueries.getRankSummary(rankId) : null;
+        return _RankQueries.getRankSummary(rankId);
     }
 
     function _charFacts(characterId) {
