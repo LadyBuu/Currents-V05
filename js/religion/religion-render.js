@@ -252,7 +252,7 @@
             if (row.locationNames.length > 3) {
                 locText += ' (+' + (row.locationNames.length - 3) + ')';
             }
-            html += '<div class="religion-card__locations">Locations: ' + _escapeHtml(locText) + '</div>';
+            html += '<div class="religion-card__locations">Present in: ' + _escapeHtml(locText) + '</div>';
         }
 
         if (row.isOrganized) {
@@ -287,7 +287,7 @@
         laws: 'Laws',
         places: 'Places',
         leader: 'Leader',
-        locations: 'Locations',
+        locations: 'Present in',
         status: 'Status'
     };
 
