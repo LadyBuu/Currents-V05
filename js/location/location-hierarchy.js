@@ -244,6 +244,89 @@
         return { valid: true, reason: 'Valid hierarchy' };
     }
 
+    /**
+     * Validate a proposed new place without requiring a canonical place id.
+     * The parent, when supplied, must exist and have an equal or higher
+     * hierarchy priority than the new place's type.
+     */
+    function validateNewPlace(typeId, parentId) {
+        if (!typeId || !LS.getLocationTypeById(typeId)) {
+            return { valid: false, reason: 'Location type not found' };
+        }
+        if (!parentId) {
+            return { valid: true, reason: 'Valid root place' };
+        }
+
+        var parent = LS.getPlaceById(parentId);
+        if (!parent) {
+            return { valid: false, reason: 'Parent place not found' };
+        }
+        if (!isValidParentType(parent.typeId, typeId)) {
+            return {
+                valid: false,
+                reason: 'Parent type priority must be equal to or higher than child type'
+            };
+        }
+        return { valid: true, reason: 'Valid hierarchy' };
+    }
+
+    /**
+     * Validate a place after applying a proposed parent and/or type change.
+     * Checks the proposed parent, cycle prevention, and both sides of the
+     * immediate hierarchy edge: proposed parent -> place -> existing children.
+     */
+    function validatePlaceStructure(placeId, proposedParentId, proposedTypeId) {
+        if (!placeId) {
+            return { valid: false, reason: 'Place ID is required' };
+        }
+        var place = LS.getPlaceById(placeId);
+        if (!place) {
+            return { valid: false, reason: 'Place not found' };
+        }
+
+        var nextTypeId = proposedTypeId || place.typeId;
+        if (!LS.getLocationTypeById(nextTypeId)) {
+            return { valid: false, reason: 'Location type not found' };
+        }
+
+        var nextParentId = proposedParentId || null;
+        var LQ = _queries();
+
+        if (nextParentId) {
+            if (nextParentId === placeId) {
+                return { valid: false, reason: 'Place cannot be its own parent' };
+            }
+            var parent = LS.getPlaceById(nextParentId);
+            if (!parent) {
+                return { valid: false, reason: 'Parent place not found' };
+            }
+            if (LQ.isAncestorOf(placeId, nextParentId)) {
+                return { valid: false, reason: 'Would create circular reference' };
+            }
+            if (!isValidParentType(parent.typeId, nextTypeId)) {
+                return {
+                    valid: false,
+                    reason: 'Parent type priority must be equal to or higher than child type'
+                };
+            }
+        }
+
+        var children = LQ.getPlaceChildren(placeId, false) || [];
+        for (var i = 0; i < children.length; i++) {
+            var child = children[i];
+            if (!child) continue;
+            if (!isValidParentType(nextTypeId, child.typeId)) {
+                return {
+                    valid: false,
+                    reason: 'New location type would be incompatible with child "' +
+                        (child.displayName || child.id) + '"'
+                };
+            }
+        }
+
+        return { valid: true, reason: 'Valid hierarchy' };
+    }
+
     // =========================================================================
     // 4. ANCESTRY (delegates to LocationQueries)
     // =========================================================================
@@ -534,6 +617,8 @@
     window.LocationHierarchy = {
         // Validation
         validateHierarchy: validateHierarchy,
+        validateNewPlace: validateNewPlace,
+        validatePlaceStructure: validatePlaceStructure,
         isValidParentType: isValidParentType,
 
         // Ancestry
