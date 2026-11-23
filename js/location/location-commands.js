@@ -538,18 +538,18 @@
     // or load-order coupling is introduced.
     var _SETTLEMENT_LOCATION_PRIORITIES = { 4: true, 5: true };
 
-    function _hasSettlementAtLocation(locationId) {
+    function _getSettlementStoreForLocationGuard() {
         var data = window.masterData && window.masterData.data;
         var store = data && data.settlementData;
-        return !!(store && typeof store === 'object' &&
-            Object.prototype.hasOwnProperty.call(store, locationId) &&
-            store[locationId]);
+        return store && typeof store === 'object' ? store : null;
     }
 
-    function _hasSettlementUsingLocationType(places) {
-        var data = window.masterData && window.masterData.data;
-        var store = data && data.settlementData;
-        if (!store || typeof store !== 'object') return false;
+    function _hasSettlementAtLocation(locationId, store) {
+        return Object.prototype.hasOwnProperty.call(store, locationId) &&
+            !!store[locationId];
+    }
+
+    function _hasSettlementUsingLocationType(places, store) {
         for (var i = 0; i < places.length; i++) {
             var place = places[i];
             if (place && place.id &&
@@ -707,15 +707,23 @@
             );
         }
 
-        if (updates.typeId !== undefined &&
-            _hasSettlementAtLocation(placeId)) {
-            var settlementLocationType = LS.getLocationTypeById(updates.typeId);
-            if (!settlementLocationType ||
-                !_SETTLEMENT_LOCATION_PRIORITIES[settlementLocationType.priority]) {
+        if (updates.typeId !== undefined) {
+            var settlementStoreForPlace = _getSettlementStoreForLocationGuard();
+            if (!settlementStoreForPlace) {
                 return _fail(
-                    'updatePlace: a location with a settlement must remain ' +
-                    'at priority 4 or 5 (town/village or locality/compound)'
+                    'updatePlace: cannot verify settlement compatibility; ' +
+                    'settlementData is unavailable'
                 );
+            }
+            if (_hasSettlementAtLocation(placeId, settlementStoreForPlace)) {
+                var settlementLocationType = LS.getLocationTypeById(updates.typeId);
+                if (!settlementLocationType ||
+                    !_SETTLEMENT_LOCATION_PRIORITIES[settlementLocationType.priority]) {
+                    return _fail(
+                        'updatePlace: a location with a settlement must remain ' +
+                        'at priority 4 or 5 (town/village or locality/compound)'
+                    );
+                }
             }
         }
 
@@ -1337,14 +1345,23 @@
                 updates.priority < 1 || updates.priority > 5) {
                 return _fail('updateLocationType: priority must be 1..5');
             }
-            if (!_SETTLEMENT_LOCATION_PRIORITIES[updates.priority] &&
-                _hasSettlementUsingLocationType(
-                    LS._getPlacesByTypeIdCanonical(typeId)
+            if (!_SETTLEMENT_LOCATION_PRIORITIES[updates.priority]) {
+                var settlementStoreForType = _getSettlementStoreForLocationGuard();
+                if (!settlementStoreForType) {
+                    return _fail(
+                        'updateLocationType: cannot verify settlement ' +
+                        'compatibility; settlementData is unavailable'
+                    );
+                }
+                if (_hasSettlementUsingLocationType(
+                    LS._getPlacesByTypeIdCanonical(typeId),
+                    settlementStoreForType
                 )) {
-                return _fail(
-                    'updateLocationType: this type is used by one or more ' +
-                    'settlements; its priority must remain 4 or 5'
-                );
+                    return _fail(
+                        'updateLocationType: this type is used by one or more ' +
+                        'settlements; its priority must remain 4 or 5'
+                    );
+                }
             }
             if (updates.priority !== type.priority) {
                 var priorityCheck = LH.validateLocationTypePriority(
