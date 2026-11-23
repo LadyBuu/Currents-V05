@@ -110,14 +110,20 @@
             return [];
         }
 
-        var place = _LocationQueries.getPlace(locationId);
-        if (!place) return [];
-
-        var hierarchy = _LocationQueries.getPlaceHierarchy(locationId);
-        if (!Array.isArray(hierarchy) || hierarchy.length === 0 ||
-            hierarchy[hierarchy.length - 1].id !== locationId) {
+        var place;
+        var hierarchy;
+        try {
+            place = _LocationQueries.getPlace(locationId);
+            hierarchy = _LocationQueries.getPlaceHierarchy(locationId);
+        } catch (e) {
             return [];
         }
+        if (!place || !Array.isArray(hierarchy) || hierarchy.length === 0) {
+            return [];
+        }
+
+        var lastNode = hierarchy[hierarchy.length - 1];
+        if (!lastNode || lastNode.id !== locationId) return [];
 
         // Do not apply a partial jurisdiction chain if the location
         // hierarchy is corrupt or a parent is missing.
@@ -134,14 +140,19 @@
         }
 
         var byId = new Map();
-        for (var i = 0; i < hierarchy.length; i++) {
-            var exact = State.getDepartmentsByLocationId(hierarchy[i].id);
-            for (var j = 0; j < exact.length; j++) {
-                var dept = exact[j];
-                if (!dept || !dept.id || byId.has(dept.id)) continue;
-                if (!options.includeDeprecated && dept.isDeprecated) continue;
-                byId.set(dept.id, dept);
+        try {
+            for (var i = 0; i < hierarchy.length; i++) {
+                var exact = State.getDepartmentsByLocationId(hierarchy[i].id);
+                if (!Array.isArray(exact)) return [];
+                for (var j = 0; j < exact.length; j++) {
+                    var dept = exact[j];
+                    if (!dept || !dept.id || byId.has(dept.id)) continue;
+                    if (!options.includeDeprecated && dept.isDeprecated) continue;
+                    byId.set(dept.id, dept);
+                }
             }
+        } catch (e) {
+            return [];
         }
 
         var out = [];
