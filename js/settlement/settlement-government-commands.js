@@ -105,6 +105,48 @@
         };
     }
 
+    /**
+     * Assigns the settlement's official state religion. This is independent
+     * of demographic dominance. Pass null to remove official recognition.
+     */
+    function setStateReligion(locationId, religionId) {
+        var settlement = _getSettlementQueries().getSettlementData(locationId);
+        if (!settlement) {
+            return _failure('SETTLEMENT_NOT_FOUND', { locationId: locationId });
+        }
+
+        if (religionId !== null) {
+            if (typeof religionId !== 'string' || religionId.length === 0) {
+                return _failure('INVALID_RELIGION_ID', { religionId: religionId });
+            }
+            var religionQueries = window.ReligionQueries;
+            if (!religionQueries || typeof religionQueries.getReligion !== 'function') {
+                return _failure('RELIGION_QUERIES_UNAVAILABLE', { religionId: religionId });
+            }
+            var religion = religionQueries.getReligion(religionId);
+            if (!religion) {
+                return _failure('RELIGION_NOT_FOUND', { religionId: religionId });
+            }
+            if (religion.isDeprecated === true) {
+                return _failure('RELIGION_DEPRECATED', { religionId: religionId });
+            }
+        }
+
+        var candidate = _copyWith(settlement, { stateReligionId: religionId });
+        var publishedEvent = _getCommit().commit(locationId, candidate, {
+            type: 'stateReligionChanged',
+            previousReligionId: settlement.stateReligionId || null,
+            stateReligionId: religionId
+        });
+
+        return {
+            success: true,
+            locationId: locationId,
+            stateReligionId: religionId,
+            event: publishedEvent
+        };
+    }
+
     function setUseReligiousLawsAsCivil(locationId, enabled) {
         if (typeof enabled !== 'boolean') {
             return _failure('INVALID_ARGUMENT', {
@@ -207,6 +249,7 @@
     window.SettlementGovernmentCommands = Object.freeze({
         setGovernmentType: setGovernmentType,
         setUseReligiousLawsAsCivil: setUseReligiousLawsAsCivil,
+        setStateReligion: setStateReligion,
         setJusticeSeverity: setJusticeSeverity,
         setWatch: setWatch
     });
