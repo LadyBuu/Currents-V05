@@ -420,8 +420,9 @@ and settlement-view-models.js explicitly).
              getActivePlaceOfWorshipCount),
       [call] settlement-prosperity-queries.js (getReligiousUnity,
              getActivePlaceOfWorshipCount, getDominantReligion),
-      [call] settlement-view-models.js (getReligiousUnityStatus,
-             getDominantReligionStatus, getActivePlaceOfWorshipCount),
+      [call] settlement-view-models.js (getReligiousPresence,
+             getReligiousUnityStatus, getDominantReligionStatus,
+             getActivePlaceOfWorshipCount),
       [call] modals-settlement-*.
 
   js/settlement/settlement-employment-queries.js
