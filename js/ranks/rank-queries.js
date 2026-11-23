@@ -202,6 +202,23 @@
         return RS.getRank(rankId);
     }
 
+    /**
+     * Compact rank projection for cross-domain consumers.
+     * RankQueries owns Character Rank reads; other domains should not
+     * resolve rank records through RoleQueries or global helper functions.
+     */
+    function getRankSummary(rankId) {
+        if (!_hasId(rankId)) return null;
+        var rank = RS.getRank(rankId);
+        if (!rank) return null;
+        return {
+            id: rank.id,
+            name: typeof rank.name === 'string' ? rank.name : rank.id,
+            priority: rank.priority,
+            symbol: typeof rank.symbol === 'string' ? rank.symbol : ''
+        };
+    }
+
     function getAllRanks() {
         return RS.getAllRanks();
     }
@@ -936,6 +953,7 @@
     window.RankQueries = {
         // Rank queries
         getRank: getRank,
+        getRankSummary: getRankSummary,
         getAllRanks: getAllRanks,
         getRanksByPriority: getRanksByPriority,
         getRankHierarchy: getRankHierarchy,
