@@ -42,7 +42,7 @@
         }
     }
 
-    var SCHEMA_VERSION = 3;
+    var SCHEMA_VERSION = 4;
 
     function _isMissing(v) {
         return v === undefined || v === null;
