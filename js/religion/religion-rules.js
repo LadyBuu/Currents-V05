@@ -274,6 +274,21 @@
         if (religion.isDeprecated) {
             return _deny('Religion is already deprecated');
         }
+
+        var settlementQueries = window.SettlementQueries;
+        if (!settlementQueries || typeof settlementQueries.getAllSettlements !== 'function') {
+            return _deny('Cannot verify state religion references: SettlementQueries unavailable');
+        }
+        var settlements = settlementQueries.getAllSettlements();
+        for (var i = 0; i < settlements.length; i++) {
+            var entry = settlements[i];
+            if (entry && entry.data && entry.data.stateReligionId === religionId) {
+                return _deny(
+                    'Cannot deprecate a religion while it is recognised as the state religion of ' +
+                    (entry.locationId || 'a settlement') + '. Remove that designation first.'
+                );
+            }
+        }
         return _allow();
     }
 
