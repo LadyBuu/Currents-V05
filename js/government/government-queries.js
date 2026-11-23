@@ -898,7 +898,7 @@
     }
 
     function getIndustryTaxRevenue(locationId) {
-        if (!_IndustryQueries.getIndustryTaxRevenue) return 0;
+        if (typeof _IndustryQueries.getIndustryTaxRevenue !== 'function') return null;
         return _IndustryQueries.getIndustryTaxRevenue(locationId);
     }
 
