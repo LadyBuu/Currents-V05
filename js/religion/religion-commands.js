@@ -470,6 +470,22 @@
             return _denyFromValidation(validation.errors);
         }
 
+        var requestedLocations = Array.isArray(data.locations) ? data.locations : [];
+        var seenLocations = Object.create(null);
+        for (var locationIndex = 0; locationIndex < requestedLocations.length; locationIndex++) {
+            var requestedLocationId = requestedLocations[locationIndex];
+            if (!requestedLocationId || typeof requestedLocationId !== 'string') {
+                return _deny('Every religion location must have a valid location id');
+            }
+            if (seenLocations[requestedLocationId]) {
+                return _deny('Religion contains a duplicate location association: ' + requestedLocationId);
+            }
+            if (!_getPlaceById(requestedLocationId)) {
+                return _deny('Religion location not found: ' + requestedLocationId);
+            }
+            seenLocations[requestedLocationId] = true;
+        }
+
         var now = Date.now();
 
         var religion = {
@@ -497,7 +513,7 @@
             laws: [],
             leader: null,
             leaderHistory: [],
-            locations: Array.isArray(data.locations) ? data.locations.slice() : [],
+            locations: requestedLocations.slice(),
             schools: [],
             placesOfWorship: [],
             isDeprecated: false,
@@ -1186,6 +1202,69 @@
     // 11. LOCATIONS
     // =========================================================================
 
+    /**
+     * Remove deleted location associations while preserving religion history.
+     * Called by LocationCommands before the location records are removed.
+     */
+    function reconcileDeletedLocations(locationIds) {
+        if (!Array.isArray(locationIds) || locationIds.length === 0) {
+            return { success: true, data: { updatedReligionIds: [], removedAssociations: 0 } };
+        }
+
+        var removed = Object.create(null);
+        for (var i = 0; i < locationIds.length; i++) {
+            if (locationIds[i]) removed[locationIds[i]] = true;
+        }
+
+        var religions = _getCanonicalReligionsArray();
+        var updatedIds = [];
+        var removedCount = 0;
+
+        for (var r = 0; r < religions.length; r++) {
+            var religion = religions[r];
+            if (!religion || !Array.isArray(religion.locations)) continue;
+
+            var nextLocations = [];
+            var changed = false;
+            for (var j = 0; j < religion.locations.length; j++) {
+                var locationId = religion.locations[j];
+                if (removed[locationId]) {
+                    changed = true;
+                    removedCount++;
+                } else if (nextLocations.indexOf(locationId) === -1) {
+                    nextLocations.push(locationId);
+                } else {
+                    changed = true;
+                }
+            }
+
+            if (!changed) continue;
+            var candidate = _clone(religion);
+            candidate.locations = nextLocations;
+            candidate.updatedAt = Date.now();
+            try {
+                _state()._updateReligion(religion.id, candidate);
+            } catch (e) {
+                return _deny('Religion location reconciliation failed for ' +
+                    religion.id + ': ' + (e && e.message ? e.message : String(e)));
+            }
+            updatedIds.push(religion.id);
+        }
+
+        if (updatedIds.length > 0) {
+            _commit('religionLocationsReconciled', {
+                locationIds: Object.keys(removed),
+                religionIds: updatedIds,
+                removedAssociations: removedCount
+            });
+        }
+
+        return {
+            success: true,
+            data: { updatedReligionIds: updatedIds, removedAssociations: removedCount }
+        };
+    }
+
     function addReligionLocation(religionId, locationId) {
         var canonical = _state()._getReligionCanonical(religionId);
         if (!canonical) {
@@ -1436,6 +1515,23 @@
         var canonical = _state()._getReligionCanonical(data.religionId);
         if (!canonical) {
             return _deny('Religion not found');
+        }
+        if (data.locationId && !_getPlaceById(data.locationId)) {
+            return _deny('Place of worship location not found');
+        }
+        if (data.headClergyId && !_getCharacterById(data.headClergyId)) {
+            return _deny('Head clergy character not found');
+        }
+        if (Array.isArray(data.clergy)) {
+            for (var clergyIndex = 0; clergyIndex < data.clergy.length; clergyIndex++) {
+                var clergyEntry = data.clergy[clergyIndex];
+                var clergyId = typeof clergyEntry === 'string'
+                    ? clergyEntry
+                    : (clergyEntry && (clergyEntry.characterId || clergyEntry.id));
+                if (clergyId && !_getCharacterById(clergyId)) {
+                    return _deny('Clergy character not found: ' + clergyId);
+                }
+            }
         }
 
         var place = {
@@ -1717,6 +1813,7 @@
 
         // Locations
         addReligionLocation: addReligionLocation,
+        reconcileDeletedLocations: reconcileDeletedLocations,
         removeReligionLocation: removeReligionLocation,
 
         // Character assignment
