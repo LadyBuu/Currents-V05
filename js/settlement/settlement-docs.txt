@@ -2296,7 +2296,7 @@ and have its own Settlement Rank.
 Existing legacy records attached to priorities 1–3 are not automatically
 deleted or migrated. They remain readable, but ensureSettlement reports
 them as ineligible and Location type changes cannot create additional
-invalid records. Move the record to an eligible location or remove it
+invalid records. Change the Location Type to an eligible priority or remove the record
 through the normal Settlement lifecycle before relying on it as valid.
 
 ================================================================================
