@@ -102,6 +102,47 @@
         return window.getCurrentYear();
     }
 
+    // A Settlement is attached to an inhabited place, not an
+    // administrative container. Location priorities 4 and 5 represent
+    // towns/villages and localities/compounds respectively.
+    function _validateSettlementLocation(locationId) {
+        var queries = window.LocationQueries;
+        if (!queries ||
+            typeof queries.getPlace !== 'function' ||
+            typeof queries.getLocationTypePriority !== 'function') {
+            return {
+                success: false,
+                code: 'LOCATION_VALIDATION_UNAVAILABLE',
+                details: { locationId: locationId }
+            };
+        }
+
+        var place = queries.getPlace(locationId);
+        if (!place) {
+            return {
+                success: false,
+                code: 'LOCATION_NOT_FOUND',
+                details: { locationId: locationId }
+            };
+        }
+
+        var priority = queries.getLocationTypePriority(place.typeId);
+        if (priority !== 4 && priority !== 5) {
+            return {
+                success: false,
+                code: 'LOCATION_TYPE_NOT_SETTLEMENT_ELIGIBLE',
+                details: {
+                    locationId: locationId,
+                    typeId: place.typeId || null,
+                    priority: priority,
+                    allowedPriorities: [4, 5]
+                }
+            };
+        }
+
+        return { success: true, place: place };
+    }
+
     function _getLowestRank() {
         var ranks = _getRankRules().getAllRanks();
         if (!ranks || ranks.length === 0) {
@@ -182,9 +223,9 @@
             return _failure('INVALID_LOCATION_ID', { locationId: locationId });
         }
 
-        var place = _getPlaceQueries().getPlaceById(locationId);
-        if (!place) {
-            return _failure('LOCATION_NOT_FOUND', { locationId: locationId });
+        var locationCheck = _validateSettlementLocation(locationId);
+        if (!locationCheck.success) {
+            return _failure(locationCheck.code, locationCheck.details);
         }
 
         var existing = _getSettlementQueries().getSettlementData(locationId);
@@ -216,6 +257,29 @@
     }
 
     function ensureSettlement(locationId, overrides) {
+        if (typeof locationId !== 'string' || locationId.length === 0) {
+            return {
+                success: false,
+                created: false,
+                record: null,
+                event: null,
+                code: 'INVALID_LOCATION_ID',
+                details: { locationId: locationId }
+            };
+        }
+
+        var locationCheck = _validateSettlementLocation(locationId);
+        if (!locationCheck.success) {
+            return {
+                success: false,
+                created: false,
+                record: null,
+                event: null,
+                code: locationCheck.code,
+                details: locationCheck.details
+            };
+        }
+
         var existing = _getSettlementQueries().getSettlementData(locationId);
         if (existing) {
             return { success: true, created: false, record: existing, event: null };
