@@ -818,6 +818,21 @@
         return out;
     }
 
+    function getPositionsByRankRequirement(rankId) {
+        if (!rankId) return [];
+        var out = [];
+        var depts = State.getAllDepartments();
+        for (var i = 0; i < depts.length; i++) {
+            var positions = State.getPositionsByDepartmentId(depts[i].id);
+            for (var p = 0; p < positions.length; p++) {
+                if (positions[p].requiredRankId === rankId) {
+                    out.push(_projectPosition(depts[i].id, positions[p]));
+                }
+            }
+        }
+        return out;
+    }
+
     function getPositionsRequiringRole() {
         var out = [];
         var depts = State.getAllDepartments();
@@ -978,6 +993,7 @@
         getLargestDepartments: getLargestDepartments,
         getMostActiveDepartments: getMostActiveDepartments,
         getPositionsByRoleRequirement: getPositionsByRoleRequirement,
+        getPositionsByRankRequirement: getPositionsByRankRequirement,
         getPositionsRequiringRole: getPositionsRequiringRole,
 
         // Government types
