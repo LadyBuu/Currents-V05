@@ -109,10 +109,10 @@
             '<textarea id="newDeptDescription" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);"></textarea>' +
             '</div>' +
             '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Jurisdiction Root</label>' +
             '<select id="newDeptLocation" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
             locationOptions + '</select>' +
-            '<small style="font-size:0.55rem;color:var(--dim);">Selecting a parent location affects all sub-locations</small>' +
+            '<small style="font-size:0.55rem;color:var(--dim);">This department applies to the selected location and all of its sub-locations.</small>' +
             '</div>' +
             '<div class="form-group" style="margin-bottom:12px;">' +
             '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Parent Department</label>' +
@@ -187,6 +187,7 @@
             '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
             '<select id="editDeptLocation" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
             locationOptions + '</select>' +
+            '<small style="font-size:0.55rem;color:var(--dim);">This department applies to the selected location and all of its sub-locations.</small>' +
             '</div>' +
             '<div class="form-group" style="margin-bottom:12px;">' +
             '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Parent Department</label>' +
@@ -315,7 +316,7 @@
             '<div>' +
             '<div style="font-size:0.9rem;font-weight:bold;">' + _escapeHtml(vm.name) + '</div>' +
             '<div style="font-size:0.6rem;color:var(--dim);">' +
-            'Location: ' + _escapeHtml(vm.locationLabel) +
+            'Jurisdiction: ' + _escapeHtml(vm.locationLabel) +
             ' · Parent: ' + _escapeHtml(vm.parentLabel) +
             '</div>' +
             '</div>' +
