@@ -59,76 +59,24 @@
  *     at its call site, not by hiding the failure inside the commit
  *     helper.
  *
- * CANDIDATE-WRITE ORDERING:
- *   The candidate is written to the in-memory canonical store BEFORE
- *   persist runs. Sequence, step by step:
+ * ATOMIC IN-MEMORY COMMIT:
  *
- *     Step 1  store[locationId] = candidate   (in-memory write)
- *     Step 2  state.rebuildIndexes()          (in-memory index update)
- *     Step 3  saveMasterData()                (durable write)
- *     Step 4  state.publish(event)            (subscriber notification)
+ *   The candidate is installed and indexes are rebuilt before persistence,
+ *   but the previous canonical record is retained until persistence succeeds.
+ *   If index rebuilding or saveMasterData fails, the previous record is
+ *   restored (or the new key is removed), indexes are rebuilt from that
+ *   restored store, and the original error is rethrown. Subscribers are not
+ *   notified on failure.
  *
- *   If step 3 fails, steps 1 and 2 have already happened. The in-memory
- *   canonical store holds the new candidate. SettlementState indexes
- *   point at it. But storage still holds the OLD record. Storage and
- *   memory are now out of sync.
+ *   This keeps the in-memory canonical state aligned with the last durable
+ *   state for ordinary settlement commits. A rollback-index failure is logged
+ *   separately; the original commit error remains the one propagated.
  *
- *   Step 4 does NOT run: subscribers are not told the world changed.
- *
- *   This ordering is deliberate:
- *
- *   - Writing the candidate before persist lets rebuildIndexes run
- *     against the new state, which is the state the caller asked for.
- *     Rebuild-after-persist would require running rebuild twice on
- *     success (once to make the caller's in-flight reads coherent,
- *     once to make subscribers coherent) or would leave a window in
- *     which a read between write and rebuild saw an inconsistent
- *     index.
- *
- *   - Throwing on persist failure (rather than rolling back step 1)
- *     means the caller knows the write was not durable and is
- *     responsible for recovery. Rolling back would require cloning the
- *     previous record before every commit — expensive and error-prone,
- *     and the failure case is rare.
- *
- *   CONSEQUENCES FOR CALLERS:
- *
- *     On a persist throw, the caller MUST NOT treat the operation as
- *     failed-if-it-returned. The command reports an exception, but the
- *     in-memory state has moved. Correct recovery is one of:
- *
- *       - Reload from storage (reloadMasterData / forceReloadData).
- *         This re-installs the pre-failure record and rebuilds indexes.
- *
- *       - Retry the persist (via a subsequent commit or a direct
- *         saveMasterData call). This makes the in-memory state durable.
- *
- *       - Explicitly re-commit the previous candidate (via another
- *         commit call with the pre-failure record). This is the caller
- *         choosing to roll back.
- *
- *     A caller that catches the exception, logs it, and continues
- *     without doing one of these three will leave the tab in a state
- *     where its in-memory record and its storage record disagree. A
- *     subsequent cross-tab reload would silently revert the in-memory
- *     record to the pre-failure state — an unexpected outcome that
- *     looks like data loss.
- *
- *     Most callers (the annual processor, the modal command wrappers)
- *     let the throw propagate to a boundary that reports a toast and
- *     stops. That is acceptable for interactive flows because the tab
- *     is not advanced past the failure. Batch callers (the annual
- *     processor's processAllSettlementsAnnual) catch per-settlement
- *     failures and continue; the divengence applies to that specific
- *     settlement only, and the next successful save (from another
- *     settlement, or from a retry) rewrites the full store including
- *     the failed settlement's in-memory candidate — so the "ahead of
- *     storage" state heals on the next successful commit.
- *
- *   This is documented here because it is a design consequence, not an
- *   accident. A reader who sees "candidate is written, then persist is
- *   attempted" is right to ask what happens on failure, and the answer
- *   is above.
+ *   Coordinated location deletion is a special batch boundary: LocationCommands
+ *   removes settlement records with persist:false, removes the corresponding
+ *   locations, and then persists the combined master data through its own
+ *   caller-owned persist() contract. That path intentionally defers settlement
+ *   notification until the location records have also been removed.
  *
  * PERSIST FAILURE CONTRACT:
  *
@@ -167,13 +115,19 @@
  *
  *     - The published event is NOT dispatched when persistence fails.
  *       Subscribers must not be told the world changed when it was not
- *       durably written. The candidate was already written to the
- *       in-memory canonical store, so the in-memory state is
- *       inconsistent with storage until the next successful commit. See
- *       CANDIDATE-WRITE ORDERING above for the recovery contract.
+ *       durably written. The previous canonical record is restored and
+ *       indexes are rebuilt before the error is propagated.
  *
  * =============================================================================
  * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Settlement commits now restore the previous canonical record and
+ *       rebuild indexes when persistence or the initial index rebuild fails.
+ *       This prevents ordinary settlement commits from leaving memory ahead
+ *       of durable storage.
+ *     - Multi-record removal also restores deleted records when its own
+ *       persistence boundary fails.
+ *     - No public signature change.
  *   Current revision:
  *     - Header CANDIDATE-WRITE ORDERING section added. Documents that
  *       the candidate is written to the in-memory store BEFORE persist
@@ -311,23 +265,37 @@
             );
         }
 
-        // --- 1. Write candidate to canonical store ---
-        // In-memory write happens BEFORE persist. See CANDIDATE-WRITE
-        // ORDERING in the module header for the failure semantics.
+        // Keep the previous record so a failed rebuild or persist can
+        // restore canonical memory to the last durable state.
         var store = _getCanonicalStore();
-        store[locationId] = candidate;
+        var hadPrevious = Object.prototype.hasOwnProperty.call(store, locationId);
+        var previous = hadPrevious ? store[locationId] : null;
 
-        // --- 2. Rebuild indexes ---
-        _getState().rebuildIndexes();
+        try {
+            // --- 1. Install candidate and rebuild indexes ---
+            store[locationId] = candidate;
+            _getState().rebuildIndexes();
 
-        // --- 3. Persist once ---
-        // Throws on failure. The published event is NOT dispatched after a
-        // failed persist; subscribers must not see a change that was not
-        // durably written. The candidate has already been written to the
-        // in-memory canonical store at this point, so the caller is
-        // responsible for reloading or retrying after a thrown persist
-        // error. See CANDIDATE-WRITE ORDERING in the module header.
-        _saveMasterData();
+            // --- 2. Persist once ---
+            _saveMasterData();
+        } catch (commitError) {
+            if (hadPrevious) {
+                store[locationId] = previous;
+            } else {
+                delete store[locationId];
+            }
+            try {
+                _getState().rebuildIndexes();
+            } catch (rollbackError) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'SettlementCommandCommit: index rebuild failed during rollback:',
+                        rollbackError
+                    );
+                }
+            }
+            throw commitError;
+        }
 
         // --- 4. Publish once ---
         var publishedEvent = {
@@ -381,6 +349,7 @@
         var store = _getCanonicalStore();
         var seen = Object.create(null);
         var removed = [];
+        var removedRecords = Object.create(null);
 
         for (var i = 0; i < locationIds.length; i++) {
             var id = locationIds[i];
@@ -389,6 +358,7 @@
             if (!Object.prototype.hasOwnProperty.call(store, id) || !store[id]) {
                 continue;
             }
+            removedRecords[id] = store[id];
             delete store[id];
             removed.push(id);
         }
@@ -397,10 +367,35 @@
             return { removedLocationIds: [], event: null };
         }
 
-        _getState().rebuildIndexes();
+        try {
+            _getState().rebuildIndexes();
 
-        if (options.persist !== false) {
-            _saveMasterData();
+            if (options.persist !== false) {
+                _saveMasterData();
+            }
+        } catch (removeError) {
+            // Standalone removal is atomic with respect to memory and
+            // persistence. The coordinated location-delete path uses
+            // persist:false and is rolled back by its owning batch boundary
+            // if that boundary is explicitly retried/reloaded.
+            for (var restoreIndex = 0; restoreIndex < removed.length; restoreIndex++) {
+                var restoreId = removed[restoreIndex];
+                // The records are captured below before deletion.
+                if (removedRecords[restoreId]) {
+                    store[restoreId] = removedRecords[restoreId];
+                }
+            }
+            try {
+                _getState().rebuildIndexes();
+            } catch (rollbackError) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'SettlementCommandCommit: index rebuild failed during removal rollback:',
+                        rollbackError
+                    );
+                }
+            }
+            throw removeError;
         }
 
         var publishedEvent = {};
