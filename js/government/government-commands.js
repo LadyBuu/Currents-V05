@@ -136,6 +136,8 @@
     function createDepartment(data) {
         var v = Rules.validateDepartment(data, false);
         if (!v.valid) return _fail(v.reason, C.CODES.VALIDATION);
+        var referenceCheck = _validateDepartmentReferences(data, null);
+        if (!referenceCheck.valid) return _fail(referenceCheck.reason, C.CODES.VALIDATION);
 
         var dept = {
             id: window.generateId('govdept'),
@@ -172,6 +174,8 @@
 
         var v = Rules.validateDepartment(updates, true, departmentId);
         if (!v.valid) return _fail(v.reason, C.CODES.VALIDATION);
+        var referenceCheck = _validateDepartmentReferences(updates, dept);
+        if (!referenceCheck.valid) return _fail(referenceCheck.reason, C.CODES.VALIDATION);
 
         State._updateDepartment(departmentId, updates, C.ALLOWED_DEPARTMENT_FIELDS);
         _commit(C.EVENTS.DEPARTMENT_UPDATED, { departmentId: departmentId });
@@ -209,14 +213,97 @@
         return _ok({ id: departmentId });
     }
 
-    function _deleteDepartmentCascadeInternal(departmentId) {
+    function _deleteDepartmentCascadeInternal(departmentId, visited) {
+        visited = visited || new Set();
+        if (!departmentId || visited.has(departmentId)) return;
+        visited.add(departmentId);
         var children = State._getDepartmentsByParentCanonical(departmentId);
-        // Copy the array — _removeDepartment mutates indexes.
+        // Copy the array because removal mutates the hierarchy indexes.
         var snapshot = children.slice();
         for (var i = 0; i < snapshot.length; i++) {
-            _deleteDepartmentCascadeInternal(snapshot[i].id);
+            _deleteDepartmentCascadeInternal(snapshot[i].id, visited);
         }
         State._removeDepartment(departmentId);
+    }
+
+    function _validateDepartmentReferences(data, existingDepartment) {
+        var locationId = data.locationId !== undefined
+            ? data.locationId
+            : existingDepartment && existingDepartment.locationId;
+        if (!locationId || !_LocationQueries.getPlaceSummary(locationId)) {
+            return { valid: false, reason: 'Department location does not exist' };
+        }
+
+        var parentId = data.parentDepartmentId !== undefined
+            ? (data.parentDepartmentId || null)
+            : existingDepartment && existingDepartment.parentDepartmentId;
+        if (!parentId) return { valid: true };
+        if (existingDepartment && parentId === existingDepartment.id) {
+            return { valid: false, reason: 'Department cannot be its own parent' };
+        }
+
+        var parent = State._getDepartmentCanonical(parentId);
+        if (!parent) {
+            return { valid: false, reason: 'Parent department does not exist' };
+        }
+
+        // Walk upward from the proposed parent. Reaching the edited
+        // department would make it a descendant of itself. A visited set
+        // also rejects already-corrupt parent chains instead of looping.
+        var visited = new Set();
+        var current = parent;
+        while (current) {
+            if (visited.has(current.id)) {
+                return { valid: false, reason: 'Existing department hierarchy contains a cycle' };
+            }
+            visited.add(current.id);
+            if (existingDepartment && current.id === existingDepartment.id) {
+                return { valid: false, reason: 'Cannot move a department beneath one of its descendants' };
+            }
+            if (!current.parentDepartmentId) break;
+            current = State._getDepartmentCanonical(current.parentDepartmentId);
+            if (!current) {
+                return { valid: false, reason: 'Department hierarchy references a missing parent' };
+            }
+        }
+        return { valid: true };
+    }
+
+    /**
+     * Remove departments tied to deleted locations, including their
+     * descendants so no child department is left with a dangling parent.
+     * Government history is deliberately retained as an audit record.
+     */
+    function reconcileDeletedLocations(locationIds) {
+        if (!Array.isArray(locationIds) || locationIds.length === 0) {
+            return _ok({ removedDepartmentIds: [] });
+        }
+        var locationSet = new Set(locationIds);
+        var departments = State._getAllDepartmentsCanonical();
+        var roots = [];
+        for (var i = 0; i < departments.length; i++) {
+            if (locationSet.has(departments[i].locationId)) roots.push(departments[i].id);
+        }
+        var removed = new Set();
+        for (var r = 0; r < roots.length; r++) {
+            _collectDepartmentSubtree(roots[r], removed);
+        }
+        if (removed.size === 0) return _ok({ removedDepartmentIds: [] });
+        removed.forEach(function(id) { State._removeDepartment(id); });
+        _commit(C.EVENTS.DEPARTMENT_DELETED, {
+            departmentIds: Array.from(removed),
+            reason: 'location_deleted'
+        });
+        return _ok({ removedDepartmentIds: Array.from(removed) });
+    }
+
+    function _collectDepartmentSubtree(departmentId, collected) {
+        if (!departmentId || collected.has(departmentId)) return;
+        collected.add(departmentId);
+        var children = State._getDepartmentsByParentCanonical(departmentId).slice();
+        for (var i = 0; i < children.length; i++) {
+            _collectDepartmentSubtree(children[i].id, collected);
+        }
     }
 
     // ---- Position commands ---------------------------------------------------
@@ -760,6 +847,12 @@
     }
 
     function assignGovernmentToPlace(placeId, govTypeId, govStyle) {
+        if (!_LocationQueries.getPlaceSummary(placeId)) {
+            return _fail('Location not found', C.CODES.NOT_FOUND);
+        }
+        if (govTypeId && !State._getGovernmentTypeCanonical(govTypeId)) {
+            return _fail('Government type not found', C.CODES.NOT_FOUND);
+        }
         var result = _LocationCommands.assignGovernment(placeId, govTypeId, govStyle);
         var wrapped = _wrapLocationResult(result);
 
@@ -836,6 +929,7 @@
         createDepartment: createDepartment,
         updateDepartment: updateDepartment,
         deleteDepartment: deleteDepartment,
+        reconcileDeletedLocations: reconcileDeletedLocations,
 
         // Positions
         addPosition: addPosition,
