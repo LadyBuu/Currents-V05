@@ -175,9 +175,8 @@
 (function () {
     'use strict';
 
-    // Feature gate: set true when ReligionCommands.updatePlaceOfWorship
-    // stops being a stub.
-    var PLACES_EDITABLE = false;
+    // Place records now have canonical storage and real CRUD.
+    var PLACES_EDITABLE = true;
 
     // =========================================================================
     // 1. CONSTANTS + DEPENDENCY WRAPPERS
@@ -417,14 +416,6 @@
                   : '') +
               '</div>' +
             '</div>' +
-
-            ((!PLACES_EDITABLE && places.length > 0)
-              ? '<div class="rt-place-partial-note">' +
-                  'Place records are not fully persisted yet — editing is ' +
-                  'disabled until the canonical place store lands. ' +
-                  'Adding and removing places works.' +
-                '</div>'
-              : '') +
 
             '<div class="rt-tab__filters">' +
               '<div class="rt-search">' +
@@ -732,8 +723,7 @@
                     // wins here.
                     if (!PLACES_EDITABLE) {
                         _showToast(
-                            'Editing places is disabled until the canonical ' +
-                            'place store lands.',
+                            'Editing places is currently unavailable.',
                             'info'
                         );
                         break;
