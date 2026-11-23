@@ -838,6 +838,42 @@
             governmentCleanup = governmentResult.data || governmentCleanup;
         }
 
+        // Religion associations are anchored to locations. Reconcile them
+        // before deleting the location graph, and fail closed if the
+        // Religion command boundary is unavailable while references exist.
+        var religionStore = window.masterData && window.masterData.data
+            ? window.masterData.data.religions
+            : [];
+        var hasReligionLocationReferences = Array.isArray(religionStore) &&
+            religionStore.some(function (religion) {
+                return religion && Array.isArray(religion.locations) &&
+                    religion.locations.some(function (locationId) {
+                        return Object.prototype.hasOwnProperty.call(toRemove, locationId);
+                    });
+            });
+        if (hasReligionLocationReferences &&
+            (!window.ReligionCommands ||
+             typeof window.ReligionCommands.reconcileDeletedLocations !== 'function')) {
+            return _fail(
+                'deletePlace: ReligionCommands.reconcileDeletedLocations is required ' +
+                'to safely delete locations with religion associations'
+            );
+        }
+        var religionCleanup = { updatedReligionIds: [], removedAssociations: 0 };
+        if (window.ReligionCommands &&
+            typeof window.ReligionCommands.reconcileDeletedLocations === 'function') {
+            var religionResult = window.ReligionCommands.reconcileDeletedLocations(
+                Object.keys(toRemove)
+            );
+            if (!religionResult || religionResult.success !== true) {
+                return _fail(
+                    'deletePlace: religion cleanup failed: ' +
+                    ((religionResult && religionResult.reason) || 'unknown error')
+                );
+            }
+            religionCleanup = religionResult.data || religionCleanup;
+        }
+
         var characterCleanup = _cleanupCharactersAtPlaces(toRemove);
         var householdCleanup = _cleanupHouseholdsAtPlaces(toRemove);
 
@@ -861,6 +897,7 @@
             removedCount: removed.length,
             settlementsRemoved: settlementCleanup.removedLocationIds.length,
             governmentDepartmentsRemoved: governmentCleanup.removedDepartmentIds.length,
+            religionAssociationsRemoved: religionCleanup.removedAssociations,
             characterReconciled: characterCleanup.reconciled,
             characterFailed: characterCleanup.failed,
             householdCleared: householdCleanup.clearedCount,
@@ -873,6 +910,7 @@
             removedCount: removed.length,
             settlementsRemoved: settlementCleanup.removedLocationIds.length,
             governmentDepartmentsRemoved: governmentCleanup.removedDepartmentIds.length,
+            religionAssociationsRemoved: religionCleanup.removedAssociations,
             charactersReconciled: characterCleanup.reconciled,
             charactersFailed: characterCleanup.failed,
             charactersFailedIds: characterCleanup.failedIds,
