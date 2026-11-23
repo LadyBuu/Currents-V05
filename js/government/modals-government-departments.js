@@ -184,7 +184,7 @@
             '<textarea id="editDeptDescription" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' + _escapeHtml(dept.description) + '</textarea>' +
             '</div>' +
             '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
+            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Jurisdiction Root</label>' +
             '<select id="editDeptLocation" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
             locationOptions + '</select>' +
             '<small style="font-size:0.55rem;color:var(--dim);">This department applies to the selected location and all of its sub-locations.</small>' +
