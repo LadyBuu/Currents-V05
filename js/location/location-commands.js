@@ -802,6 +802,25 @@
             }
         }
 
+        // Government departments are anchored to locations. Remove affected
+        // departments and their dependent child departments before deleting
+        // the locations; keep governmentHistory as an audit trail.
+        var governmentCleanup = { removedDepartmentIds: [] };
+        if (window.GovernmentCommands &&
+            typeof window.GovernmentCommands.reconcileDeletedLocations === 'function') {
+            var governmentLocationIds = Object.keys(toRemove);
+            var governmentResult = window.GovernmentCommands.reconcileDeletedLocations(
+                governmentLocationIds
+            );
+            if (!governmentResult || governmentResult.success !== true) {
+                return _fail(
+                    'deletePlace: government cleanup failed: ' +
+                    ((governmentResult && governmentResult.reason) || 'unknown error')
+                );
+            }
+            governmentCleanup = governmentResult.data || governmentCleanup;
+        }
+
         var characterCleanup = _cleanupCharactersAtPlaces(toRemove);
         var householdCleanup = _cleanupHouseholdsAtPlaces(toRemove);
 
@@ -824,6 +843,7 @@
             mode: mode,
             removedCount: removed.length,
             settlementsRemoved: settlementCleanup.removedLocationIds.length,
+            governmentDepartmentsRemoved: governmentCleanup.removedDepartmentIds.length,
             characterReconciled: characterCleanup.reconciled,
             characterFailed: characterCleanup.failed,
             householdCleared: householdCleanup.clearedCount,
@@ -835,6 +855,7 @@
             mode: mode,
             removedCount: removed.length,
             settlementsRemoved: settlementCleanup.removedLocationIds.length,
+            governmentDepartmentsRemoved: governmentCleanup.removedDepartmentIds.length,
             charactersReconciled: characterCleanup.reconciled,
             charactersFailed: characterCleanup.failed,
             charactersFailedIds: characterCleanup.failedIds,
