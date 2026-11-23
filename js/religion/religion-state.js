@@ -532,14 +532,13 @@
     }
 
     function getPlacesOfWorshipByReligion(religionId) {
-        if (!religionId) return [];
-        var religion = _indexes.byId.get(religionId);
-        if (!religion || !Array.isArray(religion.placesOfWorship)) return [];
+        if (!religionId || !_indexes.byId.has(religionId)) return [];
         var result = [];
-        for (var i = 0; i < religion.placesOfWorship.length; i++) {
-            var place = _indexes.placesOfWorshipById.get(religion.placesOfWorship[i]);
-            if (place) result.push(_projectWorshipPlace(place));
-        }
+        _indexes.placesOfWorshipById.forEach(function (place) {
+            if (place && place.religionId === religionId) {
+                result.push(_projectWorshipPlace(place));
+            }
+        });
         return result;
     }
 
