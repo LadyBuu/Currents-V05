@@ -806,9 +806,24 @@
         // departments and their dependent child departments before deleting
         // the locations; keep governmentHistory as an audit trail.
         var governmentCleanup = { removedDepartmentIds: [] };
+        var governmentLocationIds = Object.keys(toRemove);
+        var governmentDepartments = window.masterData && window.masterData.data
+            ? window.masterData.data.governmentDepartments
+            : [];
+        var hasGovernmentReferences = Array.isArray(governmentDepartments) &&
+            governmentDepartments.some(function(department) {
+                return department && toRemove[department.locationId];
+            });
+        if (hasGovernmentReferences &&
+            (!window.GovernmentCommands ||
+             typeof window.GovernmentCommands.reconcileDeletedLocations !== 'function')) {
+            return _fail(
+                'deletePlace: GovernmentCommands.reconcileDeletedLocations is required ' +
+                'to safely delete locations with government departments'
+            );
+        }
         if (window.GovernmentCommands &&
             typeof window.GovernmentCommands.reconcileDeletedLocations === 'function') {
-            var governmentLocationIds = Object.keys(toRemove);
             var governmentResult = window.GovernmentCommands.reconcileDeletedLocations(
                 governmentLocationIds
             );
@@ -1653,6 +1668,18 @@
         var place = LS._getPlaceCanonical(placeId);
         if (!place) {
             return _fail('assignGovernment: place not found: ' + placeId);
+        }
+        if (governmentTypeId) {
+            var governmentState = window.GovernmentState;
+            if (!governmentState ||
+                typeof governmentState.getGovernmentTypeById !== 'function') {
+                return _fail(
+                    'assignGovernment: GovernmentState is required to validate a government type'
+                );
+            }
+            if (!governmentState.getGovernmentTypeById(governmentTypeId)) {
+                return _fail('assignGovernment: government type not found: ' + governmentTypeId);
+            }
         }
 
         place.governmentTypeId = governmentTypeId || null;
