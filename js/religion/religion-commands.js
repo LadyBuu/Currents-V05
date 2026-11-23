@@ -1521,8 +1521,8 @@
     // =========================================================================
     // 13. PLACES OF WORSHIP
     // =========================================================================
-    // Partial: place records are not canonically stored. ADR Decision 2
-    // resolves this in a future phase. Operations documented as partial.
+    // Full records are stored in masterData.data.placesOfWorship.
+    // ReligionState owns the collection and keeps religion ID links in sync.
 
     function createPlaceOfWorship(data) {
         if (!data || typeof data !== 'object' ||
@@ -1533,11 +1533,43 @@
         var religion = _state()._getReligionCanonical(data.religionId);
         if (!religion) return _deny('Religion not found');
 
-        if (data.locationId && !_getPlaceById(data.locationId)) {
+        if (data.locationId !== undefined && data.locationId !== null &&
+            (typeof data.locationId !== 'string' || !_getPlaceById(data.locationId))) {
             return _deny('Place of worship location not found');
         }
-        if (data.headClergyId && !_getCharacterById(data.headClergyId)) {
+        if (data.headClergyId !== undefined && data.headClergyId !== null &&
+            (typeof data.headClergyId !== 'string' || !_getCharacterById(data.headClergyId))) {
             return _deny('Head clergy character not found');
+        }
+        if (data.type !== undefined && typeof data.type !== 'string') {
+            return _deny('Place type must be a string');
+        }
+        if (data.locationName !== undefined && typeof data.locationName !== 'string') {
+            return _deny('Location name must be a string');
+        }
+        if (data.ownerName !== undefined && typeof data.ownerName !== 'string') {
+            return _deny('Owner name must be a string');
+        }
+        if (data.notes !== undefined && typeof data.notes !== 'string') {
+            return _deny('Notes must be a string');
+        }
+        if (data.producesIncome !== undefined && typeof data.producesIncome !== 'boolean') {
+            return _deny('producesIncome must be a boolean');
+        }
+        if (data.isActive !== undefined && typeof data.isActive !== 'boolean') {
+            return _deny('isActive must be a boolean');
+        }
+        if (data.foundedYear !== undefined &&
+            (typeof data.foundedYear !== 'number' ||
+             !Number.isFinite(data.foundedYear) ||
+             !Number.isInteger(data.foundedYear))) {
+            return _deny('Founded year must be a finite integer');
+        }
+        if (data.features !== undefined && !Array.isArray(data.features)) {
+            return _deny('Features must be an array');
+        }
+        if (data.history !== undefined && !Array.isArray(data.history)) {
+            return _deny('History must be an array');
         }
         if (data.ownerType !== undefined && typeof data.ownerType !== 'string') {
             return _deny('Owner type must be a string');
