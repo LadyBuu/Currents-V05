@@ -1251,17 +1251,34 @@
             updatedIds.push(religion.id);
         }
 
-        if (updatedIds.length > 0) {
+        var worshipPlacesUpdated = 0;
+        try {
+            worshipPlacesUpdated = _state()._clearDeletedWorshipPlaceLocations(
+                Object.keys(removed)
+            );
+        } catch (placeError) {
+            return _deny(
+                'Worship-place location reconciliation failed: ' +
+                (placeError && placeError.message ? placeError.message : String(placeError))
+            );
+        }
+
+        if (updatedIds.length > 0 || worshipPlacesUpdated > 0) {
             _commit('religionLocationsReconciled', {
                 locationIds: Object.keys(removed),
                 religionIds: updatedIds,
-                removedAssociations: removedCount
+                removedAssociations: removedCount,
+                worshipPlacesUnassigned: worshipPlacesUpdated
             });
         }
 
         return {
             success: true,
-            data: { updatedReligionIds: updatedIds, removedAssociations: removedCount }
+            data: {
+                updatedReligionIds: updatedIds,
+                removedAssociations: removedCount,
+                worshipPlacesUnassigned: worshipPlacesUpdated
+            }
         };
     }
 
