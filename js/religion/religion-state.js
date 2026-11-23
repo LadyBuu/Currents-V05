@@ -517,10 +517,18 @@
         return rec ? _clone(rec) : null;
     }
 
+    function _projectWorshipPlace(place) {
+        if (!place) return null;
+        var projected = _clone(place);
+        var religion = place.religionId ? _indexes.byId.get(place.religionId) : null;
+        if (religion) projected.religionName = religion.name;
+        return projected;
+    }
+
     function getPlaceOfWorshipById(placeId) {
         if (!placeId) return null;
         var rec = _indexes.placesOfWorshipById.get(placeId);
-        return rec ? _clone(rec) : null;
+        return rec ? _projectWorshipPlace(rec) : null;
     }
 
     function getPlacesOfWorshipByReligion(religionId) {
@@ -530,7 +538,7 @@
         var result = [];
         for (var i = 0; i < religion.placesOfWorship.length; i++) {
             var place = _indexes.placesOfWorshipById.get(religion.placesOfWorship[i]);
-            if (place) result.push(_clone(place));
+            if (place) result.push(_projectWorshipPlace(place));
         }
         return result;
     }
@@ -539,7 +547,7 @@
         if (!locationId) return [];
         var result = [];
         _indexes.placesOfWorshipById.forEach(function (place) {
-            if (place && place.locationId === locationId) result.push(_clone(place));
+            if (place && place.locationId === locationId) result.push(_projectWorshipPlace(place));
         });
         return result;
     }
