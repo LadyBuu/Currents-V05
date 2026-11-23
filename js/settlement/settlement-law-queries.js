@@ -67,8 +67,64 @@
     function _getLawsArray(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
-        if (!settlement.civilLaws) return [];
-        return settlement.civilLaws;
+
+        var civilLaws = Array.isArray(settlement.civilLaws)
+            ? settlement.civilLaws.slice()
+            : [];
+
+        if (settlement.useReligiousLawsAsCivil !== true) {
+            return civilLaws;
+        }
+
+        // The applicable religion is the dominant religion at this exact
+        // settlement location. Do not inherit a parent's religion or use
+        // a settlement-subtree aggregate: civil jurisdiction is local.
+        var religionQueries = window.ReligionQueries;
+        if (!religionQueries ||
+            typeof religionQueries.getDominantReligion !== 'function' ||
+            typeof religionQueries.getLawsByReligion !== 'function') {
+            return null;
+        }
+
+        var dominantReligion = religionQueries.getDominantReligion(locationId);
+        if (!dominantReligion || !dominantReligion.id) {
+            return civilLaws;
+        }
+
+        var religiousLaws = religionQueries.getLawsByReligion(dominantReligion.id);
+        if (!Array.isArray(religiousLaws)) return null;
+
+        // Civil laws take precedence when an id collision exists. Religious
+        // laws are projected, never copied into canonical settlement storage.
+        var seenIds = Object.create(null);
+        for (var i = 0; i < civilLaws.length; i++) {
+            if (civilLaws[i] && civilLaws[i].id) seenIds[civilLaws[i].id] = true;
+        }
+
+        for (var j = 0; j < religiousLaws.length; j++) {
+            var law = religiousLaws[j];
+            if (!law || !law.id || seenIds[law.id]) continue;
+            var projected = {};
+            for (var key in law) {
+                if (Object.prototype.hasOwnProperty.call(law, key)) {
+                    projected[key] = law[key];
+                }
+            }
+            projected.source = 'religion';
+            projected.isReligiousLaw = true;
+            projected.religionId = dominantReligion.id;
+            civilLaws.push(projected);
+            seenIds[law.id] = true;
+        }
+
+        for (var k = 0; k < civilLaws.length; k++) {
+            if (civilLaws[k] && civilLaws[k].source === undefined) {
+                civilLaws[k].source = 'settlement';
+                civilLaws[k].isReligiousLaw = false;
+            }
+        }
+
+        return civilLaws;
     }
 
     function _isEnforced(law) {
