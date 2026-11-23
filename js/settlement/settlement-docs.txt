@@ -599,7 +599,18 @@ rules module.
       - When useReligiousLawsAsCivil is enabled, settlement-law-queries.js
         composes laws from stateReligionId only. It never infers a state
         religion from the dominant religion. No designation means civil
-        laws remain settlement-only.
+        laws remain settlement-only. Recognition and religious legal
+        jurisdiction are local to this settlement; neither is inherited
+        from a parent location.
+      - Religious population, unity and dominant-faith statistics aggregate
+        the settlement location and every descendant exactly once. Followers
+        are assigned by resolved current location, not religion.locations,
+        worship-place locations or state-religion recognition. Parent and
+        child settlement reports overlap by design; do not sum them as if
+        they were disjoint populations.
+      - If the location subtree cannot be resolved, religious aggregate
+        queries return null. They must not silently fall back to own-location
+        counts and present them as subtree totals.
 
   js/settlement/settlement-law-commands.js
     Owns window.SettlementLawCommands
