@@ -189,10 +189,12 @@
     function _migrateLegacyWorshipPlaces(religions) {
         var places = _getCanonicalPlacesOfWorshipArray();
         if (places === null) {
-            throw new Error(
-                'ReligionState: masterData.data.placesOfWorship is missing. ' +
-                'Run storage-schema normalization before ReligionState hydration.'
-            );
+            if (!window.masterData || !window.masterData.data) {
+                throw new Error('ReligionState: masterData.data is unavailable during worship-place migration.');
+            }
+            places = [];
+            _setCanonicalPlacesOfWorshipArray(places);
+            _markDirty();
         }
 
         var byId = Object.create(null);
@@ -398,12 +400,6 @@
             }
             seenWorshipPlaceIds[worshipPlace.id] = true;
             _indexes.placesOfWorshipById.set(worshipPlace.id, worshipPlace);
-        }
-
-        _buildFollowersIndex();
-
-        return true;
-    }
         }
 
         _buildFollowersIndex();
