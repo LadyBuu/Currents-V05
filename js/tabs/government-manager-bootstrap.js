@@ -808,6 +808,31 @@
     }
 
     // =========================================================================
+    // LOCATION CHANGE SUBSCRIPTIONS
+    // =========================================================================
+
+    var _locationEventsBound = false;
+
+    function _bindLocationEvents() {
+        if (_locationEventsBound || typeof window.addEventListener !== 'function') return;
+        _locationEventsBound = true;
+
+        function refreshAfterLocationChange() {
+            var ui = _requireUIState();
+            var selectedId = ui.getSelectedLocationId();
+            if (selectedId && window.LocationQueries &&
+                typeof window.LocationQueries.getPlaceSummary === 'function' &&
+                !window.LocationQueries.getPlaceSummary(selectedId)) {
+                ui.setSelectedLocationId(_pickInitialLocation());
+            }
+            _reinitAll();
+        }
+
+        window.addEventListener('placeUpdated', refreshAfterLocationChange);
+        window.addEventListener('placeDeleted', refreshAfterLocationChange);
+    }
+
+    // =========================================================================
     // 10. INIT
     // =========================================================================
 
@@ -910,6 +935,7 @@
         if (initialId) uiState.setSelectedLocationId(initialId);
 
         _setupSidebar();
+        _bindLocationEvents();
 
         // --- Initial active tab + render ---
         // The active tab is set through the config hook (uiState) and
