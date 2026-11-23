@@ -443,7 +443,11 @@
             if (typeof governmentQueries.getPositionsByRankRequirement !== 'function') {
                 return _fail('Government rank references cannot be checked; deletion is blocked.');
             }
-            governmentPositions = governmentQueries.getPositionsByRankRequirement(rankId);
+            try {
+                governmentPositions = governmentQueries.getPositionsByRankRequirement(rankId);
+            } catch (e) {
+                return _fail('Government rank references could not be read; deletion is blocked.');
+            }
             if (!Array.isArray(governmentPositions)) {
                 return _fail('Government rank references could not be read; deletion is blocked.');
             }
