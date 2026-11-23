@@ -45,32 +45,15 @@
  *   Different reads need different reference semantics. This module
  *   exposes three tiers, each documented at the call site:
  *
- *   1. LIVE CANONICAL RECORD (getSettlementData)
+ *   1. DEFENSIVE DEEP CLONE (getSettlementData)
  *
- *      Returns the exact object stored at
- *      masterData.data.settlementData[locationId], or null.
+ *      Returns a deep clone of the canonical record, or null. Neither
+ *      the record nor any nested array/object is shared with storage.
  *
- *      This is the CANONICAL ACCESSOR for commands and internal query
- *      composition. Every command that needs to build a candidate
- *      record reads through this method, clones with its own
- *      _copyWith helper, mutates the clone, and hands the clone to
- *      SettlementCommandCommit.commit. Because commit REPLACES the
- *      record with the candidate, the live reference the command read
- *      is never mutated in place.
+ *   2. DEFENSIVE DEEP CLONES (getAllSettlements)
  *
- *      Callers that are NOT commands should not mutate the returned
- *      object. The object is canonical. A mutation here is a bug; the
- *      canonical record is not a scratchpad.
- *
- *   2. SHALLOW COPY (getAllSettlements)
- *
- *      Returns [{ locationId, data }, ...] where each `data` is a
- *      shallow copy of the canonical settlement record. Nested
- *      arrays (annualHistory, civilLaws, demolitionHistory, featureIds)
- *      are NOT deep-cloned. The copy is safe for consumers that
- *      replace scalar fields (wealth, taxRate, etc.) or append to
- *      arrays without sharing them; it is NOT safe for consumers that
- *      mutate a nested array in place.
+ *      Returns [{ locationId, data }, ...] with a deep clone for every
+ *      record. Callers cannot mutate canonical data through query results.
  *
  *   3. PRIMITIVE / CLONE (all other reads)
  *
@@ -81,9 +64,8 @@
  *      delegates to SettlementRankQueries and returns whatever that
  *      query returns.
  *
- *   The rule: mutate nothing. Live and shallow-copy reads are
- *   optimizations for trusted callers, not licenses to write. If a
- *   mutation is needed, go through a command.
+ *   The rule: query results are snapshots. If a mutation is needed,
+ *   go through a command.
  *
  * Canonical storage access:
  *
@@ -222,21 +204,32 @@
     }
 
     /**
-     * Shallow-copies a settlement record. Scalars are copied by value;
-     * nested arrays and objects are copied by REFERENCE (not deep-cloned).
+     * Deep-clones a settlement record so query consumers cannot mutate
+     * canonical state through a returned object or nested collection.
      *
-     * See SETTLEMENT DATA ACCESS CONTRACT in the module header.
-     *
-     * @private
-     * @param {Object} record
-     * @returns {Object}
+     * Settlement records are JSON-shaped data. Prefer the shared project
+     * clone helper when available; retain a local recursive fallback for
+     * isolated tests and reduced load environments.
      */
-    function _shallowCopyRecord(record) {
-        if (!record || typeof record !== 'object') return record;
+    function _cloneRecord(value) {
+        if (value === null || value === undefined ||
+            typeof value !== 'object') {
+            return value;
+        }
+        if (typeof window.deepClone === 'function') {
+            return window.deepClone(value);
+        }
+        if (Array.isArray(value)) {
+            return value.map(_cloneRecord);
+        }
+        if (value instanceof Date) {
+            return new Date(value.getTime());
+        }
         var copy = {};
-        for (var key in record) {
-            if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
-            copy[key] = record[key];
+        for (var key in value) {
+            if (Object.prototype.hasOwnProperty.call(value, key)) {
+                copy[key] = _cloneRecord(value[key]);
+            }
         }
         return copy;
     }
@@ -249,7 +242,7 @@
         if (locationId === null || locationId === undefined) return null;
         var store = _getCanonicalStore();
         if (!store) return null;
-        return store[locationId] || null;
+        return store[locationId] ? _cloneRecord(store[locationId]) : null;
     }
 
     function hasSettlement(locationId) {
@@ -266,7 +259,7 @@
             if (!data) continue;
             result.push({
                 locationId: id,
-                data: _shallowCopyRecord(data)
+                data: _cloneRecord(data)
             });
         }
         return result;
