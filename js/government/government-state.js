@@ -785,8 +785,14 @@
                     var rankQueries = window.RankQueries;
                     if (!rankQueries || typeof rankQueries.getRank !== 'function') {
                         warnings.push('position ' + pos.id + ' requiredRankId could not be validated: RankQueries unavailable');
-                    } else if (!rankQueries.getRank(pos.requiredRankId)) {
-                        warnings.push('position ' + pos.id + ' references missing requiredRankId ' + pos.requiredRankId);
+                    } else {
+                        try {
+                            if (!rankQueries.getRank(pos.requiredRankId)) {
+                                warnings.push('position ' + pos.id + ' references missing requiredRankId ' + pos.requiredRankId);
+                            }
+                        } catch (e) {
+                            warnings.push('position ' + pos.id + ' requiredRankId could not be validated: RankQueries failed');
+                        }
                     }
                 }
                 if (pos.parentPositionId && !positionIds.has(pos.parentPositionId)) {
