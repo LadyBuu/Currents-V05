@@ -71,6 +71,18 @@
         }
     }
 
+    function _validateRequiredRankReference(rankId) {
+        if (rankId == null || rankId === '') return null;
+        var rankQueries = window.RankQueries;
+        if (!rankQueries || typeof rankQueries.getRank !== 'function') {
+            return 'Rank queries are unavailable; cannot validate the required rank';
+        }
+        if (!rankQueries.getRank(rankId)) {
+            return 'Required rank "' + rankId + '" does not exist';
+        }
+        return null;
+    }
+
     // ---- Commit tail ---------------------------------------------------------
     // State is always the source of truth for indexes after a mutation.
     // markDataDirty is idempotent; primitives already called it.
@@ -312,6 +324,9 @@
         var dept = State._getDepartmentCanonical(departmentId);
         if (!dept) return _fail('Department not found', C.CODES.NOT_FOUND);
 
+        var rankError = _validateRequiredRankReference(data.requiredRankId);
+        if (rankError) return _fail(rankError, C.CODES.VALIDATION);
+
         var v = Rules.validatePosition(data, false);
         if (!v.valid) return _fail(v.reason, C.CODES.VALIDATION);
 
@@ -347,6 +362,11 @@
 
         var fieldErr = _validateFieldAllowlist(updates, C.ALLOWED_POSITION_FIELDS, 'position');
         if (fieldErr) return _fail(fieldErr, C.CODES.VALIDATION);
+
+        if (Object.prototype.hasOwnProperty.call(updates, 'requiredRankId')) {
+            var rankError = _validateRequiredRankReference(updates.requiredRankId);
+            if (rankError) return _fail(rankError, C.CODES.VALIDATION);
+        }
 
         var v = Rules.validatePosition(updates, true);
         if (!v.valid) return _fail(v.reason, C.CODES.VALIDATION);
