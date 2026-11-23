@@ -851,6 +851,15 @@
                         return Object.prototype.hasOwnProperty.call(toRemove, locationId);
                     });
             });
+        var worshipPlaceStore = window.masterData && window.masterData.data
+            ? window.masterData.data.placesOfWorship
+            : [];
+        var hasWorshipPlaceLocationReferences = Array.isArray(worshipPlaceStore) &&
+            worshipPlaceStore.some(function (place) {
+                return place && Object.prototype.hasOwnProperty.call(toRemove, place.locationId);
+            });
+        hasReligionLocationReferences = hasReligionLocationReferences ||
+            hasWorshipPlaceLocationReferences;
         if (hasReligionLocationReferences &&
             (!window.ReligionCommands ||
              typeof window.ReligionCommands.reconcileDeletedLocations !== 'function')) {
