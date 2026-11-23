@@ -210,7 +210,20 @@
             for (var p = 0; p < religion.placesOfWorship.length; p++) {
                 var placeId = religion.placesOfWorship[p];
                 if (typeof placeId !== 'string' || !placeId) continue;
-                if (byId[placeId]) continue;
+                if (byId[placeId]) {
+                    if (byId[placeId].religionId &&
+                        byId[placeId].religionId !== religion.id) {
+                        throw new Error(
+                            'ReligionState: worship place "' + placeId +
+                            '" is associated with more than one religion.'
+                        );
+                    }
+                    if (!byId[placeId].religionId) {
+                        byId[placeId].religionId = religion.id;
+                        byId[placeId].religionName = religion.name || '';
+                    }
+                    continue;
+                }
 
                 var placeholder = {
                     id: placeId,
@@ -329,6 +342,7 @@
         _indexes.followersByReligion = new Map();
 
         var seenIds = Object.create(null);
+        var worshipPlaceOwners = Object.create(null);
 
         for (var i = 0; i < religions.length; i++) {
             var religion = religions[i];
@@ -940,6 +954,15 @@
                         });
                     }
                     seenWorshipIds[worshipId] = true;
+                    if (worshipPlaceOwners[worshipId] &&
+                        worshipPlaceOwners[worshipId] !== r.id) {
+                        findings.push({
+                            level: 'error',
+                            message: 'Worship place ' + worshipId +
+                                ' is associated with multiple religions.'
+                        });
+                    }
+                    worshipPlaceOwners[worshipId] = r.id;
                 }
             }
         }
@@ -972,6 +995,21 @@
                         worshipPlace.locationId + '.'
                 });
             }
+            if (worshipPlaceOwners[worshipPlace.id] &&
+                worshipPlaceOwners[worshipPlace.id] !== worshipPlace.religionId) {
+                findings.push({
+                    level: 'error',
+                    message: 'Worship place ' + worshipPlace.id +
+                        ' has a religion ownership mismatch.'
+                });
+            }
+            if (!worshipPlaceOwners[worshipPlace.id]) {
+                findings.push({
+                    level: 'warn',
+                    message: 'Worship place ' + worshipPlace.id +
+                        ' is not referenced by its owning religion.'
+                });
+            }
             if (worshipPlace.headClergyId &&
                 typeof window.getCharacterById === 'function' &&
                 !window.getCharacterById(worshipPlace.headClergyId)) {
@@ -980,6 +1018,37 @@
                     message: 'Worship place ' + worshipPlace.id + ' references missing head clergy ' +
                         worshipPlace.headClergyId + '.'
                 });
+            }
+            if (Array.isArray(worshipPlace.clergy) &&
+                typeof window.getCharacterById === 'function') {
+                for (var clergyIndex = 0; clergyIndex < worshipPlace.clergy.length; clergyIndex++) {
+                    var clergyEntry = worshipPlace.clergy[clergyIndex];
+                    var clergyId = typeof clergyEntry === 'string'
+                        ? clergyEntry
+                        : (clergyEntry && (clergyEntry.characterId || clergyEntry.id));
+                    if (clergyId && !window.getCharacterById(clergyId)) {
+                        findings.push({
+                            level: 'error',
+                            message: 'Worship place ' + worshipPlace.id +
+                                ' references missing clergy character ' + clergyId + '.'
+                        });
+                    }
+                }
+            }
+        }
+
+        for (var religionIndex = 0; religionIndex < religions.length; religionIndex++) {
+            var ownerReligion = religions[religionIndex];
+            if (!ownerReligion || !Array.isArray(ownerReligion.placesOfWorship)) continue;
+            for (var linkedIndex = 0; linkedIndex < ownerReligion.placesOfWorship.length; linkedIndex++) {
+                var linkedId = ownerReligion.placesOfWorship[linkedIndex];
+                if (!seenPlaceIds[linkedId]) {
+                    findings.push({
+                        level: 'error',
+                        message: 'Religion ' + ownerReligion.id +
+                            ' references missing canonical worship place ' + linkedId + '.'
+                    });
+                }
             }
         }
 
