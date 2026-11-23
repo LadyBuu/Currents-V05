@@ -36,43 +36,16 @@
  *   onSuccess BEFORE closing. The tab's onSuccess callback re-renders the
  *   tab; it does NOT need to persist, toast, or close anything.
  *
- * PLACES ARE PARTIAL
- * ------------------
- *   What is canonically stored:
+ * CANONICAL PLACE STORAGE
+ * -----------------------
+ *   Full place records live in masterData.data.placesOfWorship.
+ *   religion.placesOfWorship remains the owning religion's ID list.
+ *   ReligionState hydrates the lookup index from the top-level store
+ *   and migrates legacy ID-only entries to explicitly incomplete
+ *   placeholders. Missing historical details are not fabricated.
  *
- *     religion.placesOfWorship: [placeId, placeId, ...]
- *
- *   What is NOT stored:
- *
- *     The full place record (name, type, location, baseTithe,
- *     foundedYear, producesIncome, notes, headClergyId, clergy,
- *     wealth, isActive, ...). The full record exists only as the
- *     return value of createPlaceOfWorship, in-memory, for the caller
- *     that created it.
- *
- *   What this means for rendering:
- *
- *     ReligionQueries.getPlacesOfWorshipByReligion(religionId) returns
- *     the id array (religion.placesOfWorship.slice()). This tab must
- *     resolve each id to a record before rendering. The resolver:
- *
- *       - tries ReligionQueries.getPlaceOfWorship(id), which today
- *         returns { id, religionId, religionName } from the state
- *         index (no name, no type, etc.);
- *       - falls back to an id-only stub { id } if the lookup returns
- *         null, so the place is at least visible with its id as the
- *         display name (see _placeDisplayName).
- *
- *   What Edit means:
- *
- *     ReligionCommands.updatePlaceOfWorship is a documented no-op stub
- *     (see religion-commands.js §13). It returns success without
- *     applying any updates. The PLACES_EDITABLE gate hides the Edit
- *     button until the command becomes real. When the flag is false,
- *     the "partial store" note explains why Edit is absent. When the
- *     flag is true, Edit delegates to openEditPlaceOfWorshipModal,
- *     which is wired correctly against the stub — it will toast
- *     success and change nothing until the command becomes real.
+ *   This tab reads complete records through ReligionQueries and
+ *   delegates create/edit/delete to ReligionCommands via the modals.
  *
  * FILTER STATE
  * ------------
