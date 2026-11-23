@@ -351,8 +351,78 @@
     // 3. EXPORTS
     // =========================================================================
 
+    /**
+     * Removes settlement records for a set of location ids.
+     *
+     * This is used by LocationCommands when deleting a place. The location
+     * command owns the cross-domain transaction and therefore passes
+     * { persist: false }; its normal persist() boundary saves both domains
+     * together. Standalone callers persist by default.
+     *
+     * @param {string[]} locationIds
+     * @param {Object} event
+     * @param {{persist?: boolean}} options
+     * @returns {{removedLocationIds: string[], event: Object|null}}
+     */
+    function removeMany(locationIds, event, options) {
+        if (!Array.isArray(locationIds)) {
+            throw new TypeError(
+                'SettlementCommandCommit.removeMany: locationIds must be an array'
+            );
+        }
+        if (!event || typeof event !== 'object' ||
+            typeof event.type !== 'string' || event.type.length === 0) {
+            throw new TypeError(
+                'SettlementCommandCommit.removeMany: event.type is required'
+            );
+        }
+
+        options = options || {};
+        var store = _getCanonicalStore();
+        var seen = Object.create(null);
+        var removed = [];
+
+        for (var i = 0; i < locationIds.length; i++) {
+            var id = locationIds[i];
+            if (typeof id !== 'string' || id.length === 0 || seen[id]) continue;
+            seen[id] = true;
+            if (!Object.prototype.hasOwnProperty.call(store, id) || !store[id]) {
+                continue;
+            }
+            delete store[id];
+            removed.push(id);
+        }
+
+        if (removed.length === 0) {
+            return { removedLocationIds: [], event: null };
+        }
+
+        _getState().rebuildIndexes();
+
+        if (options.persist !== false) {
+            _saveMasterData();
+        }
+
+        var publishedEvent = {};
+        for (var key in event) {
+            if (Object.prototype.hasOwnProperty.call(event, key)) {
+                publishedEvent[key] = event[key];
+            }
+        }
+        publishedEvent.locationIds = removed.slice();
+        publishedEvent.removedCount = removed.length;
+
+        _getState().publish(publishedEvent);
+
+        return {
+            removedLocationIds: removed,
+            event: publishedEvent
+        };
+    }
+
     window.SettlementCommandCommit = Object.freeze({
-        commit: commit
+        commit: commit,
+        removeMany: removeMany
     });
 
 })();
