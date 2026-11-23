@@ -2261,5 +2261,44 @@ with a defined owner and validation contract. Do not reuse either field or
 reintroduce duplicate storage.
 
 ================================================================================
+PART 9 — SETTLEMENT LOCATION ELIGIBILITY
+================================================================================
+
+A Settlement may be attached only to an inhabited location node:
+  - Priority 4: town / village.
+  - Priority 5: locality / compound.
+
+Priorities 1–3 (country, region / district, county / duchy) are
+administrative containers and are not valid Settlement hosts. Eligibility
+is based on the numeric priority of the assigned Location Type, not its
+display name. Custom Location Types at priority 4 or 5 are eligible.
+
+Enforcement:
+  - SettlementFactory.createSettlement validates the location before
+    creating a record.
+  - SettlementFactory.ensureSettlement validates before returning an
+    existing record as valid; it does not silently bless a legacy record
+    attached to an ineligible location.
+  - Missing LocationQueries validation dependencies fail closed.
+  - LocationCommands.updatePlace refuses to change the type of a location
+    with a Settlement to priority 1–3.
+  - LocationCommands.updateLocationType refuses to move a type used by
+    one or more Settlements to priority 1–3.
+  - Location deletion continues to remove associated Settlement records
+    through the existing coordinated cleanup path.
+
+This rule is independent of Settlement Rank. A Hamlet, Village, Town,
+City or Metropolis rank describes the settlement's population/status tier;
+it does not determine which geographical Location Types may host a
+Settlement. A priority-5 locality can therefore host a Settlement record
+and have its own Settlement Rank.
+
+Existing legacy records attached to priorities 1–3 are not automatically
+deleted or migrated. They remain readable, but ensureSettlement reports
+them as ineligible and Location type changes cannot create additional
+invalid records. Move the record to an eligible location or remove it
+through the normal Settlement lifecycle before relying on it as valid.
+
+================================================================================
 END OF DOCUMENT
 ================================================================================
