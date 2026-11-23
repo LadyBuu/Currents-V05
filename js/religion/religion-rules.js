@@ -300,8 +300,10 @@
                          ' followers. Deprecate it instead.');
         }
 
-        if (Array.isArray(religion.placesOfWorship) &&
-            religion.placesOfWorship.length > 0) {
+        var worshipPlaces = typeof _queries().getPlaceRecordsByReligion === 'function'
+            ? _queries().getPlaceRecordsByReligion(religionId)
+            : (Array.isArray(religion.placesOfWorship) ? religion.placesOfWorship : []);
+        if (worshipPlaces && worshipPlaces.length > 0) {
             return _deny(
                 'Cannot delete a religion that still owns places of worship. ' +
                 'Remove or transfer those records first, or deprecate the religion.'
