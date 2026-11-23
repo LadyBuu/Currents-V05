@@ -308,6 +308,21 @@ Cross-domain references are labeled:
       - _resolveCurrentLocationId prefers
         LocationQueries.getCurrentLocationId (semantic); falls back to
         CharacterQueries.getCurrentLocationId (raw field).
+      - religion.locations stores explicit presence associations at exact
+        locations. They do not propagate to descendants and do not imply
+        official recognition, exclusive practice, government or legal
+        jurisdiction. getReligionsByLocation returns direct associations;
+        getReligionsInLocationSubtree aggregates associations recorded at
+        the root and descendants while preserving each source location.
+      - Worship places are separate physical-site records. Followers are
+        separate population evidence. Neither is silently converted into a
+        religion.locations association.
+      - Official recognition exists only through a settlement's explicit
+        stateReligionId. It is not inherited from a parent or inferred from
+        presence, worship sites or population dominance. Religious legal
+        jurisdiction is local to the settlement: religious laws enter its
+        civil-law query only when useReligiousLawsAsCivil is enabled and its
+        own stateReligionId resolves.
       - isCulturallyCompatible and isReligiouslyPermitted are STUBS
         that fail closed (compatible: false / permitted: false with a
         reason). Do not read the boolean as definitive.
