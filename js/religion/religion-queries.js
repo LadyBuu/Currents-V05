@@ -404,10 +404,15 @@
             return null;
         }
 
-        var root = locationQueries.getPlace(locationId);
-        if (!root) return null;
-
-        var locationIds = locationQueries.getAllSubLocationIds(locationId);
+        var root;
+        var locationIds;
+        try {
+            root = locationQueries.getPlace(locationId);
+            if (!root) return null;
+            locationIds = locationQueries.getAllSubLocationIds(locationId);
+        } catch (e) {
+            return null;
+        }
         if (!Array.isArray(locationIds) || locationIds.indexOf(locationId) === -1) {
             return null;
         }
@@ -420,9 +425,15 @@
                 seenLocations[currentLocationId]) continue;
             seenLocations[currentLocationId] = true;
 
-            var place = locationQueries.getPlace(currentLocationId);
-            if (!place) return null;
-            var religions = _getState().getByLocation(currentLocationId);
+            var place;
+            var religions;
+            try {
+                place = locationQueries.getPlace(currentLocationId);
+                religions = _getState().getByLocation(currentLocationId);
+            } catch (e) {
+                return null;
+            }
+            if (!place || !Array.isArray(religions)) return null;
             for (var j = 0; j < religions.length; j++) {
                 var religion = religions[j];
                 if (!religion || !religion.id) continue;
