@@ -412,7 +412,9 @@
         publishedEvent.locationIds = removed.slice();
         publishedEvent.removedCount = removed.length;
 
-        _getState().publish(publishedEvent);
+        if (options.publish !== false) {
+            _getState().publish(publishedEvent);
+        }
 
         return {
             removedLocationIds: removed,
