@@ -159,8 +159,6 @@
             militarySpending: 0,
             budgetAllocationYear: null,
             governmentType: 'none',
-            governmentStyle: null,
-            governmentTypeId: null,
             justiceSeverity: 'medium',
             useReligiousLawsAsCivil: false,
             // Official religion is a political designation, not a demographic calculation.
