@@ -80,6 +80,10 @@
  *   - industry-economics.js (IndustryEconomics)
  *   - time.js               (getCurrentYear)
  *
+ * DEPENDENCIES (REQUIRED at batch call time):
+ *   - industry-state.js     (transaction snapshots / restoration)
+ *   - household-state.js    (Household snapshots when needed)
+ *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
