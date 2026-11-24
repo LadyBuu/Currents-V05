@@ -1597,6 +1597,15 @@ HOUSEHOLD-STATE DIAGNOSTICS
                                         ownerId}]
     enterpriseReverseIndexAvailable: boolean
 
+    householdMembersWithMissingCharacter: [{householdId, characterId?, index?, reason}]
+    duplicateHouseholdMemberReferences: [{householdId, characterId, indices}]
+    charactersAssignedToMultipleHouseholds: [{characterId, householdIds}]
+    householdMembersWithMismatchedCharacterReference: [{householdId, characterId, characterHousehold, characterHouseholdId}]
+    charactersWithOrphanHouseholdReference: [{characterId, householdId}]
+    charactersWithMissingHouseholdMember: [{characterId, householdId, matchingMemberCount}]
+    charactersWithConflictingHouseholdFields: [{characterId, household, householdId}]
+    householdMemberReverseIndexAvailable: boolean
+
     counts: { households, positions, assignments }
 
   The residence reverse-index check runs when ResidenceSystem is
@@ -2947,3 +2956,47 @@ own host-location eligibility rules.
 
 This validation is performed at command time. LocationState is resolved
 dynamically so script load order does not freeze dependency availability.
+
+
+================================================================================
+PART 43: HOUSEHOLD / CHARACTER MEMBERSHIP INTEGRITY
+================================================================================
+
+HouseholdState._diagnostics.getIntegrityReport() checks the current
+membership relationship in both directions, using canonical
+masterData.data.households and masterData.data.characters.
+
+The check is read-only. It does not rewrite ambiguous records, because
+choosing which side is correct would be guesswork and could erase valid
+history.
+
+Reported issues:
+  - householdMembersWithMissingCharacter:
+      a Household member entry has an invalid characterId or references
+      a Character that does not exist.
+  - duplicateHouseholdMemberReferences:
+      the same Character appears more than once in one Household.members[].
+  - charactersAssignedToMultipleHouseholds:
+      one Character appears in current member lists for multiple
+      Households.
+  - householdMembersWithMismatchedCharacterReference:
+      a Household lists a Character whose current household / householdId
+      reverse reference does not point back to that Household.
+  - charactersWithOrphanHouseholdReference:
+      a Character's current household reference points to no Household.
+  - charactersWithMissingHouseholdMember:
+      a Character points to an existing Household but that Household
+      contains zero or multiple matching member entries.
+  - charactersWithConflictingHouseholdFields:
+      Character.household and Character.householdId are both populated
+      but disagree.
+  - householdMemberReverseIndexAvailable:
+      false when either canonical collection is unavailable; ok remains
+      false because the membership relationship could not be verified.
+
+Historical householdHistory entries are deliberately not treated as
+current membership. Closed entries are valid history. This diagnostic
+checks only the active reverse-reference fields and Household.members[].
+
+No automatic repair is performed. Resolve each conflict explicitly through
+the relevant Household and Character commands after reviewing the record.
