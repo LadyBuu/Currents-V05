@@ -2347,3 +2347,13 @@ also fails with a command result if the Location query is unavailable or
 throws, rather than leaking an exception or accepting an unverifiable
 reference.
 
+PART 36 — POSITION ROLE AND PARENT REFERENCES
+
+Creating or updating a Government Position with requiredRoleId now verifies
+the Role through RoleQueries.getRoleSummary. A supplied parentPositionId must
+refer to a position in the same department. Updates retain cycle detection;
+integrity diagnostics report missing role references, missing position
+parents and position hierarchy cycles. RoleQueries remains optional for
+Government bootstrap and unrelated reads, but any command that explicitly
+requires a role fails closed when the Role query is unavailable.
+
