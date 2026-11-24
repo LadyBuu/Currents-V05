@@ -1694,8 +1694,13 @@
 
         // Reputation is secondary to the withdrawal itself. Do not undo a
         // completed withdrawal if reputation bookkeeping fails.
-        var reputationResult = updateReputation(institutionId, -1);
+        var reputationResult = null;
         var warnings = [];
+        try {
+            reputationResult = updateReputation(institutionId, -1);
+        } catch (reputationError) {
+            reputationResult = null;
+        }
         if (!reputationResult || reputationResult.success !== true) {
             warnings.push('Withdrawal succeeded, but institution reputation was not adjusted.');
         }
