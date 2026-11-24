@@ -782,6 +782,7 @@
         var raw = window.SettlementQueries.getSettlementMastersByRole(
             locationId, roleId
         );
+        if (raw === null || raw === undefined) return [];
         if (!Array.isArray(raw)) {
             throw new Error(
                 'ApprenticeshipQueries.findPotentialMasters: ' +
@@ -795,17 +796,20 @@
             var entry = raw[i];
             // Eligibility must be proven, not inferred from a missing or
             // malformed profession record.
+            var characterId = entry && entry.character &&
+                typeof entry.character.id === 'string'
+                ? entry.character.id : null;
             if (!entry || typeof entry !== 'object' ||
-                typeof entry.id !== 'string' || !entry.id.trim() ||
+                !characterId || !characterId.trim() ||
                 typeof entry.skillLevel !== 'number' ||
                 !isFinite(entry.skillLevel) ||
                 entry.skillLevel < threshold ||
                 entry.skillLevel < 0 ||
                 entry.skillLevel > 100 ||
-                seen[entry.id]) {
+                seen[characterId]) {
                 continue;
             }
-            seen[entry.id] = true;
+            seen[characterId] = true;
             results.push(entry);
         }
         return results;
