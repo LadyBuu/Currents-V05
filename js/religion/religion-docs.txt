@@ -1813,9 +1813,9 @@ derived follower index and publishes followersChanged; it also publishes
 followerLocationsChanged for subscribers to the move-specific events
 (moveRecorded, movesRecordedBulk, moveUpdated, and moveDeleted).
 
-ReligionState publishes followersChanged after rebuilding the index.
-religion-followers-tab.js listens for that event and re-renders only when the
-Followers tab is active. It does not subscribe to followerLocationsChanged or
+ReligionState publishes followersChanged to its in-module subscribers after
+rebuilding the index. religion-followers-tab.js subscribes through
+ReligionState.subscribe and re-renders only when the Followers tab is active. It does not subscribe to followerLocationsChanged or
 the move-specific events, because every supported movement writer first calls
 CharacterCommands.updateCharacterFields, which emits characterChanged. The
 resulting followersChanged notification already refreshes location-based
