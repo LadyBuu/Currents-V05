@@ -283,6 +283,35 @@
 
         var debtBefore = _isFiniteNumber(settlement.totalDebt) ? settlement.totalDebt : 0;
         var wealthBefore = _isFiniteNumber(settlement.wealth) ? settlement.wealth : 0;
+        var history = Array.isArray(settlement.annualHistory)
+            ? settlement.annualHistory
+            : [];
+
+        // Annual processing may be retried after a partial world-year
+        // advance or a caller retry. Never apply interest twice for the
+        // same settlement and year.
+        for (var historyIndex = 0; historyIndex < history.length; historyIndex++) {
+            var processedRecord = history[historyIndex];
+            if (!processedRecord || processedRecord.year !== year) continue;
+            return {
+                success: true,
+                locationId: locationId,
+                year: year,
+                interest: _isFiniteNumber(processedRecord.interest)
+                    ? processedRecord.interest : 0,
+                debtBefore: _isFiniteNumber(processedRecord.debtBefore)
+                    ? processedRecord.debtBefore : debtBefore,
+                debtAfter: _isFiniteNumber(processedRecord.debtAfter)
+                    ? processedRecord.debtAfter : debtBefore,
+                wealthBefore: _isFiniteNumber(processedRecord.wealthBefore)
+                    ? processedRecord.wealthBefore : wealthBefore,
+                wealthAfter: _isFiniteNumber(processedRecord.wealthAfter)
+                    ? processedRecord.wealthAfter : wealthBefore,
+                alreadyProcessed: true,
+                noop: true,
+                event: null
+            };
+        }
 
         var interest;
         try {
@@ -301,9 +330,6 @@
         // Build the candidate. annualHistory is cloned so the caller
         // (SettlementCommandCommit) receives a fresh array; the previous
         // reference inside `settlement` is untouched by this function.
-        var history = Array.isArray(settlement.annualHistory)
-            ? settlement.annualHistory
-            : [];
         var historyRecord = {
             year: year,
             debtBefore: debtBefore,
