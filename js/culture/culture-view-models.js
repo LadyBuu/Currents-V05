@@ -34,7 +34,7 @@
  *
  * Dependencies:
  *   - CultureQueries
- *   - PlaceQueries
+ *   - LocationQueries
  *   - ReligionQueries
  *   - CharacterQueries     (used only by buildDetails via getCultureSummary)
  *
@@ -55,11 +55,11 @@
         return window.CultureQueries;
     }
 
-    function _requirePlaceQueries() {
-        if (!window.PlaceQueries) {
-            throw new Error('CultureViewModels requires PlaceQueries.');
+    function _requireLocationQueries() {
+        if (!window.LocationQueries) {
+            throw new Error('CultureViewModels requires LocationQueries.');
         }
-        return window.PlaceQueries;
+        return window.LocationQueries;
     }
 
     function _requireReligionQueries() {
@@ -140,10 +140,10 @@
 
     function _resolveLocations(locationIds) {
         if (!Array.isArray(locationIds) || locationIds.length === 0) return [];
-        var placeQueries = _requirePlaceQueries();
+        var placeQueries = _requireLocationQueries();
         var out = [];
         for (var i = 0; i < locationIds.length; i++) {
-            var place = placeQueries.getPlaceById(locationIds[i]);
+            var place = placeQueries.getPlace(locationIds[i]);
             if (!place) continue;
             out.push({
                 id: place.id,
@@ -461,9 +461,9 @@
                 'Check script tag order (culture-queries.js must load first).'
             );
         }
-        if (!window.PlaceQueries) {
+        if (!window.LocationQueries) {
             throw new Error(
-                'culture-view-models.js loaded but window.PlaceQueries is missing. ' +
+                'culture-view-models.js loaded but window.LocationQueries is missing. ' +
                 'Check script tag order (location-queries.js must load first).'
             );
         }
