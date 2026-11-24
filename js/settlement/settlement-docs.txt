@@ -703,6 +703,7 @@ rules module.
       window.SettlementQueries (getSettlementData —
         createSettlement's uniqueness check),
       window.SettlementRankRules (getAllRanks, getRankById),
+      window.SettlementProsperityDefinitions (BASE_PROSPERITY),
       window.RoleQueries (getRoleById — when specializationRoleId is supplied),
       window.SettlementCommandCommit,
       window.LocationQueries (getPlace, getLocationTypePriority),
@@ -2103,14 +2104,12 @@ PART 7 — KNOWN HAZARDS
     and 'no_religions' both return null but mean different
     things. Use getDominantReligionStatus.
 
- 9. baseProsperity coupling.
-    settlement-factory.js initializes baseProsperity: 50. That
-    value MUST equal
-    SettlementProsperityDefinitions.BASE_PROSPERITY. If you
-    change one, change the other in the same commit. There is
-    no code-level enforcement (an import would reintroduce the
-    crime ↔ prosperity cycle that the stored field exists to
-    break).
+ 9. baseProsperity baseline.
+    Resolved: SettlementFactory reads
+    SettlementProsperityDefinitions.BASE_PROSPERITY directly when
+    creating a record. The pure definitions module does not create a
+    crime/prosperity query cycle, and there is no duplicated hardcoded
+    default to keep synchronized.
 
 10. candidate-write ordering.
     Resolved: SettlementCommandCommit restores the previous canonical
