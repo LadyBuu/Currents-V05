@@ -415,19 +415,33 @@
      * @private
      */
     function _invokeDeathHandlers(characterId, year) {
-        if (_deathHandlers.length === 0) return;
+        var outcomes = [];
         var snapshot = _deathHandlers.slice();
         for (var i = 0; i < snapshot.length; i++) {
             try {
-                snapshot[i](characterId, { deathYear: year });
-            } catch (e) {
-                if (typeof console !== 'undefined' && console.error) {
-                    console.error(
-                        'character-lifecycle.js: death handler threw:', e
-                    );
+                var result = snapshot[i](characterId, { deathYear: year });
+                if (!result || result.success !== true) {
+                    outcomes.push({
+                        handlerIndex: i,
+                        success: false,
+                        reason: result && result.reason
+                            ? result.reason
+                            : 'Death handler returned no explicit success result.',
+                        code: result && result.code ? result.code : 'INVALID_HANDLER_RESULT'
+                    });
+                } else {
+                    outcomes.push({ handlerIndex: i, success: true, result: result });
                 }
+            } catch (e) {
+                outcomes.push({
+                    handlerIndex: i,
+                    success: false,
+                    code: 'HANDLER_THROWN',
+                    reason: e && e.message ? e.message : String(e)
+                });
             }
         }
+        return outcomes;
     }
 
     // =========================================================================
@@ -552,75 +566,48 @@
     //   character-lifecycle to location-commands).
 
     function _notifyCrossDomainDeath(characterId, year) {
-        if (!_hasId(characterId)) return;
-        if (typeof year !== 'number' || !isFinite(year)) {
-            year = window.getCurrentYear();
+        var outcomes = [];
+        if (!_hasId(characterId)) {
+            return { success: false, failures: [{ handler: 'validation', reason: 'Invalid character id.' }] };
         }
+        if (typeof year !== 'number' || !isFinite(year)) year = window.getCurrentYear();
 
-        // Family: structural parentage edges. Notified first because
-        // parent-child edges are structural and unrelated to the
-        // relationship or rank state.
-        if (window.FamilyCommands
-            && typeof window.FamilyCommands.handleCharacterDeath === 'function') {
+        var dispatches = [
+            ['family', window.FamilyCommands, 'handleCharacterDeath', [characterId, year]],
+            ['relationships', window.RelationshipIntegrations, 'handleCharacterDeath', [characterId, { deathYear: year }]],
+            ['ranks', window.RankIssues, 'handleCharacterDeath', [characterId, { deathYear: year }]]
+        ];
+        for (var i = 0; i < dispatches.length; i++) {
+            var item = dispatches[i];
+            if (!item[1] || typeof item[1][item[2]] !== 'function') continue;
             try {
-                window.FamilyCommands.handleCharacterDeath(characterId, year);
-            } catch (e) {
-                if (typeof console !== 'undefined' && console.warn) {
-                    console.warn(
-                        'character-lifecycle.js: FamilyCommands.handleCharacterDeath threw',
-                        e
-                    );
+                var result = item[1][item[2]].apply(item[1], item[3]);
+                if (!result || result.success !== true) {
+                    outcomes.push({
+                        handler: item[0],
+                        success: false,
+                        code: result && result.code ? result.code : 'INVALID_HANDLER_RESULT',
+                        reason: result && (result.reason || result.message)
+                            ? (result.reason || result.message)
+                            : 'Handler did not return success:true.'
+                    });
+                } else {
+                    outcomes.push({ handler: item[0], success: true });
                 }
-            }
-        }
-
-        // Relationship: end every active edge. Committed relationships
-        // become widowed; others end. Notified before rank because rank
-        // inheritance sources may resolve through a spouse who has just
-        // died.
-        //
-        // NOTE: this branch is a no-op under the documented load order
-        // (relationship-integrations.js loads after character-lifecycle.js).
-        // See LOAD ORDER NOTE above and DEATH HANDLER HOOK in the header.
-        if (window.RelationshipIntegrations
-            && typeof window.RelationshipIntegrations.handleCharacterDeath === 'function') {
-            try {
-                window.RelationshipIntegrations.handleCharacterDeath(characterId, {
-                    deathYear: year
+            } catch (e) {
+                outcomes.push({
+                    handler: item[0],
+                    success: false,
+                    code: 'HANDLER_THROWN',
+                    reason: e && e.message ? e.message : String(e)
                 });
-            } catch (e) {
-                if (typeof console !== 'undefined' && console.warn) {
-                    console.warn(
-                        'character-lifecycle.js: RelationshipIntegrations.handleCharacterDeath threw',
-                        e
-                    );
-                }
             }
         }
-
-        // Rank: deprecate any rank assignment with deprecateOnDeath, then
-        // renumber the affected ranks. Notified last so it reads the
-        // freshest relationship state.
-        if (window.RankIssues
-            && typeof window.RankIssues.handleCharacterDeath === 'function') {
-            try {
-                window.RankIssues.handleCharacterDeath(characterId, {
-                    deathYear: year
-                });
-            } catch (e) {
-                if (typeof console !== 'undefined' && console.warn) {
-                    console.warn(
-                        'character-lifecycle.js: RankIssues.handleCharacterDeath threw',
-                        e
-                    );
-                }
-            }
-        }
-
-        // LocationCommands.handleCharacterDeath is NOT dispatched here.
-        // It is registered by location-commands.js via
-        // registerDeathHandler and runs via _invokeDeathHandlers below.
-        // See LEADER-TERM CLEANUP in the module header.
+        return {
+            success: outcomes.every(function (o) { return o.success === true; }),
+            outcomes: outcomes,
+            failures: outcomes.filter(function (o) { return o.success !== true; })
+        };
     }
 
     /**
@@ -649,15 +636,24 @@
             name + ' died of ' + causeStr + detailStr + ' in ' + year,
             [character]);
 
-        _notifyCrossDomainDeath(character.id, year);
-
-        // Phase 3.13: invoke registered handlers. These reach the
-        // domains that load after this file (notably the relationship
-        // domain) and the domains that prefer the registration hook
-        // (notably LocationCommands.handleCharacterDeath) via the
-        // registration hook. The named dispatch above reaches the
-        // domains that load before it.
-        _invokeDeathHandlers(character.id, year);
+        var named = _notifyCrossDomainDeath(character.id, year);
+        var registered = _invokeDeathHandlers(character.id, year);
+        var failures = (named.failures || []).slice();
+        for (var i = 0; i < registered.length; i++) {
+            if (registered[i].success !== true) {
+                failures.push({
+                    handler: 'registered:' + registered[i].handlerIndex,
+                    code: registered[i].code,
+                    reason: registered[i].reason
+                });
+            }
+        }
+        return {
+            success: failures.length === 0,
+            failures: failures,
+            namedOutcomes: named.outcomes || [],
+            registeredOutcomes: registered
+        };
     }
 
     /**
@@ -935,14 +931,24 @@
             };
         }
 
-        _dispatchDeathEffects(
+        var cascadeResult = _dispatchDeathEffects(
             character,
             year,
             evaluation.cause,
             evaluation.causeDetail
         );
+        if (!cascadeResult || cascadeResult.success !== true) {
+            return {
+                ok: false,
+                code: 'DEATH_CASCADE_PARTIAL_FAILURE',
+                reason: 'Character was marked deceased, but one or more death consequences failed.',
+                deathRecorded: true,
+                deathResult: deathResult,
+                cascade: cascadeResult
+            };
+        }
 
-        return { ok: true, deathResult: deathResult };
+        return { ok: true, deathResult: deathResult, cascade: cascadeResult };
     }
 
     // =========================================================================
@@ -1242,13 +1248,24 @@
             };
         }
 
-        _dispatchDeathEffects(
+        var cascadeResult = _dispatchDeathEffects(
             character,
             year,
             deathData.deathCause,
             deathData.deathCauseDetail
         );
+        if (!cascadeResult || cascadeResult.success !== true) {
+            return {
+                success: false,
+                code: 'DEATH_CASCADE_PARTIAL_FAILURE',
+                reason: 'Character was marked deceased, but one or more death consequences failed.',
+                deathRecorded: true,
+                deathResult: result,
+                cascade: cascadeResult
+            };
+        }
 
+        result.cascade = cascadeResult;
         return result;
     }
 
