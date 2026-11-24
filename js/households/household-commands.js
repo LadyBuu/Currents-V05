@@ -2386,6 +2386,13 @@
 
     function addEnterpriseToHousehold(householdId, enterpriseId, options) {
         options = options || {};
+        if (options.deferCommit === true &&
+            (!window.CrossDomainTransaction ||
+                typeof window.CrossDomainTransaction.isActive !== 'function' ||
+                window.CrossDomainTransaction.isActive() !== true)) {
+            return _fail('TRANSACTION_REQUIRED',
+                'Deferred enterprise ownership writes require an active CrossDomainTransaction.');
+        }
         var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
         if (!enterpriseId) return _fail('INVALID_INPUT',
@@ -2416,11 +2423,13 @@
 
         household.updatedAt = Date.now();
 
-        _commit('householdEnterpriseAdded', {
-            householdId: householdId,
-            enterpriseId: enterpriseId,
-            year: year
-        });
+        if (options.deferCommit !== true) {
+            _commit('householdEnterpriseAdded', {
+                householdId: householdId,
+                enterpriseId: enterpriseId,
+                year: year
+            });
+        }
 
         return _ok({
             householdId: householdId,
@@ -2431,6 +2440,13 @@
 
     function removeEnterpriseFromHousehold(householdId, enterpriseId, options) {
         options = options || {};
+        if (options.deferCommit === true &&
+            (!window.CrossDomainTransaction ||
+                typeof window.CrossDomainTransaction.isActive !== 'function' ||
+                window.CrossDomainTransaction.isActive() !== true)) {
+            return _fail('TRANSACTION_REQUIRED',
+                'Deferred enterprise ownership writes require an active CrossDomainTransaction.');
+        }
         var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
         if (!enterpriseId) return _fail('INVALID_INPUT',
@@ -2469,17 +2485,59 @@
 
         household.updatedAt = Date.now();
 
-        _commit('householdEnterpriseRemoved', {
-            householdId: householdId,
-            enterpriseId: enterpriseId,
-            year: year
-        });
+        if (options.deferCommit !== true) {
+            _commit('householdEnterpriseRemoved', {
+                householdId: householdId,
+                enterpriseId: enterpriseId,
+                year: year
+            });
+        }
 
         return _ok({
             householdId: householdId,
             enterpriseId: enterpriseId,
             changed: true
         });
+    }
+
+
+    // Publish Household ownership events only after the coordinating
+    // cross-domain transaction has committed all canonical mutations.
+    function commitTransactionEnterpriseOwnership(changes) {
+        if (!window.CrossDomainTransaction ||
+            typeof window.CrossDomainTransaction.isActive !== 'function' ||
+            window.CrossDomainTransaction.isActive() !== true) {
+            return _fail('TRANSACTION_REQUIRED',
+                'Enterprise ownership notifications require an active CrossDomainTransaction.');
+        }
+        if (!Array.isArray(changes)) {
+            return _fail('INVALID_INPUT', 'Ownership changes must be an array.');
+        }
+        for (var i = 0; i < changes.length; i++) {
+            var change = changes[i];
+            if (!change || !_hasId(change.householdId) ||
+                !_hasId(change.enterpriseId) ||
+                (change.action !== 'added' && change.action !== 'removed') ||
+                !_isValidYear(change.year)) {
+                return _fail('INVALID_INPUT',
+                    'Ownership transaction change at index ' + i + ' is invalid.');
+            }
+        }
+        for (var j = 0; j < changes.length; j++) {
+            var item = changes[j];
+            _commit(
+                item.action === 'added'
+                    ? 'householdEnterpriseAdded'
+                    : 'householdEnterpriseRemoved',
+                {
+                    householdId: item.householdId,
+                    enterpriseId: item.enterpriseId,
+                    year: item.year,
+                    transaction: true
+                }
+            );
+        }
+        return _ok({ committedChanges: changes.length });
     }
 
     // =========================================================================
@@ -3355,6 +3413,7 @@
         setHouseholdEnterprises: setHouseholdEnterprises,
         addEnterpriseToHousehold: addEnterpriseToHousehold,
         removeEnterpriseFromHousehold: removeEnterpriseFromHousehold,
+        commitTransactionEnterpriseOwnership: commitTransactionEnterpriseOwnership,
 
         // Positions
         createPosition: createPosition,
