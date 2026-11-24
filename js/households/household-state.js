@@ -1478,6 +1478,63 @@
         return result;
     }
 
+    function _checkCacheIntegrity() {
+        var result = {
+            ok: true,
+            staleById: [],
+            staleByLocation: [],
+            staleByStatus: [],
+            staleByMember: []
+        };
+        var expectedId = new Map();
+        var expectedLocation = new Map();
+        var expectedStatus = new Map();
+        var expectedMember = new Map();
+        function add(map, key, value) {
+            if (!map.has(key)) map.set(key, []);
+            map.get(key).push(value);
+        }
+        _state.households.forEach(function(household) {
+            if (!household || typeof household.id !== 'string') return;
+            expectedId.set(household.id, household);
+            add(expectedLocation, household.locationId || 'none', household.id);
+            add(expectedStatus, household.status || 'none', household.id);
+            (Array.isArray(household.members) ? household.members : []).forEach(function(member) {
+                if (member && typeof member.characterId === 'string' && member.characterId) {
+                    add(expectedMember, member.characterId, household.id);
+                }
+            });
+        });
+        expectedId.forEach(function(record, id) {
+            if (_state.cache.byId.get(id) !== record) result.staleById.push(id);
+        });
+        _state.cache.byId.forEach(function(record, id) {
+            if (!expectedId.has(id)) result.staleById.push(id);
+        });
+        function compare(actual, expected, target) {
+            actual.forEach(function(records, key) {
+                var wanted = expected.get(key) || [];
+                var got = Array.isArray(records) ? records.map(function(item) {
+                    return item && typeof item === 'object' ? item.id : item;
+                }) : [];
+                if (got.length !== wanted.length || got.some(function(id, index) {
+                    return id !== wanted[index];
+                })) target.push(key);
+            });
+            expected.forEach(function(records, key) {
+                if (!actual.has(key)) target.push(key);
+            });
+        }
+        compare(_state.cache.byLocation, expectedLocation, result.staleByLocation);
+        compare(_state.cache.byStatus, expectedStatus, result.staleByStatus);
+        compare(_state.cache.byMember, expectedMember, result.staleByMember);
+        result.ok = result.staleById.length === 0
+            && result.staleByLocation.length === 0
+            && result.staleByStatus.length === 0
+            && result.staleByMember.length === 0;
+        return result;
+    }
+
     var _diagnostics = {
         getHouseholdCount: function() { return _state.households.length; },
         getPositionCount: function() { return _state.householdPositions.length; },
@@ -1568,6 +1625,7 @@
 
             var residenceIndex = _checkResidenceReverseIndex();
             var enterpriseIndex = _checkEnterpriseReverseIndex();
+            var cacheIndex = _checkCacheIntegrity();
             var memberIndex = _checkHouseholdMemberReverseIndex(
                 Array.isArray(master.data.households) ? master.data.households : null,
                 Array.isArray(master.data.characters) ? master.data.characters : null
@@ -1578,6 +1636,7 @@
                 pDup.length === 0 &&
                 aDup.length === 0 &&
                 duplicateHouseholdHeads.length === 0 &&
+                cacheIndex.ok === true &&
                 residenceIndex.available === true &&
                 enterpriseIndex.available === true &&
                 residenceIndex.householdsWithMissingResidence.length === 0 &&
@@ -1600,6 +1659,7 @@
 
             return {
                 ok: ok,
+                cacheIntegrity: cacheIndex,
                 duplicates: {
                     households: hDup,
                     positions: pDup,
