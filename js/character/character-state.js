@@ -732,7 +732,12 @@
         }
     }
 
-    function _emitChange(action, characterIds) {
+    function _emitChange(action, characterIds, options) {
+        options = options || {};
+        if (options.deferCommit === true) {
+            if (!window.CrossDomainTransaction || typeof window.CrossDomainTransaction.isActive !== 'function' || window.CrossDomainTransaction.isActive() !== true) throw new Error('Deferred Character notifications require an active CrossDomainTransaction.');
+            window.markDataDirty(); _invalidateAccessorCaches(); return;
+        }
         window.markDataDirty();
         _invalidateAccessorCaches();
 
@@ -1420,7 +1425,8 @@
         return { success: true };
     }
 
-    function updateCharacters(changes) {
+    function updateCharacters(changes, options) {
+        options = options || {};
         if (!Array.isArray(changes)) {
             return { success: false, reason: 'changes must be an array.' };
         }
@@ -1472,8 +1478,8 @@
             affectedIds.push(validated[j].id);
         }
 
-        _emitChange('bulk-updated', affectedIds);
-        return { success: true };
+        _emitChange('bulk-updated', affectedIds, options);
+        return { success: true, characterIds: affectedIds.slice() };
     }
 
     function applyDomainFieldPatch(characterId, updates) {
@@ -1731,6 +1737,11 @@
 
         updateCharacter: updateCharacter,
         updateCharacters: updateCharacters,
+        notifyTransactionUpdate: function (characterIds) {
+            if (!window.CrossDomainTransaction || typeof window.CrossDomainTransaction.isActive !== 'function' || window.CrossDomainTransaction.isActive() !== true) return { success: false, reason: 'Transaction notifications require an active CrossDomainTransaction.' };
+            _emitChange('bulk-updated', Array.isArray(characterIds) ? characterIds.slice() : []);
+            return { success: true };
+        },
         applyDomainFieldPatch: applyDomainFieldPatch,
 
         addCharacter: addCharacter,
