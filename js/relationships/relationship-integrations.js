@@ -740,49 +740,124 @@
             ? options.rollProvider
             : _roll;
 
-        // Jealousy
         var jealousy = {
+            success: false,
+            code: 'JEALOUSY_COMMANDS_UNAVAILABLE',
+            message: 'JealousyCommands.processAnnualJealousy is not available',
             confrontations: [],
             skipped: [],
             confrontationCount: 0,
             skippedCount: 0
         };
+
         if (window.JealousyCommands &&
             typeof window.JealousyCommands.processAnnualJealousy === 'function') {
-            var j = window.JealousyCommands.processAnnualJealousy({
-                year: year,
-                rollProvider: rollFn,
-                maxConfrontations: options.maxConfrontations
-            });
-            if (j && j.success) {
+            try {
+                var j = window.JealousyCommands.processAnnualJealousy({
+                    year: year,
+                    rollProvider: rollFn,
+                    maxConfrontations: options.maxConfrontations
+                });
+
+                if (j && j.success) {
+                    jealousy = {
+                        success: true,
+                        confrontations: j.confrontations || [],
+                        skipped: j.skipped || [],
+                        confrontationCount: j.confrontationCount || 0,
+                        skippedCount: j.skippedCount || 0
+                    };
+                } else {
+                    jealousy = {
+                        success: false,
+                        code: j && j.code ? j.code : 'JEALOUSY_PROCESSING_FAILED',
+                        message: j && j.message ? j.message : 'Jealousy annual processing failed',
+                        confrontations: j && j.confrontations ? j.confrontations : [],
+                        skipped: j && j.skipped ? j.skipped : [],
+                        confrontationCount: j && j.confrontationCount ? j.confrontationCount : 0,
+                        skippedCount: j && j.skippedCount ? j.skippedCount : 0
+                    };
+                }
+            } catch (e) {
                 jealousy = {
-                    confrontations: j.confrontations || [],
-                    skipped: j.skipped || [],
-                    confrontationCount: j.confrontationCount || 0,
-                    skippedCount: j.skippedCount || 0
+                    success: false,
+                    code: 'JEALOUSY_PROCESSING_THROWN',
+                    message: e && e.message ? e.message : String(e),
+                    confrontations: [],
+                    skipped: [],
+                    confrontationCount: 0,
+                    skippedCount: 0
                 };
             }
         }
 
-        // Affairs
-        var affairs = processAnnualAffairDiscovery({
-            year: year,
-            rollProvider: rollFn,
-            maxDiscoveries: options.maxDiscoveries
-        });
+        var affairs;
+        try {
+            affairs = processAnnualAffairDiscovery({
+                year: year,
+                rollProvider: rollFn,
+                maxDiscoveries: options.maxDiscoveries
+            });
+            if (!affairs || affairs.success !== true) {
+                affairs = {
+                    success: false,
+                    code: affairs && affairs.code ? affairs.code : 'AFFAIR_DISCOVERY_FAILED',
+                    message: affairs && affairs.message ? affairs.message : 'Affair annual discovery failed',
+                    year: year,
+                    discoveries: affairs && affairs.discoveries ? affairs.discoveries : [],
+                    attempts: affairs && affairs.attempts ? affairs.attempts : [],
+                    discoveryCount: affairs && affairs.discoveryCount ? affairs.discoveryCount : 0,
+                    attemptCount: affairs && affairs.attemptCount ? affairs.attemptCount : 0
+                };
+            }
+        } catch (e) {
+            affairs = {
+                success: false,
+                code: 'AFFAIR_DISCOVERY_THROWN',
+                message: e && e.message ? e.message : String(e),
+                year: year,
+                discoveries: [],
+                attempts: [],
+                discoveryCount: 0,
+                attemptCount: 0
+            };
+        }
 
-        return _ok({
+        var failures = [];
+        if (!jealousy.success) {
+            failures.push({
+                system: 'jealousy',
+                code: jealousy.code,
+                message: jealousy.message
+            });
+        }
+        if (!affairs.success) {
+            failures.push({
+                system: 'affairs',
+                code: affairs.code,
+                message: affairs.message
+            });
+        }
+
+        var result = {
             year: year,
             jealousy: jealousy,
-            affairs: affairs.success
-                ? affairs
-                : {
-                    discoveries: [],
-                    attempts: [],
-                    discoveryCount: 0,
-                    attemptCount: 0
-                }
-        });
+            affairs: affairs,
+            failures: failures,
+            failureCount: failures.length,
+            complete: failures.length === 0
+        };
+
+        if (failures.length > 0) {
+            return {
+                success: false,
+                code: 'PARTIAL_ANNUAL_RELATIONSHIP_PROCESSING',
+                message: failures.length + ' relationship annual process(es) failed',
+                ...result
+            };
+        }
+
+        return _ok(result);
     }
 
     // =========================================================================
