@@ -1934,3 +1934,26 @@ successful cleanup committed. Durable coordinated rollback remains outstanding.
 ================================================================================
 END OF DOCUMENT
 ================================================================================
+
+
+PART — CHARACTER CLEANUP PREFLIGHT AND ORDERING
+
+LocationCommands.deletePlace runs _cleanupCharactersAtPlaces with dryRun before
+any cross-domain mutation. This resolves the same semantic current-location
+and move-history references as the real cleanup, catches query/resolution
+errors, and verifies that the required Character batch writer is available.
+The dry run does not write Character records, publish events, invalidate
+caches, or mark data dirty.
+
+The real Character cleanup is deferred until Government, Religion and Culture
+have successfully reconciled. Household cleanup follows Character cleanup.
+The per-character compatibility fallback is intentionally disabled for
+Location deletion: multiple independent writes could partially succeed and
+leave only some Characters reconciled. CharacterCommands.updateCharacters is
+required whenever affected Characters need changes.
+
+This improves failure ordering and prevents predictable Character planning
+or dependency failures from occurring after another domain has been mutated.
+It does not provide coordinated rollback if the real Character batch or
+Household cleanup fails after Government, Religion or Culture has committed.
+That cross-domain transaction remains outstanding.
