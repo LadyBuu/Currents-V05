@@ -916,6 +916,19 @@
         return State.getGovernmentTypeById(typeId);
     }
 
+    function getGovernmentTypesByAllowedRank(rankId) {
+        if (!rankId) return [];
+        var types = State.getAllGovernmentTypes();
+        var out = [];
+        for (var i = 0; i < types.length; i++) {
+            var allowed = types[i] && types[i].allowedRankIds;
+            if (Array.isArray(allowed) && allowed.indexOf(rankId) !== -1) {
+                out.push(types[i]);
+            }
+        }
+        return out;
+    }
+
     function getGovernmentHistory(locationId) {
         return State.getGovernmentHistory(locationId);
     }
@@ -1058,6 +1071,7 @@
         // Government types
         getGovernmentTypes: getGovernmentTypes,
         getGovernmentType: getGovernmentType,
+        getGovernmentTypesByAllowedRank: getGovernmentTypesByAllowedRank,
         getGovernmentHistory: getGovernmentHistory,
 
         // Leader (delegated to Location)
