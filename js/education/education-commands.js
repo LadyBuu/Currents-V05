@@ -1366,10 +1366,10 @@
                         learnedVia: 'institution',
                         institutionId: institutionId
                     });
-                    if (!roleResult || roleResult.success === false) {
+                    if (!roleResult || roleResult.success !== true) {
                         roleGrantError = (roleResult && roleResult.reason)
                             ? roleResult.reason
-                            : 'Role grant failed for unknown reason';
+                            : 'Role grant did not return an explicit success result';
                     }
                 } catch (err) {
                     roleGrantError = err && err.message
@@ -1388,6 +1388,14 @@
                         ' reason=' + roleGrantError
                     );
                 }
+                // Graduation promises this role. Do not graduate or remove
+                // the student when that promise could not be fulfilled.
+                return _fail('Role grant failed; student remains enrolled: ' +
+                    roleGrantError, {
+                        studentId: studentId,
+                        institutionId: institutionId,
+                        roleId: roleToGrant
+                    });
             }
         }
 
@@ -1407,10 +1415,17 @@
             grantedRole: roleToGrant
         });
 
-        _state()._updateInstitution(institutionId, {
+        var institutionUpdate = _state()._updateInstitution(institutionId, {
             students: students,
             graduates: graduates
         });
+        if (!institutionUpdate) {
+            return _fail('Failed to update institution graduation records; student remains enrolled.', {
+                studentId: studentId,
+                institutionId: institutionId,
+                roleGranted: !!roleToGrant
+            });
+        }
 
         var gradResult = _cc('recordEducationGraduation')(studentId, institutionId, {
             graduationYear: year,
