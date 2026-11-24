@@ -666,6 +666,7 @@
     }
 
     function _wireActions(container, locationId) {
+        container.__stCurrentLocationId = locationId;
         if (container.__stReligionWired) return;
         container.__stReligionWired = true;
         container.addEventListener('click', function (event) {
@@ -673,7 +674,7 @@
             if (!btn || !container.contains(btn)) return;
             if (btn.disabled) return;
             event.preventDefault();
-            _handleAction(btn.dataset.action, btn, locationId, container);
+            _handleAction(btn.dataset.action, btn, container.__stCurrentLocationId, container);
         });
     }
 
