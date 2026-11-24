@@ -703,6 +703,7 @@ rules module.
       window.SettlementQueries (getSettlementData —
         createSettlement's uniqueness check),
       window.SettlementRankRules (getAllRanks, getRankById),
+      window.RoleQueries (getRoleById — when specializationRoleId is supplied),
       window.SettlementCommandCommit,
       window.LocationQueries (getPlace, getLocationTypePriority),
       window.getCurrentYear (via _currentYear).
