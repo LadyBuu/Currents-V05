@@ -1190,13 +1190,6 @@
                     ? character.household : '';
                 var charHouseholdId = typeof character.householdId === 'string'
                     ? character.householdId : '';
-                if (charHousehold && charHouseholdId &&
-                    charHousehold !== charHouseholdId) {
-                    result.charactersWithConflictingHouseholdFields.push({
-                        characterId: characterId, household: charHousehold,
-                        householdId: charHouseholdId
-                    });
-                }
                 var reverseId = charHouseholdId || charHousehold;
                 if (reverseId !== household.id) {
                     result.householdMembersWithMismatchedCharacterReference.push({
@@ -1233,7 +1226,14 @@
             var householdIdField = typeof characterRecord.householdId === 'string'
                 ? characterRecord.householdId : '';
             if (householdField && householdIdField &&
-                householdField !== householdIdField) continue;
+                householdField !== householdIdField) {
+                result.charactersWithConflictingHouseholdFields.push({
+                    characterId: characterRecord.id,
+                    household: householdField,
+                    householdId: householdIdField
+                });
+                continue;
+            }
             var currentHouseholdId = householdIdField || householdField;
             if (!currentHouseholdId) continue;
 
