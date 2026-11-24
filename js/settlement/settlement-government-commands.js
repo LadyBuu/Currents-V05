@@ -312,13 +312,65 @@
         return { success: true, locationId: locationId, impact: impact, event: event };
     }
 
+    function recordCrimeImpact(locationId, input) {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+            return _failure('INVALID_CRIME_IMPACT', { reason: 'Crime impact data must be an object.' });
+        }
+        if (typeof input.type !== 'string' || !input.type.trim()) {
+            return _failure('INVALID_CRIME_TYPE', { type: input.type });
+        }
+        if (typeof input.year !== 'number' || !isFinite(input.year)) {
+            return _failure('INVALID_CRIME_YEAR', { year: input.year });
+        }
+
+        var settlement = _getSettlementQueries().getSettlementData(locationId);
+        if (!settlement) return _failure('SETTLEMENT_NOT_FOUND', { locationId: locationId });
+
+        var impacts = Array.isArray(settlement.crimeImpacts) ? settlement.crimeImpacts.slice() : [];
+        if (input.crimeId) {
+            for (var i = 0; i < impacts.length; i++) {
+                if (impacts[i] && impacts[i].crimeId === input.crimeId) {
+                    return _failure('CRIME_IMPACT_ALREADY_RECORDED', {
+                        locationId: locationId, crimeId: input.crimeId
+                    });
+                }
+            }
+        }
+
+        var impact = {
+            crimeId: input.crimeId || null,
+            type: input.type,
+            year: input.year,
+            victimId: input.victimId || null,
+            killerId: input.killerId || null,
+            condemnedId: input.condemnedId || null,
+            reason: input.reason || null,
+            method: input.method || null,
+            solved: input.solved === true,
+            lawViolations: (typeof input.lawViolations === 'number' && isFinite(input.lawViolations))
+                ? Math.max(0, Math.floor(input.lawViolations)) : 0
+        };
+        impacts.push(impact);
+        if (impacts.length > 500) impacts = impacts.slice(-500);
+
+        var candidate = _copyWith(settlement, { crimeImpacts: impacts });
+        var event = _getCommit().commit(locationId, candidate, {
+            type: 'crimeImpactRecorded',
+            crimeId: impact.crimeId,
+            crimeType: impact.type,
+            year: impact.year
+        });
+        return { success: true, locationId: locationId, impact: impact, event: event };
+    }
+
     window.SettlementGovernmentCommands = Object.freeze({
         setGovernmentType: setGovernmentType,
         setUseReligiousLawsAsCivil: setUseReligiousLawsAsCivil,
         setStateReligion: setStateReligion,
         setJusticeSeverity: setJusticeSeverity,
         setWatch: setWatch,
-        recordDisasterImpact: recordDisasterImpact
+        recordDisasterImpact: recordDisasterImpact,
+        recordCrimeImpact: recordCrimeImpact
     });
 
 })();
