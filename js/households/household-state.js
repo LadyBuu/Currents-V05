@@ -62,7 +62,12 @@
  *
  *     Reports:
  *       - householdsWithMissingResidence
+ *       - householdsWithMissingResidenceUnit
+ *       - householdsWithMismatchedResidenceUnit
+ *       - householdsOccupyingMultipleUnits
  *       - residencesWithOrphanHouseholdOccupancy
+ *       - residenceUnitsWithStaleHouseholdReference
+ *       - residenceUnitsWithMissingHousehold
  *
  *   ENTERPRISE (secondary item #2):
  *     enterprises[] is maintained by
@@ -158,10 +163,8 @@
  *   - storage.js (window.masterData)
  *
  * DEPENDENCIES (OPTIONAL, checked at diagnostics time only):
- *   - residence-system.js   (window.ResidenceSystem) — if present, the
- *     residence diagnostics cross-check occupancy; if absent, the
- *     residence-related fields in the report are marked unavailable and
- *     left empty.
+ *   - None for Residence integrity. The check reads canonical
+ *     masterData.data.households and masterData.data.residences directly.
  *
  *   The enterprise diagnostics do not require any module. They read
  *   masterData.data.enterprises and masterData.data.households directly.
