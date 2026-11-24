@@ -844,65 +844,104 @@
 
     function updateInstitution(institutionId, updates) {
         if (!institutionId) return _fail('institutionId is required');
-        if (!updates || typeof updates !== 'object') return _fail('updates object is required');
+        if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+            return _fail('updates object is required');
+        }
 
         var inst = _state()._getInstitutionCanonical(institutionId);
         if (!inst) return _fail('Institution not found');
 
+        var allowed = {
+            name: true,
+            description: true,
+            notes: true,
+            locationId: true,
+            type: true,
+            religionId: true,
+            isReligiousSchool: true,
+            ownershipType: true,
+            ownerId: true,
+            ownerType: true,
+            ownerName: true,
+            specializationCategory: true,
+            taughtRoles: true,
+            curriculum: true,
+            maxStudents: true,
+            requiredYears: true,
+            skillGainPerYear: true,
+            reputation: true,
+            tuitionPerYear: true,
+            tuitionReason: true,
+            customTuition: true
+        };
+        var protectedFields = [
+            'id', 'students', 'graduates', 'teachers', 'headmaster',
+            'headmasterHistory', 'history', 'status', 'demolishedAt',
+            'demolishedReason', 'demolishedRecord', 'foundedYear',
+            'tuitionHistory', 'governmentFundingHistory', 'profitHistory'
+        ];
+        var keys = Object.keys(updates);
+        if (keys.length === 0) return _ok({ institutionId: institutionId, unchanged: true });
+        for (var i = 0; i < keys.length; i++) {
+            if (protectedFields.indexOf(keys[i]) !== -1) {
+                return _fail('Field "' + keys[i] + '" is lifecycle-managed and cannot be changed through updateInstitution');
+            }
+            if (!allowed[keys[i]]) {
+                return _fail('Field "' + keys[i] + '" is not editable through updateInstitution');
+            }
+        }
+
         var patch = Object.assign({}, updates);
         var year = _getCurrentYear();
-
-        if (patch.name !== undefined && patch.name !== inst.name) {
-            _history().recordInstitutionRenamed(institutionId, inst.name, patch.name, year, 'Renamed');
+        if (patch.name !== undefined &&
+            (typeof patch.name !== 'string' || !patch.name.trim())) {
+            return _fail('Institution name must be a non-empty string');
         }
-
         if (patch.locationId !== undefined && patch.locationId !== inst.locationId) {
-            var newPlace = _getPlaceById(patch.locationId);
-            if (!newPlace) return _fail('New location not found: ' + patch.locationId);
-            _history().recordInstitutionMoved(
-                institutionId, inst.locationName, newPlace.displayName, year, 'Moved'
-            );
-            patch.locationName = newPlace.displayName;
+            var targetPlace = _getPlaceById(patch.locationId);
+            if (!targetPlace) return _fail('New location not found: ' + patch.locationId);
+            patch.locationName = targetPlace.displayName;
         }
-
-        if (patch.type !== undefined && patch.type !== inst.type) {
-            var TYPES = window.INSTITUTION_TYPES;
+        if (patch.type !== undefined) {
+            var TYPES = window.INSTITUTION_TYPES || {};
             var typeDef = null;
-            for (var k in TYPES) {
-                if (TYPES[k].id === patch.type) { typeDef = TYPES[k]; break; }
-            }
-            if (typeDef) {
-                patch.typeName = typeDef.name;
-                patch.icon = typeDef.icon;
-            }
+            Object.keys(TYPES).some(function (key) {
+                if (TYPES[key] && TYPES[key].id === patch.type) {
+                    typeDef = TYPES[key];
+                    return true;
+                }
+                return false;
+            });
+            if (!typeDef) return _fail('Invalid institution type: ' + patch.type);
+            patch.typeName = typeDef.name;
+            patch.icon = typeDef.icon;
         }
-
-        if (patch.religionId !== undefined) {
-            if (patch.religionId) {
-                var religion = _getReligionById(patch.religionId);
-                if (!religion) return _fail('Religion not found: ' + patch.religionId);
-                patch.religionName = religion.name;
-                if (patch.isReligiousSchool === undefined) patch.isReligiousSchool = true;
-            } else {
-                patch.religionName = null;
-            }
+        if (patch.religionId !== undefined && patch.religionId) {
+            var religion = _getReligionById(patch.religionId);
+            if (!religion) return _fail('Religion not found: ' + patch.religionId);
+            patch.religionName = religion.name;
+            if (patch.isReligiousSchool === undefined) patch.isReligiousSchool = true;
+        } else if (patch.religionId === null || patch.religionId === '') {
+            patch.religionId = null;
+            patch.religionName = null;
         }
-
-        if (patch.ownershipType !== undefined &&
-            patch.ownershipType !== inst.ownershipType) {
+        if (patch.ownershipType !== undefined) {
+            if (['public', 'private', 'religious'].indexOf(patch.ownershipType) === -1) {
+                return _fail('Invalid ownershipType');
+            }
             if (patch.ownershipType === 'private') {
                 var ownerId = patch.ownerId || inst.ownerId;
                 var ownerType = patch.ownerType || inst.ownerType;
                 if (!ownerId) return _fail('Private ownership requires an ownerId');
                 var ownerName = patch.ownerName || null;
                 if (ownerType === 'character') {
-                    var c = _getCharacterById(ownerId);
-                    if (!c) return _fail('Owner character not found');
-                    if (!ownerName) ownerName = c.name + (c.surname ? ' ' + c.surname : '');
+                    var ownerCharacter = _getCharacterById(ownerId);
+                    if (!ownerCharacter) return _fail('Owner character not found');
+                    if (!ownerName) ownerName = ownerCharacter.name + (ownerCharacter.surname ? ' ' + ownerCharacter.surname : '');
                 } else if (ownerType === 'household') {
-                    var h = _getHousehold(ownerId);
-                    if (!h) return _fail('Owner household not found');
-                    if (!ownerName) ownerName = h.name;
+                    var ownerHousehold = _getHousehold(ownerId);
+                    if (!ownerHousehold) return _fail('Owner household not found');
+                    if (!ownerName) ownerName = ownerHousehold.name;
                 } else {
                     return _fail('Invalid ownerType for private ownership');
                 }
@@ -913,54 +952,77 @@
                 patch.ownerId = null;
                 patch.ownerType = null;
                 patch.ownerName = null;
-            } else if (patch.ownershipType === 'religious') {
-                var religionId = patch.religionId || inst.religionId;
-                if (!religionId) return _fail('Religious ownership requires a religionId');
-                var rel = _getReligionById(religionId);
-                if (!rel) return _fail('Religion not found');
-                patch.ownerId = rel.id;
+            } else {
+                var religiousId = patch.religionId || inst.religionId;
+                var religiousOwner = religiousId ? _getReligionById(religiousId) : null;
+                if (!religiousOwner) return _fail('Religious ownership requires a valid religionId');
+                patch.religionId = religiousOwner.id;
+                patch.religionName = religiousOwner.name;
+                patch.ownerId = religiousOwner.id;
                 patch.ownerType = 'religion';
-                patch.ownerName = rel.name;
-                patch.religionId = rel.id;
-                patch.religionName = rel.name;
+                patch.ownerName = religiousOwner.name;
                 patch.isReligiousSchool = true;
             }
         }
-
-        if (patch.specializationCategory !== undefined || patch.taughtRoles !== undefined) {
-            var cat = patch.specializationCategory !== undefined
-                ? patch.specializationCategory
-                : inst.specializationCategory;
-            var roles = patch.taughtRoles !== undefined
-                ? patch.taughtRoles
-                : (inst.taughtRoles || []);
-            patch.isSpecialized = !!cat && roles.length > 0;
+        if (patch.taughtRoles !== undefined && !Array.isArray(patch.taughtRoles)) {
+            return _fail('taughtRoles must be an array');
         }
-
+        if (patch.curriculum !== undefined && !Array.isArray(patch.curriculum)) {
+            return _fail('curriculum must be an array');
+        }
+        if (patch.maxStudents !== undefined &&
+            (!Number.isFinite(patch.maxStudents) || patch.maxStudents < 0)) {
+            return _fail('maxStudents must be a non-negative finite number');
+        }
+        ['requiredYears', 'skillGainPerYear', 'reputation', 'tuitionPerYear'].forEach(function (field) {
+            if (patch[field] !== undefined &&
+                (!Number.isFinite(patch[field]) || patch[field] < 0)) {
+                throw new Error(field + ' must be a non-negative finite number');
+            }
+        });
+        if (patch.specializationCategory !== undefined || patch.taughtRoles !== undefined) {
+            var category = patch.specializationCategory !== undefined
+                ? patch.specializationCategory : inst.specializationCategory;
+            var roles = patch.taughtRoles !== undefined ? patch.taughtRoles : (inst.taughtRoles || []);
+            patch.isSpecialized = !!category && roles.length > 0;
+        }
         if (patch.tuitionPerYear !== undefined &&
             patch.tuitionPerYear !== inst.tuitionPerYear) {
-            var bounded = Math.max(0, patch.tuitionPerYear);
-            if (!_hasTuitionHistoryEntry(inst, year, bounded)) {
-                var history = (inst.tuitionHistory || []).slice();
+            var history = (inst.tuitionHistory || []).slice();
+            if (!_hasTuitionHistoryEntry(inst, year, patch.tuitionPerYear)) {
                 history.push({
                     year: year,
                     oldAmount: inst.tuitionPerYear,
-                    newAmount: bounded,
+                    newAmount: patch.tuitionPerYear,
                     reason: patch.tuitionReason || 'Updated'
                 });
                 patch.tuitionHistory = history;
             }
-            patch.tuitionPerYear = bounded;
             delete patch.tuitionReason;
         }
-
-        if (patch.customTuition !== undefined) {
-            patch.customTuition = patch.customTuition !== null
-                ? Math.max(0, patch.customTuition)
-                : null;
+        if (patch.customTuition !== undefined &&
+            patch.customTuition !== null &&
+            (!Number.isFinite(patch.customTuition) || patch.customTuition < 0)) {
+            return _fail('customTuition must be null or a non-negative finite number');
         }
+        if (patch.name !== undefined) patch.name = patch.name.trim();
 
-        _state()._updateInstitution(institutionId, patch);
+        var result;
+        try {
+            result = _state()._updateInstitution(institutionId, patch);
+        } catch (error) {
+            return _fail('Institution update failed: ' + (error && error.message ? error.message : error));
+        }
+        if (!result) return _fail('EducationState refused the institution update');
+
+        if (updates.name !== undefined && updates.name !== inst.name) {
+            _history().recordInstitutionRenamed(institutionId, inst.name, updates.name.trim(), year, 'Renamed');
+        }
+        if (updates.locationId !== undefined && updates.locationId !== inst.locationId) {
+            _history().recordInstitutionMoved(
+                institutionId, inst.locationName, result.locationName, year, 'Moved'
+            );
+        }
         return _ok({ institutionId: institutionId });
     }
 
