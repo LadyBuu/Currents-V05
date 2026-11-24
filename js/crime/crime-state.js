@@ -649,6 +649,7 @@
             if (v.status != null && allowed.indexOf(v.status) === -1) warnings.push('vendetta ' + v.id + ' has invalid status ' + v.status);
             if (v.status === statuses.ESCALATED && deaths.length < threshold) warnings.push('vendetta ' + v.id + ' is escalated with ' + deaths.length + ' deaths (threshold ' + threshold + ')');
             if (v.status === statuses.RESOLVED && (typeof v.resolvedAt !== 'number' || !isFinite(v.resolvedAt))) warnings.push('vendetta ' + v.id + ' is resolved but has invalid resolvedAt');
+            if (v.status === statuses.ESCALATED && (typeof v.escalatedAt !== 'number' || !isFinite(v.escalatedAt))) warnings.push('vendetta ' + v.id + ' is escalated but has invalid escalatedAt');
             if (v.startedYear != null && (typeof v.startedYear !== 'number' || !isFinite(v.startedYear))) warnings.push('vendetta ' + v.id + ' has invalid startedYear');
             deaths.forEach(function(death, deathIndex) {
                 if (!death || typeof death !== 'object') warnings.push('vendetta ' + v.id + ' has invalid death at index ' + deathIndex);
