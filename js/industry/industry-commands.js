@@ -1807,10 +1807,30 @@
             participants: [{
                 name: 'household-enterprise-indexes',
                 prepare: function() {
-                    return internal.getAllHouseholdRecords({ includeDeprecated: true }).length ===
-                        householdIds.length
-                        ? true
-                        : { success: false, reason: 'Household collection changed after diagnostics.' };
+                    var records = internal.getAllHouseholdRecords({
+                        includeDeprecated: true
+                    });
+                    if (records.length !== householdIds.length) {
+                        return {
+                            success: false,
+                            reason: 'Household collection changed after diagnostics.'
+                        };
+                    }
+                    var seen = Object.create(null);
+                    for (var i = 0; i < records.length; i++) {
+                        var id = records[i] && records[i].id;
+                        if (!_hasId(id) || seen[id] ||
+                            !Object.prototype.hasOwnProperty.call(
+                                report.expectedByHousehold, id
+                            )) {
+                            return {
+                                success: false,
+                                reason: 'Household state and canonical Household ids do not match.'
+                            };
+                        }
+                        seen[id] = true;
+                    }
+                    return true;
                 },
                 snapshot: function() {
                     return internal.transactionSnapshotEnterpriseIndexes();
