@@ -409,7 +409,7 @@
     // Export
     // -------------------------------------------------------------------
 
-    function _exportHistory(locationId) {
+    function _exportHistory(container.__stCurrentLocationId) {
         var Q = _getSettlementQueries();
         if (!Q) {
             H().toast('Settlement not found.', 'error');
@@ -486,6 +486,7 @@
     }
 
     function _wireActions(container, locationId) {
+        container.__stCurrentLocationId = locationId;
         if (container.__stHistoryWired) return;
         container.__stHistoryWired = true;
 
@@ -505,7 +506,7 @@
             }
             if (action === 'clear-filters') {
                 event.preventDefault();
-                _writeFilterState(locationId, {
+                _writeFilterState(container.__stCurrentLocationId, {
                     search: '', kind: 'all', yearStart: '', yearEnd: ''
                 });
                 refresh();
