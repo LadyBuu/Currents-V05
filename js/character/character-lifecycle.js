@@ -123,95 +123,55 @@
  *   Math.random is never called directly.
  *
  * CROSS-DOMAIN DEATH DISPATCH:
- *   After CharacterCommands.markDeceased succeeds, three subsystems are
- *   notified, in this order:
+ *   After CharacterCommands.markDeceased succeeds, required cleanup
+ *   handlers are invoked and their results are inspected:
  *
- *     1. FamilyCommands.handleCharacterDeath
- *     2. RelationshipIntegrations.handleCharacterDeath
- *     3. RankIssues.handleCharacterDeath
+ *     1. FamilyCommands.handleCharacterDeath (named dispatch)
+ *     2. RankIssues.handleCharacterDeath (named dispatch)
+ *     3. Registered handlers, including RelationshipIntegrations and
+ *        LocationCommands.
  *
- *   Each is called if and only if the module and method are present.
- *   Failures are swallowed; the death has already been written and the
- *   cascade proceeds. The death operation is NOT transactional across
- *   domains. This is deliberate: each domain owns its own state, and a
- *   failure in one subsystem's cleanup must not prevent another's.
+ *   RelationshipIntegrations is intentionally NOT in the named list:
+ *   it registers through registerDeathHandler. This prevents the prior
+ *   double invocation when both the namespace and registration were
+ *   available at dispatch time.
  *
- *   NAMING:
- *     The relationship domain's cross-domain hook is exported by
- *     js/relationships/relationship-integration.js under the namespace
- *     "RelationshipIntegrations" (PLURAL). Earlier revisions referenced
- *     the singular form, which does not exist and silently skipped
- *     relationship cleanup on every death.
+ *   Every handler must return an object with success:true. Missing,
+ *   malformed, unsuccessful, or throwing results are collected. The
+ *   remaining handlers still run so the caller receives a complete
+ *   failure report rather than an arbitrary first failure.
  *
- *   The dispatch is centralised in _dispatchDeathEffects, which is
- *   called from both _die (simulation path) and killCharacter (command
- *   path). This ensures the two paths cannot drift.
+ *   IMPORTANT LIMITATION:
+ *   This dispatch is not yet atomic across domains. The character's
+ *   deceased flag and any successful domain cleanup may already be
+ *   committed when another handler fails. In that case _die and
+ *   killCharacter return DEATH_CASCADE_PARTIAL_FAILURE with
+ *   deathRecorded:true and per-handler details. They do not claim the
+ *   death was rolled back. A later transaction phase must add snapshots
+ *   and rollback support for every participating domain before this
+ *   workflow can be described as atomic.
+ *
+ *   The dispatch is centralised in _dispatchDeathEffects, shared by
+ *   _die (simulation path) and killCharacter (command path).
  *
  *   LEADER-TERM CLEANUP:
- *     The location domain's leader assignments are stored on place
- *     records (place.leaderAssignments). A character who is an active
- *     leader in one or more places must have those assignments ended
- *     when they die; otherwise LocationQueries.getCurrentLeader
- *     returns the dead character as the settlement's current leader
- *     indefinitely, and downstream consumers (settlement prosperity,
- *     settlement leader-modifier, UI leader displays) read stale data.
+ *     Location leader assignments are stored on place records. A dead
+ *     active leader must have those assignments ended. LocationCommands
+ *     registers through registerDeathHandler and its registration
+ *     wrapper returns the actual command result so failures propagate.
  *
- *     This module does NOT call LocationCommands.handleCharacterDeath
- *     directly. Instead, location-commands.js registers itself via
- *     window.registerDeathHandler at load (see CROSS-DOMAIN LEADER
- *     CLEANUP in location-commands.js), and _invokeDeathHandlers
- *     (below) fires it alongside every other registered handler.
- *
- *     This keeps the character-lifecycle module free of a hard
- *     load-time dependency on location-commands.js and preserves the
- *     "optional cross-domain cleanup" contract: if
- *     location-commands.js is not loaded, leader-term cleanup is
- *     skipped, and the character domain still functions normally.
- *     Under the documented load order, location-commands.js loads
- *     before character-lifecycle.js's auto-bootstrap runs, so the
- *     registration is present when deaths occur.
- *
- *     See CROSS-DOMAIN LEADER CLEANUP in location-commands.js for the
- *     other side of this contract.
- *
- * DEATH HANDLER HOOK (Phase 3.13):
- *   The named dispatch above only reaches the domains that load
- *   before this file. Under the documented load order, that means
- *   FamilyCommands and RankIssues, but NOT RelationshipIntegrations
- *   (which loads after character-lifecycle.js) and NOT
- *   LocationCommands (which registers via the hook rather than via
- *   the named dispatch, because the location domain prefers the
- *   registration path).
- *
- *   To close that gap, this module exposes registerDeathHandler(fn).
- *   Any module that loads after character-lifecycle.js may register a
- *   handler. Every successful death invokes every registered handler
- *   exactly once, after the named dispatch and after the death has
- *   been written.
- *
- *   RelationshipIntegrations registers itself at load time (see
- *   relationship-integrations.js's REGISTRATION HOOKS section).
- *   LocationCommands registers itself at load time (see
- *   location-commands.js's DEATH HANDLER REGISTRATION section).
+ * DEATH HANDLER HOOK:
+ *   Any module loaded after character-lifecycle.js may register a
+ *   handler. Each registered handler runs once for every death.
  *
  *   Handler contract:
- *     fn(characterId, { deathYear }) -> any
- *   The return value is ignored. Exceptions are caught and logged. A
- *   throwing handler does not prevent subsequent handlers from
- *   running, and does not propagate out of the death dispatch.
+ *     fn(characterId, { deathYear }) -> { success: true, ... }
+ *   A handler that returns nothing is a failure, not an implicit
+ *   success. Exceptions are captured and reported; they do not prevent
+ *   subsequent handlers from running.
  *
- *   The handler registration is additive with the named dispatch: a
- *   domain that registers via the hook AND is present in the named
- *   dispatch (e.g. a hypothetical future state where the load order
- *   changes) will be called twice. That is safe because the command
- *   layer is idempotent per character id (see
- *   LocationCommands.handleCharacterDeath's isActive guard, for
- *   example).
- *
- *   Registration returns an unregister function. Callers who need to
- *   tear down (test harnesses, hot reload) should call it. In a
- *   normal browser session nothing calls unregister; the handler lives
- *   for the lifetime of the page.
+ *   Registration returns an unregister function for tests and hot
+ *   reload. Normal browser sessions retain handlers for page lifetime.
  *
  * PER-CHARACTER DEATH FAILURES (advanceMortality):
  *   When a death evaluation produces a result, the mutation is
