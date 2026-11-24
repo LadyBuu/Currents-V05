@@ -14,39 +14,16 @@
  *
  * DISPATCH MODEL
  *
- *   Two dispatch paths reach this module on death and hard-delete:
+ *   This module registers death and hard-delete handlers through
+ *   window.registerDeathHandler and window.registerDeleteHandler.
+ *   CharacterLifecycle and CharacterDeletionCommands invoke those
+ *   registered handlers. The former direct-dispatch path was removed
+ *   from CharacterLifecycle to prevent duplicate execution.
  *
- *     1. Direct dispatch from the character subsystem.
- *        CharacterLifecycle.killCharacter calls
- *        RelationshipIntegrations.handleCharacterDeath directly, if
- *        the module is present.
- *        CharacterDeletionCommands.deleteCharacter calls
- *        RelationshipIntegrations.removeAllReferencesTo directly, if
- *        the module is present.
- *
- *     2. Registration hook (Phase 3.13).
- *        This file calls window.registerDeathHandler and
- *        window.registerDeleteHandler at load time. The character
- *        subsystem's handlers invoke them on every death and every
- *        hard-delete, regardless of load order.
- *
- *   Path 1 is a no-op under the documented load order, because
- *   character-lifecycle.js and character-deletion-commands.js load
- *   before this file. Path 2 is the load-order-independent path.
- *
- *   The two paths are additive, not redundant. If the character
- *   subsystem ever changed its load order so that this file loads
- *   first, path 1 would fire and path 2 would too — the handlers are
- *   idempotent per character id (the command returns early if the
- *   relationship is already ended), so double-dispatch is safe.
- *
- *   The registration functions are exposed by the character subsystem
- *   (see character-lifecycle.js's registerDeathHandler and
- *   character-deletion-commands.js's registerDeleteHandler). If either
- *   is absent — for example, on a build where Phase 3.13 hasn't landed
- *   yet — this file skips the corresponding registration with a
- *   console warning. It does not throw.
- *
+ *   Registration is therefore the active integration path. If either
+ *   registration function is absent, this module logs a warning and
+ *   that lifecycle cleanup is not wired.
+
  * Owns:
  *   - death termination: end every active relationship for a deceased
  *     character, across romance, friendship, rivalry, and professional
@@ -181,6 +158,11 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - Death cleanup now returns success:false with
+ *       PARTIAL_RELATIONSHIP_DEATH_CLEANUP when any domain operation
+ *       fails, retaining the complete per-domain summary for retry.
+ *     - Dispatch documentation now reflects registered handlers as the
+ *       sole active path after Character Phase 2 removed direct dispatch.
  *     - handleCharacterDeath's apprenticeship branch now calls
  *       ApprenticeshipCommands.terminateApprenticeship (the real
  *       terminal method) instead of
@@ -558,6 +540,25 @@
                 [deceasedChar]);
         }
 
+        var failureCount =
+            summary.romance.failed.length +
+            summary.friendship.failed.length +
+            summary.rivalry.failed.length +
+            summary.professional.failed.length;
+
+        summary.failureCount = failureCount;
+        summary.successCount = totalEnded;
+        summary.complete = failureCount === 0;
+
+        if (failureCount > 0) {
+            return {
+                success: false,
+                code: 'PARTIAL_RELATIONSHIP_DEATH_CLEANUP',
+                message: failureCount + ' relationship cleanup operation(s) failed',
+                summary: summary
+            };
+        }
+
         return _ok(summary);
     }
 
@@ -850,19 +851,9 @@
     // =========================================================================
     // 10. DISPATCH MODEL
     //
-    // Two dispatch paths reach this module (see DISPATCH MODEL in the
-    // header):
-    //
-    //   1. Direct dispatch from character-lifecycle.js and
-    //      character-deletion-commands.js. A no-op under the documented
-    //      load order.
-    //
-    //   2. Registration hooks installed above. The character subsystem
-    //      invokes them on every death and every hard-delete.
-    //
-    // The two paths are additive. Double-dispatch is safe because the
-    // command layer is idempotent per relationship id (end() refuses
-    // non-ongoing records; remove() refuses missing ids).
+    // Registered handlers are the sole active path. Character lifecycle
+    // code invokes them after recording death or during hard deletion.
+    // The old direct-dispatch path was removed to prevent duplicate calls.
     // =========================================================================
 
     if (typeof module !== 'undefined' && module.exports) {
