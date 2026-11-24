@@ -655,13 +655,30 @@
         var rollFn = (typeof options.rollProvider === 'function')
             ? options.rollProvider
             : _roll;
-        var maxDiscoveries = (typeof options.maxDiscoveries === 'number')
+        var requestedMax = (typeof options.maxDiscoveries === 'number')
             ? options.maxDiscoveries
+            : 50;
+        var maxDiscoveries = isFinite(requestedMax)
+            ? Math.max(0, Math.floor(requestedMax))
             : 50;
 
         var all = _getCharacters();
         var discoveries = [];
         var attempts = [];
+        // Each affair appears in both participants' character projections.
+        // Track relationship ids so one affair receives exactly one
+        // discovery roll per annual pass, regardless of participant order.
+        var processedRelationshipIds = Object.create(null);
+
+        if (maxDiscoveries === 0) {
+            return _ok({
+                year: year,
+                discoveries: discoveries,
+                attempts: attempts,
+                discoveryCount: 0,
+                attemptCount: 0
+            });
+        }
 
         for (var i = 0; i < all.length; i++) {
             var char = all[i];
@@ -670,7 +687,10 @@
             var affairs = AQ.getActiveAffairs(char.id);
             for (var j = 0; j < affairs.length; j++) {
                 var affair = affairs[j];
-                if (affair.discovered) continue;
+                if (!affair || typeof affair.relationshipId !== 'string' ||
+                    affair.relationshipId.length === 0) continue;
+                if (affair.discovered || processedRelationshipIds[affair.relationshipId]) continue;
+                processedRelationshipIds[affair.relationshipId] = true;
 
                 var roll = rollFn();
                 var result = AC.rollDiscovery(affair.relationshipId, {
