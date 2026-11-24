@@ -49,14 +49,19 @@
  *   - Religion law/canonical data  -> religion-commands.js
  *   - Religion rules               -> religion-rules.js
  *
- * DEATH TRANSITION (markDeceased):
+ * DEATH TRANSITION AND CORRECTION:
  *   markDeceased(characterId, deathData, options) is the ONLY function
- *   that writes isDeceased = true and the associated death fields. It
- *   validates via MortalityRules.validateDeath, then calls
- *   CharacterState.updateCharacter once. It does not dispatch
- *   family/relationship/rank/succession consequences; the caller
- *   (CharacterLifecycle.killCharacter or a UI command) is responsible
- *   for that.
+ *   that transitions isDeceased to true. It validates via
+ *   MortalityRules.validateDeath, then calls CharacterState.updateCharacter
+ *   once. It does not dispatch family/relationship/rank/succession
+ *   consequences; the caller (CharacterLifecycle.killCharacter or a UI
+ *   command) is responsible for that.
+ *
+ *   updateDeathRecord(characterId, patch) is the correction path for an
+ *   ALREADY deceased character. It cannot change life state, murder/
+ *   execution identity, or the character's killer. It validates the
+ *   resulting record with MortalityRules.validateDeathRecord and validates
+ *   death-year consistency when birth-year data is available.
  *
  *   deathData is a plain object:
  *   {
