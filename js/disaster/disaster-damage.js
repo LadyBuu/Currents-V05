@@ -657,7 +657,15 @@
         }
 
         options = options || {};
-        var severity = _isFiniteNumber(disaster.severity) ? disaster.severity : 50;
+        var severity = (typeof disaster.severity === 'undefined') ? 50 : disaster.severity;
+        if (!_isFiniteNumber(severity) || severity < 0 || severity > 100) {
+            return _fail('Disaster severity must be a finite number between 0 and 100', C.CODES.VALIDATION);
+        }
+        if (typeof options.destructionChance !== 'undefined'
+            && (!_isFiniteNumber(options.destructionChance)
+                || options.destructionChance < 0 || options.destructionChance > 1)) {
+            return _fail('destructionChance must be a finite number between 0 and 1', C.CODES.VALIDATION);
+        }
         var baseChance = _isFiniteNumber(options.destructionChance)
             ? options.destructionChance
             : _calculateDestructionChance(severity);
