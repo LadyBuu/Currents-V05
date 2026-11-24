@@ -524,6 +524,53 @@
         }
     }
 
+    function _reconcileDeletedLocations(locationIds) {
+        if (!Array.isArray(locationIds)) {
+            throw new Error('GovernmentState._reconcileDeletedLocations requires an array.');
+        }
+        var locationSet = new Set(locationIds);
+        var current = window.masterData.data.governmentDepartments;
+        if (!Array.isArray(current)) {
+            throw new Error('GovernmentState: canonical departments are unavailable.');
+        }
+        var removed = new Set();
+        var roots = [];
+        for (var i = 0; i < current.length; i++) {
+            var department = current[i];
+            if (department && locationSet.has(department.locationId)) roots.push(department.id);
+        }
+        function collect(id, visiting) {
+            if (!id || removed.has(id)) return;
+            if (visiting.has(id)) throw new Error('Government department hierarchy contains a cycle.');
+            visiting.add(id);
+            removed.add(id);
+            for (var j = 0; j < current.length; j++) {
+                if (current[j] && current[j].parentDepartmentId === id) {
+                    collect(current[j].id, visiting);
+                }
+            }
+            visiting.delete(id);
+        }
+        for (var r = 0; r < roots.length; r++) collect(roots[r], new Set());
+
+        if (removed.size === 0) return [];
+        var next = current.filter(function(department) {
+            return !department || !removed.has(department.id);
+        });
+        try {
+            window.masterData.data.governmentDepartments = next;
+            hydrateFromMasterData();
+        } catch (error) {
+            window.masterData.data.governmentDepartments = current;
+            try { hydrateFromMasterData(); } catch (restoreError) {
+                error.rollbackError = restoreError;
+            }
+            throw error;
+        }
+        _markDirty();
+        return Array.from(removed);
+    }
+
     function _removeDepartment(id) {
         var dept = _getDepartmentCanonical(id);
         if (!dept) return false;
@@ -976,6 +1023,7 @@
         _addDepartment: _addDepartment,
         _updateDepartment: _updateDepartment,
         _removeDepartment: _removeDepartment,
+        _reconcileDeletedLocations: _reconcileDeletedLocations,
         _addPosition: _addPosition,
         _updatePosition: _updatePosition,
         _removePosition: _removePosition,
