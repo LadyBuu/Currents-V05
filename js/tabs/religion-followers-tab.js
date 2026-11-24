@@ -822,6 +822,7 @@
     // idempotency marker suffices.
 
     function _wireRowActions(container, religion) {
+        container.__rtFollowersReligion = religion;
         if (container.__rtFollowersRowWired) return;
         container.__rtFollowersRowWired = true;
 
@@ -838,17 +839,17 @@
             switch (action) {
                 case 'assign-follower':
                     e.preventDefault();
-                    _actionAssignFollower(religion, container);
+                    _actionAssignFollower(container.__rtFollowersReligion, container);
                     break;
 
                 case 'bulk-assign':
                     e.preventDefault();
-                    _actionBulkAssign(religion, container);
+                    _actionBulkAssign(container.__rtFollowersReligion, container);
                     break;
 
                 case 'clear-filters':
                     e.preventDefault();
-                    _actionClearFilters(religion, container);
+                    _actionClearFilters(container.__rtFollowersReligion, container);
                     break;
 
                 case 'view-history': {
