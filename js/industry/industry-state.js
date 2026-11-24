@@ -1044,7 +1044,8 @@
     // Every mutation runs a full index rebuild. Enterprise counts are small
     // enough that an incremental index is unwarranted complexity.
 
-    function _addEnterprise(record) {
+    function _addEnterprise(record, options) {
+        options = options || {};
         _assertHydrated();
 
         if (!_isPlainObject(record)) {
@@ -1062,8 +1063,18 @@
         _enterprises.push(normalised);
         _indexesRebuild();
         _syncToMasterData();
-        _notify('enterpriseAdded', _cloneRecord(normalised));
+        if (options.silent !== true) {
+            _notify('enterpriseAdded', _cloneRecord(normalised));
+        }
         return normalised;
+    }
+
+    function _notifyTransactionEnterpriseAdded(enterpriseId) {
+        _assertHydrated();
+        var record = _cache.byId.get(enterpriseId);
+        if (!record) throw new Error('Enterprise not found for transaction notification: ' + enterpriseId);
+        _notify('enterpriseAdded', _cloneRecord(record));
+        return true;
     }
 
     function _updateEnterprise(enterpriseId, patch, options) {
@@ -1155,7 +1166,8 @@
         return true;
     }
 
-    function _removeEnterprise(enterpriseId) {
+    function _removeEnterprise(enterpriseId, options) {
+        options = options || {};
         _assertHydrated();
 
         if (!_hasId(enterpriseId)) {
@@ -1171,7 +1183,9 @@
 
         _indexesRebuild();
         _syncToMasterData();
-        _notify('enterpriseDeleted', { enterpriseId: enterpriseId });
+        if (options.silent !== true) {
+            _notify('enterpriseDeleted', { enterpriseId: enterpriseId });
+        }
         return true;
     }
 
@@ -1323,6 +1337,7 @@
         _getEnterpriseTypeCanonical: _getEnterpriseTypeCanonical,
         _getAllEnterpriseTypesCanonical: _getAllEnterpriseTypesCanonical,
         _addEnterprise: _addEnterprise,
+        _notifyTransactionEnterpriseAdded: _notifyTransactionEnterpriseAdded,
         _updateEnterprise: _updateEnterprise,
         _transactionSnapshotEnterprise: _transactionSnapshotEnterprise,
         _transactionRestoreEnterprise: _transactionRestoreEnterprise,
