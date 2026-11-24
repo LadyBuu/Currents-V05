@@ -52,7 +52,7 @@
 
     function _getFeatureQueries()  { return window.SettlementFeatureQueries; }
     function _getFeatureCommands() { return window.SettlementFeatureCommands; }
-    function _getPlaceQueries()    { return window.PlaceQueries; }
+    function _getPlaceQueries() { return typeof window.getPlaceById === 'function' ? { getPlaceById: window.getPlaceById } : null; }
 
     function _placeName(locationId) {
         var pq = _getPlaceQueries();
