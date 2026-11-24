@@ -459,10 +459,10 @@
         // preservation work — user input goes into _state.culture.appearance
         // as the user types, not only on Save.
         container.addEventListener('input', function () {
-            _syncToWorkingCulture(container, culture);
+            _syncToWorkingCulture(container, container.__ctAppearanceCulture);
         });
         container.addEventListener('change', function () {
-            _syncToWorkingCulture(container, culture);
+            _syncToWorkingCulture(container, container.__ctAppearanceCulture);
         });
 
         // Delegated click: add / remove.
