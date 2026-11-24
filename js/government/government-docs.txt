@@ -2315,3 +2315,8 @@ performs the validated canonical reconciliation without publishing the normal
 Government reconciliation command event. The caller owns the enclosing
 transaction and must publish the domain notification only after all
 participants commit. The existing { dryRun: true } behavior is unchanged.
+
+
+LOCATION DELETION TRANSACTION ADAPTER
+
+GovernmentState now exposes internal snapshot/restore adapters for Location deletion. The snapshot retains the canonical department array; restoration reinstalls it and rebuilds Government indexes. This does not change ordinary reconciliation behavior and does not itself coordinate a Location deletion transaction.
