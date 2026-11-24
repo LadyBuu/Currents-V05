@@ -1153,6 +1153,14 @@
         var allowlist = _validateHouseholdUpdates(updates);
         if (allowlist.success === false) return allowlist;
 
+        // Validate cross-domain references before mutating ANY household field.
+        // A combined rename + invalid location update must be fully atomic.
+        var locationResult = null;
+        if (updates.locationId !== undefined) {
+            locationResult = _resolveHouseholdLocation(updates.locationId);
+            if (!locationResult.success) return locationResult;
+        }
+
         var year = _getCurrentYear();
         var changed = [];
 
@@ -1182,9 +1190,6 @@
         }
 
         if (updates.locationId !== undefined) {
-            var locationResult = _resolveHouseholdLocation(updates.locationId);
-            if (!locationResult.success) return locationResult;
-
             household.locationId = locationResult.data.locationId;
             household.locationName = locationResult.data.locationName;
             changed.push('locationId');
