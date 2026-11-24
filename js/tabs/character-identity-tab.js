@@ -418,14 +418,25 @@
         catch (e) { cultures = []; }
 
         var html = '<option value="">— None —</option>';
+        var currentIncluded = false;
         for (var i = 0; i < cultures.length; i++) {
             var c = cultures[i];
             if (!c || !_hasId(c.id)) continue;
             var selected = (c.id === currentId) ? ' selected' : '';
+            if (c.id === currentId) currentIncluded = true;
             var name = (typeof c.name === 'string' && c.name.length > 0)
                 ? c.name : c.id;
             html += '<option value="' + _esc(c.id) + '"' + selected + '>' +
                 _esc(name) + '</option>';
+        }
+        if (_hasId(currentId) && !currentIncluded) {
+            var currentCulture = null;
+            try { currentCulture = window.CultureQueries.getCultureById(currentId); }
+            catch (e) { currentCulture = null; }
+            var currentName = currentCulture && currentCulture.name
+                ? currentCulture.name : currentId;
+            html += '<option value="' + _esc(currentId) + '" selected>' +
+                _esc(currentName) + ' (unavailable)</option>';
         }
         return html;
     }
