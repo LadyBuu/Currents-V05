@@ -235,7 +235,7 @@
                         f.id,
                         { reason: 'Destroyed by ' + (disaster && disaster.disasterType || 'disaster') }
                     );
-                    if (result && result.success !== false) {
+                    if (result && result.success === true) {
                         destroyed.push({
                             id: f.id,
                             name: f.name,
@@ -299,7 +299,7 @@
                             disasterId: disaster && disaster.id || null
                         }
                     );
-                    if (result && result.success !== false) {
+                    if (result && result.success === true) {
                         destroyed.push({
                             id: inst.id,
                             name: inst.name,
@@ -363,7 +363,7 @@
                             disasterId: disaster && disaster.id || null
                         }
                     );
-                    if (result && result.success !== false) {
+                    if (result && result.success === true) {
                         destroyed.push({
                             id: ent.id,
                             name: ent.name,
@@ -435,7 +435,7 @@
                             disasterId: disaster && disaster.id || null
                         }
                     );
-                    if (result && result.success !== false) {
+                    if (result && result.success === true) {
                         demolished.push({
                             id: res.id,
                             name: res.name,
@@ -517,7 +517,7 @@
                             demolishResidence: true
                         }
                     );
-                    if (result && result.success !== false) {
+                    if (result && result.success === true) {
                         destroyed.push({
                             id: hh.id,
                             name: hh.name,
@@ -574,13 +574,13 @@
     // DisasterCommands records it.
 
     function _saveDamageRecord(disasterId, report) {
-        if (!disasterId) return;
+        if (!disasterId) return { success: true, skipped: true };
         var result = State.updateDisaster(disasterId, {
             structuralDamage: {
                 featuresDestroyed:    (report.featuresDestroyed    || []).length,
                 schoolsDestroyed:     (report.schoolsDestroyed     || []).length,
                 enterprisesDestroyed: (report.enterprisesDestroyed || []).length,
-                residencesDemolished: (report.residencesDemolished || []).length,
+                residencesDemolished: (report.residencesDemolished  || []).length,
                 householdsDestroyed:  (report.householdsDestroyed  || []).length,
                 totalLoss: report.totalLoss,
                 destructionList: {
@@ -592,12 +592,17 @@
                 }
             }
         });
-        if (!result.success && typeof console !== 'undefined' && console.error) {
-            console.error(
-                'disaster-damage.js: failed to persist damage record for ' +
-                disasterId + ': ' + (result.reason || 'unknown')
-            );
+        if (!result || result.success !== true) {
+            var reason = (result && result.reason) || 'unknown';
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'disaster-damage.js: failed to persist damage record for ' +
+                    disasterId + ': ' + reason
+                );
+            }
+            return { success: false, reason: reason, code: result && result.code };
         }
+        return { success: true };
     }
 
     // =========================================================================
@@ -632,7 +637,8 @@
             residencesDemolished: [],
             householdsDestroyed:  [],
             totalLoss: 0,
-            errors: []
+            errors: [],
+            skippedSystems: []
         };
 
         var r;
@@ -640,28 +646,40 @@
         r = _destroySettlementFeatures(locationId, baseChance, disaster);
         report.featuresDestroyed = r.destroyed;
         report.errors = report.errors.concat(r.errors);
+        if (r.skipped) report.skippedSystems.push('settlement-features');
 
         r = _destroySchools(locationId, baseChance, disaster);
         report.schoolsDestroyed = r.destroyed;
         report.errors = report.errors.concat(r.errors);
+        if (r.skipped) report.skippedSystems.push('education');
 
         r = _destroyEnterprises(locationId, baseChance, disaster);
         report.enterprisesDestroyed = r.destroyed;
         report.errors = report.errors.concat(r.errors);
+        if (r.skipped) report.skippedSystems.push('industry');
 
         r = _demolishResidences(locationId, baseChance, disaster);
         report.residencesDemolished = r.demolished;
         report.errors = report.errors.concat(r.errors);
+        if (r.skipped) report.skippedSystems.push('residences');
 
         if (options.demolishHouseholds !== false) {
             r = _destroyHouseholds(locationId, baseChance, disaster);
             report.householdsDestroyed = r.destroyed;
             report.errors = report.errors.concat(r.errors);
+            if (r.skipped) report.skippedSystems.push('households');
         }
 
         report.totalLoss = _calculateTotalLoss(report);
 
-        _saveDamageRecord(report.disasterId, report);
+        var saveResult = _saveDamageRecord(report.disasterId, report);
+        report.damageRecordSaved = saveResult.success;
+        if (!saveResult.success) {
+            report.errors.push({
+                system: 'disaster-state',
+                reason: 'Failed to save structural-damage record: ' + saveResult.reason
+            });
+        }
 
         return _ok(report);
     }
