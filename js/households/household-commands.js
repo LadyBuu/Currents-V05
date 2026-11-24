@@ -793,6 +793,55 @@
     // 9. HOUSEHOLD LIFECYCLE
     // =========================================================================
 
+    /**
+     * Resolve a household's optional Location reference against canonical
+     * LocationState. Never trust a caller-supplied display name.
+     *
+     * An omitted/null/empty location means the household is unassigned.
+     * A non-empty reference must resolve; missing dependencies and lookup
+     * failures fail closed rather than persisting a dangling relationship.
+     */
+    function _resolveHouseholdLocation(locationId) {
+        if (locationId === undefined || locationId === null ||
+            locationId === '') {
+            return _ok({ locationId: null, locationName: null });
+        }
+
+        if (typeof locationId !== 'string' || locationId.trim() === '') {
+            return _fail('INVALID_LOCATION_ID',
+                'Household locationId must be a non-empty location ID or null');
+        }
+
+        var locationState = window.LocationState;
+        if (!locationState ||
+            typeof locationState.getPlaceById !== 'function') {
+            return _fail('LOCATION_STATE_UNAVAILABLE',
+                'LocationState is required to validate a household location');
+        }
+
+        var place;
+        try {
+            place = locationState.getPlaceById(locationId);
+        } catch (e) {
+            return _fail('LOCATION_LOOKUP_FAILED',
+                'Household location could not be verified: ' +
+                (e && e.message ? e.message : String(e)));
+        }
+
+        if (!place || place.id !== locationId) {
+            return _fail('LOCATION_NOT_FOUND',
+                'The selected household location does not exist');
+        }
+
+        return _ok({
+            locationId: place.id,
+            locationName: typeof place.displayName === 'string' &&
+                place.displayName.trim() !== ''
+                ? place.displayName
+                : null
+        });
+    }
+
     function createHousehold(data) {
         if (!data || typeof data !== 'object') {
             return _fail('INVALID_INPUT', 'Household data is required');
@@ -805,12 +854,15 @@
         var year = _resolveYear(data.foundedYear);
         if (year === null) return _fail('INVALID_YEAR', 'Invalid founded year');
 
+        var locationResult = _resolveHouseholdLocation(data.locationId);
+        if (!locationResult.success) return locationResult;
+
         var householdId = _generateId('house');
         var household = {
             id: householdId,
             name: data.name.trim(),
-            locationId: data.locationId || null,
-            locationName: data.locationName || null,
+            locationId: locationResult.data.locationId,
+            locationName: locationResult.data.locationName,
             departments: [],
             members: [],
             reputation: data.reputation !== undefined ? data.reputation : 10,
@@ -1130,10 +1182,11 @@
         }
 
         if (updates.locationId !== undefined) {
-            household.locationId = updates.locationId || null;
-            if (updates.locationName !== undefined) {
-                household.locationName = updates.locationName || null;
-            }
+            var locationResult = _resolveHouseholdLocation(updates.locationId);
+            if (!locationResult.success) return locationResult;
+
+            household.locationId = locationResult.data.locationId;
+            household.locationName = locationResult.data.locationName;
             changed.push('locationId');
         }
 
