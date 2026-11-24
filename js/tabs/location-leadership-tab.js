@@ -139,7 +139,8 @@
             html +=     '<div class="loc-leader-card-title">' + _esc(title) + '</div>';
             html +=     '<div class="loc-leader-card-since">Since year ' + _esc(start) + '</div>';
             if (currentLeader.rankEligibility && currentLeader.rankEligibility.warning) {
-                html += '<div class="loc-leader-eligibility-warning" role="status">' +
+                html += '<div class="loc-leader-eligibility-warning" role="status" ' +
+                    'style="margin-top:8px;padding:8px;border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:0.8rem;">' +
                     '<strong>Eligibility warning:</strong> ' +
                     _esc(currentLeader.rankEligibility.warning) +
                     '</div>';
