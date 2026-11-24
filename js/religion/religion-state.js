@@ -190,13 +190,12 @@
      */
     function _migrateLegacyWorshipPlaces(religions) {
         var places = _getCanonicalPlacesOfWorshipArray();
-        if (places === null) {
+        var initializePlaceStore = places === null;
+        if (initializePlaceStore) {
             if (!window.masterData || !window.masterData.data) {
                 throw new Error('ReligionState: masterData.data is unavailable during worship-place migration.');
             }
             places = [];
-            _setCanonicalPlacesOfWorshipArray(places);
-            _markDirty();
         } else {
             places = places.slice();
         }
@@ -268,7 +267,7 @@
             }
         }
 
-        if (migrated > 0) {
+        if (migrated > 0 || initializePlaceStore) {
             _setCanonicalPlacesOfWorshipArray(places);
             _markDirty();
         }
@@ -367,6 +366,43 @@
             seenExistingPlaceIds[existingPlace.id] = true;
         }
 
+        // Nested records are globally indexed by ID too. Validate them before
+        // legacy-place migration can write anything to the canonical store.
+        var seenGodIdsPreflight = Object.create(null);
+        var seenLawIdsPreflight = Object.create(null);
+        for (var nestedReligionIndex = 0; nestedReligionIndex < religions.length; nestedReligionIndex++) {
+            var nestedReligion = religions[nestedReligionIndex];
+            if (!nestedReligion) continue;
+            var nestedGods = Array.isArray(nestedReligion.gods) ? nestedReligion.gods : [];
+            for (var nestedGodIndex = 0; nestedGodIndex < nestedGods.length; nestedGodIndex++) {
+                var nestedGod = nestedGods[nestedGodIndex];
+                if (!nestedGod || !nestedGod.id) continue;
+                if (seenGodIdsPreflight[nestedGod.id]) {
+                    throw new Error(
+                        'ReligionState.hydrateFromMasterData: duplicate god id "' +
+                        nestedGod.id + '". Canonical data is corrupted.'
+                    );
+                }
+                seenGodIdsPreflight[nestedGod.id] = true;
+            }
+            var nestedLaws = Array.isArray(nestedReligion.laws) ? nestedReligion.laws : [];
+            for (var nestedLawIndex = 0; nestedLawIndex < nestedLaws.length; nestedLawIndex++) {
+                var nestedLaw = nestedLaws[nestedLawIndex];
+                if (!nestedLaw || !nestedLaw.id) continue;
+                if (seenLawIdsPreflight[nestedLaw.id]) {
+                    throw new Error(
+                        'ReligionState.hydrateFromMasterData: duplicate law id "' +
+                        nestedLaw.id + '". Canonical data is corrupted.'
+                    );
+                }
+                seenLawIdsPreflight[nestedLaw.id] = true;
+            }
+        }
+
+        // Build the character index before migration so a character read
+        // failure cannot leave a partially migrated canonical place store.
+        var nextFollowerIndex = _buildFollowersIndex();
+
         _migrateLegacyWorshipPlaces(religions);
         var canonicalWorshipPlaces = _getCanonicalPlacesOfWorshipArray();
         if (!canonicalWorshipPlaces) {
@@ -461,7 +497,7 @@
             nextIndexes.placesOfWorshipById.set(worshipPlace.id, worshipPlace);
         }
 
-        nextIndexes.followersByReligion = _buildFollowersIndex();
+        nextIndexes.followersByReligion = nextFollowerIndex;
 
         _indexes.byId = nextIndexes.byId;
         _indexes.byTrait = nextIndexes.byTrait;
