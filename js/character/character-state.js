@@ -1772,7 +1772,59 @@
     // 19. EXPORTS
     // =========================================================================
 
+    function _transactionSnapshotEducationFields() {
+        var coll = _getCanonicalCollection();
+        if (!coll.ok) throw new Error(coll.reason);
+        return coll.collection.map(function (character) {
+            return {
+                id: character.id,
+                education: character.education === undefined
+                    ? { present: false }
+                    : { present: true, value: JSON.parse(JSON.stringify(character.education)) },
+                educationHistory: character.educationHistory === undefined
+                    ? { present: false }
+                    : { present: true, value: JSON.parse(JSON.stringify(character.educationHistory)) }
+            };
+        });
+    }
+
+    function _transactionRestoreEducationFields(snapshot) {
+        if (!Array.isArray(snapshot)) {
+            return { success: false, reason: 'Character education snapshot must be an array.' };
+        }
+        var coll = _getCanonicalCollection();
+        if (!coll.ok) return { success: false, reason: coll.reason };
+        var indexes = [];
+        for (var i = 0; i < snapshot.length; i++) {
+            var index = _findCanonicalIndex(coll.collection, snapshot[i].id);
+            if (index === -1) {
+                return { success: false, reason: 'Character missing during Education rollback: ' + snapshot[i].id };
+            }
+            indexes.push(index);
+        }
+        var changed = [];
+        for (var j = 0; j < snapshot.length; j++) {
+            var saved = snapshot[j];
+            var target = coll.collection[indexes[j]];
+            if (saved.education.present) {
+                target.education = JSON.parse(JSON.stringify(saved.education.value));
+            } else {
+                delete target.education;
+            }
+            if (saved.educationHistory.present) {
+                target.educationHistory = JSON.parse(JSON.stringify(saved.educationHistory.value));
+            } else {
+                delete target.educationHistory;
+            }
+            changed.push(saved.id);
+        }
+        if (changed.length) _emitChange('bulk-updated', changed);
+        return { success: true, characterIds: changed };
+    }
+
     window.CharacterState = {
+        _transactionSnapshotEducationFields: _transactionSnapshotEducationFields,
+        _transactionRestoreEducationFields: _transactionRestoreEducationFields,
         _transactionSnapshotDeletedLocations: function () {
             var coll = _getCanonicalCollection();
             if (!coll.ok) throw new Error(coll.reason);
