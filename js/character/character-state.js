@@ -1711,6 +1711,17 @@
     // =========================================================================
 
     window.CharacterState = {
+        _transactionSnapshotDeletedLocations: function () {
+            var coll = _getCanonicalCollection();
+            if (!coll.ok) throw new Error(coll.reason);
+            return JSON.parse(JSON.stringify(coll.collection));
+        },
+        _transactionRestoreDeletedLocations: function (snapshot) {
+            if (!Array.isArray(snapshot) || !window.masterData || !window.masterData.data) return { success: false, reason: 'Invalid Character transaction snapshot.' };
+            window.masterData.data.characters = snapshot;
+            try { _rebuildCaches(); _invalidateAccessorCaches(); window.markDataDirty(); return { success: true }; } catch (error) { return { success: false, reason: error.message || String(error) }; }
+        },
+
         __owner: 'character/character-state.js',
 
         subscribe: subscribe,
