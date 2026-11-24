@@ -1468,3 +1468,18 @@ HARD-DELETION CLEANUP (UPDATED):
 - Bulk deletion and soft-deleted purge aggregate cleanup failures while retaining the IDs already removed. Callers must inspect success, partial, deletionComplete, and per-character cleanup reports rather than relying only on count.
 - RelationshipIntegrations is dispatched only through its registered delete handler, not also through the named cleanup table.
 - Family, Children, and Rank cleanup now surface failed underlying removals/updates instead of reporting unconditional success.
+
+
+CHARACTER CREATION COMPENSATION (Phase 5)
+-----------------------------------------
+- If family-edge or religion assignment fails after insertion, creation attempts
+  to end only the family edges created by that invocation, then removes the
+  newly inserted character.
+- Existing idempotently reused family edges are not ended during rollback.
+- Every compensation result is checked. A failed compensation is surfaced as
+  CHARACTER_CREATION_ROLLBACK_FAILED with the character ID and per-step errors.
+- Bulk creation reports rollback failures per entry and sets rollbackFailed
+  when any compensation fails.
+- This is best-effort compensation, not an atomic transaction. CharacterState
+  creation and removal events remain observable to subscribers, and a failed
+  compensation can leave residual state requiring manual repair.
