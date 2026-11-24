@@ -19,26 +19,17 @@
  *
  *   createFriendship                 one commit (single RC.create)
  *   createMutualFriendships          one commit (single RC.createBatch)
- *   increaseFriendshipStrength       one commit (single RC.update) when
- *                                    the change does not end the
- *                                    friendship; two commits when it does
- *                                    (metadata + end)
- *   decreaseFriendshipStrength       same as increase
- *   recordFriendshipEvent            one commit (single RC.update) when
- *                                    the event does not end the
- *                                    friendship; two commits when it does
- *   updateFriendship                 one commit (single RC.update)
+ *   increaseFriendshipStrength       one commit (single RC.update)
+   decreaseFriendshipStrength       one commit (single RC.update)
+   recordFriendshipEvent            one commit (single RC.update)
+   updateFriendship                 one commit (single RC.update)
  *   removeFriendship                 one commit (single RC.end)
  *
- *   The two-commit paths exist because the "ends the friendship" case
- *   requires two distinct state transitions: a metadata write
- *   (strength = STRENGTH_MIN) and a status transition (ongoing →
- *   ended). RelationshipCommands does not expose a combined
- *   update-and-end primitive, and adding one would expand the mutation
- *   surface for a rare case (strength reaching exactly zero). Both
- *   writes target the same record; a crash between them leaves the
- *   friendship at strength 0 but still ongoing, which is recoverable by
- *   calling end() again.
+ *   When a strength change or event ends a friendship, the command
+   writes final metadata, endYear, end status, and endReason in one
+   RelationshipCommands.update call. This avoids an intermediate
+   strength-zero but still-active record and ensures event history
+   cannot be lost independently of the ending transition.
  *
  * UPDATEFRIENDSHIP
  *
