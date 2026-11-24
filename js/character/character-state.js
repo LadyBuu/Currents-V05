@@ -1800,6 +1800,34 @@
     // 19. EXPORTS
     // =========================================================================
 
+    function _transactionSnapshotCharacter(characterId) {
+        var coll = _getCanonicalCollection();
+        if (!coll.ok) throw new Error(coll.reason);
+        var index = _findCanonicalIndex(coll.collection, characterId);
+        if (index === -1) return null;
+        return JSON.parse(JSON.stringify(coll.collection[index]));
+    }
+
+    function _transactionRestoreCharacter(snapshot) {
+        if (!snapshot || !snapshot.id) {
+            return { success: false, reason: 'Invalid Character transaction snapshot.' };
+        }
+        var coll = _getCanonicalCollection();
+        if (!coll.ok) return { success: false, reason: coll.reason };
+        var index = _findCanonicalIndex(coll.collection, snapshot.id);
+        if (index === -1) return { success: false, reason: 'Character missing during rollback: ' + snapshot.id };
+        try {
+            coll.collection[index] = JSON.parse(JSON.stringify(snapshot));
+            _rebuildCaches();
+            _invalidateAccessorCaches();
+            window.markDataDirty();
+            _emitChange('updated', [snapshot.id]);
+            return { success: true };
+        } catch (error) {
+            return { success: false, reason: error && error.message ? error.message : 'Character restore failed.' };
+        }
+    }
+
     function _transactionSnapshotEducationFields() {
         var coll = _getCanonicalCollection();
         if (!coll.ok) throw new Error(coll.reason);
@@ -1856,6 +1884,8 @@
     }
 
     window.CharacterState = {
+        _transactionSnapshotCharacter: _transactionSnapshotCharacter,
+        _transactionRestoreCharacter: _transactionRestoreCharacter,
         _transactionSnapshotEducationFields: _transactionSnapshotEducationFields,
         _transactionRestoreEducationFields: _transactionRestoreEducationFields,
         _transactionFlushChanges: _transactionFlushChanges,
