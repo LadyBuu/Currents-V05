@@ -1937,19 +1937,13 @@ PART 7 — KNOWN HAZARDS
     primitives; the commit tail pattern (mark dirty in
     primitive, save in Commands.persist) is the contract.
 
- 8. SettlementQueries load-time dependency without use.
-    government-commands.js loads window.SettlementQueries and
-    throws at load if it is missing, but does not actually call
-    it in the supplied file. This is a dead load-time
-    dependency. Removing it would tighten the load order; adding
-    a use would be a functional change. Do not remove it without
-    updating the load order in PART 4 G5.
-
- 9. LocationQueries load-time dependency without use in
-    government-economy.js.
-    Same story as §8. government-economy.js loads
-    window.LocationQueries and throws at load if it is missing,
-    but does not call it in the supplied file.
+ 8. Dead load-time dependencies removed.
+    government-commands.js no longer loads or requires
+    SettlementQueries; GovernmentQueries owns that dependency.
+    government-economy.js no longer loads or requires
+    LocationQueries because all location-derived inputs arrive
+    through GovernmentQueries. The required load order is updated
+    accordingly.
 
 10. GovernmentCommands's _SettlementQueries load-time check
     assumes the modern SettlementQueries module. If a build
