@@ -1118,14 +1118,20 @@
             rollback: function () {
                 if (!snapshots) return { success: false, reason: 'Transaction snapshots are unavailable.' };
                 var failures = [];
-                [
+                var restoreOrder = [
                     [LS, snapshots.location],
                     [window.SettlementState, snapshots.settlement],
                     [window.HouseholdState, snapshots.household],
-                    [window.CharacterState, snapshots.character],
+                    [window.CharacterState, snapshots.character]
+                ];
+                if (cultureTransactionEnabled) {
+                    restoreOrder.push([window.CultureState, snapshots.culture]);
+                }
+                restoreOrder.push(
                     [window.ReligionState, snapshots.religion],
                     [window.GovernmentState, snapshots.government]
-                ].forEach(function (entry) {
+                );
+                restoreOrder.forEach(function (entry) {
                     try {
                         var restored = entry[0]._transactionRestoreDeletedLocations(entry[1]);
                         if (!restored || restored.success !== true) failures.push(restored && restored.reason ? restored.reason : 'Domain restore failed');
@@ -1133,14 +1139,6 @@
                         failures.push(error && error.message ? error.message : String(error));
                     }
                 });
-                if (cultureTransactionEnabled) {
-                    try {
-                        var cultureRestore = window.CultureState._transactionRestoreDeletedLocations(snapshots.culture);
-                        if (!cultureRestore || cultureRestore.success !== true) failures.push(cultureRestore && cultureRestore.reason ? cultureRestore.reason : 'Culture restore failed');
-                    } catch (cultureRestoreError) {
-                        failures.push(cultureRestoreError && cultureRestoreError.message ? cultureRestoreError.message : String(cultureRestoreError));
-                    }
-                }
                 return failures.length
                     ? { success: false, reason: failures.join('; ') }
                     : { success: true };
