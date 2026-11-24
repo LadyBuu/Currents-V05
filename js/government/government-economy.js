@@ -11,13 +11,11 @@
     var C = window.GovernmentConstants;
     var Rules = window.GovernmentRules;
     var Queries = window.GovernmentQueries;
-    var _LocationQueries = window.LocationQueries;
     var _ProsperityQueries = window.SettlementProsperityQueries;
 
     if (!C)                    throw new Error('government-economy.js requires GovernmentConstants');
     if (!Rules)                throw new Error('government-economy.js requires GovernmentRules');
     if (!Queries)              throw new Error('government-economy.js requires GovernmentQueries');
-    if (!_LocationQueries)     throw new Error('government-economy.js requires LocationQueries');
     if (!_ProsperityQueries)   throw new Error('government-economy.js requires SettlementProsperityQueries');
 
     if (typeof _ProsperityQueries.getProsperityValue !== 'function') {
