@@ -1645,19 +1645,18 @@
             if (resolvedNewReligion !== loadedReligionId) religionChanged = true;
         }
 
-        // ---- Step 1: Trait delta.
-        for (var ta = 0; ta < traitsToAdd.length; ta++) {
-            var r = CC.addTrait(characterId, traitsToAdd[ta]);
-            if (!r || r.success !== true) {
-                errors.push('Add trait "' + traitsToAdd[ta] + '": ' +
-                    (r && r.reason ? r.reason : 'unknown'));
-            }
-        }
-        for (var tr = 0; tr < traitsToRemove.length; tr++) {
-            var rr = CC.removeTrait(characterId, traitsToRemove[tr]);
-            if (!rr || rr.success !== true) {
-                errors.push('Remove trait "' + traitsToRemove[tr] + '": ' +
-                    (rr && rr.reason ? rr.reason : 'unknown'));
+        // ---- Step 1: Replace the trait set in one domain-owned write.
+        // Per-trait writes each emit characterChanged and can cause the
+        // persistent tab pane to re-render midway through this save.
+        if (traitsToAdd.length > 0 || traitsToRemove.length > 0) {
+            if (typeof CC.replaceTraits !== 'function') {
+                errors.push('Save traits: CharacterCommands.replaceTraits is not available.');
+            } else {
+                var traitResult = CC.replaceTraits(characterId, newTraits);
+                if (!traitResult || traitResult.success !== true) {
+                    errors.push('Save traits: ' +
+                        (traitResult && traitResult.reason ? traitResult.reason : 'unknown'));
+                }
             }
         }
 
@@ -1801,16 +1800,19 @@
             }
         }
 
+        // ---- Persist once after all domain writes have been attempted.
+        // Some fields may have succeeded even when another domain rejected
+        // its change. Preserve those successful writes and report both kinds
+        // of failure instead of silently relying on the debounce.
+        var persisted = _persistIdentityChanges();
+        if (!persisted.success) {
+            errors.push('Storage save: ' + persisted.reason);
+        }
+
         // ---- Report.
         if (errors.length > 0) {
-            _toast('Save failed: ' + errors.join('; '), 'error');
+            _toast('Save incomplete: ' + errors.join('; '), 'error');
         } else {
-            var persisted = _persistIdentityChanges();
-            if (!persisted.success) {
-                _toast('Changes were applied in memory but could not be saved: ' +
-                    persisted.reason, 'error');
-                return;
-            }
             _toast('Saved.', 'success');
             _refresh();
         }
