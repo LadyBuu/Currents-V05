@@ -58,13 +58,10 @@
  *     - Metadata is deeply cloned as plain JSON data on insertion, update,
  *       reload, and snapshot. Batch updates validate every patch before
  *       committing any of them.
- *     - _reloadFromMasterData now wraps replaceAll in a try/catch.
- *       replaceAll throws on structurally invalid records; before
- *       this change a single corrupt persisted record crashed the
- *       masterDataUpdated listener, breaking the page. Now the
- *       failure is logged, the previous in-memory state is
- *       preserved, and the next save overwrites the corrupt storage
- *       with the in-memory state.
+ *     - Failed hydration leaves the state uninitialized. Storage refuses
+ *       to serialize closure-backed relationship state until hydration
+ *       succeeds, preventing stale records from an earlier dataset from
+ *       overwriting a newly loaded/imported dataset.
  *     - No other behavioural change.
  * =============================================================================
  */
@@ -610,13 +607,13 @@
         } catch (e) {
             if (typeof console !== 'undefined' && console.error) {
                 console.error(
-                    'relationship-state.js: reload failed; preserving ' +
-                    'previous in-memory state. Corrupt record(s) in ' +
-                    'masterData.data.relationships.', e
+                    'relationship-state.js: reload failed; relationship state remains uninitialized. ' +
+                    'Corrupt record(s) in masterData.data.relationships.', e
                 );
             }
-            // Leave the previous state intact. A subsequent save will
-            // overwrite the corrupt storage with the in-memory state.
+            // Keep the last known records available for diagnosis, but mark
+            // hydration as failed. The storage layer checks isInitialized()
+            // and refuses to save this stale snapshot.
         }
     }
 
