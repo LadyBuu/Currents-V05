@@ -1,6 +1,8 @@
 /**
  * relationship-state.js
  *
+ * LOCATION: js/relationships/relationship-state.js
+ *
  * Canonical storage and indexing for non-family relationship records.
  *
  * This is the single source of truth for every romance, friendship,
@@ -596,6 +598,7 @@
      * @private
      */
     function _reloadFromMasterData() {
+        _initialized = false;
         if (!window.masterData ||
             !window.masterData.data ||
             !Array.isArray(window.masterData.data.relationships)) {
@@ -620,7 +623,8 @@
     function _ensureInitializedFromMasterData() {
         if (_initialized) return;
         _reloadFromMasterData();
-        _initialized = true;
+        // replaceAll() marks the state initialized only after the entire
+        // replacement has passed validation. Never force success here.
     }
 
     if (typeof window.addEventListener === 'function') {
