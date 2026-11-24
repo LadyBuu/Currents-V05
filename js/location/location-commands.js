@@ -985,223 +985,228 @@
             );
         }
 
-        // Government departments are anchored to locations. Remove affected
-        // departments and their dependent child departments before deleting
-        // the locations; keep governmentHistory as an audit trail.
-        var governmentCleanup = { removedDepartmentIds: [] };
-        var governmentLocationIds = Object.keys(toRemove);
-        var governmentDepartments = window.masterData && window.masterData.data
-            ? window.masterData.data.governmentDepartments
-            : [];
-        // If the Government command layer is unavailable, any existing
-        // department data may contain a descendant reference to a deleted
-        // location's department. Fail closed rather than guessing from only
-        // direct location assignments.
-        var hasGovernmentReferences = Array.isArray(governmentDepartments) &&
-            governmentDepartments.length > 0;
-        if (hasGovernmentReferences &&
-            (!window.GovernmentCommands ||
-             typeof window.GovernmentCommands.reconcileDeletedLocations !== 'function')) {
-            return _fail(
-                'deletePlace: GovernmentCommands.reconcileDeletedLocations is required ' +
-                'to safely delete locations with government departments'
-            );
-        }
-        if (window.GovernmentCommands &&
-            typeof window.GovernmentCommands.reconcileDeletedLocations === 'function') {
-            var governmentResult = window.GovernmentCommands.reconcileDeletedLocations(
-                governmentLocationIds
-            );
-            if (!governmentResult || governmentResult.success !== true) {
-                return _fail(
-                    'deletePlace: government cleanup failed: ' +
-                    ((governmentResult && governmentResult.reason) || 'unknown error')
-                );
-            }
-            governmentCleanup = governmentResult.data || governmentCleanup;
+        // All seven owning domains participate in one synchronous transaction.
+        // Every snapshot is captured before the first write; notifications are
+        // withheld until all canonical stores have been updated successfully.
+        if (!window.CrossDomainTransaction ||
+            typeof window.CrossDomainTransaction.execute !== 'function') {
+            return _fail('deletePlace: CrossDomainTransaction is required for atomic deletion');
         }
 
-        // Religion associations are anchored to locations. Reconcile them
-        // before deleting the location graph, and fail closed if the
-        // Religion command boundary is unavailable while references exist.
-        var religionStore = window.masterData && window.masterData.data
-            ? window.masterData.data.religions
-            : [];
-        var hasReligionLocationReferences = Array.isArray(religionStore) &&
-            religionStore.some(function (religion) {
-                return religion && Array.isArray(religion.locations) &&
-                    religion.locations.some(function (locationId) {
-                        return Object.prototype.hasOwnProperty.call(toRemove, locationId);
-                    });
-            });
-        var worshipPlaceStore = window.masterData && window.masterData.data
-            ? window.masterData.data.placesOfWorship
-            : [];
-        var hasWorshipPlaceLocationReferences = Array.isArray(worshipPlaceStore) &&
-            worshipPlaceStore.some(function (place) {
-                return place && Object.prototype.hasOwnProperty.call(toRemove, place.locationId);
-            });
-        hasReligionLocationReferences = hasReligionLocationReferences ||
-            hasWorshipPlaceLocationReferences;
-        if (hasReligionLocationReferences &&
-            (!window.ReligionCommands ||
-             typeof window.ReligionCommands.reconcileDeletedLocations !== 'function')) {
-            return _fail(
-                'deletePlace: ReligionCommands.reconcileDeletedLocations is required ' +
-                'to safely delete locations with religion associations'
-            );
-        }
-        var religionCleanup = { updatedReligionIds: [], removedAssociations: 0 };
-        if (window.ReligionCommands &&
-            typeof window.ReligionCommands.reconcileDeletedLocations === 'function') {
-            var religionResult = window.ReligionCommands.reconcileDeletedLocations(
-                Object.keys(toRemove)
-            );
-            if (!religionResult || religionResult.success !== true) {
-                return _fail(
-                    'deletePlace: religion cleanup failed: ' +
-                    ((religionResult && religionResult.reason) || 'unknown error')
-                );
-            }
-            religionCleanup = religionResult.data || religionCleanup;
-        }
-
-        // Apply the prevalidated Culture association cleanup only after the
-        // other domain cleanup boundaries have accepted the deletion.
-        var cultureCleanup = { updatedCultureIds: [], removedAssociations: 0 };
-        if (window.CultureCommands &&
-            typeof window.CultureCommands.reconcileDeletedLocations === 'function') {
-            var cultureResult = window.CultureCommands.reconcileDeletedLocations(
-                Object.keys(toRemove)
-            );
-            if (!cultureResult || cultureResult.success !== true) {
-                return _fail(
-                    'deletePlace: Culture cleanup failed: ' +
-                    ((cultureResult && cultureResult.reason) || 'unknown error')
-                );
-            }
-            cultureCleanup = cultureResult.data || cultureCleanup;
-        }
-
-        // Character and Household cleanup is deliberately deferred until
-        // after Government, Religion and Culture have successfully reconciled.
-        // Their read-only preflights ran above, so predictable data/dependency
-        // failures are caught before the first mutation.
-        var characterCleanup = _cleanupCharactersAtPlaces(toRemove);
-        if (characterCleanup.failed > 0 || characterCleanup.status === 'unavailable') {
-            return _fail(
-                'deletePlace: character cleanup failed; no locations were deleted: ' +
-                (characterCleanup.reason || characterCleanup.failedIds.join(', ') || 'character data unavailable')
-            );
-        }
-
-        var householdCleanup = _cleanupHouseholdsAtPlaces(toRemove);
-        if (householdCleanup.status === 'failed' || householdCleanup.status === 'unavailable') {
-            return _fail(
-                'deletePlace: household cleanup failed; no locations were deleted: ' +
-                (householdCleanup.reason || 'Household references could not be verified')
-            );
-        }
-
-        // A settlement is owned by its location. Reconcile settlement
-        // records before removing the place so no orphaned settlement can
-        // survive a simple or cascade delete. This is coordinated through
-        // the settlement commit boundary, but persistence remains owned by
-        // LocationCommands.persist() so both domains are saved together.
-        var settlementCleanup = { removedLocationIds: [], event: null };
-        var settlementStore = window.masterData && window.masterData.data
-            ? window.masterData.data.settlementData
-            : null;
-        var settlementIdsToRemove = [];
-        for (var settlementLocationId in toRemove) {
-            if (!Object.prototype.hasOwnProperty.call(toRemove, settlementLocationId)) {
-                continue;
-            }
-            if (settlementStore &&
-                Object.prototype.hasOwnProperty.call(settlementStore, settlementLocationId) &&
-                settlementStore[settlementLocationId]) {
-                settlementIdsToRemove.push(settlementLocationId);
-            }
-        }
-
-        if (settlementIdsToRemove.length > 0) {
-            if (!window.SettlementCommandCommit ||
-                typeof window.SettlementCommandCommit.removeMany !== 'function') {
-                return _fail(
-                    'deletePlace: SettlementCommandCommit.removeMany is required ' +
-                    'to safely delete locations that have settlements'
-                );
-            }
-            try {
-                settlementCleanup = window.SettlementCommandCommit.removeMany(
-                    settlementIdsToRemove,
-                    {
-                        type: 'settlementsRemovedWithLocations',
-                        cause: 'locationDeleted',
-                        placeId: placeId,
-                        mode: mode
-                    },
-                    { persist: false, publish: false }
-                );
-            } catch (settlementError) {
-                return _fail(
-                    'deletePlace: settlement cleanup failed: ' +
-                    (settlementError && settlementError.message
-                        ? settlementError.message
-                        : String(settlementError))
-                );
-            }
-        }
-
-        var removed = [];
-        try {
-            if (typeof LS._removePlaces !== 'function') {
-                throw new Error('LocationState._removePlaces is required for atomic deletion');
-            }
-            removed = LS._removePlaces(Object.keys(toRemove));
-        } catch (locationRemovalError) {
-            return _fail(
-                'deletePlace: location records could not be removed atomically: ' +
-                (locationRemovalError && locationRemovalError.message
-                    ? locationRemovalError.message
-                    : String(locationRemovalError))
-            );
-        }
-
-        // Publish the settlement-side change only after the location records
-        // have also been removed, so subscribers observe a coherent graph.
-        if (settlementCleanup.event && window.SettlementState &&
-            typeof window.SettlementState.publish === 'function') {
-            window.SettlementState.publish(settlementCleanup.event);
-        }
-
-        window.markDataDirty();
-        _commit('placeDeleted', {
+        var locationIds = Object.keys(toRemove);
+        var transactionContext = {
             placeId: placeId,
             mode: mode,
-            removedCount: removed.length,
-            settlementsRemoved: settlementCleanup.removedLocationIds.length,
-            governmentDepartmentsRemoved: governmentCleanup.removedDepartmentIds.length,
-            religionAssociationsRemoved: religionCleanup.removedAssociations,
-            cultureAssociationsRemoved: cultureCleanup.removedAssociations,
-            characterReconciled: characterCleanup.reconciled,
-            characterFailed: characterCleanup.failed,
-            householdCleared: householdCleanup.clearedCount,
-            householdStatus: householdCleanup.status
+            locationIds: locationIds,
+            removeSet: toRemove
+        };
+        var snapshots = null;
+        var outcomes = {
+            government: { removedDepartmentIds: [] },
+            religion: { updatedReligionIds: [], removedAssociations: 0, worshipPlacesUnassigned: 0 },
+            culture: { updatedCultureIds: [], removedAssociations: 0 },
+            character: { reconciled: 0, failed: 0, failedIds: [] },
+            household: { status: 'skipped', clearedCount: 0, households: [], perPlace: [] },
+            settlement: { removedLocationIds: [], event: null },
+            removed: []
+        };
+        var participant = {
+            name: 'location-deletion-cascade',
+            prepare: function () {
+                var required = [
+                    [window.GovernmentState, '_transactionSnapshotDeletedLocations', '_transactionRestoreDeletedLocations'],
+                    [window.ReligionState, '_transactionSnapshotDeletedLocations', '_transactionRestoreDeletedLocations'],
+                    [window.CultureState, '_transactionSnapshotDeletedLocations', '_transactionRestoreDeletedLocations'],
+                    [window.CharacterState, '_transactionSnapshotDeletedLocations', '_transactionRestoreDeletedLocations'],
+                    [window.HouseholdState, '_transactionSnapshotDeletedLocations', '_transactionRestoreDeletedLocations'],
+                    [window.SettlementState, '_transactionSnapshotDeletedLocations', '_transactionRestoreDeletedLocations'],
+                    [LS, '_transactionSnapshotDeletedLocations', '_transactionRestoreDeletedLocations']
+                ];
+                for (var ri = 0; ri < required.length; ri++) {
+                    if (!required[ri][0] ||
+                        typeof required[ri][0][required[ri][1]] !== 'function' ||
+                        typeof required[ri][0][required[ri][2]] !== 'function') {
+                        return { success: false, reason: 'A required domain transaction adapter is unavailable at index ' + ri };
+                    }
+                }
+                if (!window.GovernmentCommands ||
+                    typeof window.GovernmentCommands.reconcileDeletedLocations !== 'function' ||
+                    !window.ReligionCommands ||
+                    typeof window.ReligionCommands.reconcileDeletedLocations !== 'function' ||
+                    !window.CultureCommands ||
+                    typeof window.CultureCommands.reconcileDeletedLocations !== 'function' ||
+                    !window.HouseholdCommands ||
+                    typeof window.HouseholdCommands.clearLocationReferencesMany !== 'function' ||
+                    !window.SettlementCommandCommit ||
+                    typeof window.SettlementCommandCommit.removeMany !== 'function') {
+                    return { success: false, reason: 'A required domain cleanup command is unavailable.' };
+                }
+                return true;
+            },
+            snapshot: function () {
+                snapshots = {
+                    government: window.GovernmentState._transactionSnapshotDeletedLocations(),
+                    religion: window.ReligionState._transactionSnapshotDeletedLocations(),
+                    culture: window.CultureState._transactionSnapshotDeletedLocations(),
+                    character: window.CharacterState._transactionSnapshotDeletedLocations(),
+                    household: window.HouseholdState._transactionSnapshotDeletedLocations(),
+                    settlement: window.SettlementState._transactionSnapshotDeletedLocations(),
+                    location: LS._transactionSnapshotDeletedLocations()
+                };
+                return snapshots;
+            },
+            apply: function () {
+                var result = window.GovernmentCommands.reconcileDeletedLocations(
+                    locationIds, { deferCommit: true }
+                );
+                if (!result || result.success !== true) throw new Error('Government cleanup failed: ' + ((result && result.reason) || 'unknown error'));
+                outcomes.government = result.data || outcomes.government;
+
+                result = window.ReligionCommands.reconcileDeletedLocations(
+                    locationIds, { deferCommit: true }
+                );
+                if (!result || result.success !== true) throw new Error('Religion cleanup failed: ' + ((result && result.reason) || 'unknown error'));
+                outcomes.religion = result.data || outcomes.religion;
+
+                result = window.CultureCommands.reconcileDeletedLocations(
+                    locationIds, { deferCommit: true }
+                );
+                if (!result || result.success !== true) throw new Error('Culture cleanup failed: ' + ((result && result.reason) || 'unknown error'));
+                outcomes.culture = result.data || outcomes.culture;
+
+                outcomes.character = _cleanupCharactersAtPlaces(toRemove, { deferCommit: true });
+                if (outcomes.character.failed > 0 || outcomes.character.status === 'unavailable') {
+                    throw new Error('Character cleanup failed: ' + (outcomes.character.reason || outcomes.character.failedIds.join(', ') || 'unknown error'));
+                }
+
+                outcomes.household = _cleanupHouseholdsAtPlaces(toRemove, { deferCommit: true });
+                if (outcomes.household.status === 'failed' || outcomes.household.status === 'unavailable') {
+                    throw new Error('Household cleanup failed: ' + (outcomes.household.reason || 'unknown error'));
+                }
+
+                var settlementStore = window.masterData.data.settlementData;
+                var settlementIds = locationIds.filter(function (id) {
+                    return settlementStore &&
+                        Object.prototype.hasOwnProperty.call(settlementStore, id) &&
+                        !!settlementStore[id];
+                });
+                if (settlementIds.length > 0) {
+                    outcomes.settlement = window.SettlementCommandCommit.removeMany(
+                        settlementIds,
+                        {
+                            type: 'settlementsRemovedWithLocations',
+                            cause: 'locationDeleted',
+                            placeId: placeId,
+                            mode: mode
+                        },
+                        { persist: false, publish: false }
+                    );
+                }
+
+                outcomes.removed = LS._removePlaces(locationIds);
+                return true;
+            },
+            rollback: function () {
+                if (!snapshots) return { success: false, reason: 'Transaction snapshots are unavailable.' };
+                var failures = [];
+                [
+                    [LS, snapshots.location],
+                    [window.SettlementState, snapshots.settlement],
+                    [window.HouseholdState, snapshots.household],
+                    [window.CharacterState, snapshots.character],
+                    [window.CultureState, snapshots.culture],
+                    [window.ReligionState, snapshots.religion],
+                    [window.GovernmentState, snapshots.government]
+                ].forEach(function (entry) {
+                    try {
+                        var restored = entry[0]._transactionRestoreDeletedLocations(entry[1]);
+                        if (!restored || restored.success !== true) failures.push(restored && restored.reason ? restored.reason : 'Domain restore failed');
+                    } catch (error) {
+                        failures.push(error && error.message ? error.message : String(error));
+                    }
+                });
+                return failures.length
+                    ? { success: false, reason: failures.join('; ') }
+                    : { success: true };
+            },
+            afterCommit: function () {
+                if (outcomes.government.removedDepartmentIds.length && window.GovernmentState) {
+                    window.GovernmentState.publish('governmentDepartmentsReconciled', {
+                        departmentIds: outcomes.government.removedDepartmentIds,
+                        reason: 'location_deleted'
+                    });
+                }
+                if ((outcomes.religion.updatedReligionIds.length || outcomes.religion.worshipPlacesUnassigned) && window.ReligionState) {
+                    window.ReligionState.publish('religionLocationsReconciled', {
+                        locationIds: locationIds.slice(),
+                        religionIds: outcomes.religion.updatedReligionIds,
+                        removedAssociations: outcomes.religion.removedAssociations,
+                        worshipPlacesUnassigned: outcomes.religion.worshipPlacesUnassigned
+                    });
+                }
+                if (outcomes.culture.updatedCultureIds.length && window.CultureState) {
+                    window.CultureState.publish('cultureLocationsReconciled', {
+                        locationIds: locationIds.slice(),
+                        cultureIds: outcomes.culture.updatedCultureIds,
+                        removedAssociations: outcomes.culture.removedAssociations
+                    });
+                }
+                if (outcomes.character.reconciled > 0 && window.CharacterState &&
+                    typeof window.CharacterState.notifyTransactionUpdate === 'function') {
+                    window.CharacterState.notifyTransactionUpdate(outcomes.character.characterIds || []);
+                }
+                if (outcomes.household.status === 'applied' && window.HouseholdCommands) {
+                    window.HouseholdCommands.commitTransactionLocationCleanup(locationIds, outcomes.household);
+                }
+                if (outcomes.settlement.event && window.SettlementState) {
+                    window.SettlementState.publish(outcomes.settlement.event);
+                }
+                window.markDataDirty();
+                _commit('placeDeleted', {
+                    placeId: placeId,
+                    mode: mode,
+                    removedCount: outcomes.removed.length,
+                    settlementsRemoved: outcomes.settlement.removedLocationIds.length,
+                    governmentDepartmentsRemoved: outcomes.government.removedDepartmentIds.length,
+                    religionAssociationsRemoved: outcomes.religion.removedAssociations,
+                    cultureAssociationsRemoved: outcomes.culture.removedAssociations,
+                    characterReconciled: outcomes.character.reconciled,
+                    characterFailed: outcomes.character.failed,
+                    householdCleared: outcomes.household.clearedCount,
+                    householdStatus: outcomes.household.status
+                });
+            }
+        };
+
+        var transactionResult = window.CrossDomainTransaction.execute({
+            context: transactionContext,
+            participants: [participant]
         });
+        if (!transactionResult || transactionResult.success !== true) {
+            return _fail(
+                'deletePlace: cross-domain transaction failed (' +
+                ((transactionResult && transactionResult.code) || 'UNKNOWN') + '): ' +
+                ((transactionResult && transactionResult.reason) || 'unknown error') +
+                (transactionResult && transactionResult.rollbackErrors && transactionResult.rollbackErrors.length
+                    ? '; rollback errors: ' + transactionResult.rollbackErrors.map(function (item) { return item.reason; }).join('; ')
+                    : '')
+            );
+        }
 
         return _ok({
             placeId: placeId,
             mode: mode,
-            removedCount: removed.length,
-            settlementsRemoved: settlementCleanup.removedLocationIds.length,
-            governmentDepartmentsRemoved: governmentCleanup.removedDepartmentIds.length,
-            religionAssociationsRemoved: religionCleanup.removedAssociations,
-            cultureAssociationsRemoved: cultureCleanup.removedAssociations,
-            charactersReconciled: characterCleanup.reconciled,
-            charactersFailed: characterCleanup.failed,
-            charactersFailedIds: characterCleanup.failedIds,
-            householdReconciliation: householdCleanup
+            removedCount: outcomes.removed.length,
+            settlementsRemoved: outcomes.settlement.removedLocationIds.length,
+            governmentDepartmentsRemoved: outcomes.government.removedDepartmentIds.length,
+            religionAssociationsRemoved: outcomes.religion.removedAssociations,
+            cultureAssociationsRemoved: outcomes.culture.removedAssociations,
+            charactersReconciled: outcomes.character.reconciled,
+            charactersFailed: outcomes.character.failed,
+            charactersFailedIds: outcomes.character.failedIds,
+            householdReconciliation: outcomes.household,
+            transactionId: transactionResult.transactionId,
+            notificationErrors: transactionResult.notificationErrors || []
         });
     }
 
