@@ -662,6 +662,14 @@
                 }
             });
         }
+        if (_state.crimes.byId.size !== expectedCrimes.byId.size) warnings.push('crime byId index size mismatch');
+        expectedCrimes.byId.forEach(function(record, id) {
+            if (_state.crimes.byId.get(id) !== record) warnings.push('crime byId index mismatch for ' + id);
+        });
+        if (_state.vendettas.byId.size !== expectedVendettas.byId.size) warnings.push('vendetta byId index size mismatch');
+        expectedVendettas.byId.forEach(function(record, id) {
+            if (_state.vendettas.byId.get(id) !== record) warnings.push('vendetta byId index mismatch for ' + id);
+        });
         compareMapSets('crime perpetrator', _state.crimes.byPerpetrator, expectedCrimes.byPerpetrator);
         compareMapSets('crime victim', _state.crimes.byVictim, expectedCrimes.byVictim);
         compareMapSets('crime type', _state.crimes.byType, expectedCrimes.byType);
