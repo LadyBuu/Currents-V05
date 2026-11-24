@@ -349,13 +349,14 @@
     }
 
     function _wireActions(container, locationId) {
+        container.__stCurrentLocationId = locationId;
         if (container.__stEducationWired) return;
         container.__stEducationWired = true;
         container.addEventListener('click', function (event) {
             var actionBtn = event.target.closest('[data-action]');
             if (actionBtn && container.contains(actionBtn)) {
                 event.preventDefault();
-                _handleAction(actionBtn.dataset.action, locationId);
+                _handleAction(actionBtn.dataset.action, container.__stCurrentLocationId);
                 return;
             }
             var viewBtn = event.target.closest('.view-institution-btn');
