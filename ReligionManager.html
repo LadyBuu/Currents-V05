@@ -2089,11 +2089,10 @@
     window.addEventListener('masterDataUpdated', refreshReligionManagerFromDomainChange);
     window.addEventListener('placeUpdated', refreshReligionManagerFromDomainChange);
     window.addEventListener('placeDeleted', refreshReligionManagerFromDomainChange);
+    // LocationCommands writes movement history through CharacterCommands,
+    // which emits characterChanged after the canonical character update.
+    // Listening to both event families would render the same move twice.
     window.addEventListener('characterChanged', refreshReligionManagerFromDomainChange);
-    window.addEventListener('moveRecorded', refreshReligionManagerFromDomainChange);
-    window.addEventListener('movesRecordedBulk', refreshReligionManagerFromDomainChange);
-    window.addEventListener('moveUpdated', refreshReligionManagerFromDomainChange);
-    window.addEventListener('moveDeleted', refreshReligionManagerFromDomainChange);
 
     function onDomReady(fn) {
         if (document.readyState === 'loading') {
