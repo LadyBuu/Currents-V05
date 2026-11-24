@@ -1134,12 +1134,9 @@
         var projectedTarget = {
             wealth: targetWealth - (targetGives.wealth || 0) + (sourceGives.wealth || 0),
             food: targetResources.food - (targetGives.food || 0) + (sourceGives.food || 0),
-            livestock: targetResources.livestock - (targetGives.livestock || 0) + (sourceGives.goods || 0)
+            livestock: targetResources.livestock - (targetGives.livestock || 0) + (sourceGives.livestock || 0),
+            goods: targetResources.goods - (targetGives.goods || 0) + (sourceGives.goods || 0)
         };
-        projectedTarget.livestock = targetResources.livestock
-            - (targetGives.livestock || 0) + (sourceGives.livestock || 0);
-        projectedTarget.goods = targetResources.goods
-            - (targetGives.goods || 0) + (sourceGives.goods || 0);
         var projectedValues = [
             projectedSource.wealth, projectedSource.food, projectedSource.livestock, projectedSource.goods,
             projectedTarget.wealth, projectedTarget.food, projectedTarget.livestock, projectedTarget.goods
