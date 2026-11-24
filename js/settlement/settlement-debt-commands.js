@@ -370,12 +370,15 @@
 
         var wealthBefore = _isFiniteNumber(settlement.wealth) ? settlement.wealth : 0;
 
-        var rate = _getFinanceDefinitions().DEBT_INTEREST_RATE.annualFraction;
-        if (!_isFiniteNumber(rate)) {
-            return _failure('INVALID_INTEREST_RATE', { rate: rate });
+        var finance = _getFinanceDefinitions();
+        var interest;
+        try {
+            interest = finance.calculateAnnualInterest(debtBefore);
+        } catch (error) {
+            return _failure('INVALID_INTEREST_RATE', {
+                reason: error && error.message ? error.message : String(error)
+            });
         }
-
-        var interest = Math.floor(debtBefore * rate);
 
         if (interest <= 0) {
             return {
