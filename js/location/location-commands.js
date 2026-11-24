@@ -868,6 +868,14 @@
         // cleanup can publish any changes. This catches malformed hierarchy,
         // unavailable canonical stores, and reconciliation validation errors
         // before the first cross-domain mutation.
+        var governmentStoreForPreflight = window.masterData && window.masterData.data
+            ? window.masterData.data.governmentDepartments
+            : [];
+        if (governmentStoreForPreflight != null && !Array.isArray(governmentStoreForPreflight)) {
+            return _fail('deletePlace: cannot verify Government departments because the store is malformed');
+        }
+        var hasGovernmentReferencesForPreflight = Array.isArray(governmentStoreForPreflight) &&
+            governmentStoreForPreflight.length > 0;
         var governmentPreflight = { success: true, data: { removedDepartmentIds: [] } };
         if (window.GovernmentCommands &&
             typeof window.GovernmentCommands.reconcileDeletedLocations === 'function') {
@@ -881,7 +889,7 @@
                     ((governmentPreflight && governmentPreflight.reason) || 'unknown error')
                 );
             }
-        } else if (hasGovernmentReferences) {
+        } else if (hasGovernmentReferencesForPreflight) {
             return _fail(
                 'deletePlace: GovernmentCommands.reconcileDeletedLocations is required ' +
                 'to safely delete locations with government departments'
