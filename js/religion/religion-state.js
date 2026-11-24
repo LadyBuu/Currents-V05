@@ -388,7 +388,6 @@
         var seenGodIds = Object.create(null);
         var seenLawIds = Object.create(null);
         var seenWorshipPlaceIds = Object.create(null);
-        var seenLeaderIds = Object.create(null);
 
         for (var i = 0; i < religions.length; i++) {
             var religion = religions[i];
@@ -415,15 +414,7 @@
             }
 
             if (religion.leader && religion.leader.characterId) {
-                var leaderId = religion.leader.characterId;
-                if (religion.leader.isActive !== false && seenLeaderIds[leaderId]) {
-                    throw new Error(
-                        'ReligionState.hydrateFromMasterData: character "' + leaderId +
-                        '" is recorded as active leader of more than one religion.'
-                    );
-                }
-                if (religion.leader.isActive !== false) seenLeaderIds[leaderId] = true;
-                nextIndexes.byLeader.set(leaderId, religion);
+                nextIndexes.byLeader.set(religion.leader.characterId, religion);
             }
 
             if (Array.isArray(religion.gods)) {
