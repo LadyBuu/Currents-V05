@@ -16,7 +16,7 @@
  *   - persist
  *   - render
  *   - decide presentation defaults (icon fallbacks, labels)
- *   - walk hierarchies it doesn't own (it delegates to PlaceQueries)
+ *   - walk hierarchies it doesn't own (it delegates to LocationQueries)
  *
  * Relationship to other modules:
  *
@@ -24,7 +24,7 @@
  *         │
  *         ├── CultureState            (indexes; public reads are clones)
  *         ├── masterData.data.cultures (canonical reads for listing)
- *         ├── PlaceQueries            (location hierarchy)
+ *         ├── LocationQueries            (location hierarchy)
  *         ├── ReligionQueries         (religion lookups)
  *         └── CharacterQueries        (character culture lookups)
  *
@@ -33,7 +33,7 @@
  *   The authoritative "which culture applies to this place" relationship
  *   lives on `place.cultureId`, not on the culture record. CultureState
  *   does not index it. This module walks the place hierarchy via
- *   PlaceQueries and returns the first culture it finds.
+ *   LocationQueries and returns the first culture it finds.
  *
  *   The culture.locations array is a *descriptive* association (which
  *   locations a culture is culturally associated with). It is a different
@@ -82,12 +82,12 @@
  *
  * NOTE ON NAMING:
  *   The canonical lookup function is `getCultureById(id)`.
- *   This matches `getPlaceById`, `getReligionById`, `getCharacterById`.
+ *   This matches `getPlace`, `getReligionById`, `getCharacterById`.
  *
  * DEPENDENCIES (required, verified at load):
  *   - CultureState
  *   - masterData.data.cultures (via CultureState)
- *   - PlaceQueries   (location hierarchy walks)
+ *   - LocationQueries   (location hierarchy walks)
  *   - ReligionQueries (religion lookups in getCultureSummary)
  *   - CharacterQueries (character enumeration and by-id reads)
  *
@@ -177,13 +177,13 @@
         return window.masterData;
     }
 
-    function _requirePlaceQueries() {
-        if (!window.PlaceQueries) {
+    function _requireLocationQueries() {
+        if (!window.LocationQueries) {
             throw new Error(
-                'CultureQueries requires PlaceQueries for location hierarchy queries.'
+                'CultureQueries requires LocationQueries for location hierarchy queries.'
             );
         }
-        return window.PlaceQueries;
+        return window.LocationQueries;
     }
 
     function _requireReligionQueries() {
@@ -455,14 +455,14 @@
     function _findPrimaryCultureIdForLocation(locationId) {
         if (!locationId) return null;
 
-        var placeQueries = _requirePlaceQueries();
+        var placeQueries = _requireLocationQueries();
         var currentId = locationId;
         var guard = 0;
 
         while (currentId && guard < _MAX_HIERARCHY_DEPTH) {
             guard++;
 
-            var place = placeQueries.getPlaceById(currentId);
+            var place = placeQueries.getPlace(currentId);
             if (!place) break;
 
             if (place.cultureId) return place.cultureId;
@@ -523,7 +523,7 @@
         if (!locationId) return [];
 
         var state = _requireCultureState();
-        var placeQueries = _requirePlaceQueries();
+        var placeQueries = _requireLocationQueries();
 
         var result = [];
         var seen = {};
@@ -543,7 +543,7 @@
         for (var i = 0; i < direct.length; i++) add(direct[i]);
 
         // Ancestor descriptive associations
-        var place = placeQueries.getPlaceById(locationId);
+        var place = placeQueries.getPlace(locationId);
         var current = place ? place.parentId : null;
         var guard = 0;
 
@@ -553,7 +553,7 @@
             var ancestors = state.getByAssociatedLocation(current);
             for (var j = 0; j < ancestors.length; j++) add(ancestors[j]);
 
-            var parentPlace = placeQueries.getPlaceById(current);
+            var parentPlace = placeQueries.getPlace(current);
             current = parentPlace ? parentPlace.parentId : null;
         }
 
@@ -652,13 +652,13 @@
         var culture = getCultureById(id);
         if (!culture) return null;
 
-        var placeQueries = _requirePlaceQueries();
+        var placeQueries = _requireLocationQueries();
         var religionQueries = _requireReligionQueries();
 
         var locations = [];
         if (Array.isArray(culture.locations)) {
             for (var i = 0; i < culture.locations.length; i++) {
-                var place = placeQueries.getPlaceById(culture.locations[i]);
+                var place = placeQueries.getPlace(culture.locations[i]);
                 if (place) locations.push(place);
             }
         }
@@ -702,7 +702,7 @@
 
     function getCultureStatistics() {
         var cultures = _readCanonicalCultures();
-        var placeQueries = _requirePlaceQueries();
+        var placeQueries = _requireLocationQueries();
         var characterQueries = _requireCharacterQueries();
 
         var places = placeQueries.getAllPlaces();
@@ -851,9 +851,9 @@
                 'Check script tag order.'
             );
         }
-        if (!window.PlaceQueries) {
+        if (!window.LocationQueries) {
             throw new Error(
-                'culture-queries.js loaded but window.PlaceQueries is missing. ' +
+                'culture-queries.js loaded but window.LocationQueries is missing. ' +
                 'Check script tag order (location-queries.js must load first).'
             );
         }
