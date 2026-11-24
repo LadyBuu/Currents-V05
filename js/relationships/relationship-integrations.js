@@ -409,10 +409,15 @@
             var fr = friends[j];
             var otherId = fr.friendId;
             if (!otherId) continue;
-            var fResult = FrC.removeFriendship(characterId, otherId, {
-                endYear: deathYear,
-                reason: 'death_of_participant'
-            });
+            var fResult;
+            try {
+                fResult = FrC.removeFriendship(characterId, otherId, {
+                    endYear: deathYear,
+                    reason: 'death_of_participant'
+                });
+            } catch (e) {
+                fResult = { success: false, code: 'FRIENDSHIP_COMMAND_THROWN', message: e && e.message ? e.message : String(e) };
+            }
             if (fResult.success) summary.friendship.ended.push(fr.relationshipId);
             else summary.friendship.failed.push({
                 id: fr.relationshipId,
@@ -431,10 +436,15 @@
         for (var k = 0; k < rivals.length; k++) {
             var rv = rivals[k];
             if (!rv.otherId) continue;
-            var rvResult = RvC.endRivalry(characterId, rv.otherId, {
-                endYear: deathYear,
-                reason: 'death_of_participant'
-            });
+            var rvResult;
+            try {
+                rvResult = RvC.endRivalry(characterId, rv.otherId, {
+                    endYear: deathYear,
+                    reason: 'death_of_participant'
+                });
+            } catch (e) {
+                rvResult = { success: false, code: 'RIVALRY_COMMAND_THROWN', message: e && e.message ? e.message : String(e) };
+            }
             if (rvResult.success) summary.rivalry.ended.push(rv.relationshipId);
             else summary.rivalry.failed.push({
                 id: rv.relationshipId,
@@ -447,10 +457,15 @@
         for (var m = 0; m < enemies.length; m++) {
             var en = enemies[m];
             if (!en.otherId) continue;
-            var enResult = RvC.endEnmity(characterId, en.otherId, {
-                endYear: deathYear,
-                reason: 'death_of_participant'
-            });
+            var enResult;
+            try {
+                enResult = RvC.endEnmity(characterId, en.otherId, {
+                    endYear: deathYear,
+                    reason: 'death_of_participant'
+                });
+            } catch (e) {
+                enResult = { success: false, code: 'ENMITY_COMMAND_THROWN', message: e && e.message ? e.message : String(e) };
+            }
             if (enResult.success) summary.rivalry.ended.push(en.relationshipId);
             else summary.rivalry.failed.push({
                 id: en.relationshipId,
@@ -498,29 +513,45 @@
                             message: 'apprenticeship record has no metadata.roleId; cannot terminate'
                         };
                     } else {
-                        endResult = apprenticeshipCommands.terminateApprenticeship(
-                            p.participantA,
-                            p.participantB,
-                            roleId,
-                            'death_of_participant'
-                        );
+                        try {
+                            endResult = apprenticeshipCommands.terminateApprenticeship(
+                                p.participantA,
+                                p.participantB,
+                                roleId,
+                                'death_of_participant'
+                            );
+                        } catch (e) {
+                            endResult = { success: false, code: 'APPRENTICESHIP_COMMAND_THROWN', message: e && e.message ? e.message : String(e) };
+                        }
                     }
                 }
             } else if (p.type === A.MASTERSHIP) {
-                endResult = PrC.endMastership(p.participantA, p.participantB, {
-                    endYear: deathYear,
-                    reason: 'death_of_participant'
-                });
+                try {
+                    endResult = PrC.endMastership(p.participantA, p.participantB, {
+                        endYear: deathYear,
+                        reason: 'death_of_participant'
+                    });
+                } catch (e) {
+                    endResult = { success: false, code: 'MASTERSHIP_COMMAND_THROWN', message: e && e.message ? e.message : String(e) };
+                }
             } else if (p.type === A.EMPLOYMENT) {
-                endResult = PrC.endEmployment(p.participantA, p.participantB, {
-                    endYear: deathYear,
-                    reason: 'death_of_participant'
-                });
+                try {
+                    endResult = PrC.endEmployment(p.participantA, p.participantB, {
+                        endYear: deathYear,
+                        reason: 'death_of_participant'
+                    });
+                } catch (e) {
+                    endResult = { success: false, code: 'EMPLOYMENT_COMMAND_THROWN', message: e && e.message ? e.message : String(e) };
+                }
             } else if (p.type === A.GUILD_MEMBERSHIP) {
-                endResult = PrC.removeGuildMembership(p.participantA, p.participantB, {
-                    endYear: deathYear,
-                    reason: 'death_of_participant'
-                });
+                try {
+                    endResult = PrC.removeGuildMembership(p.participantA, p.participantB, {
+                        endYear: deathYear,
+                        reason: 'death_of_participant'
+                    });
+                } catch (e) {
+                    endResult = { success: false, code: 'GUILD_MEMBERSHIP_COMMAND_THROWN', message: e && e.message ? e.message : String(e) };
+                }
             } else {
                 endResult = {
                     success: false,
