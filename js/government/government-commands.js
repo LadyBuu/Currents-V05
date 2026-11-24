@@ -394,7 +394,7 @@
             if (options.dryRun === true) {
                 return _ok({ removedDepartmentIds: removedDepartmentIds, dryRun: true });
             }
-            if (removedDepartmentIds.length > 0) {
+            if (removedDepartmentIds.length > 0 && options.deferCommit !== true) {
                 _commit('governmentDepartmentsReconciled', {
                     departmentIds: removedDepartmentIds,
                     reason: 'location_deleted'
