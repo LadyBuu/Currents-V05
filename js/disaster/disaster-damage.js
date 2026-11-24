@@ -573,9 +573,41 @@
     // damage coordinator is called on an in-flight record before
     // DisasterCommands records it.
 
+    function _reserveDamageRecord(disasterId) {
+        if (!disasterId) return { success: true, skipped: true };
+        var existing = State.getDisaster(disasterId);
+        if (!existing) return { success: false, reason: 'Disaster record not found' };
+        var damage = existing.structuralDamage || {};
+        var lists = damage.destructionList || {};
+        var hasPriorDamage = ['features', 'schools', 'enterprises', 'residences', 'households']
+            .some(function(key) { return Array.isArray(lists[key]) && lists[key].length > 0; });
+        if (existing.structuralDamageStatus
+            || hasPriorDamage
+            || ['featuresDestroyed', 'schoolsDestroyed', 'enterprisesDestroyed',
+                'residencesDemolished', 'householdsDestroyed'].some(function(key) {
+                return typeof damage[key] === 'number' && damage[key] > 0;
+            })) {
+            return {
+                success: false,
+                reason: 'Structural damage has already been attempted for this disaster; refusing to apply it again'
+            };
+        }
+        var result = State.updateDisaster(disasterId, {
+            structuralDamageStatus: 'in_progress',
+            structuralDamageStartedAt: Date.now()
+        });
+        if (!result || result.success !== true) {
+            return { success: false, reason: (result && result.reason) || 'Could not reserve structural damage application' };
+        }
+        return { success: true };
+    }
+
     function _saveDamageRecord(disasterId, report) {
         if (!disasterId) return { success: true, skipped: true };
+        var isPartial = report.errors.length > 0 || report.skippedSystems.length > 0;
         var result = State.updateDisaster(disasterId, {
+            structuralDamageStatus: isPartial ? 'partial' : 'complete',
+            structuralDamageCompletedAt: Date.now(),
             structuralDamageSkippedSystems: Array.isArray(report.skippedSystems)
                 ? report.skippedSystems.slice()
                 : [],
@@ -629,6 +661,11 @@
         var baseChance = _isFiniteNumber(options.destructionChance)
             ? options.destructionChance
             : _calculateDestructionChance(severity);
+
+        var reservation = _reserveDamageRecord(disaster.id || null);
+        if (!reservation.success) {
+            return _fail(reservation.reason, C.CODES.VALIDATION);
+        }
 
         var report = {
             locationId: locationId,
