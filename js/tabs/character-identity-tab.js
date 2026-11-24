@@ -1645,177 +1645,133 @@
             if (resolvedNewReligion !== loadedReligionId) religionChanged = true;
         }
 
-        // ---- Step 1: Replace the trait set in one domain-owned write.
-        // Per-trait writes each emit characterChanged and can cause the
-        // persistent tab pane to re-render midway through this save.
-        if (traitsToAdd.length > 0 || traitsToRemove.length > 0) {
-            if (typeof CC.replaceTraits !== 'function') {
-                errors.push('Save traits: CharacterCommands.replaceTraits is not available.');
-            } else {
-                var traitResult = CC.replaceTraits(characterId, newTraits);
-                if (!traitResult || traitResult.success !== true) {
-                    errors.push('Save traits: ' +
-                        (traitResult && traitResult.reason ? traitResult.reason : 'unknown'));
-                }
-            }
-        }
-
-        // ---- Step 2: Religion change.
-        if (religionChanged) {
-            if (_hasId(newReligionId)) {
-                var relResult = CC.assignCharacterReligion(characterId, newReligionId, {
-                    year: _currentYear(),
-                    reason: 'personal',
-                    notes: ''
-                });
-                if (!relResult || relResult.success !== true) {
-                    errors.push('Change religion: ' +
-                        (relResult && relResult.reason ? relResult.reason : 'unknown'));
-                }
-            } else {
-                var remRel = CC.removeCharacterReligion(characterId);
-                if (!remRel || remRel.success !== true) {
-                    errors.push('Remove religion: ' +
-                        (remRel && remRel.reason ? remRel.reason : 'unknown'));
-                }
-            }
-        }
-
-        // ---- Step 3: Character-owned field patch.
-        var patch = {};
-        var deathPatch = {};
-
-        if (model.identity) {
-            if (newFirstName !== (model.identity.firstName || '')) {
-                if (newFirstName === '') {
-                    errors.push('First name cannot be empty.');
-                } else {
-                    patch.name = newFirstName;
-                }
-            }
-            if (newSurname !== (model.identity.surname || '')) {
-                patch.surname = newSurname;
-            }
-            if (newSurnameSource !== (model.identity.surnameSource || 'custom')) {
-                patch.surnameSource = newSurnameSource;
-            }
-            if (newEpithet !== (model.identity.epithet || '')) {
-                patch.epithet = newEpithet;
-            }
-            if (newGender !== (model.identity.gender || 'unknown')) {
-                patch.gender = newGender;
-            }
-        }
-
-        if (newCultureId !== null) {
-            var loadedCultureId = (model.identity && model.identity.cultureId) || null;
-            var resolvedNewCulture = _hasId(newCultureId) ? newCultureId : null;
-            if (resolvedNewCulture !== loadedCultureId) {
-                patch.cultureId = resolvedNewCulture;
-            }
-        }
-
-        if (model.birth) {
-            var loadedBirthYear = model.birth.year;
-            var resolvedBirthYear = newBirthYearRaw === ''
-                ? null
-                : parseInt(newBirthYearRaw, 10);
-            if (!Number.isInteger(resolvedBirthYear) && resolvedBirthYear !== null) {
-                errors.push('Birth year must be a whole number.');
-            } else if (resolvedBirthYear !== loadedBirthYear) {
-                if (resolvedBirthYear !== null && !window.isValidYear(resolvedBirthYear)) {
-                    errors.push('Birth year is not a valid world year.');
-                } else {
-                    patch.birthYear = resolvedBirthYear;
-                }
-            }
-            if (newBirthplaceId !== null) {
-                var resolvedBirthplace = _hasId(newBirthplaceId) ? newBirthplaceId : null;
-                if (resolvedBirthplace !== (model.birth.placeId || null)) {
-                    patch.birthplaceId = resolvedBirthplace;
-                }
-            }
-        }
-
-        if (model.death && model.death.isDeceased === true) {
-            var loadedDeathYear = model.death.year;
-            var resolvedDeathYear = newDeathYearRaw === ''
-                ? null : parseInt(newDeathYearRaw, 10);
-            if (!Number.isInteger(resolvedDeathYear) && resolvedDeathYear !== null) {
-                errors.push('Death year must be a whole number.');
-            } else if (resolvedDeathYear !== loadedDeathYear) {
-                if (resolvedDeathYear !== null && !window.isValidYear(resolvedDeathYear)) {
-                    errors.push('Death year is not a valid world year.');
-                } else {
-                    deathPatch.deathYear = resolvedDeathYear;
-                }
-            }
-            if (newDeathCause !== (model.death.cause || '')) {
-                deathPatch.deathCause = newDeathCause;
-            }
-            if (newDeathCauseDetail !== (model.death.causeDetail || '')) {
-                deathPatch.deathCauseDetail = newDeathCauseDetail;
-            }
-            if (newDeathNotes !== (model.death.notes || '')) {
-                deathPatch.deathNotes = newDeathNotes;
-            }
-        }
-
-        // Appearance — compare as a whole object.
-        if (model.appearance) {
-            var appearanceChanged = false;
-            var keys = ['hairColor', 'eyeColor', 'skinTone', 'build', 'height',
-                        'distinguishingFeatures', 'tattoos'];
-            for (var ak = 0; ak < keys.length; ak++) {
-                var k = keys[ak];
-                if ((appearance[k] || '') !== (model.appearance[k] || '')) {
-                    appearanceChanged = true;
-                    break;
-                }
-            }
-            if (appearanceChanged) patch.appearance = appearance;
-        }
-
-        if (newNotes !== (model.notes || '')) {
-            patch.notes = newNotes;
-        }
-
-        if (Object.keys(deathPatch).length > 0) {
-            if (typeof CC.updateDeathRecord !== 'function') {
-                errors.push('Death record update: CharacterCommands.updateDeathRecord is not available.');
-            } else {
-                var deathUpdate = CC.updateDeathRecord(characterId, deathPatch);
-                if (!deathUpdate || deathUpdate.success !== true) {
-                    errors.push('Death record update: ' +
-                        (deathUpdate && deathUpdate.reason ? deathUpdate.reason : 'unknown'));
-                }
-            }
-        }
-
-        if (Object.keys(patch).length > 0) {
-            var upd = CC.updateCharacter(characterId, patch);
-            if (!upd || upd.success !== true) {
-                errors.push('Field update: ' +
-                    (upd && upd.reason ? upd.reason : 'unknown'));
-            }
-        }
-
-        // ---- Persist once after all domain writes have been attempted.
-        // Some fields may have succeeded even when another domain rejected
-        // its change. Preserve those successful writes and report both kinds
-        // of failure instead of silently relying on the debounce.
-        var persisted = _persistIdentityChanges();
-        if (!persisted.success) {
-            errors.push('Storage save: ' + persisted.reason);
-        }
-
-        // ---- Report.
+        // Reject validation errors before touching any domain state.
         if (errors.length > 0) {
-            _toast('Save incomplete: ' + errors.join('; '), 'error');
-        } else {
-            _toast('Saved.', 'success');
-            _refresh();
+            _toast('Save failed: ' + errors.join('; '), 'error');
+            return;
         }
+
+        // A single Character transaction prevents each field/domain command
+        // from publishing characterChanged and re-rendering this pane midway
+        // through the save. It also rolls every field back if validation or
+        // durable storage fails.
+        var CS = window.CharacterState;
+        var TX = window.CrossDomainTransaction;
+        if (!CS || !TX || typeof TX.execute !== 'function' ||
+            typeof CS._transactionSnapshotCharacter !== 'function' ||
+            typeof CS._transactionRestoreCharacter !== 'function' ||
+            typeof CS._transactionFlushChanges !== 'function' ||
+            typeof CS._transactionDiscardChanges !== 'function') {
+            _toast('Save failed: Character transaction support is not loaded.', 'error');
+            return;
+        }
+
+        var transaction = TX.execute({
+            id: 'character-identity-save-' + characterId,
+            context: { characterId: characterId },
+            participants: [{
+                name: 'character-identity',
+                snapshot: function () {
+                    return CS._transactionSnapshotCharacter(characterId);
+                },
+                apply: function () {
+                    // Traits.
+                    if (traitsToAdd.length > 0 || traitsToRemove.length > 0) {
+                        if (typeof CC.replaceTraits !== 'function') {
+                            errors.push('Save traits: CharacterCommands.replaceTraits is not available.');
+                        } else {
+                            var traitResult = CC.replaceTraits(characterId, newTraits);
+                            if (!traitResult || traitResult.success !== true) {
+                                errors.push('Save traits: ' +
+                                    (traitResult && traitResult.reason ? traitResult.reason : 'unknown'));
+                            }
+                        }
+                    }
+
+                    // Religion.
+                    if (religionChanged) {
+                        if (_hasId(newReligionId)) {
+                            var relResult = CC.assignCharacterReligion(characterId, newReligionId, {
+                                year: _currentYear(),
+                                reason: 'personal',
+                                notes: ''
+                            });
+                            if (!relResult || relResult.success !== true) {
+                                errors.push('Change religion: ' +
+                                    (relResult && relResult.reason ? relResult.reason : 'unknown'));
+                            }
+                        } else {
+                            var remRel = CC.removeCharacterReligion(characterId);
+                            if (!remRel || remRel.success !== true) {
+                                errors.push('Remove religion: ' +
+                                    (remRel && remRel.reason ? remRel.reason : 'unknown'));
+                            }
+                        }
+                    }
+
+                    // Death record corrections.
+                    if (Object.keys(deathPatch).length > 0) {
+                        if (typeof CC.updateDeathRecord !== 'function') {
+                            errors.push('Death record update: CharacterCommands.updateDeathRecord is not available.');
+                        } else {
+                            var deathUpdate = CC.updateDeathRecord(characterId, deathPatch);
+                            if (!deathUpdate || deathUpdate.success !== true) {
+                                errors.push('Death record update: ' +
+                                    (deathUpdate && deathUpdate.reason ? deathUpdate.reason : 'unknown'));
+                            }
+                        }
+                    }
+
+                    // Character-owned fields, including cultureId.
+                    if (Object.keys(patch).length > 0) {
+                        var upd = CC.updateCharacter(characterId, patch);
+                        if (!upd || upd.success !== true) {
+                            errors.push('Field update: ' +
+                                (upd && upd.reason ? upd.reason : 'unknown'));
+                        }
+                    }
+
+                    if (errors.length > 0) {
+                        return { success: false, reason: errors.join('; ') };
+                    }
+                    return { success: true };
+                },
+                rollback: function (snapshot) {
+                    var restored = CS._transactionRestoreCharacter(snapshot);
+                    CS._transactionDiscardChanges();
+                    return restored;
+                },
+                afterCommit: function () {
+                    CS._transactionFlushChanges();
+                }
+            }],
+            persist: function () {
+                if (typeof window.saveMasterData !== 'function') {
+                    return { success: false, reason: 'Storage saveMasterData() is not available.' };
+                }
+                if (window.saveMasterData() === true) return { success: true };
+                var lastError = typeof window.getLastSaveError === 'function'
+                    ? window.getLastSaveError()
+                    : null;
+                return {
+                    success: false,
+                    reason: lastError && lastError.message
+                        ? lastError.message
+                        : 'The browser could not write the changes to local storage.'
+                };
+            }
+        });
+
+        if (!transaction || transaction.success !== true) {
+            var reason = transaction && transaction.reason
+                ? transaction.reason
+                : 'The transaction could not be committed.';
+            _toast('Save failed. No changes were kept: ' + reason, 'error');
+            return;
+        }
+
+        _toast('Saved.', 'success');
+        _refresh();
     }
 
     function _onResetForm(container) {
