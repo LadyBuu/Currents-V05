@@ -2089,6 +2089,11 @@
     window.addEventListener('masterDataUpdated', refreshReligionManagerFromDomainChange);
     window.addEventListener('placeUpdated', refreshReligionManagerFromDomainChange);
     window.addEventListener('placeDeleted', refreshReligionManagerFromDomainChange);
+    window.addEventListener('characterChanged', refreshReligionManagerFromDomainChange);
+    window.addEventListener('moveRecorded', refreshReligionManagerFromDomainChange);
+    window.addEventListener('movesRecordedBulk', refreshReligionManagerFromDomainChange);
+    window.addEventListener('moveUpdated', refreshReligionManagerFromDomainChange);
+    window.addEventListener('moveDeleted', refreshReligionManagerFromDomainChange);
 
     function onDomReady(fn) {
         if (document.readyState === 'loading') {
