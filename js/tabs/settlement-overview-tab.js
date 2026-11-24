@@ -51,7 +51,7 @@
 
     function _getViewModels()       { return window.SettlementViewModels; }
     function _getSettlementQueries(){ return window.SettlementQueries; }
-    function _getPlaceQueries()     { return window.PlaceQueries; }
+    function _getPlaceQueries() { return typeof window.getPlaceById === 'function' ? { getPlaceById: window.getPlaceById } : null; }
     function _getPopulationAcc()    { return window.getLocationPopulationCount; }
 
     function _placeName(locationId) {
