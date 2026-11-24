@@ -767,6 +767,20 @@
                 applyResult.data = applyResult.data || {};
                 applyResult.data.disaster = stored;
                 applyResult.data.effectsApplied = true;
+                var failureUpdate = State.updateDisaster(stored.id, {
+                    effectsStatus: 'partial',
+                    effectFailures: (applyResult.data.failures || []).slice()
+                });
+                if (!failureUpdate || failureUpdate.success !== true) {
+                    applyResult.data.failures = applyResult.data.failures || [];
+                    applyResult.data.failures.push({
+                        system: 'disaster-state',
+                        reason: 'Could not save the partial-effects status to the disaster record: ' +
+                            ((failureUpdate && failureUpdate.reason) || 'unknown')
+                    });
+                } else {
+                    applyResult.data.disaster = failureUpdate.data;
+                }
                 _commit(C.EVENTS.DISASTER_ADDED, {
                     disasterId: stored.id,
                     locationId: locationId,
