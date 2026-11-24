@@ -2394,6 +2394,43 @@
         return _ok({ institutionId: institutionId, entry: entry });
     }
 
+    /**
+     * Compensating restore for an education command that failed after a
+     * withdrawal write. A null previousEntry removes the institution record.
+     */
+    function restoreEducationRecord(characterId, institutionId, previousEntry) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_hasId(institutionId)) return _fail('Institution id is required.');
+
+        var character = CS.getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var education = _isPlainObject(character.education)
+            ? Object.assign({}, character.education)
+            : {};
+        if (previousEntry === null || previousEntry === undefined) {
+            delete education[institutionId];
+        } else if (_isPlainObject(previousEntry)) {
+            education[institutionId] = Object.assign({}, previousEntry);
+        } else {
+            return _fail('previousEntry must be a plain object or null.');
+        }
+
+        var update = CS.updateCharacter(characterId, {
+            education: education,
+            updatedAt: Date.now()
+        });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the education restore.');
+        }
+        return _ok();
+    }
+
     function recordEducationWithdrawal(characterId, institutionId, data) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(institutionId)) return _fail('Institution id is required.');
@@ -3299,6 +3336,7 @@
         recordEducationGraduation: recordEducationGraduation,
         completeEducationGraduation: completeEducationGraduation,
         recordEducationWithdrawal: recordEducationWithdrawal,
+        restoreEducationRecord: restoreEducationRecord,
 
         getEducationHistory: getEducationHistory,
         appendEducationHistory: appendEducationHistory,
