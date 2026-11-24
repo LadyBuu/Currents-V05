@@ -266,6 +266,7 @@
 
         var startYear = _isMissing(birthYear) ? window.getCurrentYear() : birthYear;
 
+        var createdEdgeIds = [];
         for (var i = 0; i < parents.length; i++) {
             var p = parents[i];
             if (!_isPlainObject(p) || !_hasId(p.parentId)) {
@@ -291,12 +292,16 @@
                 return {
                     ok: false,
                     reason: 'Failed to set parent ' + p.parentId + ': ' +
-                        (result && result.reason ? result.reason : 'unknown')
+                        (result && result.reason ? result.reason : 'unknown'),
+                    createdEdgeIds: createdEdgeIds
                 };
+            }
+            if (result.unchanged !== true && _hasId(result.edgeId)) {
+                createdEdgeIds.push(result.edgeId);
             }
         }
 
-        return { ok: true };
+        return { ok: true, createdEdgeIds: createdEdgeIds };
     }
 
     /**
@@ -330,6 +335,56 @@
         return { ok: true };
     }
 
+    /**
+     * Compensates side effects created for a character that cannot complete
+     * creation. Only edges created by this invocation are ended; idempotently
+     * reused pre-existing edges are never touched.
+     */
+    function _rollbackCreatedCharacter(characterId, createdEdgeIds) {
+        var failures = [];
+        var ids = Array.isArray(createdEdgeIds) ? createdEdgeIds : [];
+
+        for (var i = ids.length - 1; i >= 0; i--) {
+            if (!window.FamilyCommands ||
+                typeof window.FamilyCommands.removeParent !== 'function') {
+                failures.push({
+                    step: 'removeFamilyEdge',
+                    edgeId: ids[i],
+                    reason: 'FamilyCommands.removeParent is unavailable.'
+                });
+                continue;
+            }
+            var edgeResult = window.FamilyCommands.removeParent(ids[i], {
+                reason: 'Character creation rollback'
+            });
+            if (!edgeResult || edgeResult.success !== true) {
+                failures.push({
+                    step: 'removeFamilyEdge',
+                    edgeId: ids[i],
+                    reason: edgeResult && edgeResult.reason
+                        ? edgeResult.reason
+                        : 'Family edge rollback failed.'
+                });
+            }
+        }
+
+        var removal = CS.removeCharacter(characterId);
+        if (!removal || removal.success !== true) {
+            failures.push({
+                step: 'removeCharacter',
+                characterId: characterId,
+                reason: removal && removal.reason
+                    ? removal.reason
+                    : 'CharacterState refused rollback.'
+            });
+        }
+
+        return {
+            success: failures.length === 0,
+            failures: failures
+        };
+    }
+
     // =========================================================================
     // 4. INTERNAL CREATION PRIMITIVE
     // =========================================================================
@@ -351,14 +406,36 @@
 
         var familyResult = _establishFamilyEdges(character.id, options, character.birthYear);
         if (!familyResult.ok) {
-            CS.removeCharacter(character.id);
-            return _fail(familyResult.reason);
+            var familyRollback = _rollbackCreatedCharacter(
+                character.id,
+                familyResult.createdEdgeIds
+            );
+            return {
+                success: false,
+                code: familyRollback.success
+                    ? 'CHARACTER_CREATION_FAILED'
+                    : 'CHARACTER_CREATION_ROLLBACK_FAILED',
+                reason: familyResult.reason,
+                characterId: character.id,
+                rollback: familyRollback
+            };
         }
 
         var religionResult = _establishReligionEdge(character.id, data);
         if (!religionResult.ok) {
-            CS.removeCharacter(character.id);
-            return _fail(religionResult.reason);
+            var religionRollback = _rollbackCreatedCharacter(
+                character.id,
+                familyResult.createdEdgeIds
+            );
+            return {
+                success: false,
+                code: religionRollback.success
+                    ? 'CHARACTER_CREATION_FAILED'
+                    : 'CHARACTER_CREATION_ROLLBACK_FAILED',
+                reason: religionResult.reason,
+                characterId: character.id,
+                rollback: religionRollback
+            };
         }
 
         return _ok({ data: character });
@@ -511,22 +588,32 @@
                 entry.character.birthYear
             );
             if (!familyResult.ok) {
-                CS.removeCharacter(entry.character.id);
+                var familyRollback = _rollbackCreatedCharacter(
+                    entry.character.id,
+                    familyResult.createdEdgeIds
+                );
                 errors.push({
                     index: k,
                     characterId: entry.character.id,
-                    reason: familyResult.reason
+                    reason: familyResult.reason,
+                    rollback: familyRollback,
+                    rollbackFailed: familyRollback.success !== true
                 });
                 continue;
             }
 
             var religionResult = _establishReligionEdge(entry.character.id, entry.data);
             if (!religionResult.ok) {
-                CS.removeCharacter(entry.character.id);
+                var religionRollback = _rollbackCreatedCharacter(
+                    entry.character.id,
+                    familyResult.createdEdgeIds
+                );
                 errors.push({
                     index: k,
                     characterId: entry.character.id,
-                    reason: religionResult.reason
+                    reason: religionResult.reason,
+                    rollback: religionRollback,
+                    rollbackFailed: religionRollback.success !== true
                 });
                 continue;
             }
@@ -537,6 +624,9 @@
         return {
             success: errors.length === 0,
             partial: errors.length > 0 && created.length > 0,
+            rollbackFailed: errors.some(function (entry) {
+                return entry.rollbackFailed === true;
+            }),
             count: created.length,
             data: created,
             errors: errors
