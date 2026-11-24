@@ -1571,35 +1571,140 @@
             return _fail('institutionId and studentId are required');
         }
 
-        var inst = _state()._getInstitutionCanonical(institutionId);
-        if (!inst || !inst.students) return _fail('Institution or students not found');
+        var state = _state();
+        var inst = state._getInstitutionCanonical(institutionId);
+        if (!inst || !Array.isArray(inst.students)) {
+            return _fail('Institution or students not found');
+        }
 
         var idx = -1;
         for (var i = 0; i < inst.students.length; i++) {
-            if (inst.students[i].studentId === studentId) { idx = i; break; }
+            if (inst.students[i].studentId === studentId) {
+                idx = i;
+                break;
+            }
         }
         if (idx === -1) return _fail('Student not enrolled');
 
-        var students = inst.students.slice();
-        students.splice(idx, 1);
-        _state()._updateInstitution(institutionId, { students: students });
+        var characterCommands = _characterCommands();
+        if (typeof characterCommands.getEducationRecord !== 'function' ||
+            typeof characterCommands.restoreEducationRecord !== 'function') {
+            return _fail('CharacterCommands education snapshot/restore methods are required');
+        }
 
-        var wdResult = _cc('recordEducationWithdrawal')(studentId, institutionId, {
-            reason: reason || 'Withdrew',
-            year: _getCurrentYear()
-        });
-        if (!wdResult || wdResult.success !== true) {
-            return _fail('Failed to record withdrawal on character: ' +
-                (wdResult && wdResult.reason
-                    ? wdResult.reason
+        var previousEducation = characterCommands.getEducationRecord(
+            studentId, institutionId
+        );
+        if (!previousEducation) {
+            return _fail('Character has no matching education record; withdrawal was not applied');
+        }
+
+        var previousStudents = inst.students.slice();
+        var previousHistory = Array.isArray(inst.history) ? inst.history.slice() : [];
+        var withdrawalYear = _getCurrentYear();
+        var withdrawalReason = reason || 'Withdrew';
+        var characterWrite = null;
+
+        try {
+            characterWrite = _cc('recordEducationWithdrawal')(
+                studentId, institutionId, {
+                    reason: withdrawalReason,
+                    year: withdrawalYear
+                }
+            );
+        } catch (characterError) {
+            return _fail('Character withdrawal write threw: ' +
+                (characterError && characterError.message
+                    ? characterError.message
                     : 'unknown error'));
         }
 
-        _history().recordStudentWithdrew(institutionId, studentId,
-            _getCurrentYear(), reason || 'Withdrew', '');
-        updateReputation(institutionId, -1);
+        if (!characterWrite || characterWrite.success !== true) {
+            return _fail('Failed to record withdrawal on character: ' +
+                (characterWrite && characterWrite.reason
+                    ? characterWrite.reason
+                    : 'unknown error'));
+        }
 
-        return _ok({ institutionId: institutionId, studentId: studentId });
+        var students = previousStudents.slice();
+        students.splice(idx, 1);
+        var institutionUpdate = null;
+        try {
+            institutionUpdate = state._updateInstitution(institutionId, {
+                students: students
+            });
+        } catch (institutionError) {
+            institutionUpdate = null;
+        }
+
+        if (!institutionUpdate) {
+            var characterRestore = characterCommands.restoreEducationRecord(
+                studentId, institutionId, previousEducation
+            );
+            return _fail('Failed to update institution roster; character withdrawal was rolled back' +
+                (characterRestore && characterRestore.success === true
+                    ? '.'
+                    : ', but character rollback failed.'), {
+                    characterRollback: characterRestore
+                });
+        }
+
+        var historyEvent = null;
+        try {
+            historyEvent = _history().recordStudentWithdrew(
+                institutionId, studentId, withdrawalYear, withdrawalReason, ''
+            );
+        } catch (historyError) {
+            historyEvent = null;
+        }
+
+        if (!historyEvent) {
+            var rollbackErrors = [];
+            try {
+                var rosterRestore = state._updateInstitution(institutionId, {
+                    students: previousStudents,
+                    history: previousHistory
+                });
+                if (!rosterRestore) rollbackErrors.push('institution roster/history restore failed');
+            } catch (restoreInstitutionError) {
+                rollbackErrors.push('institution restore threw: ' +
+                    (restoreInstitutionError && restoreInstitutionError.message
+                        ? restoreInstitutionError.message
+                        : 'unknown error'));
+            }
+
+            var restoreCharacter = characterCommands.restoreEducationRecord(
+                studentId, institutionId, previousEducation
+            );
+            if (!restoreCharacter || restoreCharacter.success !== true) {
+                rollbackErrors.push(
+                    restoreCharacter && restoreCharacter.reason
+                        ? restoreCharacter.reason
+                        : 'character education restore failed'
+                );
+            }
+
+            return _fail('Failed to record withdrawal history.' +
+                (rollbackErrors.length
+                    ? ' Rollback failed: ' + rollbackErrors.join('; ')
+                    : ' All changes were rolled back.'), {
+                    rollbackErrors: rollbackErrors
+                });
+        }
+
+        // Reputation is secondary to the withdrawal itself. Do not undo a
+        // completed withdrawal if reputation bookkeeping fails.
+        var reputationResult = updateReputation(institutionId, -1);
+        var warnings = [];
+        if (!reputationResult || reputationResult.success !== true) {
+            warnings.push('Withdrawal succeeded, but institution reputation was not adjusted.');
+        }
+
+        return _ok({
+            institutionId: institutionId,
+            studentId: studentId,
+            warnings: warnings
+        });
     }
 
     // =========================================================================
