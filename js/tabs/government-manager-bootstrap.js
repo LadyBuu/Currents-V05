@@ -449,12 +449,11 @@
         html += '</div>';
         container.innerHTML = html;
 
-        // The fallback path rebinds on every _setupSidebar call. On the
-        // primary path (LocationUI.renderLocationList) that is fine —
-        // the library owns rebinding. On the fallback path the
-        // container is a fresh innerHTML on every call, so the old
-        // listener is discarded with the old children; binding fresh
-        // each time is correct.
+        // The sidebar container is persistent even when its children are
+        // replaced. Keep one delegated listener and resolve the clicked
+        // place from the current DOM on every event.
+        if (container.__governmentFallbackSidebarWired) return;
+        container.__governmentFallbackSidebarWired = true;
         container.addEventListener('click', function (e) {
             var item = e.target.closest('[data-place-id]');
             if (!item) return;
