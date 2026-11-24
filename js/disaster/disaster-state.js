@@ -724,7 +724,9 @@
                 locationName: true, severity: true, deaths: true, population: true,
                 prosperityLoss: true, crimeIncrease: true, description: true,
                 actualDeaths: true, metadata: true, structuralDamageSkippedSystems: true,
-                effectsStatus: true, effectFailures: true, structuralDamage: true
+                effectsStatus: true, effectFailures: true, structuralDamage: true,
+                structuralDamageStatus: true, structuralDamageStartedAt: true,
+                structuralDamageCompletedAt: true
             };
             var numeric = ['year', 'severity', 'deaths', 'population', 'prosperityLoss',
                 'crimeIncrease', 'actualDeaths'];
@@ -760,6 +762,15 @@
             if (updates.effectsStatus != null && ['complete', 'partial', 'failed', 'pending'].indexOf(updates.effectsStatus) === -1) {
                 throw new Error('Invalid disaster effectsStatus');
             }
+            if (updates.structuralDamageStatus != null
+                && ['in_progress', 'complete', 'partial'].indexOf(updates.structuralDamageStatus) === -1) {
+                throw new Error('Invalid structuralDamageStatus');
+            }
+            ['structuralDamageStartedAt', 'structuralDamageCompletedAt'].forEach(function(key) {
+                if (updates[key] != null && (typeof updates[key] !== 'number' || !isFinite(updates[key]))) {
+                    throw new Error(key + ' must be a finite number');
+                }
+            });
 
             var candidate = _clone(record);
             Object.keys(updates).forEach(function(key) {
