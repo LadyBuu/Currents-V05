@@ -55,7 +55,7 @@
  *   - getPlaceById, getPlaces, getLocationPopulationCount
  *   - getAllSubLocationIds, getCurrentLocation
  *   - chance, randomInt, pickRandom, pickWeighted
- *   - modifySettlementProsperity, modifySettlementCrimeRate
+ *   - SettlementGovernmentCommands.recordDisasterImpact
  *   - SettlementFeatureCommands.demolishFeature
  *   - SettlementQueries.getSettlementData
  *
@@ -849,7 +849,6 @@
         // Effect application (public so callers can re-apply or inspect)
         applyDisasterEffects: applyDisasterEffects,
         applyDisasterSettlementEffects: applyDisasterSettlementEffects,
-        applyDisasterCrimeEffect: applyDisasterCrimeEffect,
 
         // Workflows (generate + record + apply + commit)
         triggerPlague: triggerPlague,
