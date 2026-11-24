@@ -1402,13 +1402,27 @@
         var failed = [];
         for (var i = 0; i < active.length; i++) {
             var projected = active[i];
-            if (!projected.roleId) continue;
+            if (!projected.roleId) {
+                failed.push({
+                    apprenticeshipId: projected.id,
+                    code: 'MISSING_ROLE',
+                    reason: 'Active apprenticeship has no role id.'
+                });
+                continue;
+            }
 
             var masterSkill = _getSkill(projected.masterId, projected.roleId);
             if (masterSkill === null) masterSkill = 0;
 
             var previousProfession = _getProfession(projected.apprenticeId, projected.roleId);
-            if (!previousProfession || typeof previousProfession.skillLevel !== 'number') continue;
+            if (!previousProfession || typeof previousProfession.skillLevel !== 'number') {
+                failed.push({
+                    apprenticeshipId: projected.id,
+                    code: 'MISSING_PROFESSION',
+                    reason: 'Apprentice profession record is missing or has an invalid skill level.'
+                });
+                continue;
+            }
             var currentSkill = previousProfession.skillLevel;
 
             var progress = _rules().calculateAnnualProgress({
@@ -1417,10 +1431,24 @@
             });
             if (progress.gain <= 0) continue;
 
-            var progressResult = _roleCommands().recordCharacterSkillProgress(
-                projected.apprenticeId, projected.roleId, progress.newSkill
-            );
-            if (!progressResult || progressResult.success !== true) continue;
+            var progressResult;
+            try {
+                progressResult = _roleCommands().recordCharacterSkillProgress(
+                    projected.apprenticeId, projected.roleId, progress.newSkill
+                );
+            } catch (e) {
+                progressResult = { success: false, reason: e && e.message ? e.message : 'Skill progression threw.' };
+            }
+            if (!progressResult || progressResult.success !== true) {
+                failed.push({
+                    apprenticeshipId: projected.id,
+                    code: 'SKILL_UPDATE_FAILED',
+                    reason: progressResult && progressResult.reason
+                        ? progressResult.reason
+                        : 'Failed to update apprentice skill.'
+                });
+                continue;
+            }
 
             var effectiveNewSkill = progressResult.unchanged === true
                 ? currentSkill
