@@ -1806,12 +1806,16 @@ Deceased characters remain indexed so historical follower views can include
 them; ordinary living-follower counts and location queries exclude deceased
 characters.
 
-Movement does not change religion membership and therefore does not rebuild
-the religion-keyed index. LocationCommands publishes moveRecorded,
-movesRecordedBulk, moveUpdated, and moveDeleted; ReligionState publishes
-followerLocationsChanged for subscribers, and ReligionManager refreshes the
-active religion tab on those events so current-location filters and labels
-remain current.
+Movement does not change religion membership. LocationCommands writes
+movement history through CharacterCommands, which emits characterChanged
+after the canonical character update. ReligionState therefore rebuilds its
+derived follower index and publishes followersChanged; it also publishes
+followerLocationsChanged for subscribers to the move-specific events
+(moveRecorded, movesRecordedBulk, moveUpdated, and moveDeleted).
+
+ReligionManager refreshes the active tab on characterChanged. It deliberately
+does not also subscribe to the move-specific events, because those follow the
+same characterChanged event and would render the same movement twice.
 
 Do not patch follower buckets from event payloads. Rebuild from canonical
 Character records after characterChanged, because event payloads intentionally
