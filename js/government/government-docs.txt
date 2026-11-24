@@ -2181,5 +2181,68 @@ UI, and location-deletion lifecycle. Do not overload locationId or silently
 treat headquarters as jurisdiction.
 
 ================================================================================
+PART 20 — RANK ELIGIBILITY AND GOVERNMENT-TYPE LEADERSHIP
+================================================================================
+
+20.1 POSITION REQUIRED RANK IS EXACT
+
+Position.requiredRankId is an exact active-rank requirement. A character
+qualifies only when CharacterFacts.activeRankId === requiredRankId.
+There is no minimum-rank interpretation, priority comparison, or automatic
+inheritance from a higher rank.
+
+This supports jurisdiction-specific offices: a Duke may be required to
+hold the Duchy office, a Count the County office, and so on. A King does
+not qualify for a Duke-only or Count-only position merely because the
+King's rank has a higher priority. If an exceptional appointment is needed,
+model it as an explicit appointment/waiver rule rather than weakening the
+default rank comparison.
+
+The rule is applied by GovernmentRules.checkPositionEligibility and is
+shared by single and bulk assignment planning. Candidate queries use the
+same eligibility rule.
+
+20.2 GOVERNMENT TYPE ALLOWED RANKS
+
+GovernmentType.allowedRankIds is an exact allowlist for the active leader
+of a Location using that Government Type.
+
+  - Empty array means unrestricted: any active rank may lead.
+  - Non-empty array means the leader's activeRankId must exactly match
+    one of the listed rank IDs.
+  - A higher-priority rank does not implicitly satisfy a lower rank entry.
+  - Missing, malformed, duplicate or unknown rank references are rejected
+    when creating or updating a Government Type.
+  - Assigning a leader is rejected if their active rank is not allowed.
+  - Assigning a Government Type to a Location is rejected if its current
+    leader is not allowed under that type.
+  - Updating allowedRankIds is rejected if it would make any current leader
+    at a Location using that type ineligible.
+  - Missing rank or leadership query dependencies fail closed whenever a
+    restricted allowlist must be checked.
+
+This allows a Republic to exclude Kings, a Duchy government to require a
+Duke, or a County government to require a Count, using the configured
+rank IDs. The application does not infer political systems from names:
+the user configures the exact allowed ranks for each Government Type.
+
+20.3 OWNERSHIP AND SCOPE
+
+GovernmentCommands owns enforcement of GovernmentType.allowedRankIds.
+Location remains the canonical owner of leader assignments and the
+Location's governmentTypeId. GovernmentCommands is the policy boundary
+that validates a leader or government-type change before delegating the
+canonical Location write.
+
+Character Rank is not automatically required for Location leadership or
+religious offices. Only explicit Government position requirements and
+Government Type allowedRankIds impose rank restrictions.
+
+A character's rank changing after appointment is a separate lifecycle
+event. This rule validates eligibility at assignment and when the
+Government Type allowlist changes; ongoing revalidation after rank
+succession/change remains a separate integration task.
+
+================================================================================
 END OF DOCUMENT
 ================================================================================
