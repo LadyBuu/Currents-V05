@@ -253,7 +253,22 @@
     // 4. NOTIFICATION
     // =========================================================================
 
+    var _transactionEvents = [];
+
     function _notify(eventName, detail) {
+        if (window.CrossDomainTransaction &&
+            typeof window.CrossDomainTransaction.isActive === 'function' &&
+            window.CrossDomainTransaction.isActive() === true) {
+            _transactionEvents.push({
+                eventName: eventName,
+                detail: detail ? JSON.parse(JSON.stringify(detail)) : {}
+            });
+            return;
+        }
+        _dispatchRoleEvent(eventName, detail);
+    }
+
+    function _dispatchRoleEvent(eventName, detail) {
         if (typeof window.dispatchEvent !== 'function') return;
         if (typeof window.CustomEvent !== 'function') return;
         try {
@@ -265,6 +280,21 @@
                 );
             }
         }
+    }
+
+    function _transactionFlushEvents() {
+        var pending = _transactionEvents.slice();
+        _transactionEvents = [];
+        pending.forEach(function (entry) {
+            _dispatchRoleEvent(entry.eventName, entry.detail);
+        });
+        return { success: true, count: pending.length };
+    }
+
+    function _transactionDiscardEvents() {
+        var discarded = _transactionEvents.length;
+        _transactionEvents = [];
+        return { success: true, discarded: discarded };
     }
 
     // =========================================================================
@@ -1071,6 +1101,8 @@
     // =========================================================================
 
     window.RoleCommands = {
+        _transactionFlushEvents: _transactionFlushEvents,
+        _transactionDiscardEvents: _transactionDiscardEvents,
         // Persistence
         persist: persist,
 
