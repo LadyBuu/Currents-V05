@@ -72,6 +72,7 @@
     window.getLocationGovernmentSummary = Queries.getLocationGovernmentSummary;
 
     window.getCurrentLeader = Queries.getCurrentLeader;
+    window.getLeaderEligibilityStatus = Queries.getLeaderEligibilityStatus;
     window.getLeaderHistory = Queries.getLeaderHistory;
     window.getLeaderCount = Queries.getLeaderCount;
     window.getActiveLeaderCount = Queries.getActiveLeaderCount;
@@ -162,6 +163,7 @@
             getGovernmentPositionsRequiringRole: Queries.getPositionsRequiringRole,
             getLocationGovernmentSummary: Queries.getLocationGovernmentSummary,
             getCurrentLeader: Queries.getCurrentLeader,
+            getLeaderEligibilityStatus: Queries.getLeaderEligibilityStatus,
             getLeaderHistory: Queries.getLeaderHistory,
             getLeaderCount: Queries.getLeaderCount,
             getActiveLeaderCount: Queries.getActiveLeaderCount,
