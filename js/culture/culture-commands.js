@@ -452,10 +452,9 @@
     /**
      * Deletes a culture.
      *
-     * Does NOT touch other domains' records. If a cascade is required
-     * (clearing character.cultureId, place.cultureId, etc.), the caller
-     * is responsible for invoking CultureCascade around this command, or
-     * for listening to the cultureDeleted CustomEvent.
+     * Does NOT touch other domains' records. Deletion is refused while
+     * Characters or Locations still reference this Culture. Its owned Name
+     * list is removed through NameCommands.reconcileDeletedCultures().
      *
      * @param {string} id
      * @returns {{ success: boolean, data?: Object, reason?: string, errors?: Array }}
