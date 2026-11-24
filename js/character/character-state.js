@@ -1581,6 +1581,53 @@
         return { success: true, characterIds: addedIds };
     }
 
+    function _educationReferencesForDeletion(character) {
+        if (!character || !_hasId(character.id)) {
+            return { success: false, reason: 'Character record is unavailable for Education dependency checks.' };
+        }
+
+        if (character.education && typeof character.education === 'object' &&
+            Object.keys(character.education).length > 0) {
+            return {
+                success: false,
+                reason: 'Character has Education records. Withdraw or remove those records before hard deletion.'
+            };
+        }
+
+        var data = window.masterData && window.masterData.data;
+        var institutions = data ? data.educationalInstitutions : [];
+        if (institutions === undefined || institutions === null) institutions = [];
+        if (!Array.isArray(institutions)) {
+            return { success: false, reason: 'Cannot verify Education references: educationalInstitutions is malformed.' };
+        }
+
+        for (var i = 0; i < institutions.length; i++) {
+            var institution = institutions[i];
+            if (!institution || typeof institution !== 'object') {
+                return { success: false, reason: 'Cannot verify Education references: malformed institution at index ' + i + '.' };
+            }
+            var students = Array.isArray(institution.students) ? institution.students : [];
+            var teachers = Array.isArray(institution.teachers) ? institution.teachers : [];
+            if ((institution.students != null && !Array.isArray(institution.students)) ||
+                (institution.teachers != null && !Array.isArray(institution.teachers))) {
+                return { success: false, reason: 'Cannot verify Education references: malformed roster in institution ' + (institution.id || i) + '.' };
+            }
+            if (students.some(function (entry) { return entry && entry.studentId === character.id; }) ||
+                teachers.some(function (entry) { return entry && entry.teacherId === character.id; }) ||
+                (institution.headmaster && institution.headmaster.characterId === character.id) ||
+                (institution.ownershipType === 'private' &&
+                    institution.ownerType === 'character' && institution.ownerId === character.id)) {
+                return {
+                    success: false,
+                    reason: 'Character is referenced by Education institution "' +
+                        (institution.name || institution.id || i) +
+                        '" as a student, teacher, headmaster, or private owner.'
+                };
+            }
+        }
+        return { success: true };
+    }
+
     function removeCharacter(id) {
         if (!_hasId(id)) {
             return { success: false, reason: 'Character id is required.' };
@@ -1595,6 +1642,8 @@
         }
 
         var removed = coll.collection[idx];
+        var educationCheck = _educationReferencesForDeletion(removed);
+        if (!educationCheck.success) return educationCheck;
         coll.collection.splice(idx, 1);
 
         _emitChange('delete', [id]);
@@ -1616,6 +1665,19 @@
                 return { success: false, reason: 'Invalid id at index ' + i + '.' };
             }
             idSet[ids[i]] = true;
+        }
+
+        for (var checkIndex = 0; checkIndex < coll.collection.length; checkIndex++) {
+            var candidate = coll.collection[checkIndex];
+            if (candidate && idSet[candidate.id]) {
+                var candidateCheck = _educationReferencesForDeletion(candidate);
+                if (!candidateCheck.success) {
+                    return {
+                        success: false,
+                        reason: 'Bulk character deletion blocked for ' + candidate.id + ': ' + candidateCheck.reason
+                    };
+                }
+            }
         }
 
         var next = [];
