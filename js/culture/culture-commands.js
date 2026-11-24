@@ -22,11 +22,21 @@
  *   - invent defaults that belong in CultureConstants
  *   - emit presentation events (toasts, DOM events for UI chrome)
  *   - own the application save mechanism (persist() delegates to window.saveMasterData)
- *   - know about places, religions, or characters directly
+ *   - mutate foreign-owned Character or Location records
  *
- * Cross-domain side effects (e.g. clearing a deleted culture from Place
- * records) belong to a cascade layer, not to this file. When those
- * relationships exist, add CultureCascade rather than growing this module.
+ * Culture owns its `locations` and `religions` association arrays. Their
+ * referenced records are verified through read-only query APIs, and deleted
+ * Location associations are reconciled here through
+ * reconcileDeletedLocations(). Foreign-owned references such as
+ * character.cultureId and place.cultureId are never mutated here; Culture
+ * deletion refuses while those references remain.
+ *
+ * Cross-domain notification is via CustomEvent. CultureCommands dispatches
+ * cultureCreated / cultureUpdated / cultureDeleted on window. Other domains
+ * listen if they care. They do not get called directly from here.
+ *
+ * (The duplicate notification paragraph formerly below this section is
+ * intentionally consolidated here.)
  *
  * Cross-domain notification is via CustomEvent. CultureCommands dispatches
  * cultureCreated / cultureUpdated / cultureDeleted on window. Other domains
