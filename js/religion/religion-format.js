@@ -109,24 +109,63 @@
         'mortal': 'Mortal'
     };
 
+    function _findEnumDisplayName(source, value) {
+        if (!source) return null;
+        if (Array.isArray(source)) {
+            for (var i = 0; i < source.length; i++) {
+                if (source[i] && source[i].id === value &&
+                    typeof source[i].name === 'string' && source[i].name) {
+                    return source[i].name;
+                }
+            }
+            return null;
+        }
+        if (typeof source === 'object') {
+            if (source[value] && typeof source[value] === 'object' &&
+                typeof source[value].name === 'string') {
+                return source[value].name;
+            }
+            for (var key in source) {
+                if (Object.prototype.hasOwnProperty.call(source, key) &&
+                    source[key] === value) {
+                    return key.toLowerCase().replace(/_/g, ' ')
+                        .replace(/\\b\\w/g, function (letter) { return letter.toUpperCase(); });
+                }
+            }
+        }
+        return null;
+    }
+
+    function _lawName(value, source, fallback) {
+        if (value === undefined || value === null || value === '') return '';
+        return _findEnumDisplayName(source, value) || fallback[value] || value;
+    }
+
     function getLawTypeName(typeId) {
-        if (typeId === undefined || typeId === null || typeId === '') return '';
-        return LAW_TYPE_NAMES[typeId] || typeId;
+        var definitions = window.SettlementLawDefinitions;
+        return _lawName(typeId, definitions && definitions.LAW_TYPES, LAW_TYPE_NAMES);
     }
 
     function getLawCategoryName(categoryId) {
-        if (categoryId === undefined || categoryId === null || categoryId === '') return '';
-        return LAW_CATEGORY_NAMES[categoryId] || categoryId;
+        var constants = window.CrimeConstants;
+        return _lawName(categoryId, constants && constants.LAW_CATEGORIES, LAW_CATEGORY_NAMES);
     }
 
     function getLawDomainName(domainId) {
-        if (domainId === undefined || domainId === null || domainId === '') return '';
-        return LAW_DOMAIN_NAMES[domainId] || domainId;
+        var definitions = window.SettlementLawDefinitions;
+        return _lawName(domainId, definitions && definitions.LAW_DOMAINS, LAW_DOMAIN_NAMES);
     }
 
     function getLawSeverityName(severityId) {
-        if (severityId === undefined || severityId === null || severityId === '') return '';
-        return LAW_SEVERITY_NAMES[severityId] || severityId;
+        var definitions = window.SettlementLawDefinitions;
+        var constants = window.CrimeConstants;
+        return _lawName(
+            severityId,
+            definitions && definitions.LAW_SEVERITIES
+                ? definitions.LAW_SEVERITIES
+                : (constants && constants.LAW_SEVERITY),
+            LAW_SEVERITY_NAMES
+        );
     }
 
     // =========================================================================
