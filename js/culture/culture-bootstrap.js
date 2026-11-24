@@ -134,7 +134,7 @@
     //
     // Culture depends on three other domains at runtime:
     //
-    //   PlaceQueries      — for location hierarchy resolution
+    //   LocationQueries      — for location hierarchy resolution
     //   ReligionQueries   — for religion lookups in summaries
     //   CharacterQueries  — for character culture resolution
     //
@@ -146,8 +146,8 @@
 
     var _CROSS_DOMAIN = [
         // namespace           methods used by culture
-        ['PlaceQueries', [
-            'getPlaceById',
+        ['LocationQueries', [
+            'getPlace',
             'getAllPlaces'
         ]],
         ['ReligionQueries', [
