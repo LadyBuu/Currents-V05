@@ -1679,6 +1679,106 @@
             if (resolvedNewReligion !== loadedReligionId) religionChanged = true;
         }
 
+        // ---- Step 3: Character-owned field patch.
+        var patch = {};
+        var deathPatch = {};
+
+        if (model.identity) {
+            if (newFirstName !== (model.identity.firstName || '')) {
+                if (newFirstName === '') {
+                    errors.push('First name cannot be empty.');
+                } else {
+                    patch.name = newFirstName;
+                }
+            }
+            if (newSurname !== (model.identity.surname || '')) {
+                patch.surname = newSurname;
+            }
+            if (newSurnameSource !== (model.identity.surnameSource || 'custom')) {
+                patch.surnameSource = newSurnameSource;
+            }
+            if (newEpithet !== (model.identity.epithet || '')) {
+                patch.epithet = newEpithet;
+            }
+            if (newGender !== (model.identity.gender || 'unknown')) {
+                patch.gender = newGender;
+            }
+        }
+
+        if (newCultureId !== null) {
+            var loadedCultureId = (model.identity && model.identity.cultureId) || null;
+            var resolvedNewCulture = _hasId(newCultureId) ? newCultureId : null;
+            if (resolvedNewCulture !== loadedCultureId) {
+                patch.cultureId = resolvedNewCulture;
+            }
+        }
+
+        if (model.birth) {
+            var loadedBirthYear = model.birth.year;
+            var resolvedBirthYear = newBirthYearRaw === ''
+                ? null
+                : parseInt(newBirthYearRaw, 10);
+            if (!Number.isInteger(resolvedBirthYear) && resolvedBirthYear !== null) {
+                errors.push('Birth year must be a whole number.');
+            } else if (resolvedBirthYear !== loadedBirthYear) {
+                if (resolvedBirthYear !== null && !window.isValidYear(resolvedBirthYear)) {
+                    errors.push('Birth year is not a valid world year.');
+                } else {
+                    patch.birthYear = resolvedBirthYear;
+                }
+            }
+            if (newBirthplaceId !== null) {
+                var resolvedBirthplace = _hasId(newBirthplaceId) ? newBirthplaceId : null;
+                if (resolvedBirthplace !== (model.birth.placeId || null)) {
+                    patch.birthplaceId = resolvedBirthplace;
+                }
+            }
+        }
+
+        if (model.death && model.death.isDeceased === true) {
+            var loadedDeathYear = model.death.year;
+            var resolvedDeathYear = newDeathYearRaw === ''
+                ? null : parseInt(newDeathYearRaw, 10);
+            if (!Number.isInteger(resolvedDeathYear) && resolvedDeathYear !== null) {
+                errors.push('Death year must be a whole number.');
+            } else if (resolvedDeathYear !== loadedDeathYear) {
+                if (resolvedDeathYear !== null && !window.isValidYear(resolvedDeathYear)) {
+                    errors.push('Death year is not a valid world year.');
+                } else {
+                    deathPatch.deathYear = resolvedDeathYear;
+                }
+            }
+            if (newDeathCause !== (model.death.cause || '')) {
+                deathPatch.deathCause = newDeathCause;
+            }
+            if (newDeathCauseDetail !== (model.death.causeDetail || '')) {
+                deathPatch.deathCauseDetail = newDeathCauseDetail;
+            }
+            if (newDeathNotes !== (model.death.notes || '')) {
+                deathPatch.deathNotes = newDeathNotes;
+            }
+        }
+
+        // Appearance — compare as a whole object.
+        if (model.appearance) {
+            var appearanceChanged = false;
+            var keys = ['hairColor', 'eyeColor', 'skinTone', 'build', 'height',
+                        'distinguishingFeatures', 'tattoos'];
+            for (var ak = 0; ak < keys.length; ak++) {
+                var k = keys[ak];
+                if ((appearance[k] || '') !== (model.appearance[k] || '')) {
+                    appearanceChanged = true;
+                    break;
+                }
+            }
+            if (appearanceChanged) patch.appearance = appearance;
+        }
+
+        if (newNotes !== (model.notes || '')) {
+            patch.notes = newNotes;
+        }
+
+
         // Reject validation errors before touching any domain state.
         if (errors.length > 0) {
             _toast('Save failed: ' + errors.join('; '), 'error');
