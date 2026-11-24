@@ -261,14 +261,15 @@
         html += '</div>';
         container.innerHTML = html;
 
+        container.__locationLeadershipContext = context;
         if (!container.__locationLeadershipWired) {
             container.__locationLeadershipWired = true;
             container.addEventListener('click', function (e) {
                 var btn = e.target.closest('[data-action]');
                 if (!btn || !container.contains(btn)) return;
                 var action = btn.dataset.action;
-                if (action === 'assign') _handleAssign(context);
-                else if (action === 'end-term') _handleEndTerm(context, btn.getAttribute('data-char-id'));
+                if (action === 'assign') _handleAssign(container.__locationLeadershipContext);
+                else if (action === 'end-term') _handleEndTerm(container.__locationLeadershipContext, btn.getAttribute('data-char-id'));
             });
         }
     }
