@@ -340,6 +340,7 @@
 
         var preserved = [];
         var alreadyAtOrAbove = [];
+        var failed = [];
 
         for (var i = 0; i < dyingProfessions.length; i++) {
             var prof = dyingProfessions[i];
@@ -377,13 +378,19 @@
                     heirId, roleId, inheritedLevel
                 );
                 if (!progressResult || progressResult.success !== true) {
+                    var progressFailure = progressResult && progressResult.reason
+                        ? progressResult.reason : 'Skill progression failed for unknown reason.';
+                    failed.push({
+                        roleId: roleId,
+                        roleName: roleName,
+                        operation: 'progress',
+                        reason: progressFailure
+                    });
                     if (window.console && typeof window.console.warn === 'function') {
                         window.console.warn(
                             'ProfessionalKnowledgeCommands: skill progression ' +
                             'failed for heir ' + heirId + ' role ' + roleId +
-                            ' (' + (progressResult && progressResult.reason
-                                ? progressResult.reason
-                                : 'unknown') + '); other roles continue.'
+                            ' (' + progressFailure + '); other roles continue.'
                         );
                     }
                     continue;
@@ -398,13 +405,19 @@
                     specs: []
                 });
                 if (!addResult || !addResult.success) {
+                    var addFailure = addResult && addResult.reason
+                        ? addResult.reason : 'Adding inherited profession failed for unknown reason.';
+                    failed.push({
+                        roleId: roleId,
+                        roleName: roleName,
+                        operation: 'add',
+                        reason: addFailure
+                    });
                     if (window.console && typeof window.console.warn === 'function') {
                         window.console.warn(
                             'ProfessionalKnowledgeCommands: addProfession ' +
                             'failed for heir ' + heirId + ' role ' + roleId +
-                            ' (' + (addResult && addResult.reason
-                                ? addResult.reason
-                                : 'unknown') + '); other roles continue.'
+                            ' (' + addFailure + '); other roles continue.'
                         );
                     }
                     continue;
@@ -432,9 +445,28 @@
             });
         }
 
+        if (failed.length > 0) {
+            return {
+                success: false,
+                code: 'PARTIAL_KNOWLEDGE_PRESERVATION',
+                reason: failed.length + ' profession(s) could not be preserved.',
+                data: {
+                    dyingId: dyingId,
+                    heirId: heirId,
+                    preserved: preserved,
+                    alreadyAtOrAbove: alreadyAtOrAbove,
+                    failed: failed,
+                    partial: preserved.length > 0
+                }
+            };
+        }
+
         return ok({
+            dyingId: dyingId,
+            heirId: heirId,
             preserved: preserved,
-            alreadyAtOrAbove: alreadyAtOrAbove
+            alreadyAtOrAbove: alreadyAtOrAbove,
+            failed: []
         });
     }
 
