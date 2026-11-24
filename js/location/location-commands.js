@@ -863,6 +863,54 @@
             }
         }
 
+        // Government and Religion expose read-only reconciliation plans. Run
+        // them alongside Culture's dry-run before Character or Household
+        // cleanup can publish any changes. This catches malformed hierarchy,
+        // unavailable canonical stores, and reconciliation validation errors
+        // before the first cross-domain mutation.
+        var governmentPreflight = { success: true, data: { removedDepartmentIds: [] } };
+        if (window.GovernmentCommands &&
+            typeof window.GovernmentCommands.reconcileDeletedLocations === 'function') {
+            governmentPreflight = window.GovernmentCommands.reconcileDeletedLocations(
+                Object.keys(toRemove),
+                { dryRun: true }
+            );
+            if (!governmentPreflight || governmentPreflight.success !== true) {
+                return _fail(
+                    'deletePlace: Government cleanup preflight failed: ' +
+                    ((governmentPreflight && governmentPreflight.reason) || 'unknown error')
+                );
+            }
+        } else if (hasGovernmentReferences) {
+            return _fail(
+                'deletePlace: GovernmentCommands.reconcileDeletedLocations is required ' +
+                'to safely delete locations with government departments'
+            );
+        }
+
+        var religionPreflight = {
+            success: true,
+            data: { updatedReligionIds: [], removedAssociations: 0, worshipPlacesUnassigned: 0 }
+        };
+        if (window.ReligionCommands &&
+            typeof window.ReligionCommands.reconcileDeletedLocations === 'function') {
+            religionPreflight = window.ReligionCommands.reconcileDeletedLocations(
+                Object.keys(toRemove),
+                { dryRun: true }
+            );
+            if (!religionPreflight || religionPreflight.success !== true) {
+                return _fail(
+                    'deletePlace: Religion cleanup preflight failed: ' +
+                    ((religionPreflight && religionPreflight.reason) || 'unknown error')
+                );
+            }
+        } else if (hasReligionLocationReferences) {
+            return _fail(
+                'deletePlace: ReligionCommands.reconcileDeletedLocations is required ' +
+                'to safely delete locations with religion associations'
+            );
+        }
+
         // Validate the Location graph before any other domain is mutated.
         // _removePlaces hydrates this same graph after cleanup; running the
         // read-only rebuild now moves malformed/corrupt Location failures to
