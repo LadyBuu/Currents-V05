@@ -815,6 +815,7 @@
     // innerHTML; the fresh node needs a fresh listener).
 
     function _wire(container, householdId, data) {
+        container.__hhActivityCurrentContext = { householdId: householdId, data: data };
         T.attachDelegated(container, {
             '[data-action="refresh"]':       function () { _rerender(householdId); },
             '[data-action="clear-filters"]': function () { _clearFilters(container, householdId, data); },
@@ -834,7 +835,8 @@
                 if (target.closest('button')) return;
                 var row = target.closest('.hh-activity-event');
                 if (!row) return;
-                _openEventDetailsByRow(row, data);
+                var current = container.__hhActivityCurrentContext;
+                if (current && current.data) _openEventDetailsByRow(row, current.data);
             });
         }
 
