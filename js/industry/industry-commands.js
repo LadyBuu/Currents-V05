@@ -1735,6 +1735,121 @@
         });
     }
 
+    /**
+     * Rebuilds Household.enterprises reverse indexes from canonical
+     * Enterprise.ownerType/ownerId fields. Dry-run is the default-safe path.
+     */
+    function reconcileHouseholdEnterpriseIndexes(options) {
+        options = options || {};
+        if (!IS || typeof IS.getOwnershipIntegrityReport !== 'function') {
+            return {
+                success: false,
+                code: 'DIAGNOSTICS_UNAVAILABLE',
+                reason: 'Industry ownership diagnostics are unavailable.'
+            };
+        }
+        var report = IS.getOwnershipIntegrityReport();
+        if (options.dryRun === true) {
+            return {
+                success: report.valid || report.repairable,
+                dryRun: true,
+                repairable: report.repairable,
+                report: report
+            };
+        }
+        if (report.valid) {
+            return { success: true, changed: false, report: report };
+        }
+        if (!report.repairable) {
+            return {
+                success: false,
+                code: 'REPAIR_BLOCKED',
+                reason: 'Ownership data contains unresolved canonical references; repair was not attempted.',
+                report: report
+            };
+        }
+
+        var householdState = window.HouseholdState;
+        var internal = householdState && householdState._internal;
+        var householdCommands = _requireHouseholdCommands();
+        var transaction = window.CrossDomainTransaction;
+        if (!internal ||
+            typeof internal.transactionSnapshotEnterpriseIndexes !== 'function' ||
+            typeof internal.transactionRebuildEnterpriseIndexes !== 'function' ||
+            typeof internal.transactionRestoreEnterpriseIndexes !== 'function' ||
+            typeof householdCommands.commitTransactionEnterpriseIndexRepair !== 'function' ||
+            !transaction || typeof transaction.execute !== 'function') {
+            return {
+                success: false,
+                code: 'TRANSACTION_UNAVAILABLE',
+                reason: 'Household Enterprise index repair transaction support is unavailable.'
+            };
+        }
+
+        var householdIds = Object.keys(report.expectedByHousehold);
+        var enterpriseCount = 0;
+        householdIds.forEach(function(id) {
+            enterpriseCount += report.expectedByHousehold[id].length;
+        });
+
+        var result = transaction.execute({
+            participants: [{
+                name: 'household-enterprise-indexes',
+                prepare: function() {
+                    return internal.getAllHouseholdRecords({ includeDeprecated: true }).length ===
+                        householdIds.length
+                        ? true
+                        : { success: false, reason: 'Household collection changed after diagnostics.' };
+                },
+                snapshot: function() {
+                    return internal.transactionSnapshotEnterpriseIndexes();
+                },
+                apply: function() {
+                    return internal.transactionRebuildEnterpriseIndexes(
+                        report.expectedByHousehold
+                    );
+                },
+                rollback: function(snapshot) {
+                    return internal.transactionRestoreEnterpriseIndexes(snapshot);
+                },
+                afterCommit: function() {
+                    var committed = householdCommands.commitTransactionEnterpriseIndexRepair(
+                        householdIds,
+                        enterpriseCount
+                    );
+                    if (!committed || committed.success !== true) {
+                        throw new Error(committed && committed.reason
+                            ? committed.reason
+                            : 'Household index repair notification failed.');
+                    }
+                }
+            }],
+            persist: function() {
+                return persist();
+            }
+        });
+
+        if (!result || result.success !== true) {
+            return {
+                success: false,
+                code: result && result.code || 'REPAIR_FAILED',
+                reason: result && result.reason || 'Household Enterprise index repair failed.',
+                rollbackErrors: result && result.rollbackErrors || [],
+                report: IS.getOwnershipIntegrityReport()
+            };
+        }
+
+        return {
+            success: true,
+            changed: true,
+            repairedHouseholdCount: householdIds.length,
+            enterpriseReferenceCount: enterpriseCount,
+            transactionId: result.transactionId || null,
+            notificationErrors: result.notificationErrors || [],
+            report: IS.getOwnershipIntegrityReport()
+        };
+    }
+
     // =========================================================================
     // 14. DEMOLISH / REBUILD
     // =========================================================================
@@ -2045,6 +2160,7 @@
         convertEnterpriseToPublic: convertEnterpriseToPublic,
 
         // Demolish / rebuild
+        reconcileHouseholdEnterpriseIndexes: reconcileHouseholdEnterpriseIndexes,
         demolishEnterprise: demolishEnterprise,
         rebuildEnterprise: rebuildEnterprise
     });
