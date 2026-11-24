@@ -571,38 +571,31 @@
             }
         });
 
-        // Filter changes: search debounced via requestAnimationFrame
-        // batching (no setTimeout, per playbook rule 10); select changes
-        // are immediate.
-        var searchEl = container.querySelector('[data-filter="search"]');
-        if (searchEl) {
-            var rafHandle = null;
-            searchEl.addEventListener('input', function () {
-                if (rafHandle !== null) return;
-                rafHandle = requestAnimationFrame(function () {
-                    rafHandle = null;
-                    _writeFilterState(locationId,
-                        _collectFilterState(container));
-                    _rerenderList(container, locationId);
-                });
-            });
-        }
-        var statusEl = container.querySelector('[data-filter="status"]');
-        if (statusEl) {
-            statusEl.addEventListener('change', function () {
-                _writeFilterState(locationId,
+        // Delegate filter events from the persistent tab container. Filter
+        // controls are replaced during list refreshes, and the selected
+        // settlement can change while this container remains mounted.
+        var rafHandle = null;
+        container.addEventListener('input', function (event) {
+            if (!event.target || !event.target.dataset
+                || event.target.dataset.filter !== 'search') return;
+            if (rafHandle !== null) return;
+            rafHandle = requestAnimationFrame(function () {
+                rafHandle = null;
+                var currentLocationId = container.__stCurrentLocationId;
+                _writeFilterState(currentLocationId,
                     _collectFilterState(container));
-                _rerenderList(container, locationId);
+                _rerenderList(container, currentLocationId);
             });
-        }
-        var conditionEl = container.querySelector('[data-filter="condition"]');
-        if (conditionEl) {
-            conditionEl.addEventListener('change', function () {
-                _writeFilterState(locationId,
-                    _collectFilterState(container));
-                _rerenderList(container, locationId);
-            });
-        }
+        });
+        container.addEventListener('change', function (event) {
+            var filter = event.target && event.target.dataset
+                ? event.target.dataset.filter : null;
+            if (filter !== 'status' && filter !== 'condition') return;
+            var currentLocationId = container.__stCurrentLocationId;
+            _writeFilterState(currentLocationId,
+                _collectFilterState(container));
+            _rerenderList(container, currentLocationId);
+        });
     }
 
     // -------------------------------------------------------------------
