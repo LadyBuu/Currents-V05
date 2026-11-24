@@ -104,37 +104,39 @@
     //
 
     function rebuildIndexes() {
-        _indexes.byLocation.clear();
-        _indexes.byRank.clear();
-        _indexes.byGovernment.clear();
-        _indexes.bySpecialization.clear();
-        _indexes.byFeature.clear();
+        // Build into a private candidate set. If malformed canonical data
+        // causes an exception, the last complete index set remains usable.
+        var nextIndexes = {
+            byLocation: new Map(),
+            byRank: new Map(),
+            byGovernment: new Map(),
+            bySpecialization: new Map(),
+            byFeature: new Map()
+        };
 
         var store = _getCanonicalStore();
-        if (!store) {
-            _indexBuilt = true;
-            return;
-        }
+        if (store) {
+            for (var locationId in store) {
+                if (!Object.prototype.hasOwnProperty.call(store, locationId)) continue;
+                var settlement = store[locationId];
+                if (!settlement || typeof settlement !== 'object') continue;
 
-        for (var locationId in store) {
-            if (!Object.prototype.hasOwnProperty.call(store, locationId)) continue;
-            var settlement = store[locationId];
-            if (!settlement) continue;
+                nextIndexes.byLocation.set(locationId, settlement);
 
-            _indexes.byLocation.set(locationId, settlement);
+                _pushIndex(nextIndexes.byRank, settlement.rankId, locationId);
+                _pushIndex(nextIndexes.byGovernment, settlement.governmentType, locationId);
+                _pushIndex(nextIndexes.bySpecialization, settlement.specializationRoleId, locationId);
 
-            _pushIndex(_indexes.byRank, settlement.rankId, locationId);
-            _pushIndex(_indexes.byGovernment, settlement.governmentType, locationId);
-            _pushIndex(_indexes.bySpecialization, settlement.specializationRoleId, locationId);
-
-            var featureIds = settlement.featureIds;
-            if (featureIds && featureIds.length > 0) {
-                for (var i = 0; i < featureIds.length; i++) {
-                    _pushIndex(_indexes.byFeature, featureIds[i], locationId);
+                var featureIds = settlement.featureIds;
+                if (Array.isArray(featureIds)) {
+                    for (var i = 0; i < featureIds.length; i++) {
+                        _pushIndex(nextIndexes.byFeature, featureIds[i], locationId);
+                    }
                 }
             }
         }
 
+        _indexes = nextIndexes;
         _indexBuilt = true;
     }
 
