@@ -144,69 +144,70 @@
             var departments = d.governmentDepartments;
             var types = d.governmentTypes;
 
-            // Reset indexes
-            _state.departmentsById.clear();
-            _state.departmentsByLocation.clear();
-            _state.departmentsByParent.clear();
-            _state.positionsByDepartment.clear();
-            _state.positionsById.clear();
-            _state.assignmentsByDepartment.clear();
-            _state.assignmentsByPosition.clear();
-            _state.assignmentsByCharacter.clear();
-            _state.assignmentsById.clear();
-            _state.governmentTypesById.clear();
-
+            // Build a complete replacement index set off to the side. A
+            // malformed late record must not erase the last usable indexes.
+            var next = {
+                departmentsById: new Map(),
+                departmentsByLocation: new Map(),
+                departmentsByParent: new Map(),
+                positionsByDepartment: new Map(),
+                positionsById: new Map(),
+                assignmentsByDepartment: new Map(),
+                assignmentsByPosition: new Map(),
+                assignmentsByCharacter: new Map(),
+                assignmentsById: new Map(),
+                governmentTypesById: new Map()
+            };
             var seenDeptIds = new Set();
 
             for (var i = 0; i < departments.length; i++) {
                 var dept = departments[i];
                 _hydrateDepartment(dept, seenDeptIds);
-
-                _state.departmentsById.set(dept.id, dept);
+                next.departmentsById.set(dept.id, dept);
 
                 if (dept.locationId) {
-                    if (!_state.departmentsByLocation.has(dept.locationId)) {
-                        _state.departmentsByLocation.set(dept.locationId, []);
+                    if (!next.departmentsByLocation.has(dept.locationId)) {
+                        next.departmentsByLocation.set(dept.locationId, []);
                     }
-                    _state.departmentsByLocation.get(dept.locationId).push(dept);
+                    next.departmentsByLocation.get(dept.locationId).push(dept);
                 }
                 if (dept.parentDepartmentId) {
-                    if (!_state.departmentsByParent.has(dept.parentDepartmentId)) {
-                        _state.departmentsByParent.set(dept.parentDepartmentId, []);
+                    if (!next.departmentsByParent.has(dept.parentDepartmentId)) {
+                        next.departmentsByParent.set(dept.parentDepartmentId, []);
                     }
-                    _state.departmentsByParent.get(dept.parentDepartmentId).push(dept);
+                    next.departmentsByParent.get(dept.parentDepartmentId).push(dept);
                 }
 
-                _state.positionsByDepartment.set(dept.id, dept.positions);
-                _state.assignmentsByDepartment.set(dept.id, dept.assignments);
+                next.positionsByDepartment.set(dept.id, dept.positions);
+                next.assignmentsByDepartment.set(dept.id, dept.assignments);
 
                 for (var p = 0; p < dept.positions.length; p++) {
                     var pos = dept.positions[p];
-                    if (_state.positionsById.has(pos.id)) {
+                    if (next.positionsById.has(pos.id)) {
                         throw new Error('government-state.js: duplicate position id: ' + pos.id);
                     }
-                    _state.positionsById.set(pos.id, { deptId: dept.id, position: pos });
+                    next.positionsById.set(pos.id, { deptId: dept.id, position: pos });
                 }
 
                 for (var a = 0; a < dept.assignments.length; a++) {
                     var asg = dept.assignments[a];
-                    if (_state.assignmentsById.has(asg.id)) {
+                    if (next.assignmentsById.has(asg.id)) {
                         throw new Error('government-state.js: duplicate assignment id: ' + asg.id);
                     }
-                    _state.assignmentsById.set(asg.id, { deptId: dept.id, assignment: asg });
+                    next.assignmentsById.set(asg.id, { deptId: dept.id, assignment: asg });
 
                     if (asg.positionId) {
                         var pk = dept.id + '_' + asg.positionId;
-                        if (!_state.assignmentsByPosition.has(pk)) {
-                            _state.assignmentsByPosition.set(pk, []);
+                        if (!next.assignmentsByPosition.has(pk)) {
+                            next.assignmentsByPosition.set(pk, []);
                         }
-                        _state.assignmentsByPosition.get(pk).push(asg);
+                        next.assignmentsByPosition.get(pk).push(asg);
                     }
                     if (asg.characterId) {
-                        if (!_state.assignmentsByCharacter.has(asg.characterId)) {
-                            _state.assignmentsByCharacter.set(asg.characterId, []);
+                        if (!next.assignmentsByCharacter.has(asg.characterId)) {
+                            next.assignmentsByCharacter.set(asg.characterId, []);
                         }
-                        _state.assignmentsByCharacter.get(asg.characterId).push({
+                        next.assignmentsByCharacter.get(asg.characterId).push({
                             deptId: dept.id,
                             assignment: asg
                         });
@@ -216,13 +217,26 @@
 
             for (var t = 0; t < types.length; t++) {
                 var type = types[t];
-                if (!type.id) throw new Error('government-state.js: government type missing id');
-                if (_state.governmentTypesById.has(type.id)) {
+                if (!type || !type.id) {
+                    throw new Error('government-state.js: government type missing id');
+                }
+                if (next.governmentTypesById.has(type.id)) {
                     throw new Error('government-state.js: duplicate government type id: ' + type.id);
                 }
-                _state.governmentTypesById.set(type.id, type);
+                next.governmentTypesById.set(type.id, type);
             }
 
+            // Publish the new indexes only after every record has passed.
+            _state.departmentsById = next.departmentsById;
+            _state.departmentsByLocation = next.departmentsByLocation;
+            _state.departmentsByParent = next.departmentsByParent;
+            _state.positionsByDepartment = next.positionsByDepartment;
+            _state.positionsById = next.positionsById;
+            _state.assignmentsByDepartment = next.assignmentsByDepartment;
+            _state.assignmentsByPosition = next.assignmentsByPosition;
+            _state.assignmentsByCharacter = next.assignmentsByCharacter;
+            _state.assignmentsById = next.assignmentsById;
+            _state.governmentTypesById = next.governmentTypesById;
             _state.initialized = true;
             _publish(C.STATE_EVENTS.HYDRATED, null);
         } finally {
