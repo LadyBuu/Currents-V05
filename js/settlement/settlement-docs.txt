@@ -706,7 +706,8 @@ rules module.
       window.RoleQueries (getRoleById — when specializationRoleId is supplied),
       window.SettlementCommandCommit,
       window.LocationQueries (getPlace, getLocationTypePriority),
-      window.getCurrentYear (via _currentYear).
+      window.getCurrentYear (via _currentYear),
+      window.isValidYear (when foundedYear is supplied).
     Consumed by:
       [call] settlement-annual-processor.js? No — the processor
              does not create settlements.
