@@ -288,37 +288,24 @@
     // 6. CLONE HELPER
     // =========================================================================
 
+    function _cloneValue(value, seen) {
+        if (value === null || typeof value !== 'object') return value;
+        if (value instanceof Date) return new Date(value.getTime());
+        seen = seen || [];
+        var existing = seen.indexOf(value);
+        if (existing !== -1) return seen[existing + 1];
+
+        var copy = Array.isArray(value) ? [] : {};
+        seen.push(value, copy);
+        Object.keys(value).forEach(function (key) {
+            copy[key] = _cloneValue(value[key], seen);
+        });
+        return copy;
+    }
+
     function _cloneInstitution(inst) {
         if (!inst) return null;
-
-        var clone = {};
-        for (var k in inst) {
-            if (!Object.prototype.hasOwnProperty.call(inst, k)) continue;
-            clone[k] = inst[k];
-        }
-
-        for (var a = 0; a < _CONTAINER_ARRAY_FIELDS.length; a++) {
-            var arrField = _CONTAINER_ARRAY_FIELDS[a];
-            var arr = inst[arrField];
-            if (Array.isArray(arr)) {
-                clone[arrField] = arr.slice();
-            }
-        }
-
-        for (var o = 0; o < _CONTAINER_OBJECT_FIELDS.length; o++) {
-            var objField = _CONTAINER_OBJECT_FIELDS[o];
-            var obj = inst[objField];
-            if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-                var objCopy = {};
-                for (var ok in obj) {
-                    if (!Object.prototype.hasOwnProperty.call(obj, ok)) continue;
-                    objCopy[ok] = obj[ok];
-                }
-                clone[objField] = objCopy;
-            }
-        }
-
-        return clone;
+        return _cloneValue(inst);
     }
 
     // =========================================================================
@@ -532,12 +519,13 @@
         if (_indexes.byId.has(institution.id)) {
             throw new Error('_addInstitution: id already exists: ' + institution.id);
         }
-        _institutions.push(institution);
+        var stored = _cloneInstitution(institution);
+        _institutions.push(stored);
         _indexesRebuild();
         _syncToMasterData();
         _lastUpdated = Date.now();
-        _notify('institutionAdded', _cloneInstitution(institution));
-        return institution;
+        _notify('institutionAdded', _cloneInstitution(stored));
+        return _cloneInstitution(stored);
     }
 
     function _updateInstitution(id, updates) {
@@ -546,17 +534,36 @@
         var inst = _indexes.byId.get(id);
         if (!inst) return null;
 
-        for (var k in updates) {
-            if (Object.prototype.hasOwnProperty.call(updates, k)) {
-                inst[k] = updates[k];
-            }
+        if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+            throw new Error('_updateInstitution: updates must be an object');
+        }
+        if (Object.prototype.hasOwnProperty.call(updates, 'id') &&
+            updates.id !== id) {
+            throw new Error('_updateInstitution: institution id cannot be changed');
         }
 
-        _indexesRebuild();
-        _syncToMasterData();
+        var previous = _cloneInstitution(inst);
+        var safeUpdates = _cloneValue(updates);
+        delete safeUpdates.id;
+        try {
+            Object.keys(safeUpdates).forEach(function (key) {
+                inst[key] = safeUpdates[key];
+            });
+            _indexesRebuild();
+            _syncToMasterData();
+        } catch (error) {
+            var index = _institutions.indexOf(inst);
+            if (index !== -1) _institutions[index] = previous;
+            _indexesRebuild();
+            try { _writeToMasterData(); } catch (restoreError) {}
+            throw error;
+        }
         _lastUpdated = Date.now();
-        _notify('institutionUpdated', { id: id, updates: updates });
-        return inst;
+        _notify('institutionUpdated', {
+            id: id,
+            updates: _cloneValue(safeUpdates)
+        });
+        return _cloneInstitution(inst);
     }
 
     function _removeInstitution(id) {
