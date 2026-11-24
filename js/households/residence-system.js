@@ -3202,9 +3202,165 @@
             try {
                 var all = _getResidencesArray();
                 var dupes = _detectDuplicates(all);
+                var duplicateUnitIds = [];
+                var duplicateUnitNumbers = [];
+                var unitsWithStaleHouseholdReference = [];
+                var unitsWithMissingHousehold = [];
+                var householdOccupancy = new Map();
+                var householdById = new Map();
+                var canonicalHouseholds = window.masterData &&
+                    window.masterData.data &&
+                    Array.isArray(window.masterData.data.households)
+                    ? window.masterData.data.households : null;
+
+                if (canonicalHouseholds) {
+                    for (var h = 0; h < canonicalHouseholds.length; h++) {
+                        var household = canonicalHouseholds[h];
+                        if (household && typeof household.id === 'string') {
+                            householdById.set(household.id, household);
+                        }
+                    }
+                }
+
+                for (var r = 0; r < all.length; r++) {
+                    var residence = all[r];
+                    if (!residence || !Array.isArray(residence.units)) continue;
+                    var seenUnitIds = new Set();
+                    var seenUnitNumbers = new Set();
+
+                    for (var u = 0; u < residence.units.length; u++) {
+                        var unit = residence.units[u];
+                        if (!unit) continue;
+
+                        if (typeof unit.id === 'string' && unit.id !== '') {
+                            if (seenUnitIds.has(unit.id)) {
+                                duplicateUnitIds.push({
+                                    residenceId: residence.id,
+                                    unitId: unit.id,
+                                    index: u
+                                });
+                            } else {
+                                seenUnitIds.add(unit.id);
+                            }
+                        }
+                        if (unit.unitNumber !== undefined &&
+                            unit.unitNumber !== null) {
+                            var numberKey = String(unit.unitNumber);
+                            if (seenUnitNumbers.has(numberKey)) {
+                                duplicateUnitNumbers.push({
+                                    residenceId: residence.id,
+                                    unitNumber: unit.unitNumber,
+                                    index: u
+                                });
+                            } else {
+                                seenUnitNumbers.add(numberKey);
+                            }
+                        }
+
+                        var householdId = typeof unit.householdId === 'string'
+                            ? unit.householdId : '';
+                        var inactive = unit.isVacant === true ||
+                            unit.isDemolished === true;
+                        if (householdId && inactive) {
+                            unitsWithStaleHouseholdReference.push({
+                                residenceId: residence.id,
+                                unitNumber: unit.unitNumber,
+                                householdId: householdId,
+                                isVacant: unit.isVacant === true,
+                                isDemolished: unit.isDemolished === true
+                            });
+                        } else if (unit.isVacant === false && !householdId) {
+                            unitsWithMissingHousehold.push({
+                                residenceId: residence.id,
+                                unitNumber: unit.unitNumber
+                            });
+                        }
+
+                        if (householdId && !inactive) {
+                            if (!householdOccupancy.has(householdId)) {
+                                householdOccupancy.set(householdId, []);
+                            }
+                            householdOccupancy.get(householdId).push({
+                                residenceId: residence.id,
+                                unitNumber: unit.unitNumber
+                            });
+                            if (canonicalHouseholds &&
+                                !householdById.has(householdId)) {
+                                // HouseholdState reports this in its
+                                // cross-domain integrity report too.
+                                unitsWithMissingHousehold.push({
+                                    residenceId: residence.id,
+                                    unitNumber: unit.unitNumber,
+                                    householdId: householdId,
+                                    reason: 'household does not exist'
+                                });
+                            }
+                        }
+                    }
+                }
+
+                var householdsOccupyingMultipleUnits = [];
+                householdOccupancy.forEach(function(units, householdId) {
+                    if (units.length > 1) {
+                        householdsOccupyingMultipleUnits.push({
+                            householdId: householdId,
+                            units: units
+                        });
+                    }
+                });
+
+                var householdReverseReferenceMismatches = [];
+                if (canonicalHouseholds) {
+                    var unitsByResidenceAndNumber = new Map();
+                    for (var rr = 0; rr < all.length; rr++) {
+                        var resRecord = all[rr];
+                        if (!resRecord || !Array.isArray(resRecord.units)) continue;
+                        for (var uu = 0; uu < resRecord.units.length; uu++) {
+                            var unitRecord = resRecord.units[uu];
+                            if (!unitRecord || !unitRecord.householdId ||
+                                unitRecord.isVacant === true ||
+                                unitRecord.isDemolished === true) continue;
+                            var key = String(resRecord.id) + '|' +
+                                String(unitRecord.unitNumber);
+                            unitsByResidenceAndNumber.set(key, unitRecord.householdId);
+                        }
+                    }
+                    for (var hh = 0; hh < canonicalHouseholds.length; hh++) {
+                        var householdRecord = canonicalHouseholds[hh];
+                        if (!householdRecord || !householdRecord.residenceId) continue;
+                        var reverseKey = String(householdRecord.residenceId) + '|' +
+                            String(householdRecord.residenceUnitNumber);
+                        if (unitsByResidenceAndNumber.get(reverseKey) !==
+                            householdRecord.id) {
+                            householdReverseReferenceMismatches.push({
+                                householdId: householdRecord.id,
+                                residenceId: householdRecord.residenceId,
+                                unitNumber: householdRecord.residenceUnitNumber
+                            });
+                        }
+                    }
+                }
+
+                var householdIndexAvailable = canonicalHouseholds !== null;
+                var ok = dupes.length === 0 &&
+                    duplicateUnitIds.length === 0 &&
+                    duplicateUnitNumbers.length === 0 &&
+                    unitsWithStaleHouseholdReference.length === 0 &&
+                    unitsWithMissingHousehold.length === 0 &&
+                    householdsOccupyingMultipleUnits.length === 0 &&
+                    householdIndexAvailable &&
+                    householdReverseReferenceMismatches.length === 0;
+
                 return {
-                    ok: dupes.length === 0,
+                    ok: ok,
                     duplicates: dupes,
+                    duplicateUnitIds: duplicateUnitIds,
+                    duplicateUnitNumbers: duplicateUnitNumbers,
+                    unitsWithStaleHouseholdReference: unitsWithStaleHouseholdReference,
+                    unitsWithMissingHousehold: unitsWithMissingHousehold,
+                    householdsOccupyingMultipleUnits: householdsOccupyingMultipleUnits,
+                    householdReverseReferenceMismatches: householdReverseReferenceMismatches,
+                    householdIndexAvailable: householdIndexAvailable,
                     count: all.length
                 };
             } catch (e) {
