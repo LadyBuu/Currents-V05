@@ -1774,6 +1774,29 @@ PART 7 — KNOWN HAZARDS
      Do not mutate the returned character object.
 
 
+
+================================================================================
+PART 22: ATOMIC CULTURE REMOVAL
+================================================================================
+
+CultureState._removeCulture(id) stages removal on a separate canonical
+array and rebuilds derived indexes before considering the operation
+successful.
+
+If index hydration fails, the original canonical cultures array is
+restored and hydration of the prior data is attempted. The command must
+not report a failed deletion after silently removing the Culture record.
+
+A pre-existing duplicate Culture ID can still prevent index hydration.
+In that case canonical Culture records are restored, but the derived
+indexes may remain unavailable until the duplicate data is corrected
+and CultureState.hydrateFromMasterData() succeeds.
+
+This protects canonical data from a failed removal. It does not provide
+a durable transaction across Culture and Name persistence; callers
+still use the domain persistence contracts, and cross-domain durable
+transactions remain a separate architecture task.
+
 ================================================================================
 END OF DOCUMENT
 ================================================================================
