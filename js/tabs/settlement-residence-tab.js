@@ -187,7 +187,7 @@
         }
     }
 
-    function _writeFilterState(locationId, state) {
+    function _writeFilterState(container.__stCurrentLocationId, state) {
         if (!locationId) return;
         try {
             localStorage.setItem(
@@ -468,7 +468,7 @@
     // Actions (delegated to modals)
     // -------------------------------------------------------------------
 
-    function _handleAdd(locationId) {
+    function _handleAdd(container.__stCurrentLocationId) {
         var open = _resolveModal('openNewResidenceModal');
         if (!open) return;
         var place = _getPlaceById(locationId);
@@ -532,6 +532,7 @@
     }
 
     function _wireActions(container, locationId) {
+        container.__stCurrentLocationId = locationId;
         if (container.__stResidenceWired) return;
         container.__stResidenceWired = true;
 
