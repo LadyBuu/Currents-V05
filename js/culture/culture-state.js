@@ -549,7 +549,7 @@
     window.CultureState = {
         _transactionSnapshotDeletedLocations: function () {
             if (!window.masterData || !window.masterData.data || !Array.isArray(window.masterData.data.cultures)) throw new Error('Culture canonical store unavailable.');
-            return window.masterData.data.cultures;
+            return window.masterData.data.cultures.map(function (culture) { return culture && typeof culture === 'object' ? JSON.parse(JSON.stringify(culture)) : culture; });
         },
         _transactionRestoreDeletedLocations: function (snapshot) {
             if (!Array.isArray(snapshot) || !window.masterData || !window.masterData.data) return { success: false, reason: 'Invalid Culture transaction snapshot.' };
