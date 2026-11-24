@@ -818,10 +818,49 @@
 
         var types = d.governmentTypes || [];
         var typeIds = new Set();
+        var rankQueriesForTypes = window.RankQueries;
         for (var t = 0; t < types.length; t++) {
-            if (!types[t].id) { warnings.push('government type missing id at index ' + t); continue; }
-            if (typeIds.has(types[t].id)) warnings.push('duplicate government type id: ' + types[t].id);
-            typeIds.add(types[t].id);
+            var governmentType = types[t];
+            if (!governmentType.id) {
+                warnings.push('government type missing id at index ' + t);
+                continue;
+            }
+            if (typeIds.has(governmentType.id)) {
+                warnings.push('duplicate government type id: ' + governmentType.id);
+            }
+            typeIds.add(governmentType.id);
+
+            var allowedRankIds = governmentType.allowedRankIds;
+            if (allowedRankIds == null) continue;
+            if (!Array.isArray(allowedRankIds)) {
+                warnings.push('government type ' + governmentType.id + ' allowedRankIds is not an array');
+                continue;
+            }
+            var allowedRankSeen = new Set();
+            for (var ar = 0; ar < allowedRankIds.length; ar++) {
+                var allowedRankId = allowedRankIds[ar];
+                if (typeof allowedRankId !== 'string' || allowedRankId.length === 0) {
+                    warnings.push('government type ' + governmentType.id + ' has an invalid allowedRankId');
+                    continue;
+                }
+                if (allowedRankSeen.has(allowedRankId)) {
+                    warnings.push('government type ' + governmentType.id + ' has duplicate allowedRankId ' + allowedRankId);
+                    continue;
+                }
+                allowedRankSeen.add(allowedRankId);
+                if (!rankQueriesForTypes ||
+                    typeof rankQueriesForTypes.getRank !== 'function') {
+                    warnings.push('government type ' + governmentType.id + ' allowedRankIds could not be validated: RankQueries unavailable');
+                } else {
+                    try {
+                        if (!rankQueriesForTypes.getRank(allowedRankId)) {
+                            warnings.push('government type ' + governmentType.id + ' references missing allowedRankId ' + allowedRankId);
+                        }
+                    } catch (e) {
+                        warnings.push('government type ' + governmentType.id + ' allowedRankId could not be validated: RankQueries failed');
+                    }
+                }
+            }
         }
 
         if (typeof console !== 'undefined' && console.warn && warnings.length > 0) {
