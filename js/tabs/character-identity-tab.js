@@ -96,8 +96,7 @@
  *
  * DEPENDENCIES (required at load):
  *   - TabManager              (self-registration)
- *   - formatting.js           (escapeHtml, formatYear, formatDateRange,
- *                              getGenderLabel)
+ *   - formatting.js           (escapeHtml, formatYear, formatDateRange)
  *   - icons.js                (Icons)
  *   - CharacterUIState        (collapsed state)
  *   - CharacterViewModels     (buildIdentityModel)
