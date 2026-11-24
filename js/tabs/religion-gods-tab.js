@@ -533,6 +533,7 @@
     // idempotency marker suffices.
 
     function _wireRowActions(container, religion) {
+        container.__rtGodsReligion = religion;
         if (container.__rtGodsRowWired) return;
         container.__rtGodsRowWired = true;
 
@@ -549,26 +550,26 @@
             switch (action) {
                 case 'add-god':
                     e.preventDefault();
-                    _actionAddGod(religion, container);
+                    _actionAddGod(container.__rtGodsReligion, container);
                     break;
 
                 case 'edit-god': {
                     e.preventDefault();
                     var eid = btn.getAttribute('data-god-id');
-                    if (eid) _actionEditGod(religion, container, eid);
+                    if (eid) _actionEditGod(container.__rtGodsReligion, container, eid);
                     break;
                 }
 
                 case 'delete-god': {
                     e.preventDefault();
                     var did = btn.getAttribute('data-god-id');
-                    if (did) _actionDeleteGod(religion, container, did);
+                    if (did) _actionDeleteGod(container.__rtGodsReligion, container, did);
                     break;
                 }
 
                 case 'clear-filters':
                     e.preventDefault();
-                    _actionClearFilters(religion, container);
+                    _actionClearFilters(container.__rtGodsReligion, container);
                     break;
 
                 // Unknown action: no-op. New actions add a case here and
