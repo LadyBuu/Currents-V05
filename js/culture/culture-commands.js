@@ -645,7 +645,8 @@
      * Removes deleted Location IDs from Culture-owned location associations.
      * The complete batch is validated before any Culture record is changed.
      */
-    function reconcileDeletedLocations(locationIds) {
+    function reconcileDeletedLocations(locationIds, options) {
+        options = options || {};
         if (!Array.isArray(locationIds) || locationIds.length === 0) {
             return { success: false, reason: 'locationIds must be a non-empty array.' };
         }
@@ -709,6 +710,16 @@
 
         if (staged.length === 0) {
             return { success: true, data: { updatedCultureIds: [], removedAssociations: 0 } };
+        }
+        if (options.dryRun === true) {
+            return {
+                success: true,
+                data: {
+                    updatedCultureIds: staged.map(function(item) { return item.id; }),
+                    removedAssociations: removedAssociations,
+                    dryRun: true
+                }
+            };
         }
 
         var applied = [];
