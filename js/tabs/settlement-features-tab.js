@@ -434,6 +434,8 @@
     // -------------------------------------------------------------------
 
     function _wireActions(container, locationId, wealth) {
+        container.__stFeaturesLocationId = locationId;
+        container.__stFeaturesWealth = wealth;
         if (container.__stFeaturesWired) return;
         container.__stFeaturesWired = true;
         container.addEventListener('click', function (event) {
@@ -443,11 +445,11 @@
             var action = btn.dataset.action;
             var featureId = btn.dataset.featureId;
             if (action === 'build') {
-                _handleBuild(locationId, featureId, wealth);
+                _handleBuild(container.__stFeaturesLocationId, featureId, container.__stFeaturesWealth);
             } else if (action === 'remove') {
-                _handleRemove(locationId, featureId);
+                _handleRemove(container.__stFeaturesLocationId, featureId);
             } else if (action === 'demolish') {
-                _handleDemolish(locationId, featureId);
+                _handleDemolish(container.__stFeaturesLocationId, featureId);
             }
         });
     }
