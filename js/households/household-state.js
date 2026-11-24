@@ -1169,6 +1169,9 @@
                 }
                 if (!seenMembers.has(characterId)) seenMembers.set(characterId, []);
                 seenMembers.get(characterId).push(mi);
+                // Duplicate list entries have their own diagnostic; avoid
+                // repeating the same reverse-reference mismatch for each copy.
+                if (seenMembers.get(characterId).length > 1) continue;
 
                 if (!memberHouseholdsByCharacter.has(characterId)) {
                     memberHouseholdsByCharacter.set(characterId, []);
@@ -1360,6 +1363,8 @@
                 pDup.length === 0 &&
                 aDup.length === 0 &&
                 duplicateHouseholdHeads.length === 0 &&
+                residenceIndex.available === true &&
+                enterpriseIndex.available === true &&
                 residenceIndex.householdsWithMissingResidence.length === 0 &&
                 residenceIndex.residencesWithOrphanHouseholdOccupancy.length === 0 &&
                 enterpriseIndex.householdsWithOrphanEnterpriseRef.length === 0 &&
