@@ -234,7 +234,44 @@
     // =========================================================================
 
     function _normaliseRecord(record) {
-        if (!record || typeof record !== 'object') return record;
+        if (!record || typeof record !== 'object' || Array.isArray(record)) return record;
+
+        // Missing legacy fields may be repaired below. Explicitly malformed
+        // values must not be silently converted into zeroes or empty arrays.
+        var numericFields = ['year', 'severity', 'deaths', 'population', 'prosperityLoss',
+            'crimeIncrease', 'schoolsDestroyed', 'actualDeaths', 'featuresDestroyed',
+            'enterprisesDestroyed', 'residencesDemolished', 'householdsDestroyed', 'totalLoss'];
+        numericFields.forEach(function(key) {
+            if (record[key] != null && (typeof record[key] !== 'number' || !isFinite(record[key]))) {
+                throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid ' + key);
+            }
+        });
+        if (record.structuralDamage != null
+            && (typeof record.structuralDamage !== 'object' || Array.isArray(record.structuralDamage))) {
+            throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid structuralDamage');
+        }
+        if (record.structuralDamage) {
+            var incomingDamage = record.structuralDamage;
+            ['featuresDestroyed', 'schoolsDestroyed', 'enterprisesDestroyed',
+             'residencesDemolished', 'householdsDestroyed', 'totalLoss'].forEach(function(key) {
+                if (incomingDamage[key] != null
+                    && (typeof incomingDamage[key] !== 'number' || !isFinite(incomingDamage[key]) || incomingDamage[key] < 0)) {
+                    throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid structuralDamage.' + key);
+                }
+            });
+            if (incomingDamage.destructionList != null
+                && (typeof incomingDamage.destructionList !== 'object' || Array.isArray(incomingDamage.destructionList))) {
+                throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid destructionList');
+            }
+            if (incomingDamage.destructionList) {
+                ['features', 'schools', 'enterprises', 'residences', 'households'].forEach(function(key) {
+                    if (incomingDamage.destructionList[key] != null
+                        && !Array.isArray(incomingDamage.destructionList[key])) {
+                        throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid destructionList.' + key);
+                    }
+                });
+            }
+        }
 
         if (!record.structuralDamage || typeof record.structuralDamage !== 'object') {
             record.structuralDamage = _emptyStructuralDamage();
