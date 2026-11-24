@@ -1957,3 +1957,8 @@ or dependency failures from occurring after another domain has been mutated.
 It does not provide coordinated rollback if the real Character batch or
 Household cleanup fails after Government, Religion or Culture has committed.
 That cross-domain transaction remains outstanding.
+
+
+LOCATION DELETION TRANSACTION SNAPSHOTS
+
+The Location, Settlement, Government, Religion, Culture, Character and Household state modules now expose internal transaction snapshot/restore adapters for the Location-deletion workflow. These adapters preserve canonical stores and rebuild their derived indexes/caches on restoration. Character snapshots deep-copy records because Character batch updates mutate records in place; other affected workflows replace canonical arrays or delete Settlement map keys, so their snapshots retain the prior canonical containers. These adapters are infrastructure only: LocationCommands.deletePlace has not yet been moved under CrossDomainTransaction, and no global atomicity guarantee should be inferred until the coordinator migration and failure-injection tests are complete.
