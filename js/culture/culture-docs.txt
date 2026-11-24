@@ -1800,3 +1800,8 @@ transactions remain a separate architecture task.
 ================================================================================
 END OF DOCUMENT
 ================================================================================
+
+
+PART 23 — DEFERRED LOCATION RECONCILIATION COMMIT
+
+CultureCommands.reconcileDeletedLocations(locationIds, { deferCommit: true }) performs the validated Culture association updates without publishing the normal Culture reconciliation command event. The enclosing transaction caller owns notification timing. The existing { dryRun: true } behavior is unchanged.
