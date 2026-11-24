@@ -69,6 +69,12 @@
     function _commands() {
         return (typeof window.LocationCommands !== 'undefined') ? window.LocationCommands : null;
     }
+    function _governmentQueries() {
+        return (typeof window.GovernmentQueries !== 'undefined') ? window.GovernmentQueries : null;
+    }
+    function _governmentCommands() {
+        return (typeof window.GovernmentCommands !== 'undefined') ? window.GovernmentCommands : null;
+    }
     function _tabManager() {
         return (typeof window.TabManager !== 'undefined') ? window.TabManager : null;
     }
@@ -132,6 +138,12 @@
             html +=     '<div class="loc-leader-card-name">' + _esc(name) + '</div>';
             html +=     '<div class="loc-leader-card-title">' + _esc(title) + '</div>';
             html +=     '<div class="loc-leader-card-since">Since year ' + _esc(start) + '</div>';
+            if (currentLeader.rankEligibility && currentLeader.rankEligibility.warning) {
+                html += '<div class="loc-leader-eligibility-warning" role="status">' +
+                    '<strong>Eligibility warning:</strong> ' +
+                    _esc(currentLeader.rankEligibility.warning) +
+                    '</div>';
+            }
             html +=   '</div>';
             html +=   '<button type="button" class="loc-tab-btn loc-tab-btn--danger" ' +
                         'data-action="end-term" data-char-id="' + _esc(currentLeader.characterId) + '">' +
@@ -194,8 +206,28 @@
         }
 
         var currentLeader = null;
-        try { currentLeader = Q.getCurrentLeader(context.locationId); }
-        catch (e) { currentLeader = null; }
+        var GQ = _governmentQueries();
+        try {
+            currentLeader = GQ && typeof GQ.getCurrentLeader === 'function'
+                ? GQ.getCurrentLeader(context.locationId)
+                : Q.getCurrentLeader(context.locationId);
+            if (currentLeader && (!GQ || typeof GQ.getCurrentLeader !== 'function')) {
+                currentLeader.rankEligibility = {
+                    status: 'unknown',
+                    eligible: null,
+                    warning: 'Government rank eligibility could not be checked because GovernmentQueries is unavailable.'
+                };
+            }
+        } catch (e) {
+            currentLeader = Q.getCurrentLeader(context.locationId);
+            if (currentLeader) {
+                currentLeader.rankEligibility = {
+                    status: 'unknown',
+                    eligible: null,
+                    warning: 'Government rank eligibility could not be checked.'
+                };
+            }
+        }
 
         var allHistory = [];
         try { allHistory = Q.getLeaderHistory(context.locationId) || []; }
@@ -242,9 +274,9 @@
     // =========================================================================
 
     function _handleAssign(context) {
-        var LC = _commands();
-        if (!LC || typeof LC.assignLeader !== 'function' || typeof LC.persist !== 'function') {
-            _toast('Leader assignment is unavailable. Load location-commands.js.', 'error');
+        var GC = _governmentCommands();
+        if (!GC || typeof GC.assignLeader !== 'function' || typeof GC.persist !== 'function') {
+            _toast('Leader assignment is unavailable. Load government-commands.js.', 'error');
             return;
         }
         var openSelector = _resolveModal('openCharacterSelector')
@@ -263,12 +295,12 @@
                     _toast('The current year is unavailable; cannot assign a leader.', 'error');
                     return;
                 }
-                var res = LC.assignLeader(context.locationId, characterId, year, 'Leader');
+                var res = GC.assignLeader(context.locationId, characterId, year, 'Leader');
                 if (!res || res.success !== true) {
                     _toast((res && res.reason) ? res.reason : 'Failed to assign leader', 'error');
                     return;
                 }
-                var p = LC.persist();
+                var p = GC.persist();
                 if (!p || p.success !== true) {
                     _toast((p && p.reason) ? p.reason : 'Failed to save leader assignment', 'error');
                     return;
