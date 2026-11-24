@@ -136,12 +136,10 @@
     if (typeof window.pickWeighted !== 'function') {
         throw new Error('disaster-commands.js requires pickWeighted');
     }
-    if (typeof window.modifySettlementProsperity !== 'function') {
-        throw new Error('disaster-commands.js requires modifySettlementProsperity');
-    }
-    if (typeof window.modifySettlementCrimeRate !== 'function') {
-        throw new Error('disaster-commands.js requires modifySettlementCrimeRate');
-    }
+    // Legacy settlement mutators are optional. The current Settlement
+    // domain exposes derived prosperity/crime queries but no equivalent
+    // mutation commands. Missing effects are reported as partial failures
+    // at runtime instead of preventing the entire Disaster module from booting.
     if (typeof window.SettlementQueries === 'undefined' ||
         typeof window.SettlementQueries.getSettlementData !== 'function') {
         throw new Error('disaster-commands.js requires SettlementQueries.getSettlementData');
@@ -513,6 +511,12 @@
             ? disaster.prosperityLoss
             : 0;
 
+        if (typeof window.modifySettlementProsperity !== 'function') {
+            return { value: 0, failure: {
+                system: 'settlement-prosperity',
+                reason: 'No supported Settlement prosperity mutation command is available.'
+            }};
+        }
         var effectResult;
         try {
             effectResult = window.modifySettlementProsperity(
@@ -543,6 +547,12 @@
             ? disaster.crimeIncrease
             : 0;
 
+        if (typeof window.modifySettlementCrimeRate !== 'function') {
+            return { value: 0, failure: {
+                system: 'settlement-crime',
+                reason: 'No supported Settlement crime-rate mutation command is available.'
+            }};
+        }
         var effectResult;
         try {
             effectResult = window.modifySettlementCrimeRate(
