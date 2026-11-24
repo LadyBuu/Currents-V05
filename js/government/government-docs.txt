@@ -2266,8 +2266,12 @@ Rank changes publish the existing CharacterState 'characterChanged' event.
 The Location Manager listens for that event and re-renders its Leadership tab
 when active, so the warning updates without requiring a manual refresh.
 
-The Location Leadership tab routes new appointments through
-GovernmentCommands.assignLeader, which enforces the Government Type allowlist.
+All user-facing leader assignment flows (Location Leadership and Government
+Details) route new appointments through GovernmentCommands.assignLeader,
+which enforces the Government Type allowlist. Government Details also shows
+the same advisory warning for active leaders. Character changes refresh both
+managers' active views so the warning does not remain stale.
+
 LocationCommands remains the canonical writer for Location-owned leader
 records, but direct calls to that lower-level writer are not a substitute for
 the Government policy boundary.
