@@ -644,12 +644,12 @@
 
         if (input.cultureId) {
             if (!window.CultureQueries ||
-                typeof window.CultureQueries.getCulture !== 'function') {
+                typeof window.CultureQueries.getCultureById !== 'function') {
                 return _fail(
                     'createPlace: CultureQueries required to assign a culture'
                 );
             }
-            var culture = window.CultureQueries.getCulture(input.cultureId);
+            var culture = window.CultureQueries.getCultureById(input.cultureId);
             if (!culture) {
                 return _fail(
                     'createPlace: culture not found: ' + input.cultureId
@@ -2005,12 +2005,12 @@
 
         if (cultureId) {
             if (!window.CultureQueries ||
-                typeof window.CultureQueries.getCulture !== 'function') {
+                typeof window.CultureQueries.getCultureById !== 'function') {
                 return _fail(
                     'updatePlaceCulture: CultureQueries required to assign a culture'
                 );
             }
-            var culture = window.CultureQueries.getCulture(cultureId);
+            var culture = window.CultureQueries.getCultureById(cultureId);
             if (!culture) {
                 return _fail(
                     'updatePlaceCulture: culture not found: ' + cultureId
