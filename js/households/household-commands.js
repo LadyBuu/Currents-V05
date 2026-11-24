@@ -961,7 +961,7 @@
                         Object.keys(entry).forEach(function (key) { copy[key] = entry[key]; });
                         return copy;
                     })
-                    : [];
+                    : liveCharacter.householdHistory;
                 memberSnapshots.push({
                     characterId: memberId,
                     household: liveCharacter.household,
@@ -1687,7 +1687,7 @@
                     Object.keys(entry).forEach(function (key) { copy[key] = entry[key]; });
                     return copy;
                 })
-                : []
+                : character.householdHistory
         };
 
         function restoreHouseholds() {
