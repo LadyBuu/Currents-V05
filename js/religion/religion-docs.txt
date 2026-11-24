@@ -1790,6 +1790,34 @@ PART 7 — KNOWN HAZARDS
       both read `law.lawCategory`.
 
 
+--------------------------------------------------------------------------------
+FOLLOWER INDEX LIFECYCLE
+--------------------------------------------------------------------------------
+
+ReligionState.followersByReligion is a derived index over canonical Character
+records. It is rebuilt after every CharacterState characterChanged event and
+after masterDataUpdated. This covers character creation, religion assignment
+or conversion, death, soft deletion, restoration, and hard deletion without
+requiring each writer to know about ReligionState.
+
+Soft-deleted characters are excluded from the follower index. Restoring a
+character emits characterChanged and places the character back in the index.
+Deceased characters remain indexed so historical follower views can include
+them; ordinary living-follower counts and location queries exclude deceased
+characters.
+
+Movement does not change religion membership and therefore does not rebuild
+the religion-keyed index. LocationCommands publishes moveRecorded,
+movesRecordedBulk, moveUpdated, and moveDeleted; ReligionState publishes
+followerLocationsChanged for subscribers, and ReligionManager refreshes the
+active religion tab on those events so current-location filters and labels
+remain current.
+
+Do not patch follower buckets from event payloads. Rebuild from canonical
+Character records after characterChanged, because event payloads intentionally
+carry IDs and action metadata rather than full character records.
+
+
 ================================================================================
 END OF DOCUMENT
 ================================================================================
