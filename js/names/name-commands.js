@@ -864,6 +864,52 @@
         return _ok();
     }
 
+    /**
+     * Removes canonical name-list data for permanently deleted Cultures.
+     * All IDs and the canonical data shape are validated before mutation.
+     */
+    function reconcileDeletedCultures(cultureIds) {
+        if (!Array.isArray(cultureIds) || cultureIds.length === 0) {
+            return _fail('cultureIds must be a non-empty array.');
+        }
+        var seen = {};
+        for (var i = 0; i < cultureIds.length; i++) {
+            if (!_hasId(cultureIds[i])) return _fail('Every culture ID must be a non-empty string.');
+            if (seen[cultureIds[i]]) return _fail('Duplicate culture ID: ' + cultureIds[i]);
+            seen[cultureIds[i]] = true;
+        }
+
+        var data = window.masterData && window.masterData.data;
+        if (!data || typeof data !== 'object') {
+            return _fail('masterData.data is required to reconcile deleted Cultures.');
+        }
+        var lists = data.nameLists;
+        if (lists === undefined || lists === null) return _ok({ removed: [] });
+        if (!_isPlainObject(lists)) {
+            return _fail('masterData.data.nameLists must be a plain object.');
+        }
+
+        var removed = [];
+        for (var j = 0; j < cultureIds.length; j++) {
+            if (Object.prototype.hasOwnProperty.call(lists, cultureIds[j])) {
+                removed.push(cultureIds[j]);
+            }
+        }
+        if (removed.length === 0) return _ok({ removed: [] });
+
+        for (var k = 0; k < removed.length; k++) {
+            delete lists[removed[k]];
+            if (NS && typeof NS.invalidateNameList === 'function') {
+                NS.invalidateNameList(removed[k]);
+            }
+        }
+        _commit('nameListChanged', {
+            cultureIds: removed.slice(),
+            action: 'culturesDeleted'
+        });
+        return _ok({ removed: removed });
+    }
+
     // =========================================================================
     // 13. EXPORTS
     // =========================================================================
@@ -878,7 +924,7 @@
         addNameToList: addNameToList,
         removeNameFromList: removeNameFromList,
         setCultureSurnameRules: setCultureSurnameRules,
-        clearCultureSurnameRules: clearCultureSurnameRules,
+        clearCultureSurnameRules: clearCultureSurnameRules,\n        reconcileDeletedCultures: reconcileDeletedCultures,
 
         calculateMarriageSurnames: calculateMarriageSurnames,
 
