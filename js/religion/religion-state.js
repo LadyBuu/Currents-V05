@@ -1229,13 +1229,60 @@
 
         for (var c = 0; c < characters.length; c++) {
             var character = characters[c];
-            if (!character || !character.religionId) continue;
-            if (!knownReligionIds[character.religionId]) {
+            if (!character) continue;
+            if (character.religionId && !knownReligionIds[character.religionId]) {
                 findings.push({
                     level: 'error',
                     message: 'Character ' + (character.id || c) +
                         ' references missing religion ' + character.religionId + '.'
                 });
+            }
+
+            var religionHistory = Array.isArray(character.religionHistory)
+                ? character.religionHistory : [];
+            for (var historyIndex = 0; historyIndex < religionHistory.length; historyIndex++) {
+                var historyEntry = religionHistory[historyIndex];
+                if (!historyEntry) continue;
+                if (historyEntry.fromReligionId &&
+                    !knownReligionIds[historyEntry.fromReligionId]) {
+                    findings.push({
+                        level: 'error',
+                        message: 'Character ' + (character.id || c) +
+                            ' has religion history referencing missing source religion ' +
+                            historyEntry.fromReligionId + '.'
+                    });
+                }
+                if (historyEntry.toReligionId &&
+                    !knownReligionIds[historyEntry.toReligionId]) {
+                    findings.push({
+                        level: 'error',
+                        message: 'Character ' + (character.id || c) +
+                            ' has religion history referencing missing target religion ' +
+                            historyEntry.toReligionId + '.'
+                    });
+                }
+            }
+        }
+
+        // Official state-religion links are owned by Settlements. Diagnose
+        // dangling references here, but never rewrite another domain's data.
+        var settlementQueries = window.SettlementQueries;
+        if (settlementQueries &&
+            typeof settlementQueries.getAllSettlements === 'function') {
+            var settlements = settlementQueries.getAllSettlements();
+            if (Array.isArray(settlements)) {
+                for (var settlementIndex = 0; settlementIndex < settlements.length; settlementIndex++) {
+                    var settlement = settlements[settlementIndex];
+                    var settlementData = settlement && settlement.data;
+                    var stateReligionId = settlementData && settlementData.stateReligionId;
+                    if (stateReligionId && !knownReligionIds[stateReligionId]) {
+                        findings.push({
+                            level: 'error',
+                            message: 'Settlement ' + (settlement.locationId || settlementIndex) +
+                                ' references missing state religion ' + stateReligionId + '.'
+                        });
+                    }
+                }
             }
         }
 
