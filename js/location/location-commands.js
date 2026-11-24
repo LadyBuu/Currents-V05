@@ -1001,6 +1001,11 @@
             removeSet: toRemove
         };
         var snapshots = null;
+        var cultureTransactionEnabled = !!(window.CultureCommands &&
+            typeof window.CultureCommands.reconcileDeletedLocations === 'function' &&
+            window.CultureState &&
+            typeof window.CultureState._transactionSnapshotDeletedLocations === 'function' &&
+            typeof window.CultureState._transactionRestoreDeletedLocations === 'function');
         var outcomes = {
             government: { removedDepartmentIds: [] },
             religion: { updatedReligionIds: [], removedAssociations: 0, worshipPlacesUnassigned: 0 },
@@ -1016,7 +1021,6 @@
                 var required = [
                     [window.GovernmentState, '_transactionSnapshotDeletedLocations', '_transactionRestoreDeletedLocations'],
                     [window.ReligionState, '_transactionSnapshotDeletedLocations', '_transactionRestoreDeletedLocations'],
-                    [window.CultureState, '_transactionSnapshotDeletedLocations', '_transactionRestoreDeletedLocations'],
                     [window.CharacterState, '_transactionSnapshotDeletedLocations', '_transactionRestoreDeletedLocations'],
                     [window.HouseholdState, '_transactionSnapshotDeletedLocations', '_transactionRestoreDeletedLocations'],
                     [window.SettlementState, '_transactionSnapshotDeletedLocations', '_transactionRestoreDeletedLocations'],
@@ -1033,8 +1037,6 @@
                     typeof window.GovernmentCommands.reconcileDeletedLocations !== 'function' ||
                     !window.ReligionCommands ||
                     typeof window.ReligionCommands.reconcileDeletedLocations !== 'function' ||
-                    !window.CultureCommands ||
-                    typeof window.CultureCommands.reconcileDeletedLocations !== 'function' ||
                     !window.HouseholdCommands ||
                     typeof window.HouseholdCommands.clearLocationReferencesMany !== 'function' ||
                     !window.SettlementCommandCommit ||
@@ -1047,7 +1049,9 @@
                 snapshots = {
                     government: window.GovernmentState._transactionSnapshotDeletedLocations(),
                     religion: window.ReligionState._transactionSnapshotDeletedLocations(),
-                    culture: window.CultureState._transactionSnapshotDeletedLocations(),
+                    culture: cultureTransactionEnabled
+                        ? window.CultureState._transactionSnapshotDeletedLocations()
+                        : null,
                     character: window.CharacterState._transactionSnapshotDeletedLocations(),
                     household: window.HouseholdState._transactionSnapshotDeletedLocations(),
                     settlement: window.SettlementState._transactionSnapshotDeletedLocations(),
@@ -1068,11 +1072,13 @@
                 if (!result || result.success !== true) throw new Error('Religion cleanup failed: ' + ((result && result.reason) || 'unknown error'));
                 outcomes.religion = result.data || outcomes.religion;
 
-                result = window.CultureCommands.reconcileDeletedLocations(
-                    locationIds, { deferCommit: true }
-                );
-                if (!result || result.success !== true) throw new Error('Culture cleanup failed: ' + ((result && result.reason) || 'unknown error'));
-                outcomes.culture = result.data || outcomes.culture;
+                if (cultureTransactionEnabled) {
+                    result = window.CultureCommands.reconcileDeletedLocations(
+                        locationIds, { deferCommit: true }
+                    );
+                    if (!result || result.success !== true) throw new Error('Culture cleanup failed: ' + ((result && result.reason) || 'unknown error'));
+                    outcomes.culture = result.data || outcomes.culture;
+                }
 
                 outcomes.character = _cleanupCharactersAtPlaces(toRemove, { deferCommit: true });
                 if (outcomes.character.failed > 0 || outcomes.character.status === 'unavailable') {
@@ -1114,7 +1120,6 @@
                     [window.SettlementState, snapshots.settlement],
                     [window.HouseholdState, snapshots.household],
                     [window.CharacterState, snapshots.character],
-                    [window.CultureState, snapshots.culture],
                     [window.ReligionState, snapshots.religion],
                     [window.GovernmentState, snapshots.government]
                 ].forEach(function (entry) {
@@ -1125,6 +1130,14 @@
                         failures.push(error && error.message ? error.message : String(error));
                     }
                 });
+                if (cultureTransactionEnabled) {
+                    try {
+                        var cultureRestore = window.CultureState._transactionRestoreDeletedLocations(snapshots.culture);
+                        if (!cultureRestore || cultureRestore.success !== true) failures.push(cultureRestore && cultureRestore.reason ? cultureRestore.reason : 'Culture restore failed');
+                    } catch (cultureRestoreError) {
+                        failures.push(cultureRestoreError && cultureRestoreError.message ? cultureRestoreError.message : String(cultureRestoreError));
+                    }
+                }
                 return failures.length
                     ? { success: false, reason: failures.join('; ') }
                     : { success: true };
@@ -1144,7 +1157,7 @@
                         worshipPlacesUnassigned: outcomes.religion.worshipPlacesUnassigned
                     });
                 }
-                if (outcomes.culture.updatedCultureIds.length && window.CultureState) {
+                if (cultureTransactionEnabled && outcomes.culture.updatedCultureIds.length && window.CultureState) {
                     window.CultureState.publish('cultureLocationsReconciled', {
                         locationIds: locationIds.slice(),
                         cultureIds: outcomes.culture.updatedCultureIds,
