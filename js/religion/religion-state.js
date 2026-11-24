@@ -643,6 +643,94 @@
         return place;
     }
 
+    function _reconcileDeletedLocations(locationIds) {
+        var removed = Object.create(null);
+        if (!Array.isArray(locationIds)) {
+            throw new Error('ReligionState._reconcileDeletedLocations requires an array.');
+        }
+        for (var i = 0; i < locationIds.length; i++) {
+            if (typeof locationIds[i] === 'string' && locationIds[i]) removed[locationIds[i]] = true;
+        }
+        var currentReligions = _getCanonicalReligionsArray();
+        var currentPlaces = _getCanonicalPlacesOfWorshipArray();
+        if (!currentReligions || !currentPlaces) {
+            throw new Error('Canonical Religion and worship-place stores must both be available.');
+        }
+
+        var nextReligions = currentReligions.slice();
+        var nextPlaces = currentPlaces.slice();
+        var updatedReligionIds = [];
+        var removedAssociations = 0;
+        var worshipPlacesUpdated = 0;
+        var now = Date.now();
+
+        for (var r = 0; r < currentReligions.length; r++) {
+            var religion = currentReligions[r];
+            if (!religion || !Array.isArray(religion.locations)) continue;
+            var nextLocations = [];
+            var changed = false;
+            for (var j = 0; j < religion.locations.length; j++) {
+                var locationId = religion.locations[j];
+                if (removed[locationId]) {
+                    changed = true;
+                    removedAssociations++;
+                } else if (nextLocations.indexOf(locationId) === -1) {
+                    nextLocations.push(locationId);
+                } else {
+                    changed = true;
+                }
+            }
+            if (changed) {
+                var religionCopy = _clone(religion);
+                religionCopy.locations = nextLocations;
+                religionCopy.updatedAt = now;
+                nextReligions[r] = religionCopy;
+                updatedReligionIds.push(religion.id);
+            }
+        }
+
+        for (var p = 0; p < currentPlaces.length; p++) {
+            var place = currentPlaces[p];
+            if (!place || !removed[place.locationId]) continue;
+            var placeCopy = _clone(place);
+            placeCopy.history = Array.isArray(placeCopy.history) ? placeCopy.history.slice() : [];
+            placeCopy.history.push({
+                type: 'locationRemoved',
+                locationId: placeCopy.locationId,
+                locationName: placeCopy.locationName || '',
+                date: now
+            });
+            placeCopy.locationId = null;
+            placeCopy.locationName = '';
+            placeCopy.updatedAt = now;
+            nextPlaces[p] = placeCopy;
+            worshipPlacesUpdated++;
+        }
+
+        if (updatedReligionIds.length === 0 && worshipPlacesUpdated === 0) {
+            return { updatedReligionIds: [], removedAssociations: 0, worshipPlacesUnassigned: 0 };
+        }
+
+        try {
+            _setCanonicalReligionsArray(nextReligions);
+            _setCanonicalPlacesOfWorshipArray(nextPlaces);
+            hydrateFromMasterData();
+        } catch (error) {
+            _setCanonicalReligionsArray(currentReligions);
+            _setCanonicalPlacesOfWorshipArray(currentPlaces);
+            try { hydrateFromMasterData(); } catch (restoreError) {
+                error.rollbackError = restoreError;
+            }
+            throw error;
+        }
+        _markDirty();
+        return {
+            updatedReligionIds: updatedReligionIds,
+            removedAssociations: removedAssociations,
+            worshipPlacesUnassigned: worshipPlacesUpdated
+        };
+    }
+
     function _clearDeletedWorshipPlaceLocations(locationIds) {
         var removed = Object.create(null);
         if (Array.isArray(locationIds)) {
