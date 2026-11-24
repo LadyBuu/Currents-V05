@@ -409,7 +409,7 @@
     // Export
     // -------------------------------------------------------------------
 
-    function _exportHistory(container.__stCurrentLocationId) {
+    function _exportHistory(locationId) {
         var Q = _getSettlementQueries();
         if (!Q) {
             H().toast('Settlement not found.', 'error');
