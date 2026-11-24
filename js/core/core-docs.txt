@@ -1149,6 +1149,10 @@ PART 4 — LOAD-ORDER INVARIANTS (MUST-HOLD RULES)
   13. integrity.js before maintenance.js at the time an audit is due (the
       "not due" path is dependency-free).
 
+  14. cross-domain-transaction.js is loaded after storage.js and before any
+      domain command that adopts CrossDomainTransaction. It has no domain
+      dependencies and must be present before transaction execution.
+
 
 ================================================================================
 PART 5 — KNOWN HAZARDS
