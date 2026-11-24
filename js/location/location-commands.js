@@ -110,11 +110,13 @@
  *        wants residences removed too, that is a separate orchestration
  *        above this command.
  *
- *   Character and Household cleanup are both required before the Location
- *   graph is mutated. Any query, dependency, or reconciliation failure
- *   aborts deletion. Earlier successful cleanup may leave harmless cleared
- *   references while the Location itself remains. This is deliberately
- *   fail-closed; it is not a cross-domain rollback transaction.
+ *   Character, Household, Government, Religion, Culture (when loaded),
+ *   Settlement, and Location mutations are applied inside one synchronous
+ *   CrossDomainTransaction. All snapshots are captured before mutation;
+ *   apply failures trigger reverse-order restoration. Notifications are
+ *   deferred until every domain has applied successfully. Persistence remains
+ *   caller-owned through LocationCommands.persist(); this is not crash-safe
+ *   and has no durable journal or cross-tab lock.
  *
  * CHARACTER CLEANUP SEMANTIC RESOLUTION:
  *   Prior revisions of _cleanupCharactersAtPlaces read the raw
