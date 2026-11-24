@@ -1634,6 +1634,7 @@
 
         // ---- Step 3: Character-owned field patch.
         var patch = {};
+        var deathPatch = {};
 
         if (model.identity) {
             if (newFirstName !== (model.identity.firstName || '')) {
@@ -1697,17 +1698,17 @@
                 if (resolvedDeathYear !== null && !window.isValidYear(resolvedDeathYear)) {
                     errors.push('Death year is not a valid world year.');
                 } else {
-                    patch.deathYear = resolvedDeathYear;
+                    deathPatch.deathYear = resolvedDeathYear;
                 }
             }
             if (newDeathCause !== (model.death.cause || '')) {
-                patch.deathCause = newDeathCause;
+                deathPatch.deathCause = newDeathCause;
             }
             if (newDeathCauseDetail !== (model.death.causeDetail || '')) {
-                patch.deathCauseDetail = newDeathCauseDetail;
+                deathPatch.deathCauseDetail = newDeathCauseDetail;
             }
             if (newDeathNotes !== (model.death.notes || '')) {
-                patch.deathNotes = newDeathNotes;
+                deathPatch.deathNotes = newDeathNotes;
             }
         }
 
@@ -1728,6 +1729,18 @@
 
         if (newNotes !== (model.notes || '')) {
             patch.notes = newNotes;
+        }
+
+        if (Object.keys(deathPatch).length > 0) {
+            if (typeof CC.updateDeathRecord !== 'function') {
+                errors.push('Death record update: CharacterCommands.updateDeathRecord is not available.');
+            } else {
+                var deathUpdate = CC.updateDeathRecord(characterId, deathPatch);
+                if (!deathUpdate || deathUpdate.success !== true) {
+                    errors.push('Death record update: ' +
+                        (deathUpdate && deathUpdate.reason ? deathUpdate.reason : 'unknown'));
+                }
+            }
         }
 
         if (Object.keys(patch).length > 0) {
