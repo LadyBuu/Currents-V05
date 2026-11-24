@@ -224,6 +224,7 @@
             // SettlementProsperityDefinitions.BASE_PROSPERITY (currently
             // 50). See BASE PROSPERITY FIELD in the module header.
             baseProsperity: 50,
+            disasterImpacts: [],
             civilLaws: [],
             demolitionHistory: []
         };
