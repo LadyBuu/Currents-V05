@@ -1922,3 +1922,8 @@ performs the canonical Religion and worship-place reconciliation without
 publishing the normal Religion reconciliation command event. The enclosing
 transaction caller owns notification timing. The existing { dryRun: true }
 behavior is unchanged.
+
+
+LOCATION DELETION TRANSACTION ADAPTER
+
+ReligionState now exposes internal snapshot/restore adapters for Location deletion. The snapshot retains both canonical Religion and worship-place arrays; restoration reinstalls both and rebuilds Religion indexes, including derived follower indexes. This is transaction infrastructure only and does not itself coordinate Location deletion.
