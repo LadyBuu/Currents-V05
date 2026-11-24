@@ -569,7 +569,7 @@
         return updateCharacterFields(characterId, updates);
     }
 
-    function updateCharactersFields(changes) {
+    function updateCharactersFields(changes, options) {
         if (!Array.isArray(changes)) return _fail('changes must be an array.');
         if (changes.length === 0) return _ok();
 
@@ -596,13 +596,14 @@
             }
         }
 
-        var result = CS.updateCharacters(changes);
+        options = options || {};
+        var result = CS.updateCharacters(changes, options);
         if (!result || result.success !== true) {
             return _fail(result && result.reason
                 ? result.reason
                 : 'CharacterState refused the batch update.');
         }
-        return _ok();
+        return _ok({ characterIds: result.characterIds || [], deferred: options.deferCommit === true });
     }
 
     // =========================================================================
