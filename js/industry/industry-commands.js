@@ -514,7 +514,14 @@
                 var rollbackErrors = [];
                 for (var i = snapshots.length - 1; i >= 0; i--) {
                     try {
-                        householdInternal.transactionRestoreHousehold(snapshots[i]);
+                        var restored = householdInternal.transactionRestoreHousehold(snapshots[i]);
+                        if (restored === false ||
+                            (restored && restored.success === false)) {
+                            rollbackErrors.push(
+                                restored && restored.reason
+                                    ? restored.reason : 'Household restore was rejected.'
+                            );
+                        }
                     } catch (rollbackError) {
                         rollbackErrors.push(
                             rollbackError && rollbackError.message
