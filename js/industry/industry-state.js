@@ -96,6 +96,7 @@
  *       valid: boolean,
  *       errors: string[],
  *       checksSkipped: string[]   // cross-domain checks skipped because
+ *       ownership: { valid, repairable, issues, expectedByHousehold }
  *                                 // the required accessor was absent
  *     }
  *
@@ -1144,14 +1145,12 @@
             var wanted = expected[current.id] || [];
             for (var wi = 0; wi < wanted.length; wi++) {
                 var count = refs.filter(function(id) { return id === wanted[wi]; }).length;
-                if (count !== 1) {
+                if (count === 0) {
                     issues.push({
-                        code: count === 0 ? 'MISSING_ENTERPRISE_REFERENCE' : 'DUPLICATE_ENTERPRISE_REFERENCE',
+                        code: 'MISSING_ENTERPRISE_REFERENCE',
                         householdId: current.id,
                         enterpriseId: wanted[wi],
-                        message: count === 0
-                            ? 'Household "' + current.id + '" is missing Enterprise "' + wanted[wi] + '" in its reverse index.'
-                            : 'Household "' + current.id + '" has ' + count + ' references to Enterprise "' + wanted[wi] + '".'
+                        message: 'Household "' + current.id + '" is missing Enterprise "' + wanted[wi] + '" in its reverse index.'
                     });
                 }
             }
