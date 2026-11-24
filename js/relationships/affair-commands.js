@@ -395,6 +395,29 @@
                     : []
             });
         }
+        if (rec.metadata.consequencesInProgress || rec.metadata.consequencesPartial) {
+            return _fail(
+                'CONSEQUENCES_REQUIRE_REVIEW',
+                'Consequence processing was previously started but not confirmed complete. Review the stored consequence run before attempting it again.'
+            );
+        }
+
+        // Claim the run before executing cross-domain effects. Without this
+        // marker, a failed final write or interrupted page could cause a
+        // retry to repeat a murder, execution, or breakup.
+        var claimResult = RC.update(relationshipId, {
+            metadata: {
+                consequencesInProgress: true,
+                consequencesStartedAt: Date.now()
+            }
+        });
+        if (!claimResult || !claimResult.success) {
+            return _fail(
+                'CONSEQUENCE_CLAIM_FAILED',
+                'Could not claim consequence processing; no consequences were executed.',
+                { cause: claimResult || null }
+            );
+        }
 
         var consequences = [];
 
@@ -441,7 +464,7 @@
             );
             consequences.push({
                 type: AR.CONSEQUENCE.BREAKUP,
-                success: breakupResult.count > 0,
+                success: breakupResult.failed.length === 0,
                 details: breakupResult
             });
         }
@@ -519,7 +542,7 @@
                 } else {
                     consequences.push({
                         type: AR.CONSEQUENCE.EXECUTION,
-                        success: false,
+                        success: true,
                         details: { roll: execRoll, chance: execChance, triggered: false }
                     });
                 }
@@ -532,18 +555,50 @@
             }
         }
 
-        // Persist the consequence summary
+        // Persist the complete outcome and release the processing claim.
         var types = [];
-        for (var i = 0; i < consequences.length; i++) types.push(consequences[i].type);
+        var failures = [];
+        for (var i = 0; i < consequences.length; i++) {
+            types.push(consequences[i].type);
+            if (!consequences[i].success) failures.push(consequences[i]);
+        }
 
-        RC.update(relationshipId, {
+        var complete = failures.length === 0;
+        var persistResult = RC.update(relationshipId, {
             metadata: {
-                consequencesTriggered: true,
-                consequences: types
+                consequencesInProgress: false,
+                consequencesTriggered: complete,
+                consequencesPartial: !complete,
+                consequences: types,
+                consequenceResults: consequences,
+                consequenceFailureCount: failures.length
             }
         });
+        if (!persistResult || !persistResult.success) {
+            return _fail(
+                'CONSEQUENCE_RESULT_PERSIST_FAILED',
+                'Consequences ran, but their final results could not be saved. The in-progress marker remains to prevent accidental re-execution.',
+                {
+                    consequences: consequences,
+                    failures: failures,
+                    cause: persistResult || null
+                }
+            );
+        }
 
-        return _ok({ consequences: consequences });
+        if (!complete) {
+            return _fail(
+                'PARTIAL_AFFAIR_CONSEQUENCES',
+                'Some consequences failed. The run is recorded and locked against automatic re-execution.',
+                {
+                    consequences: consequences,
+                    failures: failures,
+                    failureCount: failures.length
+                }
+            );
+        }
+
+        return _ok({ consequences: consequences, complete: true });
     }
 
     // -------------------------------------------------------------------------
@@ -592,31 +647,47 @@
 
     function _applyBreakups(rec, partnersA, partnersB, roll, chance) {
         var ended = [];
+        var failed = [];
         if (roll >= chance) {
-            return { count: 0, ended: ended, roll: roll, chance: chance };
+            return {
+                count: 0, ended: ended, failed: failed,
+                triggered: false, roll: roll, chance: chance
+            };
         }
 
         var year = rec.metadata && typeof rec.metadata.discoveryYear === 'number'
             ? rec.metadata.discoveryYear
             : _getCurrentYear();
 
-        var i;
-        for (i = 0; i < partnersA.length; i++) {
-            var r = RoC.breakUp(partnersA[i].relationshipId, {
+        function attempt(partner) {
+            var relationshipId = partner.relationshipId;
+            var result = RoC.breakUp(relationshipId, {
                 endYear: year,
                 reason: 'affair discovered'
             });
-            if (r.success) ended.push(partnersA[i].relationshipId);
-        }
-        for (i = 0; i < partnersB.length; i++) {
-            var r2 = RoC.breakUp(partnersB[i].relationshipId, {
-                endYear: year,
-                reason: 'affair discovered'
-            });
-            if (r2.success) ended.push(partnersB[i].relationshipId);
+            if (result && result.success) {
+                ended.push(relationshipId);
+            } else {
+                failed.push({
+                    relationshipId: relationshipId,
+                    code: result && result.code ? result.code : 'NO_RESULT',
+                    message: result && result.message ? result.message : 'breakUp returned no successful result'
+                });
+            }
         }
 
-        return { count: ended.length, ended: ended, roll: roll, chance: chance };
+        var i;
+        for (i = 0; i < partnersA.length; i++) attempt(partnersA[i]);
+        for (i = 0; i < partnersB.length; i++) attempt(partnersB[i]);
+
+        return {
+            count: ended.length,
+            ended: ended,
+            failed: failed,
+            triggered: true,
+            roll: roll,
+            chance: chance
+        };
     }
 
     // -------------------------------------------------------------------------
