@@ -1276,6 +1276,10 @@
         if (!unit) return _fail('UNIT_NOT_FOUND', 'Unit not found');
         if (unit.isDemolished) return _fail('UNIT_DEMOLISHED', 'Unit is demolished');
         if (!unit.isVacant) return _fail('UNIT_OCCUPIED', 'Unit is already occupied');
+        if (unit.householdId) {
+            return _fail('UNIT_OCCUPANCY_INCONSISTENT',
+                'Vacant unit still contains a Household reference');
+        }
 
         // Both sides of this relationship are required. Do not proceed with
         // an unverifiable household or a missing reverse-index writer.
@@ -1512,6 +1516,18 @@
     function _disassociateHouseholdFromUnit(r, unit, year, reason) {
         var householdId = unit.householdId;
         var unitNumber = unit.unitNumber;
+        var householdState = window.HouseholdState;
+        if (!householdState || !householdState._internal
+            || typeof householdState._internal.getHouseholdRecord !== 'function') {
+            return _fail('HOUSEHOLD_STATE_UNAVAILABLE',
+                'HouseholdState canonical lookup is required to vacate an occupied unit');
+        }
+        var householdRecord = householdState._internal.getHouseholdRecord(householdId);
+        if (!householdRecord || householdRecord.residenceId !== r.id
+            || householdRecord.residenceUnitNumber !== unitNumber) {
+            return _fail('HOUSEHOLD_REFERENCE_MISMATCH',
+                'Household reverse reference does not match the occupied Residence unit');
+        }
 
         // Clear the Household reverse index first. If this fails, preserve
         // canonical unit occupancy and its histories exactly as they were.
