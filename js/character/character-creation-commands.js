@@ -272,7 +272,8 @@
             if (!_isPlainObject(p) || !_hasId(p.parentId)) {
                 return {
                     ok: false,
-                    reason: 'options.parents[' + i + '] must have a parentId.'
+                    reason: 'options.parents[' + i + '] must have a parentId.',
+                    createdEdgeIds: createdEdgeIds
                 };
             }
 
@@ -283,11 +284,21 @@
             };
             if (!_isMissing(p.parentRole)) callOptions.parentRole = p.parentRole;
 
-            var result = window.FamilyCommands.setParent(
-                characterId,
-                p.parentId,
-                callOptions
-            );
+            var result;
+            try {
+                result = window.FamilyCommands.setParent(
+                    characterId,
+                    p.parentId,
+                    callOptions
+                );
+            } catch (error) {
+                return {
+                    ok: false,
+                    reason: 'Failed to set parent ' + p.parentId + ': ' +
+                        (error && error.message ? error.message : String(error)),
+                    createdEdgeIds: createdEdgeIds
+                };
+            }
             if (!result || result.success !== true) {
                 return {
                     ok: false,
@@ -315,15 +326,24 @@
             return { ok: true };
         }
 
-        var result = window.ReligionCommands.assignReligionToCharacter(
-            characterId,
-            data.religionId,
-            {
-                year: _isMissing(data.birthYear) ? window.getCurrentYear() : data.birthYear,
-                reason: 'birth',
-                notes: ''
-            }
-        );
+        var result;
+        try {
+            result = window.ReligionCommands.assignReligionToCharacter(
+                characterId,
+                data.religionId,
+                {
+                    year: _isMissing(data.birthYear) ? window.getCurrentYear() : data.birthYear,
+                    reason: 'birth',
+                    notes: ''
+                }
+            );
+        } catch (error) {
+            return {
+                ok: false,
+                reason: 'Failed to record religion: ' +
+                    (error && error.message ? error.message : String(error))
+            };
+        }
 
         if (!result || result.success !== true) {
             return {
