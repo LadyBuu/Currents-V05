@@ -507,10 +507,8 @@ Cross-domain references:
 
     Consumed by:
       [load] relationship-bootstrap.js
-      [call] CharacterLifecycle (via direct dispatch OR via registered
-                                  death handler)
-      [call] CharacterDeletionCommands (via direct dispatch OR via
-                                         registered delete handler)
+      [call] CharacterLifecycle (via registered death handler)
+      [call] CharacterDeletionCommands (via registered delete handler)
 
     APPRENTICESHIP CLEANUP:
 
@@ -559,24 +557,22 @@ Cross-domain references:
 
     DISPATCH MODEL:
 
-      Two paths reach this module:
+      Registered handlers are the sole active integration path.
+      This file registers through window.registerDeathHandler and
+      window.registerDeleteHandler. CharacterLifecycle and
+      CharacterDeletionCommands invoke those handlers. The former
+      direct-dispatch path was removed from CharacterLifecycle to
+      prevent duplicate execution.
 
-        1. Direct dispatch from CharacterLifecycle.killCharacter and
-           CharacterDeletionCommands.deleteCharacter (a no-op under the
-           documented load order — those modules load first).
+      If either registration function is missing, that lifecycle
+      integration is not wired and this file logs a warning.
 
-        2. Registration hook: this file calls
-           window.registerDeathHandler and window.registerDeleteHandler
-           at load time. Both are the load-order-independent path.
-
-      The two are additive. Double-dispatch is safe because the
-      command layer is idempotent per relationship id.
-
-      If registerDeathHandler or registerDeleteHandler is missing (a
-      build before Phase 3.13), the corresponding registration is a
-      no-op with a console warning. The direct dispatch path still
-      fires for those builds — but only for the domains that load
-      before the character subsystem.
+      Death cleanup returns success:false with
+      PARTIAL_RELATIONSHIP_DEATH_CLEANUP when one or more domain
+      operations fail. The result includes the per-domain summary,
+      successCount, failureCount and complete flag. Successfully ended
+      records are no longer active, so retry processes the remaining
+      active records rather than repeating completed terminations.
 
     ANNUAL PASSES:
 
