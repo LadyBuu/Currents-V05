@@ -1051,12 +1051,24 @@
 
         var students = (inst.students || []).slice();
         var teachers = (inst.teachers || []).slice();
-        var studentIds = students.map(function (entry) {
-            return entry && entry.studentId;
-        }).filter(Boolean);
-        var teacherIds = teachers.map(function (entry) {
-            return entry && entry.teacherId;
-        }).filter(Boolean);
+        if (!Array.isArray(inst.students) || !Array.isArray(inst.teachers)) {
+            return _fail('Cannot delete institution: student and teacher rosters must be valid arrays.');
+        }
+        for (var validationIndex = 0; validationIndex < students.length; validationIndex++) {
+            if (!students[validationIndex] || !students[validationIndex].studentId) {
+                return _fail('Cannot delete institution: invalid student entry at index ' + validationIndex);
+            }
+        }
+        for (var teacherValidationIndex = 0; teacherValidationIndex < teachers.length; teacherValidationIndex++) {
+            if (!teachers[teacherValidationIndex] || !teachers[teacherValidationIndex].teacherId) {
+                return _fail('Cannot delete institution: invalid teacher entry at index ' + teacherValidationIndex);
+            }
+        }
+        if (inst.headmaster && !inst.headmaster.characterId) {
+            return _fail('Cannot delete institution: headmaster record has no characterId.');
+        }
+        var studentIds = students.map(function (entry) { return entry.studentId; });
+        var teacherIds = teachers.map(function (entry) { return entry.teacherId; });
 
         if (cascade) {
             for (var i = 0; i < students.length; i++) {
@@ -1118,7 +1130,11 @@
 
         var sweepAttempted = 0;
         var sweepSucceeded = 0;
-        var idsToSweep = cascade ? studentIds.concat(teacherIds) : studentIds.concat(teacherIds);
+        var idsToSweep = studentIds.concat(teacherIds);
+        if (inst.headmaster && inst.headmaster.characterId) idsToSweep.push(inst.headmaster.characterId);
+        idsToSweep = idsToSweep.filter(function (id, index, all) {
+            return all.indexOf(id) === index;
+        });
         for (var k = 0; k < idsToSweep.length; k++) {
             sweepAttempted++;
             var sweepResult = _removeCharacterEducationRecord(idsToSweep[k], institutionId);
@@ -1263,10 +1279,24 @@
         var teachers = inst.teachers.slice();
         teachers.splice(idx, 1);
 
-        _state()._updateInstitution(institutionId, { teachers: teachers });
-        _history().recordTeacherDeparted(
-            institutionId, teacherId, _getCurrentYear(), reason || 'Dismissed', ''
-        );
+        var updated = null;
+        try {
+            updated = _state()._updateInstitution(institutionId, { teachers: teachers });
+        } catch (error) {
+            return _fail('Teacher roster update failed: ' + (error.message || String(error)));
+        }
+        if (!updated) return _fail('Teacher roster update failed.');
+
+        var historyEvent = null;
+        try {
+            historyEvent = _history().recordTeacherDeparted(
+                institutionId, teacherId, _getCurrentYear(), reason || 'Dismissed', ''
+            );
+        } catch (historyError) {
+            return _fail('Teacher departure history failed: ' +
+                (historyError.message || String(historyError)));
+        }
+        if (!historyEvent) return _fail('Teacher departure history could not be recorded.');
 
         return _ok({ institutionId: institutionId, teacherId: teacherId });
     }
@@ -2001,10 +2031,26 @@
         var year = endYear !== undefined ? endYear : _getCurrentYear();
         var former = inst.headmaster;
 
-        _state()._updateInstitution(institutionId, { headmaster: null });
-        _history().recordHeadmasterEnded(
-            institutionId, former.characterId, year, reason || 'Term ended', ''
-        );
+        if (!former.characterId) return _fail('Headmaster record has no characterId.');
+
+        var updated = null;
+        try {
+            updated = _state()._updateInstitution(institutionId, { headmaster: null });
+        } catch (error) {
+            return _fail('Headmaster update failed: ' + (error.message || String(error)));
+        }
+        if (!updated) return _fail('Headmaster update failed.');
+
+        var historyEvent = null;
+        try {
+            historyEvent = _history().recordHeadmasterEnded(
+                institutionId, former.characterId, year, reason || 'Term ended', ''
+            );
+        } catch (historyError) {
+            return _fail('Headmaster history failed: ' +
+                (historyError.message || String(historyError)));
+        }
+        if (!historyEvent) return _fail('Headmaster history could not be recorded.');
 
         return _ok({
             institutionId: institutionId,
