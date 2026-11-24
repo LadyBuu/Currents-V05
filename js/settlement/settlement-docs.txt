@@ -727,6 +727,10 @@ rules module.
   js/settlement/settlement-annual-processor.js
     Owns window.SettlementAnnualProcessor
       ({ processSettlementAnnual, processAllSettlementsAnnual }).
+    Batch result counts:
+      processed — newly processed settlements,
+      skipped   — settlements already processed for the requested year,
+      failed    — settlements whose annual processing threw.
     Reads at call:
       window.SettlementQueries (getSettlementData,
         getAllSettlements),
@@ -747,9 +751,11 @@ rules module.
         annualHistory in one commit.
       - Per-settlement failure isolation: processAllSettlementsAnnual
         catches per-settlement throws and records them in
-        result.failures; it does not abort the loop. This is
-        documented in the module header and in settlement-docs.txt
-        §26.
+        result.failures; it does not abort the loop.
+      - Idempotence: annualHistory is checked for the requested year
+        before interest is calculated. Repeating a year does not
+        accrue interest twice. Batch results count already-processed
+        settlements in skipped, not processed.
       - Explicit year contract: options.year is required to be a
         valid world year when supplied. Invalid values throw,
         matching the same contract in
