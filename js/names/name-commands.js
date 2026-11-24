@@ -21,7 +21,7 @@
  *   - addNameToList(cultureId, type, name)
  *   - removeNameFromList(cultureId, type, name)
  *   - setCultureSurnameRules(cultureId, rules)
- *   - clearCultureSurnameRules(cultureId)       <-- NEW
+ *   - clearCultureSurnameRules(cultureId)\n *   - reconcileDeletedCultures(cultureIds)
  *   - calculateMarriageSurnames (delegates to NameRules)
  *   - persist
  *
