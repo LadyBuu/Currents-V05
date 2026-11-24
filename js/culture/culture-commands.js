@@ -752,11 +752,13 @@
         }
 
         var updatedIds = staged.map(function(item) { return item.id; });
-        _commit('cultureLocationsReconciled', {
-            locationIds: locationIds.slice(),
-            updatedCultureIds: updatedIds,
-            removedAssociations: removedAssociations
-        });
+        if (options.deferCommit !== true) {
+            _commit('cultureLocationsReconciled', {
+                locationIds: locationIds.slice(),
+                updatedCultureIds: updatedIds,
+                removedAssociations: removedAssociations
+            });
+        }
         return {
             success: true,
             data: {
