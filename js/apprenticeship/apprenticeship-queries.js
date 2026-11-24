@@ -765,26 +765,48 @@
                 ? window.TEACHING_CONSTANTS.MIN_MASTER_SKILL
                 : null);
 
-        if (typeof threshold !== 'number') {
+        if (typeof threshold !== 'number' ||
+            !isFinite(threshold) ||
+            threshold < 0 ||
+            threshold > 100) {
             throw new Error(
                 'ApprenticeshipQueries.findPotentialMasters: ' +
-                'minSkillLevel or TEACHING_CONSTANTS.MIN_MASTER_SKILL is required.'
+                'minimum master skill must be a finite number between 0 and 100.'
             );
+        }
+        if (typeof roleId !== 'string' || !roleId.trim() ||
+            typeof locationId !== 'string' || !locationId.trim()) {
+            return [];
         }
 
         var raw = window.SettlementQueries.getSettlementMastersByRole(
             locationId, roleId
-        ) || [];
+        );
+        if (!Array.isArray(raw)) {
+            throw new Error(
+                'ApprenticeshipQueries.findPotentialMasters: ' +
+                'SettlementQueries returned an invalid master list.'
+            );
+        }
 
         var results = [];
+        var seen = Object.create(null);
         for (var i = 0; i < raw.length; i++) {
             var entry = raw[i];
-            if (entry && typeof entry.skillLevel === 'number') {
-                if (entry.skillLevel < threshold) continue;
-                results.push(entry);
-            } else {
-                results.push(entry);
+            // Eligibility must be proven, not inferred from a missing or
+            // malformed profession record.
+            if (!entry || typeof entry !== 'object' ||
+                typeof entry.id !== 'string' || !entry.id.trim() ||
+                typeof entry.skillLevel !== 'number' ||
+                !isFinite(entry.skillLevel) ||
+                entry.skillLevel < threshold ||
+                entry.skillLevel < 0 ||
+                entry.skillLevel > 100 ||
+                seen[entry.id]) {
+                continue;
             }
+            seen[entry.id] = true;
+            results.push(entry);
         }
         return results;
     }
