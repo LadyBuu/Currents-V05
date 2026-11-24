@@ -530,6 +530,7 @@
     // =========================================================================
 
     function _attachNameListEvents(container, culture) {
+        container.__ctNamesCulture = culture;
         // Bulk-edit Apply.
         var applyBtns = container.querySelectorAll('.ct-names__apply');
         for (var i = 0; i < applyBtns.length; i++) {
@@ -577,6 +578,8 @@
         }
 
         // Chip remove — delegated.
+        if (container.__ctNamesRemoveWired) return;
+        container.__ctNamesRemoveWired = true;
         container.addEventListener('click', function (e) {
             var target = e.target;
             if (!target || typeof target.closest !== 'function') return;
@@ -586,7 +589,7 @@
             var type = removeBtn.getAttribute('data-type');
             var name = removeBtn.getAttribute('data-name');
             if (!type || !name) return;
-            _handleRemoveOne(container, culture, type, name);
+            _handleRemoveOne(container, container.__ctNamesCulture, type, name);
         });
     }
 
