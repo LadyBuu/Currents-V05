@@ -620,6 +620,7 @@
     // that landed on a button (checked via .closest('button')).
 
     function _wire(container, householdId) {
+        container.__hhHoldingsCurrentHouseholdId = householdId;
         T.attachDelegated(container, {
             '[data-action="add-enterprise"]': function () { _openAddEnterprise(householdId); },
             '[data-action="add-school"]':     function () { _openAddSchool(householdId); },
