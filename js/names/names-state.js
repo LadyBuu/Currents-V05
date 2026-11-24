@@ -373,13 +373,12 @@
     function _handleCharacterChanged(event) {
         var detail = event && event.detail;
         if (!detail) return;
-        var action = detail.action;
-        if (action !== 'surnameChange'
-            && action !== 'surnameRevert'
-            && action !== 'surnameHistoryCleared'
-            && action !== 'birthSurname') {
-            return;
-        }
+
+        // CharacterState emits the canonical characterChanged event for
+        // every successful Character mutation. Surname-specific commands
+        // therefore arrive with actions such as "update", not the
+        // NameCommands event names. Invalidate every affected character;
+        // unrelated updates are harmless and keep this cache coherent.
         var ids = Array.isArray(detail.characterIds) ? detail.characterIds : [];
         for (var i = 0; i < ids.length; i++) {
             invalidateSurnameHistory(ids[i]);
@@ -388,12 +387,27 @@
 
     function _handleNameListChanged(event) {
         var detail = event && event.detail;
-        if (!detail || !_hasId(detail.cultureId)) return;
-        invalidateNameList(detail.cultureId);
+        if (!detail) return;
+
+        // NameCommands retains the nameEvent wrapper for compatibility.
+        // Accept the flat shape too, so the state boundary is resilient
+        // to future event-contract cleanup.
+        var payload = detail.nameEvent && typeof detail.nameEvent === 'object'
+            ? detail.nameEvent
+            : detail;
+        if (!_hasId(payload.cultureId)) return;
+        invalidateNameList(payload.cultureId);
+    }
+
+    function _handleMasterDataUpdated() {
+        // Imports and cross-tab reloads replace canonical objects. Cached
+        // references must never survive that replacement.
+        clearAllCaches();
     }
 
     window.addEventListener('characterChanged', _handleCharacterChanged);
     window.addEventListener('nameListChanged', _handleNameListChanged);
+    window.addEventListener('masterDataUpdated', _handleMasterDataUpdated);
 
     // =========================================================================
     // 11. INTEGRITY / DIAGNOSTICS
