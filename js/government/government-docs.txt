@@ -291,9 +291,11 @@ Cross-domain references are labeled with their subsystem:
       window.IndustryQueries               ([industry]
                                             getIndustryTaxRevenue,
                                             getIndustryEnterpriseStats)
-    Call-time dependencies:
-      All of the above, plus C.SUCCESSION_CANDIDATE_LIMIT read
+    Required call-time dependencies:
+      The required modules above, plus C.SUCCESSION_CANDIDATE_LIMIT read
       inside getSuccessionPlan.
+    Optional call-time projections:
+      RoleQueries.getRoleSummary and IndustryQueries revenue/statistics.
     Consumed by:
       [load] government-commands.js (getDepartmentDeletionImpact,
         getPosition via createDepartment logging path
@@ -335,7 +337,7 @@ Cross-domain references are labeled with their subsystem:
       - getIndustryTaxRevenue / getIndustryEnterpriseStats return
         null when IndustryQueries or the corresponding method is
         unavailable. IndustryQueries is an optional call-time
-        dependency; the core Government query module still loads.
+        dependency; the core Government query module and bootstrap load.
       - getSalaryBudgetSufficiency returns
         { locationId, allocatedBudget, prosperity } — NOT a
         sufficiency ratio. The view model
@@ -1374,10 +1376,10 @@ GROUP S4 — GOVERNMENT QUERIES
     ← AFTER: js/systems/government/government-rules.js
     ← AFTER: js/character/character-queries.js
     ← AFTER: js/location/location-queries.js
-    ← AFTER: js/roles/role-queries.js         [UNVERIFIED]
+    ← OPTIONAL: js/roles/role-queries.js (role-name projections only)
     ← AFTER: js/settlement/settlement-queries.js
     ← AFTER: js/settlement/settlement-prosperity-queries.js
-    ← AFTER: js/industry/industry-queries.js   [UNVERIFIED]
+    ← OPTIONAL: js/industry/industry-queries.js (industry projections only)
 
   Notes:
     - Every cross-domain module in the load-time guard block is
