@@ -799,10 +799,22 @@
         }
         var result = RC.collectTithes(placeId);
         if (result && result.success) {
+            var saveResult = typeof RC.persist === 'function'
+                ? RC.persist()
+                : { success: false, reason: 'ReligionCommands.persist is unavailable' };
+            if (!saveResult || saveResult.success !== true) {
+                _showToast(
+                    'Tithes were collected in memory, but saving failed: ' +
+                    (saveResult && saveResult.reason ? saveResult.reason : 'unknown'),
+                    'error'
+                );
+                return;
+            }
             var amount = result.data && typeof result.data.amount === 'number'
                 ? result.data.amount
                 : 0;
             _showToast('Collected ' + amount + ' gold in tithes', 'success');
+            _rerender(container, religion);
         } else {
             _showToast(
                 'Failed to collect tithes: ' +
