@@ -556,7 +556,17 @@
             );
         }
 
-        var result = CS.updateCharacter(characterId, updates);
+        if (typeof window.validateCharacterFieldUpdates !== 'function') {
+            return _fail('CharacterFactory.validateCharacterFieldUpdates is required.');
+        }
+        var validation = window.validateCharacterFieldUpdates(updates);
+        if (!validation || validation.success !== true) {
+            return _fail(validation && validation.reason
+                ? validation.reason
+                : 'Character field validation failed.');
+        }
+
+        var result = CS.updateCharacter(characterId, validation.updates);
         if (!result || result.success !== true) {
             return _fail(result && result.reason
                 ? result.reason
@@ -594,6 +604,19 @@
                     offenders.join(', ')
                 );
             }
+            if (typeof window.validateCharacterFieldUpdates !== 'function') {
+                return _fail('CharacterFactory.validateCharacterFieldUpdates is required.');
+            }
+            var validation = window.validateCharacterFieldUpdates(change.updates);
+            if (!validation || validation.success !== true) {
+                return _fail(
+                    'Change at index ' + i + ': ' +
+                    (validation && validation.reason
+                        ? validation.reason
+                        : 'Character field validation failed.')
+                );
+            }
+            change.updates = validation.updates;
         }
 
         options = options || {};
