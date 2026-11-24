@@ -197,7 +197,18 @@
             return _fail('saveMasterData unavailable', C.CODES.DAMAGE_FAILED);
         }
         try {
-            window.saveMasterData();
+            var saved = window.saveMasterData();
+            if (saved !== true) {
+                var saveError = (typeof window.getLastSaveError === 'function')
+                    ? window.getLastSaveError()
+                    : null;
+                var message = saveError && saveError.message
+                    ? saveError.message
+                    : (saved === false
+                        ? 'saveMasterData returned false (save failed or another save is in progress).'
+                        : 'saveMasterData did not confirm a successful save.');
+                return _fail(message, C.CODES.DAMAGE_FAILED);
+            }
             if (typeof window.invalidateAccessorCaches === 'function') {
                 window.invalidateAccessorCaches();
             }
