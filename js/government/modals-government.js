@@ -204,7 +204,7 @@
             '<select id="newGovTypeRanks" multiple size="5" style="width:100%;height:120px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
             _buildRankOptions([]) +
             '</select>' +
-            '<small style="font-size:0.55rem;color:var(--dim);">Hold Ctrl/Cmd to select multiple. Empty = all ranks.</small>' +
+            '<small style="font-size:0.55rem;color:var(--dim);">Hold Ctrl/Cmd to select multiple. A leader must hold one of these exact active ranks. Empty = all ranks.</small>' +
             '</div>' +
             '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
             infoIcon + ' Government types define the structure of governance for locations.' +
@@ -279,6 +279,7 @@
             '<select id="editGovTypeRanks" multiple size="5" style="width:100%;height:120px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
             _buildRankOptions(type.allowedRankIds) +
             '</select>' +
+            '<small style="font-size:0.55rem;color:var(--dim);">A leader must hold one of these exact active ranks. Empty = all ranks. Saving is blocked if it would invalidate a current leader.</small>' +
             '</div>' +
             '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
             infoIcon + ' Edit government type details.' +
