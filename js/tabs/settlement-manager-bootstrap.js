@@ -386,7 +386,6 @@
 
     function init() {
         if (_initialized) return;
-        _initialized = true;
 
         var TabManager, uiState;
         try {
@@ -408,6 +407,10 @@
             }
             return;
         }
+
+        // Mark initialized only after required dependencies are available.
+        // A caller may retry init() after a transient script-order failure.
+        _initialized = true;
 
         // Rebuild canonical indexes against current data.
         if (window.SettlementState
