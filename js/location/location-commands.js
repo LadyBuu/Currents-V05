@@ -1433,7 +1433,8 @@
                 return {
                     reconciled: changes.length,
                     failed: 0,
-                    failedIds: []
+                    failedIds: [],
+                    characterIds: changes.map(function(change) { return change.id; })
                 };
             }
 
