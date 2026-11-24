@@ -1161,7 +1161,7 @@
                 if (cultureTransactionEnabled && outcomes.culture.updatedCultureIds.length && window.CultureState) {
                     window.CultureState.publish('cultureLocationsReconciled', {
                         locationIds: locationIds.slice(),
-                        cultureIds: outcomes.culture.updatedCultureIds,
+                        updatedCultureIds: outcomes.culture.updatedCultureIds,
                         removedAssociations: outcomes.culture.removedAssociations
                     });
                 }
