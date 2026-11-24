@@ -665,6 +665,19 @@
                 totalLoss: (typeof disasterData.totalLoss === 'number') ? disasterData.totalLoss : 0
             };
 
+            newRecord = _normaliseRecord(newRecord);
+            var damageLists = newRecord.structuralDamage.destructionList;
+            [
+                ['featuresDestroyed', 'features'],
+                ['schoolsDestroyed', 'schools'],
+                ['enterprisesDestroyed', 'enterprises'],
+                ['residencesDemolished', 'residences'],
+                ['householdsDestroyed', 'households']
+            ].forEach(function(pair) {
+                if (newRecord.structuralDamage[pair[0]] !== damageLists[pair[1]].length) {
+                    throw new Error('Initial structuralDamage.' + pair[0] + ' must match destructionList.' + pair[1] + '.length');
+                }
+            });
             if (!_indexInto(_state.disasters, newRecord)) {
                 return _fail('Disaster already indexed: ' + newRecord.id, C.CODES.VALIDATION);
             }
