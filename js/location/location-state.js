@@ -677,6 +677,16 @@
     // -------------------------------------------------------------------------
 
     window.LocationState = {
+        _transactionSnapshotDeletedLocations: function () {
+            if (!window.masterData || !window.masterData.data || !Array.isArray(window.masterData.data.places)) throw new Error('Location canonical places unavailable.');
+            return window.masterData.data.places;
+        },
+        _transactionRestoreDeletedLocations: function (snapshot) {
+            if (!Array.isArray(snapshot) || !window.masterData || !window.masterData.data) return { success: false, reason: 'Invalid Location transaction snapshot.' };
+            window.masterData.data.places = snapshot;
+            try { hydrateFromMasterData(); return { success: true }; } catch (error) { return { success: false, reason: error.message || String(error) }; }
+        },
+
         // Lifecycle
         hydrateFromMasterData: hydrateFromMasterData,
         refresh: refresh,
