@@ -468,6 +468,60 @@
         return false;
     }
 
+    /**
+     * Removes a set of places as one in-memory state mutation. Canonical data
+     * is staged first and indexes are hydrated once. If hydration fails, the
+     * original canonical array is restored and the error is propagated.
+     *
+     * @param {string[]} placeIds
+     * @returns {string[]} removed ids
+     */
+    function _removePlaces(placeIds) {
+        if (!Array.isArray(placeIds)) {
+            throw new TypeError('LocationState._removePlaces: placeIds must be an array');
+        }
+        var places = _canonicalPlaces();
+        var removeSet = Object.create(null);
+        for (var i = 0; i < placeIds.length; i++) {
+            if (typeof placeIds[i] !== 'string' || placeIds[i].length === 0) {
+                throw new TypeError('LocationState._removePlaces: every id must be a non-empty string');
+            }
+            removeSet[placeIds[i]] = true;
+        }
+        var removed = [];
+        var staged = [];
+        for (var j = 0; j < places.length; j++) {
+            var record = places[j];
+            if (record && Object.prototype.hasOwnProperty.call(removeSet, record.id)) {
+                removed.push(record.id);
+            } else {
+                staged.push(record);
+            }
+        }
+        if (removed.length !== Object.keys(removeSet).length) {
+            var found = Object.create(null);
+            for (var k = 0; k < removed.length; k++) found[removed[k]] = true;
+            var missing = Object.keys(removeSet).filter(function(id) { return !found[id]; });
+            throw new Error('LocationState._removePlaces: places not found: ' + missing.join(', '));
+        }
+        if (removed.length === 0) return [];
+        window.masterData.data.places = staged;
+        try {
+            hydrateFromMasterData();
+        } catch (error) {
+            window.masterData.data.places = places;
+            try {
+                hydrateFromMasterData();
+            } catch (rollbackError) {
+                error.rollbackError = rollbackError;
+            }
+            throw error;
+        }
+        window.markDataDirty();
+        _invalidateAccessorCaches();
+        return removed;
+    }
+
     function _addLocationType(type) {
         if (!type || !type.id) {
             throw new Error(
@@ -648,6 +702,7 @@
         // invalidateAccessorCaches on success.
         _addPlace: _addPlace,
         _removePlace: _removePlace,
+        _removePlaces: _removePlaces,
         _addLocationType: _addLocationType,
         _removeLocationType: _removeLocationType,
 
