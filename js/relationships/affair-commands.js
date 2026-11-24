@@ -55,15 +55,17 @@
  *   RomanceCommands.startCommittedRelationship directly and merge
  *   metadata in a subsequent RelationshipCommands.update.
  *
- *   All other public commands in this file are single-commit.
+ *   All other public commands in this file are single-commit, except
+ *   applyConsequences, which uses a claim write before cross-domain
+ *   effects and a result write afterward. The claim prevents automatic
+ *   re-execution if the page is interrupted or the final result write
+ *   fails. A claimed/partial run requires manual review; it is not
+ *   silently retried because murder and execution commands do not
+ *   expose a shared transaction or idempotency contract.
  *
- *   The record is never in an inconsistent state between the two
- *   commits: startCommittedRelationship produces a valid committed
- *   relationship with the SECRET attribute (i.e. an affair with
- *   default metadata), and the second commit upgrades the metadata in
- *   place. A crash between commits leaves a valid affair record with
- *   default metadata, which is indistinguishable from an affair
- *   created directly via RomanceCommands with forceAffair: true.
+ *   The createAffair record is valid between its two commits:
+ *   startCommittedRelationship produces a committed relationship with
+ *   the SECRET attribute, and the second commit adds affair metadata.
  *
  * Randomness:
  *   Every roll is either caller-supplied or drawn from window.Random.
