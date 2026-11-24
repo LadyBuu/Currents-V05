@@ -924,7 +924,8 @@
         addNameToList: addNameToList,
         removeNameFromList: removeNameFromList,
         setCultureSurnameRules: setCultureSurnameRules,
-        clearCultureSurnameRules: clearCultureSurnameRules,\n        reconcileDeletedCultures: reconcileDeletedCultures,
+        clearCultureSurnameRules: clearCultureSurnameRules,
+        reconcileDeletedCultures: reconcileDeletedCultures,
 
         calculateMarriageSurnames: calculateMarriageSurnames,
 
