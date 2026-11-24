@@ -1417,3 +1417,28 @@ PART 5 — KNOWN HAZARDS
 ================================================================================
 END OF DOCUMENT
 ================================================================================
+
+
+CHARACTER FIELD UPDATE VALIDATION (Phase 1)
+-------------------------------------------
+character-factory.js exports validateCharacterFieldUpdates(updates).
+CharacterCommands.updateCharacterFields and updateCharactersFields use this
+shared schema validator before passing patches to CharacterState.
+
+The validator:
+  - rejects unknown fields and id changes;
+  - validates scalar types, enum values, years, IDs, and required names;
+  - validates structured object fields as plain, cycle-free objects;
+  - clones array/object inputs so callers cannot retain mutable references;
+  - rejects cyclic arrays and objects;
+  - applies the deceased/deathYear consistency rule when both fields are
+    supplied in the same patch.
+
+Domain-owned fields remain blocked by CharacterCommands' ownership gate,
+even if the factory accepts those fields during initial character creation.
+They must be changed through their owning domain's commands.
+
+The generic update API now rejects invalid values rather than relying on
+creation-time validation alone. Nested entry-level schemas for moves and
+history arrays, and full cross-record/cross-domain validation, remain
+separate audit work.
