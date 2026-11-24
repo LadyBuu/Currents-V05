@@ -23,7 +23,6 @@
     var _LocationCommands       = window.LocationCommands;
     var _HouseholdCommands      = window.HouseholdCommands;
     var _HouseholdQueries       = window.HouseholdQueries;
-    var _SettlementQueries      = window.SettlementQueries;
     var _SettlementGovCmds      = window.SettlementGovernmentCommands;
 
     if (!C)                       throw new Error('government-commands.js requires GovernmentConstants');
@@ -36,7 +35,6 @@
     if (!_LocationCommands)       throw new Error('government-commands.js requires LocationCommands');
     if (!_HouseholdCommands)      throw new Error('government-commands.js requires HouseholdCommands');
     if (!_HouseholdQueries)       throw new Error('government-commands.js requires HouseholdQueries');
-    if (!_SettlementQueries)      throw new Error('government-commands.js requires SettlementQueries');
     if (!_SettlementGovCmds)      throw new Error('government-commands.js requires SettlementGovernmentCommands');
 
     // Load-time verification of the specific cross-domain methods we call.
@@ -538,10 +536,20 @@
         var pos = State._getPositionCanonical(departmentId, positionId);
         if (!pos) return _fail('Position not found', C.CODES.NOT_FOUND);
 
-        var active = State._getAssignmentsForPositionCanonical(departmentId, positionId, true);
-        if (active.length > 0) {
-            return _fail('Position has ' + active.length +
-                ' active assignment(s). Remove them first.', C.CODES.HAS_ASSIGNMENTS);
+        var assignments = State._getAssignmentsForPositionCanonical(
+            departmentId, positionId, false
+        );
+        if (assignments.length > 0) {
+            var activeCount = 0;
+            for (var assignmentIndex = 0; assignmentIndex < assignments.length; assignmentIndex++) {
+                if (assignments[assignmentIndex].endYear == null) activeCount++;
+            }
+            return _fail(
+                'Position has ' + assignments.length + ' assignment record(s)' +
+                (activeCount ? ', including ' + activeCount + ' active' : '') +
+                '. It cannot be deleted without orphaning assignment history.',
+                C.CODES.HAS_ASSIGNMENTS
+            );
         }
 
         State._removePosition(departmentId, positionId);
