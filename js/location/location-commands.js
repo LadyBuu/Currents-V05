@@ -846,19 +846,19 @@
                 'to safely delete locations with Culture associations'
             );
         }
-        var cultureCleanup = { updatedCultureIds: [], removedAssociations: 0 };
+        var culturePreflight = { success: true, data: { updatedCultureIds: [], removedAssociations: 0 } };
         if (window.CultureCommands &&
             typeof window.CultureCommands.reconcileDeletedLocations === 'function') {
-            var cultureResult = window.CultureCommands.reconcileDeletedLocations(
-                Object.keys(toRemove)
+            culturePreflight = window.CultureCommands.reconcileDeletedLocations(
+                Object.keys(toRemove),
+                { dryRun: true }
             );
-            if (!cultureResult || cultureResult.success !== true) {
+            if (!culturePreflight || culturePreflight.success !== true) {
                 return _fail(
-                    'deletePlace: Culture cleanup failed: ' +
-                    ((cultureResult && cultureResult.reason) || 'unknown error')
+                    'deletePlace: Culture cleanup preflight failed: ' +
+                    ((culturePreflight && culturePreflight.reason) || 'unknown error')
                 );
             }
-            cultureCleanup = cultureResult.data || cultureCleanup;
         }
 
         // A settlement is owned by its location. Reconcile settlement
@@ -990,6 +990,23 @@
                 );
             }
             religionCleanup = religionResult.data || religionCleanup;
+        }
+
+        // Apply the prevalidated Culture association cleanup only after the
+        // other domain cleanup boundaries have accepted the deletion.
+        var cultureCleanup = { updatedCultureIds: [], removedAssociations: 0 };
+        if (window.CultureCommands &&
+            typeof window.CultureCommands.reconcileDeletedLocations === 'function') {
+            var cultureResult = window.CultureCommands.reconcileDeletedLocations(
+                Object.keys(toRemove)
+            );
+            if (!cultureResult || cultureResult.success !== true) {
+                return _fail(
+                    'deletePlace: Culture cleanup failed: ' +
+                    ((cultureResult && cultureResult.reason) || 'unknown error')
+                );
+            }
+            cultureCleanup = cultureResult.data || cultureCleanup;
         }
 
         var characterCleanup = _cleanupCharactersAtPlaces(toRemove);
