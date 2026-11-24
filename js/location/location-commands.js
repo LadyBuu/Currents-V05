@@ -863,6 +863,25 @@
             }
         }
 
+        // Validate the Location graph before any other domain is mutated.
+        // _removePlaces hydrates this same graph after cleanup; running the
+        // read-only rebuild now moves malformed/corrupt Location failures to
+        // the preflight phase instead of discovering them after other domains
+        // have already reconciled their references.
+        try {
+            if (!LS || typeof LS.refresh !== 'function') {
+                throw new Error('LocationState.refresh is required for deletion preflight');
+            }
+            LS.refresh();
+        } catch (locationPreflightError) {
+            return _fail(
+                'deletePlace: Location state failed preflight: ' +
+                (locationPreflightError && locationPreflightError.message
+                    ? locationPreflightError.message
+                    : String(locationPreflightError))
+            );
+        }
+
         // Character and Household references are required cleanup, not
         // best-effort housekeeping. Run them before mutating other domains so
         // a failure cannot leave a deleted Location with dangling references.
@@ -882,55 +901,6 @@
             );
         }
 
-        // A settlement is owned by its location. Reconcile settlement
-        // records before removing the place so no orphaned settlement can
-        // survive a simple or cascade delete. This is coordinated through
-        // the settlement commit boundary, but persistence remains owned by
-        // LocationCommands.persist() so both domains are saved together.
-        var settlementCleanup = { removedLocationIds: [], event: null };
-        var settlementStore = window.masterData && window.masterData.data
-            ? window.masterData.data.settlementData
-            : null;
-        var settlementIdsToRemove = [];
-        for (var settlementLocationId in toRemove) {
-            if (!Object.prototype.hasOwnProperty.call(toRemove, settlementLocationId)) {
-                continue;
-            }
-            if (settlementStore &&
-                Object.prototype.hasOwnProperty.call(settlementStore, settlementLocationId) &&
-                settlementStore[settlementLocationId]) {
-                settlementIdsToRemove.push(settlementLocationId);
-            }
-        }
-
-        if (settlementIdsToRemove.length > 0) {
-            if (!window.SettlementCommandCommit ||
-                typeof window.SettlementCommandCommit.removeMany !== 'function') {
-                return _fail(
-                    'deletePlace: SettlementCommandCommit.removeMany is required ' +
-                    'to safely delete locations that have settlements'
-                );
-            }
-            try {
-                settlementCleanup = window.SettlementCommandCommit.removeMany(
-                    settlementIdsToRemove,
-                    {
-                        type: 'settlementsRemovedWithLocations',
-                        cause: 'locationDeleted',
-                        placeId: placeId,
-                        mode: mode
-                    },
-                    { persist: false, publish: false }
-                );
-            } catch (settlementError) {
-                return _fail(
-                    'deletePlace: settlement cleanup failed: ' +
-                    (settlementError && settlementError.message
-                        ? settlementError.message
-                        : String(settlementError))
-                );
-            }
-        }
 
         // Government departments are anchored to locations. Remove affected
         // departments and their dependent child departments before deleting
@@ -1028,6 +998,56 @@
                 );
             }
             cultureCleanup = cultureResult.data || cultureCleanup;
+        }
+
+        // A settlement is owned by its location. Reconcile settlement
+        // records before removing the place so no orphaned settlement can
+        // survive a simple or cascade delete. This is coordinated through
+        // the settlement commit boundary, but persistence remains owned by
+        // LocationCommands.persist() so both domains are saved together.
+        var settlementCleanup = { removedLocationIds: [], event: null };
+        var settlementStore = window.masterData && window.masterData.data
+            ? window.masterData.data.settlementData
+            : null;
+        var settlementIdsToRemove = [];
+        for (var settlementLocationId in toRemove) {
+            if (!Object.prototype.hasOwnProperty.call(toRemove, settlementLocationId)) {
+                continue;
+            }
+            if (settlementStore &&
+                Object.prototype.hasOwnProperty.call(settlementStore, settlementLocationId) &&
+                settlementStore[settlementLocationId]) {
+                settlementIdsToRemove.push(settlementLocationId);
+            }
+        }
+
+        if (settlementIdsToRemove.length > 0) {
+            if (!window.SettlementCommandCommit ||
+                typeof window.SettlementCommandCommit.removeMany !== 'function') {
+                return _fail(
+                    'deletePlace: SettlementCommandCommit.removeMany is required ' +
+                    'to safely delete locations that have settlements'
+                );
+            }
+            try {
+                settlementCleanup = window.SettlementCommandCommit.removeMany(
+                    settlementIdsToRemove,
+                    {
+                        type: 'settlementsRemovedWithLocations',
+                        cause: 'locationDeleted',
+                        placeId: placeId,
+                        mode: mode
+                    },
+                    { persist: false, publish: false }
+                );
+            } catch (settlementError) {
+                return _fail(
+                    'deletePlace: settlement cleanup failed: ' +
+                    (settlementError && settlementError.message
+                        ? settlementError.message
+                        : String(settlementError))
+                );
+            }
         }
 
         var removed = [];
