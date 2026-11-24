@@ -200,12 +200,6 @@
     if (typeof window.getCurrentLocationId !== 'function') {
         throw new Error('crime-commands.js requires getCurrentLocationId');
     }
-    if (typeof window.getRelationshipsForCharacter !== 'function') {
-        throw new Error('crime-commands.js requires getRelationshipsForCharacter');
-    }
-    if (typeof window.endRelationship !== 'function') {
-        throw new Error('crime-commands.js requires endRelationship');
-    }
 
     if (typeof window.HouseholdCommands === 'undefined') {
         throw new Error('crime-commands.js requires HouseholdCommands');
@@ -1100,26 +1094,6 @@
                 }
             }
             var partialFailures = deathCascadeFailure ? [deathCascadeFailure] : [];
-
-            if (options.endRelationships !== false) {
-                try {
-                    var relationships = window.getRelationshipsForCharacter(condemned.id);
-                    for (var i = 0; i < relationships.length; i++) {
-                        var rel = relationships[i];
-                        if (rel.status === 'ongoing') {
-                            window.endRelationship(
-                                rel.id,
-                                year,
-                                'Execution of ' + (condemned.name || 'Unknown')
-                            );
-                        }
-                    }
-                } catch (e) {
-                    if (typeof console !== 'undefined' && console.error) {
-                        console.error('crime-commands.js: endRelationship flow threw', e);
-                    }
-                }
-            }
 
             var householdId = _getHouseholdIdForCharacter(condemned);
             if (householdId) {
