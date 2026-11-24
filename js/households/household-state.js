@@ -345,13 +345,13 @@
         var duplicates = [];
         for (var i = 0; i < records.length; i++) {
             var r = records[i];
-            if (!r || typeof r !== 'object') {
+            if (!r || typeof r !== 'object' || Array.isArray(r)) {
                 duplicates.push({ index: i, id: null, reason: 'non-object' });
                 continue;
             }
             var id = r[idField];
-            if (!id) {
-                duplicates.push({ index: i, id: null, reason: 'missing id' });
+            if (typeof id !== 'string' || id.trim() === '') {
+                duplicates.push({ index: i, id: id == null ? null : id, reason: 'invalid id' });
                 continue;
             }
             if (seen.has(id)) {
@@ -363,40 +363,33 @@
         return duplicates;
     }
 
+    // Prepare detached collections. Legacy shape defaults are applied to
+    // copies, never to canonical masterData, until every collection passes
+    // identity validation. A malformed later record therefore cannot leave
+    // earlier records half-normalised after a failed hydration.
+    function _prepareCollection(source, normalise) {
+        var records = Array.isArray(source) ? source : [];
+        var prepared = records.map(function(record) {
+            var copy = _cloneTransactionValue(record);
+            normalise(copy);
+            return copy;
+        });
+        return prepared;
+    }
+
     function _loadHouseholds() {
         var master = _getMasterData();
-        if (!Array.isArray(master.data.households)) {
-            master.data.households = [];
-        }
-        var households = master.data.households;
-        for (var i = 0; i < households.length; i++) {
-            _ensureHouseholdShape(households[i]);
-        }
-        return households;
+        return _prepareCollection(master.data.households, _ensureHouseholdShape);
     }
 
     function _loadHouseholdPositions() {
         var master = _getMasterData();
-        if (!Array.isArray(master.data.householdPositions)) {
-            master.data.householdPositions = [];
-        }
-        var positions = master.data.householdPositions;
-        for (var i = 0; i < positions.length; i++) {
-            _ensurePositionShape(positions[i]);
-        }
-        return positions;
+        return _prepareCollection(master.data.householdPositions, _ensurePositionShape);
     }
 
     function _loadHouseholdAssignments() {
         var master = _getMasterData();
-        if (!Array.isArray(master.data.householdAssignments)) {
-            master.data.householdAssignments = [];
-        }
-        var assignments = master.data.householdAssignments;
-        for (var i = 0; i < assignments.length; i++) {
-            _ensureAssignmentShape(assignments[i]);
-        }
-        return assignments;
+        return _prepareCollection(master.data.householdAssignments, _ensureAssignmentShape);
     }
 
     /**
@@ -438,6 +431,12 @@
                 );
             }
 
+            // Commit all three canonical collections together only after
+            // every identity check succeeds.
+            var master = _getMasterData();
+            master.data.households = households;
+            master.data.householdPositions = positions;
+            master.data.householdAssignments = assignments;
             _state.households = households;
             _state.householdPositions = positions;
             _state.householdAssignments = assignments;
