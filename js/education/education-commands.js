@@ -2935,6 +2935,26 @@
         var transaction = TX.execute({
             id: 'education-' + label + '-' + Date.now(),
             context: { operation: label },
+            persist: function () {
+                if (typeof window.saveMasterData !== 'function') {
+                    return { success: false, reason: 'saveMasterData is unavailable.' };
+                }
+                try {
+                    if (window.saveMasterData() === true) return { success: true };
+                    var saveError = typeof window.getLastSaveError === 'function'
+                        ? window.getLastSaveError()
+                        : null;
+                    return {
+                        success: false,
+                        reason: saveError && saveError.message
+                            ? saveError.message
+                            : 'saveMasterData returned false.'
+                    };
+                } catch (error) {
+                    return { success: false, reason: error && error.message
+                        ? error.message : 'saveMasterData threw.' };
+                }
+            },
             participants: [{
                 name: 'education-institution-lifecycle',
                 prepare: function () {
