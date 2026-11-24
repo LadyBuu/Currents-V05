@@ -1277,34 +1277,93 @@
         if (unit.isDemolished) return _fail('UNIT_DEMOLISHED', 'Unit is demolished');
         if (!unit.isVacant) return _fail('UNIT_OCCUPIED', 'Unit is already occupied');
 
-        var household = null;
-        if (_householdQueriesAvailable()) {
-            var hq = window.HouseholdQueries;
-            if (typeof hq.getHousehold === 'function') {
-                household = hq.getHousehold(householdId);
-            }
+        // Both sides of this relationship are required. Do not proceed with
+        // an unverifiable household or a missing reverse-index writer.
+        if (!_householdQueriesAvailable()
+            || typeof window.HouseholdQueries.getHousehold !== 'function') {
+            return _fail('HOUSEHOLD_QUERIES_UNAVAILABLE',
+                'HouseholdQueries.getHousehold is required for residence assignment');
         }
-        if (!household && _householdQueriesAvailable()) {
-            return _fail('HOUSEHOLD_NOT_FOUND', 'Household not found');
+        if (!_householdCommandsAvailable()
+            || typeof window.HouseholdCommands.associateWithResidence !== 'function') {
+            return _fail('HOUSEHOLD_COMMANDS_UNAVAILABLE',
+                'HouseholdCommands.associateWithResidence is required for residence assignment');
+        }
+
+        var household = null;
+        try {
+            household = window.HouseholdQueries.getHousehold(householdId);
+        } catch (e) {
+            return _fail('HOUSEHOLD_LOOKUP_FAILED',
+                e && e.message ? e.message : 'Household lookup failed');
+        }
+        if (!household) return _fail('HOUSEHOLD_NOT_FOUND', 'Household not found');
+
+        if (household.residenceId && household.residenceId !== residenceId) {
+            return _fail('HOUSEHOLD_ALREADY_ASSIGNED',
+                'Household is already associated with another residence; vacate it before reassignment');
         }
 
         var y = _resolveYear(year);
         if (y === null) return _fail('INVALID_YEAR', 'Invalid assignment year');
 
-        var resolvedHouseholdName = householdName ||
-            (household ? household.name : 'Unknown');
+        var resolvedHouseholdName = householdName || household.name || 'Unknown';
+
+        // Write the reverse index before changing canonical unit occupancy.
+        // A rejected Household write therefore leaves the Residence untouched.
+        var reverseIndexResult = _associateHouseholdReverseIndex(
+            householdId, r, unitNumber, y, options.notes || ''
+        );
+        if (!reverseIndexResult || reverseIndexResult.success !== true) {
+            return _fail(
+                reverseIndexResult && reverseIndexResult.code
+                    ? reverseIndexResult.code : 'HOUSEHOLD_ASSOCIATION_FAILED',
+                reverseIndexResult && reverseIndexResult.reason
+                    ? reverseIndexResult.reason
+                    : 'Could not update the Household residence reference'
+            );
+        }
 
         var vacatedOthers = [];
         for (var j = 0; j < r.units.length; j++) {
             var other = r.units[j];
             if (other.unitNumber === unitNumber) continue;
             if (other.householdId === householdId && !other.isVacant) {
-                var dis = _disassociateHouseholdFromUnit(r, other, y,
-                    'Moved to Unit ' + unitNumber);
-                vacatedOthers.push({
-                    unitNumber: other.unitNumber,
-                    disassociation: dis
-                });
+                // This is a same-residence unit move. The Household reverse
+                // index already points to the destination, so close the old
+                // unit history without clearing that newly-written index.
+                if (!Array.isArray(other.associationHistory)) {
+                    other.associationHistory = [];
+                }
+                for (var ah = other.associationHistory.length - 1; ah >= 0; ah--) {
+                    var oldAssociation = other.associationHistory[ah];
+                    if (oldAssociation.householdId === householdId
+                        && !oldAssociation.endedYear) {
+                        oldAssociation.endedYear = y;
+                        oldAssociation.reason = 'Moved to Unit ' + unitNumber;
+                        oldAssociation.timestamp = Date.now();
+                        break;
+                    }
+                }
+                if (Array.isArray(r.associationHistory)) {
+                    for (var rh = r.associationHistory.length - 1; rh >= 0; rh--) {
+                        var oldResidenceAssociation = r.associationHistory[rh];
+                        if (oldResidenceAssociation.householdId === householdId
+                            && oldResidenceAssociation.unitNumber === other.unitNumber
+                            && !oldResidenceAssociation.endedYear) {
+                            oldResidenceAssociation.endedYear = y;
+                            oldResidenceAssociation.reason = 'Moved to Unit ' + unitNumber;
+                            oldResidenceAssociation.timestamp = Date.now();
+                            break;
+                        }
+                    }
+                }
+                other.householdId = null;
+                other.householdName = null;
+                other.isVacant = true;
+                other.assignedYear = null;
+                other.vacantYear = y;
+                vacatedOthers.push({ unitNumber: other.unitNumber });
             }
         }
 
@@ -1336,12 +1395,7 @@
             timestamp: Date.now()
         });
 
-        var reverseIndexResult = _associateHouseholdReverseIndex(
-            householdId, r, unitNumber, y, options.notes || ''
-        );
-
         r.lastUpdated = y;
-
         _pushHistory(r, 'unit_assigned',
             resolvedHouseholdName + ' assigned to Unit ' + unitNumber,
             null, y);
@@ -1366,10 +1420,8 @@
             householdId: householdId,
             year: y,
             vacatedOthers: vacatedOthers,
-            reverseIndexFailed: !reverseIndexResult.success,
-            reverseIndexReason: reverseIndexResult.success
-                ? null
-                : reverseIndexResult.reason
+            reverseIndexFailed: false,
+            reverseIndexReason: null
         });
     }
 
@@ -1449,10 +1501,21 @@
      */
     function _disassociateHouseholdFromUnit(r, unit, year, reason) {
         var householdId = unit.householdId;
-        var householdName = unit.householdName;
         var unitNumber = unit.unitNumber;
 
-        // Update unit-side history.
+        // Clear the Household reverse index first. If this fails, preserve
+        // canonical unit occupancy and its histories exactly as they were.
+        var dis = _disassociateHouseholdReverseIndex(
+            householdId, r, unitNumber, year, reason
+        );
+        if (!dis || dis.success !== true) {
+            return _fail(
+                dis && dis.code ? dis.code : 'HOUSEHOLD_DISASSOCIATION_FAILED',
+                dis && dis.reason ? dis.reason :
+                    'Could not clear the Household residence reference'
+            );
+        }
+
         if (!Array.isArray(unit.associationHistory)) unit.associationHistory = [];
         for (var i = unit.associationHistory.length - 1; i >= 0; i--) {
             var a = unit.associationHistory[i];
@@ -1464,13 +1527,12 @@
             }
         }
 
-        // Update residence-side association history.
         if (Array.isArray(r.associationHistory)) {
             for (var j = r.associationHistory.length - 1; j >= 0; j--) {
                 var ra = r.associationHistory[j];
-                if (ra.householdId === householdId &&
-                    ra.unitNumber === unitNumber &&
-                    !ra.endedYear) {
+                if (ra.householdId === householdId
+                    && ra.unitNumber === unitNumber
+                    && !ra.endedYear) {
                     ra.endedYear = year;
                     ra.reason = reason;
                     ra.timestamp = Date.now();
@@ -1479,27 +1541,12 @@
             }
         }
 
-        // Clear canonical unit occupancy.
         unit.householdId = null;
         unit.householdName = null;
         unit.isVacant = true;
         unit.assignedYear = null;
         unit.vacantYear = year;
-
-        // Attempt to clear the reverse index on the household side.
-        var dis = _disassociateHouseholdReverseIndex(
-            householdId, r, unitNumber, year, reason
-        );
-
-        // If the reverse index didn't clear, record it as a damage
-        // entry — this is the persistent audit trail.
-        if (!dis.success) {
-            _recordReverseIndexFailure(
-                r, householdId, unitNumber, dis.reason
-            );
-        }
-
-        return dis;
+        return _ok(null);
     }
 
     function demolishUnit(residenceId, unitNumber, reason, year) {
