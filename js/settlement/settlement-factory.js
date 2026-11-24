@@ -211,7 +211,14 @@
         }
 
         var foundedYear = currentYear;
-        if (_isFiniteNumber(overrides.foundedYear)) {
+        if (overrides.foundedYear !== undefined &&
+            overrides.foundedYear !== null) {
+            if (typeof window.isValidYear !== 'function' ||
+                window.isValidYear(overrides.foundedYear) !== true) {
+                throw new Error(
+                    'SettlementFactory: foundedYear must be a valid world year.'
+                );
+            }
             foundedYear = overrides.foundedYear;
         }
 
