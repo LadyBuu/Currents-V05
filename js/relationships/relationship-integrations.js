@@ -53,7 +53,9 @@
  *   progressApprenticeship / completeApprenticeship.
  *
  *   ApprenticeshipCommands exposes terminateApprenticeship(masterId,
- *   apprenticeId, roleId, reason) as its terminal method. There is no
+ *   apprenticeId, roleId, reason, endYear?) as its terminal method. The
+ *   optional endYear lets lifecycle callers preserve historical event dates.
+ *   There is no
  *   `endApprenticeship` — that name was a bug in earlier revisions of
  *   this module's dispatch. This revision calls the correct method.
  *
@@ -92,7 +94,8 @@
  *     1. Reads the record via RelationshipQueries.getById(relationshipId).
  *     2. Extracts metadata.roleId.
  *     3. Calls ApprenticeshipCommands.terminateApprenticeship(
- *            participantA, participantB, roleId, 'death_of_participant').
+ *            participantA, participantB, roleId, 'death_of_participant',
+ *            deathYear).
  *
  *   If the record is missing (shouldn't happen — the projection just
  *   came from the same store) or metadata.roleId is absent (a
