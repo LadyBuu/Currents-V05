@@ -41,20 +41,15 @@
  *   only for callers that need a stored prosperity input outside the
  *   prosperity query itself.
  *
- *   Coupling: the factory's default (50) MUST equal
- *   SettlementProsperityDefinitions.BASE_PROSPERITY (50). If that
- *   constant changes, this default must change with it, or freshly
- *   created settlements will diverge from the freshness baseline used
- *   by the prosperity calculation. This is a data-level invariant that
- *   the code cannot enforce without an import cycle, so it is
- *   documented here and checked by the settlement-docs consistency
- *   pass.
+ *   The factory reads BASE_PROSPERITY directly from the pure
+ *   SettlementProsperityDefinitions module when creating a record.
+ *   This does not create the crime ↔ prosperity query cycle: the
+ *   definitions module has no dependencies and performs no queries.
+ *   A missing or invalid baseline fails creation instead of silently
+ *   storing a divergent hardcoded value.
  *
- *   A future revision may add
- *   SettlementProsperityCommands.setBaseProsperity(locationId, value)
- *   to allow explicit adjustment. Until then, baseProsperity is set by
- *   the factory and never modified by a command; it is a read-only
- *   input from the domain's perspective.
+ *   baseProsperity is set by the factory and never modified by a
+ *   command; it is a read-only input from the domain's perspective.
  *
  * =============================================================================
  * REFACTOR HISTORY:
@@ -65,10 +60,9 @@
  *       settlement.prosperity, which the factory never set, so the
  *       prosperity term in the crime rate calculation was silently
  *       zero for every settlement.
- *     - Header BASE PROSPERITY FIELD section added, documenting the
- *       field's purpose, its role in breaking the crime ↔ prosperity
- *       query cycle, and its coupling to
- *       SettlementProsperityDefinitions.BASE_PROSPERITY.
+ *     - Factory now reads the stored baseProsperity value from
+ *       SettlementProsperityDefinitions.BASE_PROSPERITY instead of
+ *       hardcoding 50, eliminating a manually maintained invariant.
  *     - No other field or behaviour change. Every other default value
  *       is byte-identical to the prior revision.
  *   Previous revision:
