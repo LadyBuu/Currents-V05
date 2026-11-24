@@ -289,6 +289,17 @@
                 '</div>';
         }
 
+        if (vm.structuralDamageSkippedSystems && vm.structuralDamageSkippedSystems.length > 0) {
+            content +=
+                '<div style="margin-top:8px;padding:8px;background:var(--bg3);' +
+                'border-radius:6px;">' +
+                '<div style="font-size:0.65rem;font-weight:bold;margin-bottom:5px;">' +
+                'Damage systems not applied</div>' +
+                '<div style="font-size:0.6rem;color:var(--dim);">' +
+                _escape(vm.structuralDamageSkippedSystems.join(', ')) +
+                '</div></div>';
+        }
+
         if (vm.metadata && (vm.metadata.severityText || vm.metadata.locationModifier != null)) {
             var metaParts = [];
             if (vm.metadata.severityText) {
