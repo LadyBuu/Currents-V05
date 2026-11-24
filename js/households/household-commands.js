@@ -1425,6 +1425,66 @@
         return _ok({ householdId: householdId });
     }
 
+    /**
+     * Records crime-related household consequences in the Household-owned
+     * crime history. Prestige loss is applied to the canonical reputation
+     * score; an omitted loss (for example, an execution record) is history
+     * only and does not invent a numeric penalty.
+     */
+    function _applyHouseholdCrimeEffect(householdId, params, role) {
+        params = params || {};
+        var household = _internal.getHouseholdRecord(householdId);
+        if (!household) return _fail('NOT_FOUND', 'Household not found');
+        var year = params.year !== undefined ? _resolveYear(params.year) : _getCurrentYear();
+        if (year === null) return _fail('INVALID_YEAR', 'Crime effect year is invalid');
+        var prestigeLoss = params.prestigeLoss === undefined ? 0 : params.prestigeLoss;
+        if (typeof prestigeLoss !== 'number' || !isFinite(prestigeLoss) || prestigeLoss < 0) {
+            return _fail('INVALID_PRESTIGE_LOSS', 'Prestige loss must be a non-negative finite number');
+        }
+
+        if (!Array.isArray(household.crimeHistory)) household.crimeHistory = [];
+        var entry = {
+            eventType: params.eventType || 'crime',
+            role: role,
+            year: year,
+            perpetratorId: params.perpetratorId || null,
+            victimId: params.victimId || null,
+            condemnedId: params.condemnedId || null,
+            prestigeLoss: prestigeLoss,
+            recordedAt: Date.now()
+        };
+        household.crimeHistory.push(entry);
+        if (household.crimeHistory.length > 200) {
+            household.crimeHistory = household.crimeHistory.slice(-200);
+        }
+        if (prestigeLoss > 0) {
+            var currentReputation = (typeof household.reputation === 'number' && isFinite(household.reputation))
+                ? household.reputation : 0;
+            household.reputation = currentReputation - prestigeLoss;
+        }
+        household.updatedAt = Date.now();
+        _commit('householdCrimeImpactRecorded', {
+            householdId: householdId,
+            role: role,
+            eventType: entry.eventType,
+            year: year,
+            prestigeLoss: prestigeLoss
+        });
+        return _ok({ householdId: householdId, entry: entry, reputation: household.reputation });
+    }
+
+    function applyVictimCrime(householdId, params) {
+        return _applyHouseholdCrimeEffect(householdId, params, 'victim');
+    }
+
+    function applyPerpetratorCrime(householdId, params) {
+        return _applyHouseholdCrimeEffect(householdId, params, 'perpetrator');
+    }
+
+    function applyExecutionToHousehold(householdId, params) {
+        return _applyHouseholdCrimeEffect(householdId, params, 'execution');
+    }
+
     // =========================================================================
     // 11. MEMBER MUTATIONS
     // =========================================================================
@@ -3424,6 +3484,11 @@
         // Household lifecycle
         createHousehold: createHousehold,
         deleteHousehold: deleteHousehold,
+
+        // Crime history and consequences
+        applyVictimCrime: applyVictimCrime,
+        applyPerpetratorCrime: applyPerpetratorCrime,
+        applyExecutionToHousehold: applyExecutionToHousehold,
 
         // Household fields
         updateHousehold: updateHousehold,
