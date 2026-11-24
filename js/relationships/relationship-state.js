@@ -591,9 +591,9 @@
      * replaceAll throws on structurally invalid records. Before this
      * change, that throw propagated out of the masterDataUpdated
      * listener, breaking the page on a single corrupt persisted
-     * record. Now the failure is caught, logged, and the previous
-     * in-memory state is preserved. A subsequent save overwrites the
-     * corrupt storage with the in-memory state.
+     * record. Failure is caught and logged, while the previous records
+     * remain available for diagnosis. The state stays uninitialized, so
+     * storage refuses to serialize that stale snapshot.
      *
      * @private
      */
