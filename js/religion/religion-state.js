@@ -1345,6 +1345,7 @@
         _updatePlaceOfWorship: _updatePlaceOfWorship,
         _removePlaceOfWorship: _removePlaceOfWorship,
         _clearDeletedWorshipPlaceLocations: _clearDeletedWorshipPlaceLocations,
+        _reconcileDeletedLocations: _reconcileDeletedLocations,
 
         // ---- Subscriptions ----
         subscribe: subscribe,
