@@ -64,34 +64,38 @@
     function _normalizeArrayField(value, fieldName) {
         if (_isMissing(value)) return [];
         if (Array.isArray(value)) return value;
-        console.warn(
-            'storage-schema.js: field "' + fieldName + '" is not an array ' +
-            '(got ' + typeof value + '); replacing with [].'
+        throw new Error(
+            'storage-schema.js: field "' + fieldName + '" must be an array; refusing to discard its value.'
         );
-        return [];
     }
 
     function _normalizeObjectField(value, fieldName) {
         if (_isMissing(value)) return {};
         if (_isPlainObject(value)) return value;
-        console.warn(
-            'storage-schema.js: field "' + fieldName + '" is not a plain object ' +
-            '(got ' + (Array.isArray(value) ? 'array' : typeof value) + '); replacing with {}.'
+        throw new Error(
+            'storage-schema.js: field "' + fieldName + '" must be a plain object; refusing to discard its value.'
         );
-        return {};
     }
 
     function _ensureArrayField(obj, fieldName) {
         if (!obj || typeof obj !== 'object') return;
-        if (_isMissing(obj[fieldName]) || !Array.isArray(obj[fieldName])) {
+        if (_isMissing(obj[fieldName])) {
             obj[fieldName] = [];
+            return;
+        }
+        if (!Array.isArray(obj[fieldName])) {
+            throw new Error('storage-schema.js: nested field "' + fieldName + '" must be an array; refusing to discard its value.');
         }
     }
 
     function _ensurePlainObjectField(obj, fieldName) {
         if (!obj || typeof obj !== 'object') return;
-        if (!_isPlainObject(obj[fieldName])) {
+        if (_isMissing(obj[fieldName])) {
             obj[fieldName] = {};
+            return;
+        }
+        if (!_isPlainObject(obj[fieldName])) {
+            throw new Error('storage-schema.js: nested field "' + fieldName + '" must be a plain object; refusing to discard its value.');
         }
     }
 
@@ -330,7 +334,8 @@
         if (envelope._legacyEnvelopeLess === true) {
             result._legacyEnvelopeLess = true;
         }
-        if (envelope._yearCoerced === true) {
+        if (envelope._yearCoerced === true ||
+            (!_isMissing(source.currentYear) && !_isValidWorldYear(source.currentYear))) {
             result._yearCoerced = true;
         }
         if (envelope._preserveUnknownTopLevel === true) {
