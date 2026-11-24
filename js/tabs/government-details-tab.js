@@ -10,7 +10,8 @@
  * PURPOSE:
  *   Render the government record for a location — government type,
  *   style, current leadership, past leadership, and department summary
- *   — and delegate edits to canonical LocationCommands.
+ *   — and route Location-owned writes to LocationCommands and policy-checked
+ *     leader appointments through GovernmentCommands.
  *
  * RENDERER CONTRACT (from GovernmentManagerBootstrap):
  *   fn(container, context)
