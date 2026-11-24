@@ -556,7 +556,8 @@
                 var rec = students[j];
                 if (rec.graduated) continue;
 
-                var r = _advanceStudentYear(rec, inst, currentYear);
+                var currentInstitution = _state()._getInstitutionCanonical(inst.id) || inst;
+                var r = _advanceStudentYear(rec, currentInstitution, currentYear);
 
                 if (r.error === 'student_deceased' || r.error === 'student_not_found') {
                     var withdrew = _commands().withdrawStudent(
@@ -857,7 +858,8 @@
             var rec = students[j];
             if (rec.graduated) continue;
 
-            var r = _advanceStudentYear(rec, inst, currentYear);
+            var currentInstitution = _state()._getInstitutionCanonical(inst.id) || inst;
+            var r = _advanceStudentYear(rec, currentInstitution, currentYear);
 
             if (r.error === 'student_deceased' || r.error === 'student_not_found') {
                 var withdrew = _commands().withdrawStudent(
