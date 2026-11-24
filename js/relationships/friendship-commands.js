@@ -469,15 +469,16 @@
         });
 
         if (applied.ended) {
-            // Two commits for this path. See module header.
-            RC.update(rel.relationshipId, {
-                metadata: { strength: FR.STRENGTH_MIN }
+            // Strength, end status, end year, and reason are one state update.
+            var endYear = _getCurrentYear();
+            var endResult = RC.update(rel.relationshipId, {
+                status: STATUS.ENDED,
+                endYear: endYear,
+                metadata: {
+                    strength: FR.STRENGTH_MIN,
+                    endReason: FR.END_REASONS.DRIFTED_APART
+                }
             });
-            var endResult = RC.end(
-                rel.relationshipId,
-                _getCurrentYear(),
-                FR.END_REASONS.DRIFTED_APART
-            );
             if (!endResult.success) return endResult;
 
             return _ok({
@@ -582,18 +583,16 @@
         });
 
         if (applied.ended) {
-            // Two commits for this path. See module header.
-            RC.update(rel.relationshipId, {
+            // Event history, strength, end status, year, and reason are one state update.
+            var endResult = RC.update(rel.relationshipId, {
+                status: STATUS.ENDED,
+                endYear: year,
                 metadata: {
                     events: currentEvents,
-                    strength: FR.STRENGTH_MIN
+                    strength: FR.STRENGTH_MIN,
+                    endReason: FR.END_REASONS.DRIFTED_APART
                 }
             });
-            var endResult = RC.end(
-                rel.relationshipId,
-                year,
-                FR.END_REASONS.DRIFTED_APART
-            );
             if (!endResult.success) return endResult;
 
             return _ok({
