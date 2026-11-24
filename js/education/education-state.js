@@ -584,6 +584,29 @@
         return true;
     }
 
+    function _transactionSnapshotInstitutionState() {
+        _assertHydrated();
+        return _cloneValue(_institutions);
+    }
+
+    function _transactionRestoreInstitutionState(snapshot) {
+        _assertHydrated();
+        if (!Array.isArray(snapshot)) return { success: false, reason: 'Education institution snapshot must be an array.' };
+        try {
+            _institutions = _cloneValue(snapshot);
+            _indexesRebuild();
+            _writeToMasterData();
+            _markDirty();
+            _lastUpdated = Date.now();
+            _notify('institutionsRestored', {
+                institutionIds: _institutions.map(function (inst) { return inst.id; })
+            });
+            return { success: true };
+        } catch (error) {
+            return { success: false, reason: error && error.message ? error.message : 'Education state restore failed.' };
+        }
+    }
+
     function _indexesRebuildExport() {
         _assertHydrated();
         _indexesRebuild();
@@ -914,6 +937,8 @@
         _addInstitution: _addInstitution,
         _updateInstitution: _updateInstitution,
         _removeInstitution: _removeInstitution,
+        _transactionSnapshotInstitutionState: _transactionSnapshotInstitutionState,
+        _transactionRestoreInstitutionState: _transactionRestoreInstitutionState,
 
         // Kept for education-commands.js callers. Forces a reindex. Does
         // NOT sync to masterData.
