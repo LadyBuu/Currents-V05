@@ -465,9 +465,7 @@
 
         var validation = _requireCultureValidation();
         var state = _requireCultureState();
-
         var cultures = _readCanonicalCultures();
-
         var result = validation.validateDelete(id, { cultures: cultures });
         if (!result.valid) {
             return { success: false, reason: 'Validation failed', errors: result.errors };
@@ -475,12 +473,74 @@
 
         var removed = state._getCultureCanonical(id);
         if (!removed) {
-            // validateDelete says the id exists but State doesn't see it.
-            // Same out-of-sync case as updateCulture.
             return { success: false, reason: 'Culture index inconsistency for id: ' + id };
         }
-
         var snapshot = _clone(removed);
+
+        // Refuse deletion while foreign-owned records still point at this
+        // culture. Those records must be reassigned through their own domain.
+        var characterQueries = window.CharacterQueries;
+        if (!characterQueries || typeof characterQueries.getAllCharacters !== 'function') {
+            return { success: false, reason: 'Cannot verify Character references: CharacterQueries.getAllCharacters is required.' };
+        }
+        var locationQueries = window.LocationQueries;
+        if (!locationQueries || typeof locationQueries.getAllPlaces !== 'function') {
+            return { success: false, reason: 'Cannot verify Location references: LocationQueries.getAllPlaces is required.' };
+        }
+
+        var characters;
+        var places;
+        try {
+            characters = characterQueries.getAllCharacters();
+            places = locationQueries.getAllPlaces();
+        } catch (e) {
+            return { success: false, reason: 'Could not verify dependent records: ' + (e.message || String(e)) };
+        }
+        if (!Array.isArray(characters) || !Array.isArray(places)) {
+            return { success: false, reason: 'Could not verify dependent records: query results must be arrays.' };
+        }
+
+        var characterRefs = [];
+        var locationRefs = [];
+        for (var i = 0; i < characters.length; i++) {
+            var character = characters[i];
+            if (!character || typeof character !== 'object') {
+                return { success: false, reason: 'Could not verify Character references: malformed character record at index ' + i + '.' };
+            }
+            if (character.cultureId === id) characterRefs.push(character.id || null);
+        }
+        for (var j = 0; j < places.length; j++) {
+            var place = places[j];
+            if (!place || typeof place !== 'object') {
+                return { success: false, reason: 'Could not verify Location references: malformed location record at index ' + j + '.' };
+            }
+            if (place.cultureId === id) locationRefs.push(place.id || null);
+        }
+
+        if (characterRefs.length || locationRefs.length) {
+            return {
+                success: false,
+                reason: 'Culture is still referenced by other domains. Reassign or clear these references before deletion.',
+                references: {
+                    characters: characterRefs,
+                    characterCount: characterRefs.length,
+                    locations: locationRefs,
+                    locationCount: locationRefs.length
+                }
+            };
+        }
+
+        var data = window.masterData && window.masterData.data;
+        var nameLists = data && data.nameLists;
+        var hasNameList = !!(nameLists && Object.prototype.hasOwnProperty.call(nameLists, id));
+        if (nameLists !== undefined && nameLists !== null &&
+            (typeof nameLists !== 'object' || Array.isArray(nameLists))) {
+            return { success: false, reason: 'Cannot safely reconcile Name data: masterData.data.nameLists is malformed.' };
+        }
+        if (hasNameList && (!window.NameCommands ||
+            typeof window.NameCommands.reconcileDeletedCultures !== 'function')) {
+            return { success: false, reason: 'Cannot safely delete Culture: NameCommands.reconcileDeletedCultures is required to remove its name data.' };
+        }
 
         try {
             state._removeCulture(id);
@@ -488,8 +548,34 @@
             return { success: false, reason: e.message };
         }
 
-        _commit('cultureDeleted', snapshot);
+        if (hasNameList) {
+            var nameResult;
+            try {
+                nameResult = window.NameCommands.reconcileDeletedCultures([id]);
+            } catch (e) {
+                nameResult = { success: false, reason: e.message || String(e) };
+            }
+            if (!nameResult || nameResult.success !== true) {
+                // Restore the Culture if its owned Name data could not be
+                // reconciled. Do not leave a half-deleted domain record.
+                try { state._addCulture(snapshot); }
+                catch (restoreError) {
+                    return {
+                        success: false,
+                        reason: 'Name reconciliation failed and Culture rollback also failed: ' +
+                            (restoreError.message || String(restoreError)),
+                        reconciliationError: nameResult && nameResult.reason
+                    };
+                }
+                return {
+                    success: false,
+                    reason: 'Name reconciliation failed; Culture deletion was rolled back.',
+                    reconciliationError: nameResult && nameResult.reason
+                };
+            }
+        }
 
+        _commit('cultureDeleted', snapshot);
         return { success: true, data: snapshot };
     }
 
