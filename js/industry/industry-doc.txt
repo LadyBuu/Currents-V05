@@ -2339,5 +2339,41 @@ state.
 
 
 ================================================================================
+PART 34 — TRANSACTIONAL ENTERPRISE CREATION AND DELETION
+================================================================================
+
+IndustryCommands.createEnterprise and deleteEnterprise coordinate the
+Enterprise record and its Household reverse index through
+CrossDomainTransaction when the Enterprise is Household-owned.
+
+Creation:
+  - validates the Household before mutation;
+  - snapshots the complete Household record;
+  - registers the new Enterprise in the Household with deferred notification;
+  - adds the Enterprise silently to IndustryState;
+  - publishes Household and Industry notifications only after both writes
+    succeed.
+
+Deletion:
+  - requires exactly one matching Enterprise reference in the source
+    Household reverse index;
+  - snapshots the complete Household and the Enterprise record/index;
+  - removes the Household reverse reference and then removes the Enterprise
+    silently;
+  - restores both participants in reverse order if either operation fails;
+  - publishes notifications only after successful completion.
+
+Non-Household-owned Enterprise creation/deletion still uses the same
+coordinator with Industry as its sole participant. These lifecycle commands
+retain the existing persistence contract: they do not call saveMasterData.
+The caller remains responsible for the normal IndustryCommands.persist()
+boundary.
+
+A failed rollback returns ROLLBACK_FAILED with rollbackErrors. Treat this as
+an integrity incident. The coordinator is synchronous and does not provide
+crash consistency, durable journaling or cross-tab locking.
+
+
+================================================================================
 END OF DOCUMENT
 ================================================================================
