@@ -1453,7 +1453,8 @@
      * @returns {{ status: string, clearedCount: number, households: Array,
      *             reason?: string, perPlace: Array }}
      */
-    function _cleanupHouseholdsAtPlaces(removeSet) {
+    function _cleanupHouseholdsAtPlaces(removeSet, options) {
+        options = options || {};
         var HC = _householdCommands();
         var removedIds = Object.keys(removeSet);
 
@@ -1478,7 +1479,7 @@
 
         var result;
         try {
-            result = HC.clearLocationReferencesMany(removedIds);
+            result = HC.clearLocationReferencesMany(removedIds, { deferCommit: options.deferCommit === true });
         } catch (e) {
             result = {
                 success: false,
