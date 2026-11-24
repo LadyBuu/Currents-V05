@@ -1031,9 +1031,18 @@
         }
 
         var removed = [];
-        for (var rid in toRemove) {
-            if (!Object.prototype.hasOwnProperty.call(toRemove, rid)) continue;
-            if (LS._removePlace(rid)) removed.push(rid);
+        try {
+            if (typeof LS._removePlaces !== 'function') {
+                throw new Error('LocationState._removePlaces is required for atomic deletion');
+            }
+            removed = LS._removePlaces(Object.keys(toRemove));
+        } catch (locationRemovalError) {
+            return _fail(
+                'deletePlace: location records could not be removed atomically: ' +
+                (locationRemovalError && locationRemovalError.message
+                    ? locationRemovalError.message
+                    : String(locationRemovalError))
+            );
         }
 
         // Publish the settlement-side change only after the location records
