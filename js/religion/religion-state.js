@@ -338,79 +338,125 @@
             return false;
         }
 
+        // Preflight canonical identity before migration or index mutation.
+        // A corrupt store must not leave a half-built index behind.
+        var seenReligionIds = Object.create(null);
+        for (var preflightReligion = 0; preflightReligion < religions.length; preflightReligion++) {
+            var religionRecord = religions[preflightReligion];
+            if (!religionRecord || !religionRecord.id) continue;
+            if (seenReligionIds[religionRecord.id]) {
+                throw new Error(
+                    'ReligionState.hydrateFromMasterData: duplicate religion id "' +
+                    religionRecord.id + '". Canonical data is corrupted.'
+                );
+            }
+            seenReligionIds[religionRecord.id] = true;
+        }
+
+        var existingPlaces = _getCanonicalPlacesOfWorshipArray() || [];
+        var seenExistingPlaceIds = Object.create(null);
+        for (var preflightPlace = 0; preflightPlace < existingPlaces.length; preflightPlace++) {
+            var existingPlace = existingPlaces[preflightPlace];
+            if (!existingPlace || !existingPlace.id) continue;
+            if (seenExistingPlaceIds[existingPlace.id]) {
+                throw new Error(
+                    'ReligionState.hydrateFromMasterData: duplicate worship-place id "' +
+                    existingPlace.id + '". Canonical data is corrupted.'
+                );
+            }
+            seenExistingPlaceIds[existingPlace.id] = true;
+        }
+
         _migrateLegacyWorshipPlaces(religions);
         var canonicalWorshipPlaces = _getCanonicalPlacesOfWorshipArray();
+        if (!canonicalWorshipPlaces) {
+            throw new Error('ReligionState.hydrateFromMasterData: worship-place store is unavailable.');
+        }
 
-        _indexes.byId = new Map();
-        _indexes.byTrait = new Map();
-        _indexes.byLocation = new Map();
-        _indexes.byLeader = new Map();
-        _indexes.godsById = new Map();
-        _indexes.lawsById = new Map();
-        _indexes.placesOfWorshipById = new Map();
-        _indexes.followersByReligion = new Map();
-
-        var seenIds = Object.create(null);
+        // Build every index in temporary maps. Publish them together only
+        // after the complete canonical graph has passed identity checks.
+        var nextIndexes = {
+            byId: new Map(),
+            byTrait: new Map(),
+            byLocation: new Map(),
+            byLeader: new Map(),
+            followersByReligion: new Map(),
+            godsById: new Map(),
+            lawsById: new Map(),
+            placesOfWorshipById: new Map()
+        };
+        var seenGodIds = Object.create(null);
+        var seenLawIds = Object.create(null);
+        var seenWorshipPlaceIds = Object.create(null);
+        var seenLeaderIds = Object.create(null);
 
         for (var i = 0; i < religions.length; i++) {
             var religion = religions[i];
             if (!religion || !religion.id) continue;
 
-            if (seenIds[religion.id]) {
-                throw new Error(
-                    'ReligionState.hydrateFromMasterData: duplicate religion id "' +
-                    religion.id + '". Canonical data is corrupted.'
-                );
-            }
-            seenIds[religion.id] = true;
-
-            _indexes.byId.set(religion.id, religion);
+            nextIndexes.byId.set(religion.id, religion);
 
             if (religion.trait) {
-                if (!_indexes.byTrait.has(religion.trait)) {
-                    _indexes.byTrait.set(religion.trait, []);
+                if (!nextIndexes.byTrait.has(religion.trait)) {
+                    nextIndexes.byTrait.set(religion.trait, []);
                 }
-                _indexes.byTrait.get(religion.trait).push(religion);
+                nextIndexes.byTrait.get(religion.trait).push(religion);
             }
 
             if (Array.isArray(religion.locations)) {
                 for (var j = 0; j < religion.locations.length; j++) {
                     var locationId = religion.locations[j];
                     if (!locationId) continue;
-                    if (!_indexes.byLocation.has(locationId)) {
-                        _indexes.byLocation.set(locationId, []);
+                    if (!nextIndexes.byLocation.has(locationId)) {
+                        nextIndexes.byLocation.set(locationId, []);
                     }
-                    _indexes.byLocation.get(locationId).push(religion);
+                    nextIndexes.byLocation.get(locationId).push(religion);
                 }
             }
 
             if (religion.leader && religion.leader.characterId) {
-                _indexes.byLeader.set(religion.leader.characterId, religion);
+                var leaderId = religion.leader.characterId;
+                if (religion.leader.isActive !== false && seenLeaderIds[leaderId]) {
+                    throw new Error(
+                        'ReligionState.hydrateFromMasterData: character "' + leaderId +
+                        '" is recorded as active leader of more than one religion.'
+                    );
+                }
+                if (religion.leader.isActive !== false) seenLeaderIds[leaderId] = true;
+                nextIndexes.byLeader.set(leaderId, religion);
             }
 
             if (Array.isArray(religion.gods)) {
                 for (var k = 0; k < religion.gods.length; k++) {
                     var god = religion.gods[k];
-                    if (god && god.id) {
-                        _indexes.godsById.set(god.id, god);
+                    if (!god || !god.id) continue;
+                    if (seenGodIds[god.id]) {
+                        throw new Error(
+                            'ReligionState.hydrateFromMasterData: duplicate god id "' +
+                            god.id + '". Canonical data is corrupted.'
+                        );
                     }
+                    seenGodIds[god.id] = true;
+                    nextIndexes.godsById.set(god.id, god);
                 }
             }
 
             if (Array.isArray(religion.laws)) {
                 for (var l = 0; l < religion.laws.length; l++) {
                     var law = religion.laws[l];
-                    if (law && law.id) {
-                        _indexes.lawsById.set(law.id, law);
+                    if (!law || !law.id) continue;
+                    if (seenLawIds[law.id]) {
+                        throw new Error(
+                            'ReligionState.hydrateFromMasterData: duplicate law id "' +
+                            law.id + '". Canonical data is corrupted.'
+                        );
                     }
+                    seenLawIds[law.id] = true;
+                    nextIndexes.lawsById.set(law.id, law);
                 }
             }
-
         }
 
-        // Worship-place records are canonical in their own collection.
-        // Religion's ID array remains a compatibility/ownership index.
-        var seenWorshipPlaceIds = Object.create(null);
         for (var w = 0; w < canonicalWorshipPlaces.length; w++) {
             var worshipPlace = canonicalWorshipPlaces[w];
             if (!worshipPlace || !worshipPlace.id) continue;
@@ -421,10 +467,19 @@
                 );
             }
             seenWorshipPlaceIds[worshipPlace.id] = true;
-            _indexes.placesOfWorshipById.set(worshipPlace.id, worshipPlace);
+            nextIndexes.placesOfWorshipById.set(worshipPlace.id, worshipPlace);
         }
 
-        _buildFollowersIndex();
+        nextIndexes.followersByReligion = _buildFollowersIndex();
+
+        _indexes.byId = nextIndexes.byId;
+        _indexes.byTrait = nextIndexes.byTrait;
+        _indexes.byLocation = nextIndexes.byLocation;
+        _indexes.byLeader = nextIndexes.byLeader;
+        _indexes.followersByReligion = nextIndexes.followersByReligion;
+        _indexes.godsById = nextIndexes.godsById;
+        _indexes.lawsById = nextIndexes.lawsById;
+        _indexes.placesOfWorshipById = nextIndexes.placesOfWorshipById;
 
         return true;
     }
@@ -443,11 +498,9 @@
     }
 
     function _buildFollowersIndex() {
-        // Cross-domain: reads character records. Character records are
-        // owned by the character domain. This index is derived state
-        // that declares a dependency on that domain.
-        _indexes.followersByReligion = new Map();
-
+        // Cross-domain: reads character records. Build off to the side so
+        // a failed character read cannot destroy the last valid index.
+        var next = new Map();
         var characters = _getCharacters();
 
         for (var i = 0; i < characters.length; i++) {
@@ -456,16 +509,15 @@
             // Deceased characters remain indexed so historical follower
             // views can opt into them; query projections filter them by default.
             if (char && char.isDeleted !== true && char.religionId) {
-                if (!_indexes.followersByReligion.has(char.religionId)) {
-                    _indexes.followersByReligion.set(char.religionId, []);
-                }
-                _indexes.followersByReligion.get(char.religionId).push(char);
+                if (!next.has(char.religionId)) next.set(char.religionId, []);
+                next.get(char.religionId).push(char);
             }
         }
+        return next;
     }
 
     function _invalidateFollowerIndex() {
-        _buildFollowersIndex();
+        _indexes.followersByReligion = _buildFollowersIndex();
     }
 
     // CharacterState emits characterChanged after every canonical character
