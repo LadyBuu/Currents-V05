@@ -2496,3 +2496,38 @@ change Enterprise owner fields, or resolve duplicate Household identities.
 Review and correct those canonical conflicts before retrying.
 
 ================================================================================
+
+
+================================================================================
+PART 38 — LIFECYCLE FAILURE-INJECTION VERIFICATION
+================================================================================
+
+Failure-path review of the shared CrossDomainTransaction coordinator and
+Industry ownership-transfer transaction covered:
+  - successful two-participant commit and one persistence call
+  - participant apply returning failure after mutation
+  - participant apply throwing after mutation
+  - persistence returning failure, reverse-order rollback and compensation
+  - persistence throwing, rollback and compensation attempt
+  - rollback returning false, surfaced as ROLLBACK_FAILED
+  - post-commit notification throwing, reported without undoing committed data
+  - transaction active flag reset after every tested path
+
+The review found and fixed an ownership-transfer rollback defect:
+_runHouseholdOwnershipTransaction previously ignored a false return from
+transactionRestoreHousehold. It now treats false / { success: false } as a
+rollback error, causing CrossDomainTransaction to return ROLLBACK_FAILED
+rather than claiming a successful restoration.
+
+An isolated IndustryCommands.updateEnterprise failure-injection harness
+verified that an Industry apply failure combined with rejected Household
+restoration returns ROLLBACK_FAILED and releases the transaction lock.
+
+These are isolated runtime harness tests, not browser end-to-end tests. The
+ordinary Industry lifecycle commands continue to leave durable persistence
+to their caller / batch boundary; only annual processing and explicit repair
+currently supply persistence directly to CrossDomainTransaction. A caller
+that saves after a successful ordinary command must handle a later save
+failure according to its own batch contract.
+
+================================================================================
