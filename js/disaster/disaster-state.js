@@ -310,9 +310,21 @@
             }
         });
         ['features', 'schools', 'enterprises', 'residences', 'households'].forEach(function(key) {
-            if (!Array.isArray(record.structuralDamage.destructionList[key])) {
+            var list = record.structuralDamage.destructionList[key];
+            if (!Array.isArray(list)) {
                 throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid destructionList.' + key);
             }
+            var seen = new Set();
+            list.forEach(function(item, index) {
+                if (!item || typeof item !== 'object' || Array.isArray(item)
+                    || typeof item.id !== 'string' || !item.id.trim()) {
+                    throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid ' + key + ' destruction entry at index ' + index);
+                }
+                if (seen.has(item.id)) {
+                    throw new Error('disaster-state.js: disaster ' + record.id + ' has duplicate ' + key + ' destruction entry ' + item.id);
+                }
+                seen.add(item.id);
+            });
         });
         if (record.year != null && typeof record.year !== 'number') {
             throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid year');
