@@ -388,23 +388,25 @@
         if (!Array.isArray(locationIds) || locationIds.length === 0) {
             return _ok({ removedDepartmentIds: [] });
         }
-        var locationSet = new Set(locationIds);
-        var departments = State._getAllDepartmentsCanonical();
-        var roots = [];
-        for (var i = 0; i < departments.length; i++) {
-            if (locationSet.has(departments[i].locationId)) roots.push(departments[i].id);
+        try {
+            var removedDepartmentIds = State._reconcileDeletedLocations(locationIds);
+            if (removedDepartmentIds.length > 0) {
+                _commit('governmentDepartmentsReconciled', {
+                    departmentIds: removedDepartmentIds,
+                    reason: 'location_deleted'
+                });
+            }
+            return _ok({ removedDepartmentIds: removedDepartmentIds });
+        } catch (error) {
+            return _fail(
+                'Government location reconciliation failed: ' +
+                (error && error.message ? error.message : String(error)) +
+                (error && error.rollbackError
+                    ? '; rollback also failed: ' + error.rollbackError.message
+                    : ''),
+                C.CODES.INTERNAL
+            );
         }
-        var removed = new Set();
-        for (var r = 0; r < roots.length; r++) {
-            _collectDepartmentSubtree(roots[r], removed);
-        }
-        if (removed.size === 0) return _ok({ removedDepartmentIds: [] });
-        removed.forEach(function(id) { State._removeDepartment(id); });
-        _commit('governmentDepartmentsReconciled', {
-            departmentIds: Array.from(removed),
-            reason: 'location_deleted'
-        });
-        return _ok({ removedDepartmentIds: Array.from(removed) });
     }
 
     function _collectDepartmentSubtree(departmentId, collected) {
