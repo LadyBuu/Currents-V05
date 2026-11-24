@@ -1141,6 +1141,17 @@
         return true;
     }
 
+    function _notifyTransactionEnterpriseUpdated(enterpriseId) {
+        _assertHydrated();
+        var record = _cache.byId.get(enterpriseId);
+        if (!record) {
+            throw new Error('Enterprise not found for transaction notification: ' +
+                enterpriseId);
+        }
+        _notify('enterpriseUpdated', _cloneRecord(record));
+        return true;
+    }
+
     function _removeEnterprise(enterpriseId) {
         _assertHydrated();
 
@@ -1312,6 +1323,7 @@
         _updateEnterprise: _updateEnterprise,
         _transactionSnapshotEnterprise: _transactionSnapshotEnterprise,
         _transactionRestoreEnterprise: _transactionRestoreEnterprise,
+        _notifyTransactionEnterpriseUpdated: _notifyTransactionEnterpriseUpdated,
         _removeEnterprise: _removeEnterprise,
         _addEnterpriseType: _addEnterpriseType,
         _updateEnterpriseType: _updateEnterpriseType,
