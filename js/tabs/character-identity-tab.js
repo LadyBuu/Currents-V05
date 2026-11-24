@@ -43,9 +43,11 @@
  *     b. Religion change (if the select differs from the model) is
  *        applied via assignCharacterReligion (which appends history).
  *     c. Character-owned field patch (name, surname, surnameSource,
- *        epithet, gender, birthYear, birthplaceId, deathYear, deathCause,
- *        deathCauseDetail, deathNotes, appearance, notes) is applied via
- *        updateCharacter.
+ *        epithet, gender, birthYear, birthplaceId, appearance, notes) is
+ *        applied via updateCharacter.
+ *     d. Corrections to an existing death record (deathYear, deathCause,
+ *        deathCauseDetail, deathNotes) go through updateDeathRecord, which
+ *        validates the resulting record with MortalityRules.
  *   Steps run in fixed order; failures accumulate; if any fail the form
  *   stays dirty so the user can retry the failed portion.
  *
