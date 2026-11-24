@@ -397,11 +397,12 @@
         var context = null;
         try { context = cfg.buildContext(); }
         catch (err) {
-            container.innerHTML =
-                '<div class="empty-state" style="color:var(--danger);">' +
-                'Context build failed: ' +
-                (err && err.message ? err.message : 'unknown') +
-                '</div>';
+            var contextError = document.createElement('div');
+            contextError.className = 'empty-state';
+            contextError.style.color = 'var(--danger)';
+            contextError.textContent = 'Context build failed: ' +
+                (err && err.message ? err.message : 'unknown');
+            container.replaceChildren(contextError);
             return;
         }
         if (!context) {
@@ -421,11 +422,12 @@
         try {
             renderer(container, context);
         } catch (err) {
-            container.innerHTML =
-                '<div class="empty-state" style="color:var(--danger);">' +
-                'Render failed: ' +
-                (err && err.message ? err.message : 'unknown') +
-                '</div>';
+            var renderError = document.createElement('div');
+            renderError.className = 'empty-state';
+            renderError.style.color = 'var(--danger)';
+            renderError.textContent = 'Render failed: ' +
+                (err && err.message ? err.message : 'unknown');
+            container.replaceChildren(renderError);
             if (typeof console !== 'undefined' && console.error) {
                 console.error(
                     '[TabManager] render error for ' + scope + '/' + tabId + ':',
