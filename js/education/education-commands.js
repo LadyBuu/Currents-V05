@@ -1399,7 +1399,9 @@
             }
         }
 
-        var students = inst.students.slice();
+        var previousStudents = inst.students.slice();
+        var previousGraduates = (inst.graduates || []).slice();
+        var students = previousStudents.slice();
         var record = Object.assign({}, students[idx], {
             graduated: true,
             graduationYear: year,
@@ -1407,7 +1409,7 @@
         });
         students.splice(idx, 1);
 
-        var graduates = (inst.graduates || []).slice();
+        var graduates = previousGraduates.slice();
         graduates.push({
             studentId: studentId,
             studentName: record.studentName,
@@ -1415,27 +1417,38 @@
             grantedRole: roleToGrant
         });
 
-        var institutionUpdate = _state()._updateInstitution(institutionId, {
-            students: students,
-            graduates: graduates
-        });
-        if (!institutionUpdate) {
-            return _fail('Failed to update institution graduation records; student remains enrolled.', {
-                studentId: studentId,
-                institutionId: institutionId,
-                roleGranted: !!roleToGrant
+        var institutionUpdate = null;
+        try {
+            institutionUpdate = _state()._updateInstitution(institutionId, {
+                students: students,
+                graduates: graduates
             });
+        } catch (institutionError) {
+            institutionUpdate = null;
         }
-
-        var gradResult = _cc('recordEducationGraduation')(studentId, institutionId, {
-            graduationYear: year,
-            grantedRole: roleToGrant
-        });
-        if (!gradResult || gradResult.success !== true) {
-            return _fail('Failed to record graduation on character: ' +
-                (gradResult && gradResult.reason
-                    ? gradResult.reason
-                    : 'unknown error'));
+        if (!institutionUpdate) {
+            var failedGrantRollback = null;
+            if (roleToGrant) {
+                var roleCommands = _roleCommandsOrNull();
+                if (roleCommands && typeof roleCommands.removeRoleFromCharacter === 'function') {
+                    try {
+                        failedGrantRollback = roleCommands.removeRoleFromCharacter(
+                            studentId, roleToGrant
+                        );
+                    } catch (removeError) {
+                        failedGrantRollback = { success: false, reason: removeError.message };
+                    }
+                }
+            }
+            return _fail('Failed to update institution graduation records; student remains enrolled.' +
+                (roleToGrant && (!failedGrantRollback || failedGrantRollback.success !== true)
+                    ? ' The granted role could not be rolled back.'
+                    : ''), {
+                    studentId: studentId,
+                    institutionId: institutionId,
+                    roleGranted: !!roleToGrant,
+                    roleRollback: failedGrantRollback
+                });
         }
 
         var historyEntry = {
@@ -1448,12 +1461,68 @@
             taughtRoles: (inst.taughtRoles || []).slice(),
             curriculum: (inst.curriculum || []).map(function(c) { return c.name; })
         };
-        var histResult = _cc('appendEducationHistory')(studentId, historyEntry);
-        if (!histResult || histResult.success !== true) {
-            return _fail('Failed to append education history: ' +
-                (histResult && histResult.reason
-                    ? histResult.reason
-                    : 'unknown error'));
+
+        var completionResult = _cc('completeEducationGraduation')(
+            studentId,
+            institutionId,
+            { graduationYear: year, grantedRole: roleToGrant },
+            historyEntry
+        );
+
+        if (!completionResult || completionResult.success !== true) {
+            var rollbackErrors = [];
+            try {
+                var restored = _state()._updateInstitution(institutionId, {
+                    students: previousStudents,
+                    graduates: previousGraduates
+                });
+                if (!restored) rollbackErrors.push('institution roster restore failed');
+            } catch (restoreError) {
+                rollbackErrors.push('institution roster restore threw: ' +
+                    (restoreError && restoreError.message ? restoreError.message : 'unknown error'));
+            }
+
+            if (roleToGrant) {
+                var rollbackRoleCommands = _roleCommandsOrNull();
+                if (!rollbackRoleCommands ||
+                    typeof rollbackRoleCommands.removeRoleFromCharacter !== 'function') {
+                    rollbackErrors.push('RoleCommands.removeRoleFromCharacter is unavailable');
+                } else {
+                    try {
+                        var roleRemoval = rollbackRoleCommands.removeRoleFromCharacter(
+                            studentId, roleToGrant
+                        );
+                        if (!roleRemoval || roleRemoval.success !== true) {
+                            rollbackErrors.push(
+                                roleRemoval && roleRemoval.reason
+                                    ? roleRemoval.reason
+                                    : 'granted role removal failed'
+                            );
+                        }
+                    } catch (roleRestoreError) {
+                        rollbackErrors.push(
+                            roleRestoreError && roleRestoreError.message
+                                ? roleRestoreError.message
+                                : 'granted role removal threw'
+                        );
+                    }
+                }
+            }
+
+            return _fail(
+                'Failed to complete graduation on character: ' +
+                (completionResult && completionResult.reason
+                    ? completionResult.reason
+                    : 'unknown error') +
+                (rollbackErrors.length
+                    ? ' Rollback failed: ' + rollbackErrors.join('; ')
+                    : ''),
+                {
+                    studentId: studentId,
+                    institutionId: institutionId,
+                    rollbackErrors: rollbackErrors
+                }
+            );
         }
 
         // Curriculum proficiency cap. See GRADUATION PROGRESS CAP in the
