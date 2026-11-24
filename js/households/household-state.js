@@ -872,26 +872,14 @@
         var result = {
             available: false,
             householdsWithMissingResidence: [],
-            residencesWithOrphanHouseholdOccupancy: []
+            householdsWithMissingResidenceUnit: [],
+            householdsWithMismatchedResidenceUnit: [],
+            householdsOccupyingMultipleUnits: [],
+            residencesWithOrphanHouseholdOccupancy: [],
+            residenceUnitsWithStaleHouseholdReference: [],
+            residenceUnitsWithMissingHousehold: []
         };
 
-        // Household → residence check: does the residenceId resolve?
-        var residenceExistsFn = null;
-        var rs = window.ResidenceSystem;
-        if (rs && typeof rs.getResidence === 'function') {
-            residenceExistsFn = function(residenceId) {
-                try {
-                    return rs.getResidence(residenceId) !== null;
-                } catch (e) {
-                    return false;
-                }
-            };
-        }
-
-        // residenceExistsFn may still be null if ResidenceSystem is
-        // absent. The household→residence check can still run if the
-        // canonical residences array is present in masterData, since we
-        // can look it up directly.
         var master;
         try {
             master = _getMasterData();
@@ -899,69 +887,158 @@
             return result;
         }
 
+        var canonicalHouseholds = Array.isArray(master.data.households)
+            ? master.data.households : null;
         var canonicalResidences = Array.isArray(master.data.residences)
-            ? master.data.residences
-            : null;
+            ? master.data.residences : null;
+        if (!canonicalHouseholds || !canonicalResidences) return result;
+        result.available = true;
 
-        if (!residenceExistsFn && canonicalResidences) {
-            var residenceIdSet = new Set();
-            for (var r = 0; r < canonicalResidences.length; r++) {
-                var rr = canonicalResidences[r];
-                if (rr && typeof rr.id === 'string') {
-                    residenceIdSet.add(rr.id);
-                }
+        var householdById = new Map();
+        var residenceById = new Map();
+        var unitRefsByHousehold = new Map();
+
+        for (var hi = 0; hi < canonicalHouseholds.length; hi++) {
+            var household = canonicalHouseholds[hi];
+            if (household && typeof household.id === 'string' &&
+                household.id !== '' && !householdById.has(household.id)) {
+                householdById.set(household.id, household);
             }
-            residenceExistsFn = function(residenceId) {
-                return residenceIdSet.has(residenceId);
-            };
         }
+        for (var ri = 0; ri < canonicalResidences.length; ri++) {
+            var residence = canonicalResidences[ri];
+            if (residence && typeof residence.id === 'string' &&
+                residence.id !== '' && !residenceById.has(residence.id)) {
+                residenceById.set(residence.id, residence);
+            }
+            if (!residence || !Array.isArray(residence.units)) continue;
+            for (var ui = 0; ui < residence.units.length; ui++) {
+                var unit = residence.units[ui];
+                if (!unit || typeof unit.householdId !== 'string' ||
+                    unit.householdId === '') continue;
 
-        if (residenceExistsFn) {
-            result.available = true;
+                var ref = {
+                    residenceId: residence.id || null,
+                    residenceName: residence.name || null,
+                    unitNumber: unit.unitNumber,
+                    unitId: unit.id || null,
+                    isVacant: unit.isVacant === true,
+                    isDemolished: unit.isDemolished === true
+                };
+                if (!unitRefsByHousehold.has(unit.householdId)) {
+                    unitRefsByHousehold.set(unit.householdId, []);
+                }
+                unitRefsByHousehold.get(unit.householdId).push(ref);
 
-            // Check 1: household.residenceId → residence.
-            for (var i = 0; i < _state.households.length; i++) {
-                var h = _state.households[i];
-                if (!h || typeof h.residenceId !== 'string') continue;
-                if (h.residenceId.length === 0) continue;
-                if (!residenceExistsFn(h.residenceId)) {
-                    result.householdsWithMissingResidence.push({
-                        householdId: h.id,
-                        householdName: h.name || null,
-                        residenceId: h.residenceId
+                if (unit.isVacant === true || unit.isDemolished === true) {
+                    result.residenceUnitsWithStaleHouseholdReference.push({
+                        householdId: unit.householdId,
+                        residenceId: residence.id || null,
+                        residenceName: residence.name || null,
+                        unitNumber: unit.unitNumber,
+                        isVacant: unit.isVacant === true,
+                        isDemolished: unit.isDemolished === true
+                    });
+                    continue;
+                }
+
+                if (!householdById.has(unit.householdId)) {
+                    result.residencesWithOrphanHouseholdOccupancy.push({
+                        residenceId: residence.id || null,
+                        residenceName: residence.name || null,
+                        unitNumber: unit.unitNumber,
+                        householdId: unit.householdId
                     });
                 }
             }
+        }
 
-            // Check 2: residence.units[].householdId → household.
-            if (canonicalResidences) {
-                var householdIdSet = new Set();
-                for (var hh = 0; hh < _state.households.length; hh++) {
-                    var hrec = _state.households[hh];
-                    if (hrec && typeof hrec.id === 'string') {
-                        householdIdSet.add(hrec.id);
+        // Household → Residence and exact unit reverse reference.
+        for (var h = 0; h < canonicalHouseholds.length; h++) {
+            var householdRecord = canonicalHouseholds[h];
+            if (!householdRecord || typeof householdRecord.id !== 'string') continue;
+            var residenceId = typeof householdRecord.residenceId === 'string'
+                ? householdRecord.residenceId : '';
+            var unitNumber = householdRecord.residenceUnitNumber;
+            var refs = unitRefsByHousehold.get(householdRecord.id) || [];
+
+            if (residenceId) {
+                var targetResidence = residenceById.get(residenceId);
+                if (!targetResidence) {
+                    result.householdsWithMissingResidence.push({
+                        householdId: householdRecord.id,
+                        householdName: householdRecord.name || null,
+                        residenceId: residenceId
+                    });
+                } else {
+                    var matchingRefs = refs.filter(function(ref) {
+                        return ref.residenceId === residenceId &&
+                            ref.isVacant !== true && ref.isDemolished !== true;
+                    });
+                    if (matchingRefs.length === 0) {
+                        result.householdsWithMissingResidenceUnit.push({
+                            householdId: householdRecord.id,
+                            residenceId: residenceId,
+                            unitNumber: unitNumber === undefined ? null : unitNumber,
+                            reason: 'no active unit points back to this household'
+                        });
+                    } else if (matchingRefs.length > 1) {
+                        result.householdsOccupyingMultipleUnits.push({
+                            householdId: householdRecord.id,
+                            units: matchingRefs
+                        });
+                    } else if (unitNumber === undefined || unitNumber === null ||
+                        matchingRefs[0].unitNumber !== unitNumber) {
+                        result.householdsWithMismatchedResidenceUnit.push({
+                            householdId: householdRecord.id,
+                            residenceId: residenceId,
+                            householdUnitNumber: unitNumber === undefined ? null : unitNumber,
+                            actualUnitNumber: matchingRefs[0].unitNumber
+                        });
                     }
                 }
+            } else if (refs.some(function(ref) {
+                return ref.isVacant !== true && ref.isDemolished !== true;
+            })) {
+                result.householdsWithMissingResidenceUnit.push({
+                    householdId: householdRecord.id,
+                    residenceId: null,
+                    unitNumber: unitNumber === undefined ? null : unitNumber,
+                    reason: 'unit occupancy exists but household reverse reference is missing'
+                });
+            }
 
-                for (var res = 0; res < canonicalResidences.length; res++) {
-                    var residence = canonicalResidences[res];
-                    if (!residence || !Array.isArray(residence.units)) continue;
-                    for (var u = 0; u < residence.units.length; u++) {
-                        var unit = residence.units[u];
-                        if (!unit) continue;
-                        if (unit.isDemolished === true) continue;
-                        if (unit.isVacant === true) continue;
-                        if (typeof unit.householdId !== 'string') continue;
-                        if (unit.householdId.length === 0) continue;
-                        if (!householdIdSet.has(unit.householdId)) {
-                            result.residencesWithOrphanHouseholdOccupancy.push({
-                                residenceId: residence.id,
-                                residenceName: residence.name || null,
-                                unitNumber: unit.unitNumber,
-                                householdId: unit.householdId
-                            });
-                        }
-                    }
+            if (refs.length > 1) {
+                var activeRefs = refs.filter(function(ref) {
+                    return ref.isVacant !== true && ref.isDemolished !== true;
+                });
+                if (activeRefs.length > 1 &&
+                    !result.householdsOccupyingMultipleUnits.some(function(item) {
+                        return item.householdId === householdRecord.id;
+                    })) {
+                    result.householdsOccupyingMultipleUnits.push({
+                        householdId: householdRecord.id,
+                        units: activeRefs
+                    });
+                }
+            }
+        }
+
+        // A unit marked occupied without a householdId is also inconsistent.
+        for (var r2 = 0; r2 < canonicalResidences.length; r2++) {
+            var residence2 = canonicalResidences[r2];
+            if (!residence2 || !Array.isArray(residence2.units)) continue;
+            for (var u2 = 0; u2 < residence2.units.length; u2++) {
+                var unit2 = residence2.units[u2];
+                if (!unit2 || unit2.isDemolished === true ||
+                    unit2.isVacant !== false) continue;
+                if (typeof unit2.householdId !== 'string' ||
+                    unit2.householdId === '') {
+                    result.residenceUnitsWithMissingHousehold.push({
+                        residenceId: residence2.id || null,
+                        residenceName: residence2.name || null,
+                        unitNumber: unit2.unitNumber
+                    });
                 }
             }
         }
@@ -1291,6 +1368,11 @@
          *   duplicateHouseholdHeads: [],
          *   householdsWithMissingResidence: [],
          *   residencesWithOrphanHouseholdOccupancy: [],
+         *   householdsWithMissingResidenceUnit: [],
+         *   householdsWithMismatchedResidenceUnit: [],
+         *   householdsOccupyingMultipleUnits: [],
+         *   residenceUnitsWithStaleHouseholdReference: [],
+         *   residenceUnitsWithMissingHousehold: [],
          *   residenceReverseIndexAvailable: boolean,
          *   householdsWithOrphanEnterpriseRef: [],
          *   enterprisesOrphanedFromHousehold: [],
@@ -1367,6 +1449,11 @@
                 enterpriseIndex.available === true &&
                 residenceIndex.householdsWithMissingResidence.length === 0 &&
                 residenceIndex.residencesWithOrphanHouseholdOccupancy.length === 0 &&
+                residenceIndex.householdsWithMissingResidenceUnit.length === 0 &&
+                residenceIndex.householdsWithMismatchedResidenceUnit.length === 0 &&
+                residenceIndex.householdsOccupyingMultipleUnits.length === 0 &&
+                residenceIndex.residenceUnitsWithStaleHouseholdReference.length === 0 &&
+                residenceIndex.residenceUnitsWithMissingHousehold.length === 0 &&
                 enterpriseIndex.householdsWithOrphanEnterpriseRef.length === 0 &&
                 enterpriseIndex.enterprisesOrphanedFromHousehold.length === 0 &&
                 memberIndex.available === true &&
@@ -1390,6 +1477,16 @@
                     residenceIndex.householdsWithMissingResidence,
                 residencesWithOrphanHouseholdOccupancy:
                     residenceIndex.residencesWithOrphanHouseholdOccupancy,
+                householdsWithMissingResidenceUnit:
+                    residenceIndex.householdsWithMissingResidenceUnit,
+                householdsWithMismatchedResidenceUnit:
+                    residenceIndex.householdsWithMismatchedResidenceUnit,
+                householdsOccupyingMultipleUnits:
+                    residenceIndex.householdsOccupyingMultipleUnits,
+                residenceUnitsWithStaleHouseholdReference:
+                    residenceIndex.residenceUnitsWithStaleHouseholdReference,
+                residenceUnitsWithMissingHousehold:
+                    residenceIndex.residenceUnitsWithMissingHousehold,
                 residenceReverseIndexAvailable: residenceIndex.available,
                 householdsWithOrphanEnterpriseRef:
                     enterpriseIndex.householdsWithOrphanEnterpriseRef,
