@@ -430,20 +430,27 @@
     // replaced by _reapplyInPlace.
 
     var ATTACHED_FLAG = '__hhTabDelegatedAttached';
+    var HANDLERS_KEY = '__hhTabDelegatedHandlers';
 
     function attachDelegated(container, handlers) {
         if (!container || !handlers) return;
+        // Refresh the handler map on every render. The pane element survives
+        // TabManager's innerHTML replacement, so a one-time listener must not
+        // retain callbacks (and household IDs) from its first render.
+        container[HANDLERS_KEY] = handlers;
         if (container[ATTACHED_FLAG]) return;
         container[ATTACHED_FLAG] = true;
 
         container.addEventListener('click', function (event) {
+            var currentHandlers = container[HANDLERS_KEY];
+            if (!currentHandlers) return;
             var target = event.target;
             if (!target || !target.closest) return;
             var button = target.closest('button');
             if (!button || !container.contains(button)) return;
 
             // 1. id
-            if (button.id && handlers['#' + button.id]) {
+            if (button.id && currentHandlers['#' + button.id]) {
                 event.preventDefault();
                 event.stopPropagation();
                 handlers['#' + button.id](event, button);
@@ -454,7 +461,7 @@
             if (button.classList && button.classList.length > 0) {
                 for (var i = 0; i < button.classList.length; i++) {
                     var clsKey = '.' + button.classList[i];
-                    if (handlers[clsKey]) {
+                    if (currentHandlers[clsKey]) {
                         event.preventDefault();
                         event.stopPropagation();
                         handlers[clsKey](event, button);
@@ -465,7 +472,7 @@
 
             // 3. data-action
             var action = button.getAttribute('data-action');
-            if (action && handlers['[data-action="' + action + '"]']) {
+            if (action && currentHandlers['[data-action="' + action + '"]']) {
                 event.preventDefault();
                 event.stopPropagation();
                 handlers['[data-action="' + action + '"]'](event, button);
