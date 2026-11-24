@@ -87,15 +87,28 @@
     // =========================================================================
 
     var _mutatingState = false;
+    var _mutationSnapshot = null;
 
     function _beginMutation() {
         if (_mutatingState) return false;
+
+        var masterData = window.masterData;
+        var hasCanonicalStore = !!(masterData && masterData.data);
+        _mutationSnapshot = {
+            masterData: masterData || null,
+            hasCanonicalStore: hasCanonicalStore,
+            disasters: hasCanonicalStore
+                ? _clone(Array.isArray(masterData.data.disasters) ? masterData.data.disasters : [])
+                : []
+        };
+
         _mutatingState = true;
         return true;
     }
 
     function _endMutation() {
         _mutatingState = false;
+        _mutationSnapshot = null;
     }
 
     // =========================================================================
@@ -126,7 +139,57 @@
     }
 
     function _markDirty() {
-        window.markDataDirty();
+        var snapshot = _mutationSnapshot;
+        try {
+            if (!window.masterData || !window.masterData.data) {
+                throw new Error('disaster-state.js cannot mutate without masterData.data');
+            }
+            if (!Array.isArray(window.masterData.data.disasters)) {
+                throw new Error('disaster-state.js: masterData.data.disasters must be an array');
+            }
+            if (typeof window.markDataDirty !== 'function') {
+                throw new Error('disaster-state.js requires markDataDirty');
+            }
+            window.markDataDirty();
+        } catch (error) {
+            // Restore both the canonical records and their indexes from the
+            // snapshot captured before any in-place mutation took place.
+            if (snapshot && snapshot.hasCanonicalStore
+                && snapshot.masterData && snapshot.masterData.data) {
+                snapshot.masterData.data.disasters = snapshot.disasters;
+                var restored = _emptyIndexes();
+                try {
+                    for (var i = 0; i < snapshot.disasters.length; i++) {
+                        var record = _normaliseRecord(snapshot.disasters[i]);
+                        if (!_indexInto(restored, record)) {
+                            throw new Error('Could not restore disaster index');
+                        }
+                    }
+                    restored.byLocation.forEach(function(list) {
+                        list.sort(function(a, b) {
+                            var ay = (typeof a.year === 'number') ? a.year : 0;
+                            var by = (typeof b.year === 'number') ? b.year : 0;
+                            if (ay !== by) return ay - by;
+                            return (a.createdAt || 0) - (b.createdAt || 0);
+                        });
+                    });
+                    restored.byYear.forEach(function(list) {
+                        list.sort(function(a, b) {
+                            return (a.createdAt || 0) - (b.createdAt || 0);
+                        });
+                    });
+                    _state.disasters = restored;
+                    _state.initialized = true;
+                } catch (restoreError) {
+                    _state.disasters = _emptyIndexes();
+                    _state.initialized = false;
+                }
+            } else {
+                _state.disasters = _emptyIndexes();
+                _state.initialized = false;
+            }
+            throw error;
+        }
     }
 
     function _emptyStructuralDamage() {
