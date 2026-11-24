@@ -1349,6 +1349,64 @@
         });
     }
 
+    /**
+     * Records a disaster destroying the Household as a social/economic unit.
+     * The Household record and its members are retained for historical
+     * continuity; this is not a hard delete and does not kill or detach people.
+     * Physical Residence demolition is owned by ResidenceSystem and is
+     * coordinated separately by DisasterDamage.
+     */
+    function demolishHousehold(householdId, reason, year, options) {
+        options = options || {};
+        var household = _internal.getHouseholdRecord(householdId);
+        if (!household) return _fail('NOT_FOUND', 'Household not found');
+        var resolvedYear = year !== undefined && year !== null
+            ? _resolveYear(year) : _getCurrentYear();
+        if (resolvedYear === null) return _fail('INVALID_YEAR', 'Invalid disaster year');
+        if (household.status === 'destroyed') {
+            return _ok({
+                householdId: householdId,
+                alreadyDestroyed: true,
+                membersRemoved: 0,
+                membersPreserved: Array.isArray(household.members) ? household.members.length : 0
+            });
+        }
+
+        var oldStatus = household.status || 'active';
+        household.status = 'destroyed';
+        household.updatedAt = Date.now();
+        if (!Array.isArray(household.damageHistory)) household.damageHistory = [];
+        var entry = {
+            eventType: 'disaster_destruction',
+            year: resolvedYear,
+            reason: reason || 'Destroyed by disaster',
+            disasterId: options.disasterId || null,
+            destroyedBy: options.destroyedBy || 'disaster',
+            previousStatus: oldStatus,
+            recordedAt: Date.now()
+        };
+        household.damageHistory.push(entry);
+        if (household.damageHistory.length > 200) {
+            household.damageHistory = household.damageHistory.slice(-200);
+        }
+
+        _commit('householdDestroyed', {
+            householdId: householdId,
+            year: resolvedYear,
+            disasterId: entry.disasterId,
+            reason: entry.reason,
+            membersPreserved: Array.isArray(household.members) ? household.members.length : 0
+        });
+
+        return _ok({
+            householdId: householdId,
+            alreadyDestroyed: false,
+            membersRemoved: 0,
+            membersPreserved: Array.isArray(household.members) ? household.members.length : 0,
+            entry: entry
+        });
+    }
+
     function setStatus(householdId, status, options) {
         options = options || {};
         var household = _internal.getHouseholdRecord(householdId);
@@ -3484,6 +3542,7 @@
         // Household lifecycle
         createHousehold: createHousehold,
         deleteHousehold: deleteHousehold,
+        demolishHousehold: demolishHousehold,
 
         // Crime history and consequences
         applyVictimCrime: applyVictimCrime,
