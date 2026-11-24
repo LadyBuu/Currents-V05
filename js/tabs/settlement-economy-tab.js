@@ -447,13 +447,14 @@
     }
 
     function _wireActions(container, locationId) {
+        container.__stCurrentLocationId = locationId;
         if (container.__stEconomyWired) return;
         container.__stEconomyWired = true;
         container.addEventListener('click', function (event) {
             var btn = event.target.closest('[data-action]');
             if (!btn || !container.contains(btn)) return;
             event.preventDefault();
-            _handleAction(btn.dataset.action, locationId);
+            _handleAction(btn.dataset.action, container.__stCurrentLocationId);
         });
     }
 
