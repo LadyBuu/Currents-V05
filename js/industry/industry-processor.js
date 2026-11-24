@@ -270,7 +270,9 @@
             interest: transition.interest,
             newWealth: transition.newWealth,
             newDebt: transition.newDebt,
-            status: transition.nextStatus
+            status: transition.nextStatus,
+            transactionId: applyResult.transactionId || null,
+            notificationErrors: applyResult.notificationErrors || []
         };
     }
 
