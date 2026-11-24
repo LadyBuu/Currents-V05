@@ -798,9 +798,9 @@
     function reload() {
         if (_mutatingState) return false;
 
-        _state.disasters = _emptyIndexes();
-        _state.initialized = false;
-
+        // Hydration builds a detached index set and swaps only after the
+        // canonical dataset validates. Keep the last known-good cache intact
+        // if a reload encounters malformed persisted data.
         try {
             hydrateFromMasterData(true);
             _publish(C.STATE_EVENTS.CACHE_RELOADED, null);
