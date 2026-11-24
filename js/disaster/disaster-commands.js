@@ -761,10 +761,17 @@
         if (options.applyEffects !== false) {
             applyResult = applyDisasterEffects(locationId, stored);
             if (!applyResult.success) {
+                // The disaster itself is already recorded and some effects may
+                // already have happened. Preserve the record in the failure
+                // payload so the UI can persist it and explain the partial result.
+                applyResult.data = applyResult.data || {};
+                applyResult.data.disaster = stored;
+                applyResult.data.effectsApplied = true;
                 _commit(C.EVENTS.DISASTER_ADDED, {
                     disasterId: stored.id,
                     locationId: locationId,
-                    effectsFailed: true
+                    effectsFailed: true,
+                    failureCount: (applyResult.data.failures || []).length
                 });
                 return applyResult;
             }
