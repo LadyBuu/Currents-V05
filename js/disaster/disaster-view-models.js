@@ -263,6 +263,15 @@
                 locationModifier: (typeof metadata.locationModifier === 'number') ? metadata.locationModifier : null,
                 forced: !!metadata.forced
             },
+            effectsStatus: disaster.effectsStatus || 'complete',
+            effectFailures: Array.isArray(disaster.effectFailures)
+                ? disaster.effectFailures.map(function(failure) {
+                    return {
+                        system: failure && failure.system ? String(failure.system) : 'unknown',
+                        reason: failure && failure.reason ? String(failure.reason) : 'Unspecified failure.'
+                    };
+                })
+                : [],
             structuralDamage: structuralDamage
                 ? toStructuralDamageViewModel(structuralDamage)
                 : null
