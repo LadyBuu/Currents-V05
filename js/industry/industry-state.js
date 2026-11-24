@@ -155,7 +155,16 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (M3 + D4):
+ *   Current revision (Household ownership diagnostics):
+ *     - Added getOwnershipIntegrityReport(), which checks both directions
+ *       of Enterprise <-> Household ownership, including missing reverse
+ *       references, duplicate/stale references, malformed indexes, and
+ *       ambiguous canonical Household identities.
+ *     - validateIntegrity() includes the ownership report and its issues.
+ *     - The report exposes expectedByHousehold for the transactional repair
+ *       command. It marks repair unsafe when canonical owner references or
+ *       Household identities cannot be resolved unambiguously.
+ *   Previous current revision (M3 + D4):
  *     - validateIntegrity now cross-checks the household enterprise reverse
  *       index. For every household in masterData.data.households, each
  *       enterprises[] entry must (a) resolve to an existing enterprise and
