@@ -1805,3 +1805,8 @@ END OF DOCUMENT
 PART 23 — DEFERRED LOCATION RECONCILIATION COMMIT
 
 CultureCommands.reconcileDeletedLocations(locationIds, { deferCommit: true }) performs the validated Culture association updates without publishing the normal Culture reconciliation command event. The enclosing transaction caller owns notification timing. The existing { dryRun: true } behavior is unchanged.
+
+
+LOCATION DELETION TRANSACTION ADAPTER
+
+CultureState now exposes internal snapshot/restore adapters for Location deletion. The snapshot retains the canonical Culture array; restoration reinstalls it and rebuilds Culture indexes. This does not itself coordinate Location deletion.
