@@ -3367,7 +3367,7 @@
                 return { ok: false, reason: e.message };
             }
         },
-        getVersion: function() { return 9; }
+        getVersion: function() { return 10; }
     };
 
     // =========================================================================
