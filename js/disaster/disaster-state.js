@@ -283,7 +283,9 @@
         var next = _emptyIndexes();
 
         for (var i = 0; i < saved.length; i++) {
-            var record = _normaliseRecord(saved[i]);
+            // Normalise a detached copy. Hydration must not mutate the live
+            // canonical dataset until every record has passed validation.
+            var record = _normaliseRecord(_clone(saved[i]));
             if (!record || !record.id) {
                 throw new Error('disaster-state.js: disaster record missing id at index ' + i);
             }
@@ -310,6 +312,12 @@
                 return ac - bc;
             });
         });
+
+        // Commit the normalised records to canonical storage only after
+        // the complete dataset has validated and all indexes are ready.
+        // This preserves the transactional hydration guarantee while keeping
+        // canonical records and indexed records as the same live objects.
+        d.disasters = next.all.slice();
 
         _state.disasters = next;
         _state.initialized = true;
