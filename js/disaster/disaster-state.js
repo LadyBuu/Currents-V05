@@ -695,108 +695,141 @@
 
         try {
             hydrateFromMasterData(false);
-            // Work on a detached input object. Structural-damage merging below
-            // removes its nested payload and must not mutate caller-owned data.
             updates = _clone(updates || {});
+            if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+                return _fail('Disaster updates must be an object', C.CODES.VALIDATION);
+            }
 
             var record = _state.disasters.byId.get(disasterId);
-            if (!record) {
-                return _fail('Disaster not found', C.CODES.NOT_FOUND);
-            }
-            if (Object.prototype.hasOwnProperty.call(updates, 'id')
-                && updates.id !== record.id) {
+            if (!record) return _fail('Disaster not found', C.CODES.NOT_FOUND);
+            if (Object.prototype.hasOwnProperty.call(updates, 'id') && updates.id !== record.id) {
                 return _fail('Disaster id is immutable', C.CODES.VALIDATION);
             }
-            if (Object.prototype.hasOwnProperty.call(updates, 'year')
-                && (typeof updates.year !== 'number' || !isFinite(updates.year))) {
-                return _fail('Disaster year must be a finite number', C.CODES.VALIDATION);
+
+            var allowed = {
+                year: true, disasterType: true, disasterId: true, locationId: true,
+                locationName: true, severity: true, deaths: true, population: true,
+                prosperityLoss: true, crimeIncrease: true, description: true,
+                actualDeaths: true, metadata: true, structuralDamageSkippedSystems: true,
+                effectsStatus: true, effectFailures: true, structuralDamage: true
+            };
+            var numeric = ['year', 'severity', 'deaths', 'population', 'prosperityLoss',
+                'crimeIncrease', 'actualDeaths'];
+            Object.keys(updates).forEach(function(key) {
+                if (key === 'id') return;
+                if (!allowed[key]) throw new Error('Unsupported disaster update field: ' + key);
+                if (numeric.indexOf(key) !== -1
+                    && (typeof updates[key] !== 'number' || !isFinite(updates[key]))) {
+                    throw new Error('Disaster ' + key + ' must be a finite number');
+                }
+            });
+
+            // These are mirrors, not independent inputs. Letting a caller
+            // edit them separately creates impossible count/list combinations.
+            ['featuresDestroyed', 'schoolsDestroyed', 'enterprisesDestroyed',
+             'residencesDemolished', 'householdsDestroyed', 'totalLoss'].forEach(function(key) {
+                if (Object.prototype.hasOwnProperty.call(updates, key)) {
+                    throw new Error(key + ' is derived from structuralDamage and cannot be updated directly');
+                }
+            });
+
+            if (updates.locationId != null && typeof updates.locationId !== 'string') {
+                throw new Error('Disaster locationId must be a string or null');
+            }
+            if (updates.metadata != null && (typeof updates.metadata !== 'object' || Array.isArray(updates.metadata))) {
+                throw new Error('Disaster metadata must be an object');
+            }
+            ['structuralDamageSkippedSystems', 'effectFailures'].forEach(function(key) {
+                if (updates[key] != null && !Array.isArray(updates[key])) {
+                    throw new Error('Disaster ' + key + ' must be an array');
+                }
+            });
+            if (updates.effectsStatus != null && ['complete', 'partial', 'failed', 'pending'].indexOf(updates.effectsStatus) === -1) {
+                throw new Error('Invalid disaster effectsStatus');
             }
 
+            var candidate = _clone(record);
+            Object.keys(updates).forEach(function(key) {
+                if (key === 'structuralDamage' || key === 'id') return;
+                candidate[key] = updates[key];
+            });
+
+            if (Object.prototype.hasOwnProperty.call(updates, 'structuralDamage')) {
+                var incoming = updates.structuralDamage;
+                if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+                    throw new Error('structuralDamage must be an object');
+                }
+                var sd = candidate.structuralDamage || _emptyStructuralDamage();
+                var countKeys = ['featuresDestroyed', 'schoolsDestroyed', 'enterprisesDestroyed',
+                    'residencesDemolished', 'householdsDestroyed'];
+                countKeys.concat(['totalLoss']).forEach(function(key) {
+                    if (Object.prototype.hasOwnProperty.call(incoming, key)
+                        && (typeof incoming[key] !== 'number' || !isFinite(incoming[key]) || incoming[key] < 0)) {
+                        throw new Error('structuralDamage.' + key + ' must be a finite non-negative number');
+                    }
+                });
+                if (incoming.destructionList != null
+                    && (typeof incoming.destructionList !== 'object' || Array.isArray(incoming.destructionList))) {
+                    throw new Error('structuralDamage.destructionList must be an object');
+                }
+                var listKeys = ['features', 'schools', 'enterprises', 'residences', 'households'];
+                var listUpdates = incoming.destructionList || {};
+                listKeys.forEach(function(key) {
+                    if (Object.prototype.hasOwnProperty.call(listUpdates, key)) {
+                        if (!Array.isArray(listUpdates[key])) {
+                            throw new Error('structuralDamage.destructionList.' + key + ' must be an array');
+                        }
+                        sd.destructionList[key] = _clone(listUpdates[key]);
+                    }
+                });
+                countKeys.forEach(function(key, index) {
+                    var list = sd.destructionList[listKeys[index]];
+                    var count = list.length;
+                    if (Object.prototype.hasOwnProperty.call(incoming, key) && incoming[key] !== count) {
+                        throw new Error('structuralDamage.' + key + ' must match destructionList.' + listKeys[index] + '.length');
+                    }
+                    sd[key] = count;
+                });
+                if (Object.prototype.hasOwnProperty.call(incoming, 'totalLoss')) sd.totalLoss = incoming.totalLoss;
+                candidate.structuralDamage = sd;
+            }
+
+            // Normalise a detached candidate, then validate before touching
+            // canonical storage or indexes.
+            candidate = _normaliseRecord(candidate);
             var oldLocationId = record.locationId;
             var oldYear = record.year;
+            Object.keys(record).forEach(function(key) { delete record[key]; });
+            Object.keys(candidate).forEach(function(key) { record[key] = candidate[key]; });
 
-            // Structural damage requires field-level merge.
-            if (updates.structuralDamage) {
-                if (!record.structuralDamage) {
-                    record.structuralDamage = _emptyStructuralDamage();
-                }
-                var sd = record.structuralDamage;
-                var incoming = updates.structuralDamage;
-
-                if (typeof incoming.featuresDestroyed === 'number')     sd.featuresDestroyed = incoming.featuresDestroyed;
-                if (typeof incoming.schoolsDestroyed === 'number')      sd.schoolsDestroyed = incoming.schoolsDestroyed;
-                if (typeof incoming.enterprisesDestroyed === 'number')  sd.enterprisesDestroyed = incoming.enterprisesDestroyed;
-                if (typeof incoming.residencesDemolished === 'number')  sd.residencesDemolished = incoming.residencesDemolished;
-                if (typeof incoming.householdsDestroyed === 'number')   sd.householdsDestroyed = incoming.householdsDestroyed;
-                if (typeof incoming.totalLoss === 'number')             sd.totalLoss = incoming.totalLoss;
-
-                if (incoming.destructionList) {
-                    if (!sd.destructionList) sd.destructionList = _emptyStructuralDamage().destructionList;
-                    var dl = incoming.destructionList;
-                    if (Array.isArray(dl.features))    sd.destructionList.features = dl.features.slice();
-                    if (Array.isArray(dl.schools))     sd.destructionList.schools = dl.schools.slice();
-                    if (Array.isArray(dl.enterprises)) sd.destructionList.enterprises = dl.enterprises.slice();
-                    if (Array.isArray(dl.residences))  sd.destructionList.residences = dl.residences.slice();
-                    if (Array.isArray(dl.households))  sd.destructionList.households = dl.households.slice();
-                }
-
-                record.featuresDestroyed    = sd.featuresDestroyed;
-                record.schoolsDestroyed     = sd.schoolsDestroyed;
-                record.enterprisesDestroyed = sd.enterprisesDestroyed;
-                record.residencesDemolished = sd.residencesDemolished;
-                record.householdsDestroyed  = sd.householdsDestroyed;
-                record.totalLoss            = sd.totalLoss;
-
-                delete updates.structuralDamage;
-            }
-
-            for (var key in updates) {
-                if (!Object.prototype.hasOwnProperty.call(updates, key)) continue;
-                record[key] = updates[key];
-            }
-
-            // Maintain location / year indexes on change.
             if (oldLocationId !== record.locationId) {
                 if (oldLocationId) {
-                    var oldLocList = _state.disasters.byLocation.get(oldLocationId);
-                    if (oldLocList) {
-                        var li = oldLocList.indexOf(record);
-                        if (li !== -1) oldLocList.splice(li, 1);
-                        if (oldLocList.length === 0) _state.disasters.byLocation.delete(oldLocationId);
-                    }
+                    var oldList = _state.disasters.byLocation.get(oldLocationId) || [];
+                    var oldIndex = oldList.indexOf(record);
+                    if (oldIndex !== -1) oldList.splice(oldIndex, 1);
+                    if (!oldList.length) _state.disasters.byLocation.delete(oldLocationId);
                 }
                 if (record.locationId) {
-                    if (!_state.disasters.byLocation.has(record.locationId)) {
-                        _state.disasters.byLocation.set(record.locationId, []);
-                    }
+                    if (!_state.disasters.byLocation.has(record.locationId)) _state.disasters.byLocation.set(record.locationId, []);
                     _state.disasters.byLocation.get(record.locationId).push(record);
                 }
             }
             if (oldYear !== record.year) {
                 if (typeof oldYear === 'number') {
-                    var oldYearList = _state.disasters.byYear.get(oldYear);
-                    if (oldYearList) {
-                        var yi = oldYearList.indexOf(record);
-                        if (yi !== -1) oldYearList.splice(yi, 1);
-                        if (oldYearList.length === 0) _state.disasters.byYear.delete(oldYear);
-                    }
+                    var oldYearList = _state.disasters.byYear.get(oldYear) || [];
+                    var oldYearIndex = oldYearList.indexOf(record);
+                    if (oldYearIndex !== -1) oldYearList.splice(oldYearIndex, 1);
+                    if (!oldYearList.length) _state.disasters.byYear.delete(oldYear);
                 }
                 if (typeof record.year === 'number') {
-                    if (!_state.disasters.byYear.has(record.year)) {
-                        _state.disasters.byYear.set(record.year, []);
-                    }
+                    if (!_state.disasters.byYear.has(record.year)) _state.disasters.byYear.set(record.year, []);
                     _state.disasters.byYear.get(record.year).push(record);
                 }
             }
 
             _markDirty();
-            _publish(C.EVENTS.DISASTER_UPDATED, {
-                disasterId: disasterId,
-                disaster: _clone(record)
-            });
-
+            _publish(C.EVENTS.DISASTER_UPDATED, { disasterId: disasterId, disaster: _clone(record) });
             return _ok(_clone(record));
-
         } catch (e) {
             return _fail(e.message || String(e), C.CODES.VALIDATION);
         } finally {
