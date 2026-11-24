@@ -936,9 +936,103 @@
     // ---- Leader / place government -------------------------------------------
     // Delegated to LocationQueries. Government does not own leader data.
 
+    function getLeaderEligibilityStatus(placeId, characterId) {
+        var leader = characterId
+            ? { characterId: characterId }
+            : (_LocationQueries.getCurrentLeader
+                ? _LocationQueries.getCurrentLeader(placeId)
+                : null);
+        if (!leader) {
+            return { status: 'no-leader', eligible: null, warning: null };
+        }
+
+        var place = _placeSummary(placeId);
+        if (!place) {
+            return {
+                status: 'unknown',
+                eligible: null,
+                warning: 'Government rank eligibility could not be checked because the location is unavailable.'
+            };
+        }
+        if (!place.governmentTypeId) {
+            return { status: 'unrestricted', eligible: true, warning: null };
+        }
+
+        var governmentType = getGovernmentType(place.governmentTypeId);
+        if (!governmentType) {
+            return {
+                status: 'unknown',
+                eligible: null,
+                warning: 'Government rank eligibility could not be checked because the assigned government type is missing.'
+            };
+        }
+
+        var allowedRankIds = governmentType.allowedRankIds;
+        if (!Array.isArray(allowedRankIds)) {
+            return {
+                status: 'unknown',
+                eligible: null,
+                warning: 'Government rank eligibility could not be checked because the government type has an invalid rank allowlist.'
+            };
+        }
+        if (allowedRankIds.length === 0) {
+            return { status: 'unrestricted', eligible: true, warning: null };
+        }
+
+        var facts;
+        try {
+            facts = _charFacts(leader.characterId);
+        } catch (e) {
+            facts = null;
+        }
+        if (!facts) {
+            return {
+                status: 'unknown',
+                eligible: null,
+                warning: 'Government rank eligibility could not be checked because the leader record is unavailable.'
+            };
+        }
+
+        var activeRankId = facts.activeRankId || null;
+        if (allowedRankIds.indexOf(activeRankId) !== -1) {
+            return {
+                status: 'eligible',
+                eligible: true,
+                activeRankId: activeRankId,
+                activeRankName: (function () {
+                    var rank = _rankSummary(activeRankId);
+                    return rank ? rank.name : null;
+                })(),
+                allowedRankIds: allowedRankIds.slice(),
+                governmentTypeName: governmentType.name || null,
+                warning: null
+            };
+        }
+
+        var activeRank = _rankSummary(activeRankId);
+        var rankLabel = activeRank ? activeRank.name : 'no active rank';
+        return {
+            status: 'ineligible',
+            eligible: false,
+            activeRankId: activeRankId,
+            activeRankName: activeRank ? activeRank.name : null,
+            allowedRankIds: allowedRankIds.slice(),
+            governmentTypeName: governmentType.name || null,
+            warning: 'The current leader holds ' + rankLabel +
+                ', which is not on the allowed-rank list for ' +
+                (governmentType.name || 'this government type') +
+                '. The appointment remains in office; an explicit exception may be recognised.'
+        };
+    }
+
     function getCurrentLeader(placeId) {
         if (!_LocationQueries.getCurrentLeader) return null;
-        return _LocationQueries.getCurrentLeader(placeId);
+        var leader = _LocationQueries.getCurrentLeader(placeId);
+        if (!leader) return null;
+        var eligibility = getLeaderEligibilityStatus(placeId, leader.characterId);
+        var projected = Object.assign({}, leader);
+        projected.rankEligibility = eligibility;
+        return projected;
     }
 
     function getLeaderHistory(placeId) {
@@ -1076,6 +1170,7 @@
 
         // Leader (delegated to Location)
         getCurrentLeader: getCurrentLeader,
+        getLeaderEligibilityStatus: getLeaderEligibilityStatus,
         getLeaderHistory: getLeaderHistory,
         getLeaderCount: getLeaderCount,
         getActiveLeaderCount: getActiveLeaderCount,
