@@ -513,8 +513,7 @@
                         (disaster && disaster.year) || null,
                         {
                             destroyedBy: 'disaster',
-                            disasterId: disaster && disaster.id || null,
-                            demolishResidence: true
+                            disasterId: disaster && disaster.id || null
                         }
                     );
                     if (result && result.success === true) {
@@ -523,6 +522,7 @@
                             name: hh.name,
                             type: 'household',
                             membersRemoved: (result && result.membersRemoved) || 0,
+                            membersPreserved: (result && result.membersPreserved) || 0,
                             demolished: true,
                             year: (disaster && disaster.year) || null
                         });
