@@ -54,8 +54,9 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - getDefaultSettlement now initializes baseProsperity: 50. This
- *       is the canonical prosperity input read by
+ *     - getDefaultSettlement initializes baseProsperity from
+ *       SettlementProsperityDefinitions.BASE_PROSPERITY. This is the
+ *       canonical prosperity input read by
  *       SettlementCrimeQueries.getCrimeRate. Prior revisions read
  *       settlement.prosperity, which the factory never set, so the
  *       prosperity term in the crime rate calculation was silently
