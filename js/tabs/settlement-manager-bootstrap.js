@@ -125,9 +125,8 @@
 
     function _placeName(locationId) {
         if (!locationId) return null;
-        if (window.PlaceQueries
-            && typeof window.PlaceQueries.getPlaceById === 'function') {
-            var place = window.PlaceQueries.getPlaceById(locationId);
+        if (typeof window.getPlaceById === 'function') {
+            var place = window.getPlaceById(locationId);
             if (place) return place.displayName || place.name || null;
         }
         return null;
