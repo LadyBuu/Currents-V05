@@ -969,72 +969,101 @@
         var inst = _state()._getInstitutionCanonical(institutionId);
         if (!inst) return _fail('Institution not found');
 
-        // Snapshot student and teacher IDs before removing the institution.
-        var studentIds = [];
-        var teacherIds = [];
-        if (Array.isArray(inst.students)) {
-            for (var s = 0; s < inst.students.length; s++) {
-                if (inst.students[s] && inst.students[s].studentId) {
-                    studentIds.push(inst.students[s].studentId);
-                }
-            }
-        }
-        if (Array.isArray(inst.teachers)) {
-            for (var t = 0; t < inst.teachers.length; t++) {
-                if (inst.teachers[t] && inst.teachers[t].teacherId) {
-                    teacherIds.push(inst.teachers[t].teacherId);
-                }
-            }
-        }
+        var students = (inst.students || []).slice();
+        var teachers = (inst.teachers || []).slice();
+        var studentIds = students.map(function (entry) {
+            return entry && entry.studentId;
+        }).filter(Boolean);
+        var teacherIds = teachers.map(function (entry) {
+            return entry && entry.teacherId;
+        }).filter(Boolean);
 
         if (cascade) {
-            var students = (inst.students || []).slice();
             for (var i = 0; i < students.length; i++) {
-                withdrawStudent(institutionId, students[i].studentId, 'Institution deleted');
+                if (!students[i] || !students[i].studentId) {
+                    return _fail('Cannot cascade-delete institution: invalid student entry');
+                }
+                var withdrawal = withdrawStudent(
+                    institutionId, students[i].studentId, 'Institution deleted'
+                );
+                if (!withdrawal || withdrawal.success !== true) {
+                    return _fail(
+                        'Institution deletion stopped while withdrawing student ' +
+                        students[i].studentId + ': ' +
+                        (withdrawal && (withdrawal.reason || withdrawal.error) || 'unknown failure'),
+                        { institutionRetained: true, partialCleanup: true }
+                    );
+                }
             }
-            var teachers = (inst.teachers || []).slice();
+
             for (var j = 0; j < teachers.length; j++) {
-                fireTeacher(institutionId, teachers[j].teacherId, 'Institution deleted');
+                if (!teachers[j] || !teachers[j].teacherId) {
+                    return _fail('Cannot cascade-delete institution: invalid teacher entry');
+                }
+                var dismissal = fireTeacher(
+                    institutionId, teachers[j].teacherId, 'Institution deleted'
+                );
+                if (!dismissal || dismissal.success !== true) {
+                    return _fail(
+                        'Institution deletion stopped while removing teacher ' +
+                        teachers[j].teacherId + ': ' +
+                        (dismissal && (dismissal.reason || dismissal.error) || 'unknown failure'),
+                        { institutionRetained: true, partialCleanup: true }
+                    );
+                }
             }
-            if (inst.headmaster) {
-                endHeadmasterTerm(institutionId, _getCurrentYear(), 'Institution deleted');
+
+            var current = _state()._getInstitutionCanonical(institutionId);
+            if (current && current.headmaster) {
+                var headmasterResult = endHeadmasterTerm(
+                    institutionId, _getCurrentYear(), 'Institution deleted'
+                );
+                if (!headmasterResult || headmasterResult.success !== true) {
+                    return _fail('Institution deletion stopped: headmaster term could not be ended', {
+                        institutionRetained: true,
+                        partialCleanup: true
+                    });
+                }
             }
         }
 
-        // Orphan sweep: regardless of cascade, drop character-side
-        // education records for this institution's student and teacher
-        // IDs. When cascade=true, the withdraw/fire path above already
-        // wrote proper history and removed character.education entries
-        // via recordEducationWithdrawal; the sweep is a no-op for those
-        // characters. When cascade=false, this is the only cleanup.
-        // See ORPHAN CLEANUP ON DELETE.
+        // Do not delete the institution if orphan cleanup cannot be completed.
+        var CC = window.CharacterCommands;
+        if (!CC || typeof CC.removeEducationRecord !== 'function') {
+            return _fail(
+                'CharacterCommands.removeEducationRecord is required; institution was retained',
+                { institutionRetained: true }
+            );
+        }
+
         var sweepAttempted = 0;
         var sweepSucceeded = 0;
-        var sweepAvailable = _removeCharacterEducationRecord('__probe__', '__probe__');
-        var methodMissing = (sweepAvailable === null);
-
-        if (methodMissing) {
-            if (typeof console !== 'undefined' && console.warn) {
-                console.warn(
-                    'education-commands.js: CharacterCommands.removeEducationRecord ' +
-                    'is not available; character-side orphan records may remain ' +
-                    'for institution ' + institutionId + '.'
+        var idsToSweep = cascade ? studentIds.concat(teacherIds) : studentIds.concat(teacherIds);
+        for (var k = 0; k < idsToSweep.length; k++) {
+            sweepAttempted++;
+            var sweepResult = _removeCharacterEducationRecord(idsToSweep[k], institutionId);
+            if (sweepResult !== true) {
+                return _fail(
+                    'Institution deletion stopped during character education cleanup for ' +
+                    idsToSweep[k] + '; institution was retained',
+                    {
+                        institutionRetained: true,
+                        partialCleanup: true,
+                        orphanSweepAttempted: sweepAttempted,
+                        orphanSweepSucceeded: sweepSucceeded
+                    }
                 );
             }
-        } else {
-            for (var si = 0; si < studentIds.length; si++) {
-                sweepAttempted++;
-                var okS = _removeCharacterEducationRecord(studentIds[si], institutionId);
-                if (okS === true) sweepSucceeded++;
-            }
-            for (var ti = 0; ti < teacherIds.length; ti++) {
-                sweepAttempted++;
-                var okT = _removeCharacterEducationRecord(teacherIds[ti], institutionId);
-                if (okT === true) sweepSucceeded++;
-            }
+            sweepSucceeded++;
         }
 
-        _state()._removeInstitution(institutionId);
+        if (_state()._removeInstitution(institutionId) !== true) {
+            return _fail('Institution record could not be removed', {
+                institutionRetained: true,
+                orphanSweepAttempted: sweepAttempted,
+                orphanSweepSucceeded: sweepSucceeded
+            });
+        }
         return _ok({
             institutionId: institutionId,
             orphanSweepAttempted: sweepAttempted,
@@ -2483,6 +2512,18 @@
 
         var demolishYear = year !== undefined ? year : _getCurrentYear();
         var demolishReason = reason || 'Demolished';
+        var removeStudents = options.removeStudents !== false;
+        var removeTeachers = options.removeTeachers !== false;
+        var original = {};
+        Object.keys(inst).forEach(function (key) {
+            original[key] = Array.isArray(inst[key])
+                ? inst[key].map(function (entry) {
+                    return entry && typeof entry === 'object'
+                        ? Object.assign({}, entry) : entry;
+                })
+                : (inst[key] && typeof inst[key] === 'object'
+                    ? Object.assign({}, inst[key]) : inst[key]);
+        });
 
         var record = {
             institutionId: inst.id,
@@ -2510,52 +2551,85 @@
         };
 
         var removedStudents = 0;
-        if (options.removeStudents !== false) {
+        if (removeStudents) {
             var students = (inst.students || []).slice();
             for (var i = 0; i < students.length; i++) {
-                if (!students[i].graduated) {
-                    var res = withdrawStudent(
-                        institutionId,
-                        students[i].studentId,
-                        'Institution demolished'
+                if (students[i] && !students[i].graduated) {
+                    var studentResult = withdrawStudent(
+                        institutionId, students[i].studentId, 'Institution demolished'
                     );
-                    if (res.success) removedStudents++;
+                    if (!studentResult || studentResult.success !== true) {
+                        return _fail(
+                            'Demolition stopped while withdrawing student ' +
+                            students[i].studentId + ': ' +
+                            (studentResult && (studentResult.reason || studentResult.error) || 'unknown failure'),
+                            { institutionRetained: true, partialCleanup: true }
+                        );
+                    }
+                    removedStudents++;
                 }
             }
         }
 
         var removedTeachers = 0;
-        if (options.removeTeachers !== false) {
+        if (removeTeachers) {
             var teachers = (inst.teachers || []).slice();
             for (var j = 0; j < teachers.length; j++) {
-                var resT = fireTeacher(
-                    institutionId,
-                    teachers[j].teacherId,
-                    'Institution demolished'
+                if (!teachers[j] || !teachers[j].teacherId) {
+                    return _fail('Demolition stopped: invalid teacher entry', {
+                        institutionRetained: true, partialCleanup: true
+                    });
+                }
+                var teacherResult = fireTeacher(
+                    institutionId, teachers[j].teacherId, 'Institution demolished'
                 );
-                if (resT.success) removedTeachers++;
+                if (!teacherResult || teacherResult.success !== true) {
+                    return _fail(
+                        'Demolition stopped while removing teacher ' +
+                        teachers[j].teacherId + ': ' +
+                        (teacherResult && (teacherResult.reason || teacherResult.error) || 'unknown failure'),
+                        { institutionRetained: true, partialCleanup: true }
+                    );
+                }
+                removedTeachers++;
             }
         }
 
-        if (inst.headmaster) {
-            endHeadmasterTerm(institutionId, demolishYear, 'Institution demolished');
+        var current = _state()._getInstitutionCanonical(institutionId);
+        if (current && current.headmaster) {
+            var headmasterResult = endHeadmasterTerm(
+                institutionId, demolishYear, 'Institution demolished'
+            );
+            if (!headmasterResult || headmasterResult.success !== true) {
+                return _fail('Demolition stopped: headmaster term could not be ended', {
+                    institutionRetained: true, partialCleanup: true
+                });
+            }
         }
 
-        _state()._updateInstitution(institutionId, {
+        var patch = {
             status: 'demolished',
             demolishedAt: demolishYear,
             demolishedReason: demolishReason,
             destroyedBy: options.destroyedBy || 'manual',
             disasterId: options.disasterId || null,
             demolishedRecord: record,
-            students: [],
-            teachers: [],
-            headmaster: null,
-            reputation: Math.max(0, (inst.reputation || 50) - 30),
+            reputation: Math.max(0, (current.reputation || 50) - 30),
             maxStudents: 0
-        });
+        };
+        if (removeStudents) patch.students = [];
+        if (removeTeachers) patch.teachers = [];
+        patch.headmaster = null;
 
-        _history().addEvent(institutionId, {
+        var updated = _state()._updateInstitution(institutionId, patch);
+        if (!updated) {
+            _state()._updateInstitution(institutionId, original);
+            return _fail('Institution demolition state update failed; original institution fields restored', {
+                partialCleanup: removedStudents > 0 || removedTeachers > 0
+            });
+        }
+
+        var event = _history().addEvent(institutionId, {
             type: window.HISTORY_EVENT_TYPES.INSTITUTION_DEMOLISHED,
             year: demolishYear,
             details: 'Demolished: ' + demolishReason,
@@ -2565,12 +2639,20 @@
                 disasterId: options.disasterId || null
             }
         });
+        if (!event) {
+            _state()._updateInstitution(institutionId, original);
+            return _fail('Demolition history could not be recorded; institution fields restored', {
+                partialCleanup: removedStudents > 0 || removedTeachers > 0
+            });
+        }
 
         return _ok({
             institutionId: institutionId,
             demolitionRecord: record,
             removedStudents: removedStudents,
-            removedTeachers: removedTeachers
+            removedTeachers: removedTeachers,
+            retainedStudents: removeStudents ? 0 : (original.students || []).length,
+            retainedTeachers: removeTeachers ? 0 : (original.teachers || []).length
         });
     }
 
