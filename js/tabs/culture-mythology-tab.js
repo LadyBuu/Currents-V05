@@ -511,7 +511,7 @@
             if (target && target.classList && target.classList.contains('ct-mythology-textarea')) {
                 _updateWordCount(target);
             }
-            _syncToWorkingCulture(container, culture);
+            _syncToWorkingCulture(container, container.__ctMythologyCulture);
         });
 
         // Delegated keydown on the list inputs: Enter adds a tag.
@@ -534,7 +534,7 @@
             if (addBtn) {
                 e.preventDefault();
                 var sectionKey = addBtn.getAttribute('data-section');
-                if (sectionKey) _handleAddTag(container, culture, sectionKey);
+                if (sectionKey) _handleAddTag(container, container.__ctMythologyCulture, sectionKey);
                 return;
             }
 
