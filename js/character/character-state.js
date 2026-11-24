@@ -1811,7 +1811,10 @@
                     : { present: true, value: JSON.parse(JSON.stringify(character.education)) },
                 educationHistory: character.educationHistory === undefined
                     ? { present: false }
-                    : { present: true, value: JSON.parse(JSON.stringify(character.educationHistory)) }
+                    : { present: true, value: JSON.parse(JSON.stringify(character.educationHistory)) },
+                updatedAt: character.updatedAt === undefined
+                    ? { present: false }
+                    : { present: true, value: character.updatedAt }
             };
         });
     }
@@ -1844,6 +1847,8 @@
             } else {
                 delete target.educationHistory;
             }
+            if (saved.updatedAt.present) target.updatedAt = saved.updatedAt.value;
+            else delete target.updatedAt;
             changed.push(saved.id);
         }
         if (changed.length) _emitChange('bulk-updated', changed);
