@@ -227,6 +227,37 @@
         }
     }
 
+    // Identity writes are user-initiated saves. Flush the storage debounce
+    // synchronously so a successful command is not mistaken for a durable save.
+    function _persistIdentityChanges() {
+        if (typeof window.saveMasterData !== 'function') {
+            return { success: false, reason: 'Storage saveMasterData() is not available.' };
+        }
+        var saved = false;
+        try { saved = window.saveMasterData() === true; }
+        catch (e) {
+            return { success: false, reason: e && e.message ? e.message : String(e) };
+        }
+        if (saved) return { success: true };
+        var lastError = null;
+        try {
+            lastError = typeof window.getLastSaveError === 'function'
+                ? window.getLastSaveError()
+                : null;
+        } catch (e) { lastError = e; }
+        // A failed immediate flush cancels the pending debounce in storage.js.
+        // Re-arm it so a transient storage failure can still recover.
+        if (typeof window.scheduleSave === 'function') {
+            try { window.scheduleSave(); } catch (e) { /* retain failure below */ }
+        }
+        return {
+            success: false,
+            reason: lastError && lastError.message
+                ? lastError.message
+                : 'The browser could not write the changes to local storage.'
+        };
+    }
+
     function _year(v) {
         if (typeof window.formatYear === 'function') return window.formatYear(v);
         if (_isMissing(v)) return '?';
@@ -1774,6 +1805,12 @@
         if (errors.length > 0) {
             _toast('Save failed: ' + errors.join('; '), 'error');
         } else {
+            var persisted = _persistIdentityChanges();
+            if (!persisted.success) {
+                _toast('Changes were applied in memory but could not be saved: ' +
+                    persisted.reason, 'error');
+                return;
+            }
             _toast('Saved.', 'success');
             _refresh();
         }
@@ -2216,6 +2253,12 @@
                     _toast('Failed: ' + (r && r.reason ? r.reason : 'unknown'), 'error');
                     return false;
                 }
+                var persisted = _persistIdentityChanges();
+                if (!persisted.success) {
+                    _toast('Rank was added in memory but could not be saved: ' +
+                        persisted.reason, 'error');
+                    return false;
+                }
                 _toast('Rank added.', 'success');
                 _refresh();
             }
@@ -2311,6 +2354,12 @@
                     _toast('Failed: ' + (r && r.reason ? r.reason : 'unknown'), 'error');
                     return false;
                 }
+                var persisted = _persistIdentityChanges();
+                if (!persisted.success) {
+                    _toast('Rank was updated in memory but could not be saved: ' +
+                        persisted.reason, 'error');
+                    return false;
+                }
                 _toast('Rank updated.', 'success');
                 _refresh();
             }
@@ -2325,6 +2374,12 @@
         var r = CC.setActiveRank(characterId, rankId);
         if (!r || r.success !== true) {
             _toast('Failed: ' + (r && r.reason ? r.reason : 'unknown'), 'error');
+            return;
+        }
+        var persisted = _persistIdentityChanges();
+        if (!persisted.success) {
+            _toast('Active rank changed in memory but could not be saved: ' +
+                persisted.reason, 'error');
             return;
         }
         _toast('Active rank set.', 'success');
@@ -2342,6 +2397,12 @@
             _toast('Failed: ' + (r && r.reason ? r.reason : 'unknown'), 'error');
             return;
         }
+        var persisted = _persistIdentityChanges();
+        if (!persisted.success) {
+            _toast('Rank was deprecated in memory but could not be saved: ' +
+                persisted.reason, 'error');
+            return;
+        }
         _toast('Rank deprecated.', 'success');
         _refresh();
     }
@@ -2355,6 +2416,12 @@
         var r = CC.removeRankAssignment(characterId, rankId);
         if (!r || r.success !== true) {
             _toast('Failed: ' + (r && r.reason ? r.reason : 'unknown'), 'error');
+            return;
+        }
+        var persisted = _persistIdentityChanges();
+        if (!persisted.success) {
+            _toast('Rank was removed in memory but could not be saved: ' +
+                persisted.reason, 'error');
             return;
         }
         _toast('Rank removed.', 'success');
