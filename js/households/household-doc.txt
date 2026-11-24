@@ -3160,3 +3160,8 @@ Canonical Enterprise owner fields are authoritative. The repair refuses to
 run when Household identity or Enterprise owner references are ambiguous.
 
 ================================================================================
+
+
+LOCATION DELETION TRANSACTION ADAPTER
+
+HouseholdState now exposes internal snapshot/restore adapters for Location deletion. The snapshot retains the canonical Household, position and assignment arrays; restoration reinstalls them and rebuilds Household indexes/caches. This does not itself coordinate Location deletion.
