@@ -1851,3 +1851,30 @@ Character, household, organization, and other private ownership types must not
 be enabled until each has a canonical resolver and a deletion/reassignment
 policy. This remains an explicit cross-domain design task, not a free-text
 field.
+
+PART 21 — LOCATION-DRIVEN RELIGION VIEW REFRESH
+------------------------------------------------
+
+Location Commands publish the following window events after their canonical
+write and state rehydration:
+
+  placeCreated
+  placeUpdated
+  placeDeleted
+  locationTypeCreated
+  locationTypeUpdated
+  locationTypeDeleted
+
+The Religion tab layer listens for these events and asks TabManager to
+re-render the active Religion tab. This refreshes location names, hierarchy-
+dependent projections, religious-presence associations and canonical worship-
+place rows from current data. The refresh runs after Location deletion
+reconciliation, so a deleted location is not reintroduced from a stale view
+snapshot.
+
+The listener is installed once by religion-details-tab.js. It is deliberately
+not part of religion-bootstrap.js, whose responsibility remains domain
+verification and state hydration rather than UI wiring. Only the active
+Religion tab is re-rendered; inactive tabs render from current data when
+opened. The bridge is guarded so reduced test harnesses without TabManager
+remain loadable.
