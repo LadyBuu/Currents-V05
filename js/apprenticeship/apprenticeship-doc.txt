@@ -1738,3 +1738,39 @@ PART 7 — KNOWN HAZARDS
 ================================================================================
 END OF DOCUMENT
 ================================================================================
+
+
+--------------------------------------------------------------------------------
+2.7 RECENT INTEGRITY HARDENING
+--------------------------------------------------------------------------------
+
+  findPotentialMasters:
+    - Candidate eligibility is fail-closed. A candidate must have a
+      character.id and a finite numeric skillLevel in [0, 100] that
+      meets the requested threshold. Missing or malformed skill data
+      is never treated as eligible.
+    - The SettlementQueries result shape is { character, skillLevel,
+      apprenticeCount }; identity is read from character.id.
+    - Duplicate character entries are removed. A missing settlement
+      (null result) produces an empty candidate list. Invalid query
+      output throws rather than silently appearing as no candidates.
+
+  removeAllReferencesTo:
+    - Both master and apprentice reference queries must return arrays.
+      Query exceptions or invalid results abort before any removal.
+    - Every edge removal is checked. Partial cleanup returns
+      success:false, code PARTIAL_REFERENCE_CLEANUP, with expected,
+      removed and failed counts plus per-edge failure reasons.
+      Successful removals are still reported and notifications are
+      published when at least one edge was removed.
+
+  preserveKnowledgeOnDeath:
+    - Per-profession failures are returned in data.failed rather than
+      being represented only by console warnings.
+    - Partial completion returns success:false,
+      code PARTIAL_KNOWLEDGE_PRESERVATION, with preserved,
+      alreadyAtOrAbove, failed and partial fields. Successful
+      profession transfers are not automatically rolled back; the
+      enclosing death cascade remains the transaction boundary and
+      must inspect the result and abort/compensate when appropriate.
+--------------------------------------------------------------------------------
