@@ -255,19 +255,33 @@
      * @private
      */
     function _invokeDeleteHandlers(characterId) {
-        if (_deleteHandlers.length === 0) return;
+        var report = { applied: 0, failed: [] };
         var snapshot = _deleteHandlers.slice();
         for (var i = 0; i < snapshot.length; i++) {
             try {
-                snapshot[i](characterId);
+                var result = snapshot[i](characterId);
+                if (!result || result.success !== true) {
+                    report.failed.push({
+                        handlerIndex: i,
+                        reason: result && result.reason
+                            ? result.reason
+                            : 'Delete handler returned an invalid result.'
+                    });
+                } else {
+                    report.applied++;
+                }
             } catch (e) {
+                report.failed.push({
+                    handlerIndex: i,
+                    reason: e && e.message ? e.message : 'Delete handler threw.'
+                });
                 if (typeof console !== 'undefined' && console.error) {
-                    console.error(
-                        'character-deletion-commands.js: delete handler threw:', e
-                    );
+                    console.error('character-deletion-commands.js: delete handler threw:', e);
                 }
             }
         }
+        report.success = report.failed.length === 0;
+        return report;
     }
 
     // =========================================================================
@@ -384,10 +398,12 @@
 
             try {
                 var result = mod[target.methodName](characterId);
-                if (result && result.success === false) {
+                if (!result || result.success !== true) {
                     report.failed.push({
                         domain: target.label,
-                        reason: result.reason || 'cleanup reported failure'
+                        reason: result && result.reason
+                            ? result.reason
+                            : 'cleanup returned an invalid result'
                     });
                 } else {
                     report.applied.push({ domain: target.label });
@@ -418,12 +434,17 @@
         // Phase 3.13b: invoke registered delete handlers after the
         // named cleanup table. This reaches the domains that load
         // after this file (notably the relationship domain).
-        _invokeDeleteHandlers(characterId);
+        var handlers = _invokeDeleteHandlers(characterId);
+        cleanup.handlers = handlers;
+        cleanup.success = cleanup.failed.length === 0 && handlers.success;
+        cleanup.partial = !cleanup.success;
 
         return _ok({
             deletedId: characterId,
             deletedCharacter: removed.character,
-            cleanup: cleanup
+            deletionComplete: true,
+            cleanup: cleanup,
+            cleanupFailed: !cleanup.success
         });
     }
 
@@ -533,13 +554,14 @@
 
         var cleanupReports = [];
         for (var j = 0; j < toPurge.length; j++) {
+            var purgeReport = _dispatchCleanup(toPurge[j]);
+            purgeReport.handlers = _invokeDeleteHandlers(toPurge[j]);
+            purgeReport.success = purgeReport.failed.length === 0 && purgeReport.handlers.success;
+            purgeReport.partial = !purgeReport.success;
             cleanupReports.push({
                 characterId: toPurge[j],
-                report: _dispatchCleanup(toPurge[j])
+                report: purgeReport
             });
-            // Phase 3.13b: invoke registered delete handlers per purged
-            // character, matching the per-character cleanup pattern.
-            _invokeDeleteHandlers(toPurge[j]);
         }
 
         return {
@@ -652,13 +674,14 @@
 
         var cleanupReports = [];
         for (var j = 0; j < existingIds.length; j++) {
+            var bulkReport = _dispatchCleanup(existingIds[j]);
+            bulkReport.handlers = _invokeDeleteHandlers(existingIds[j]);
+            bulkReport.success = bulkReport.failed.length === 0 && bulkReport.handlers.success;
+            bulkReport.partial = !bulkReport.success;
             cleanupReports.push({
                 characterId: existingIds[j],
-                report: _dispatchCleanup(existingIds[j])
+                report: bulkReport
             });
-            // Phase 3.13b: invoke registered delete handlers per
-            // removed character.
-            _invokeDeleteHandlers(existingIds[j]);
         }
 
         return {
