@@ -1946,21 +1946,57 @@
 
         var y = calc.year;
         var funding = calc.funding;
-
         var history = (inst.governmentFundingHistory || []).slice();
+        var prior = history.find(function(entry) {
+            return entry && entry.year === y;
+        });
+        if (prior) {
+            return _ok({
+                institutionId: institutionId,
+                year: y,
+                funding: prior.amount,
+                studentCount: prior.students,
+                alreadyProcessed: true
+            });
+        }
+
+        // Move money first. Do not write a successful funding record if the
+        // settlement debit fails.
+        var debitResult;
+        try {
+            debitResult = _updateSettlementWealth(inst.locationId, -funding,
+                'Education funding for ' + inst.name +
+                ' (' + calc.studentCount + ' students)');
+        } catch (e) {
+            return _fail('Settlement funding debit failed: ' +
+                (e && e.message ? e.message : 'unknown error'));
+        }
+        if (!debitResult || debitResult.success !== true) {
+            return _fail('Settlement funding debit failed', {
+                settlementResult: debitResult || null
+            });
+        }
+
         history.push({ year: y, amount: funding, students: calc.studentCount });
         if (history.length > 40) history = history.slice(-40);
-
-        _state()._updateInstitution(institutionId, {
+        var updated = _state()._updateInstitution(institutionId, {
             governmentFunding: funding,
             governmentFundingYear: y,
             lastFunded: y,
             governmentFundingHistory: history
         });
-
-        _updateSettlementWealth(inst.locationId, -funding,
-            'Education funding for ' + inst.name +
-            ' (' + calc.studentCount + ' students)');
+        if (!updated) {
+            // Compensate the debit if the institution record cannot be updated.
+            try {
+                _updateSettlementWealth(inst.locationId, funding,
+                    'Rollback failed education funding record for ' + inst.name);
+            } catch (rollbackError) {
+                return _fail('Funding record failed and settlement rollback threw', {
+                    rollbackError: rollbackError.message || 'unknown error'
+                });
+            }
+            return _fail('Funding record failed; settlement debit was reversed');
+        }
 
         return _ok({
             institutionId: institutionId,
@@ -2021,6 +2057,48 @@
         if (!calc.success) return calc;
 
         var history = (inst.profitHistory || []).slice();
+        var prior = history.find(function(entry) {
+            return entry && entry.year === calc.year;
+        });
+        if (prior) {
+            return _ok({
+                institutionId: institutionId,
+                year: calc.year,
+                profit: prior.profit,
+                ownerId: inst.ownerId,
+                ownerType: inst.ownerType,
+                alreadyProcessed: true
+            });
+        }
+
+        var householdId = null;
+        if (inst.ownerType === 'character') {
+            var owner = _getCharacterById(inst.ownerId);
+            if (!owner) return _fail('Private school owner character not found');
+            var ownerHousehold = _getCharacterHousehold(owner.id);
+            if (!ownerHousehold) return _fail('Private school owner has no household');
+            householdId = ownerHousehold.id;
+        } else if (inst.ownerType === 'household') {
+            householdId = inst.ownerId;
+        } else {
+            return _fail('Unsupported private school owner type');
+        }
+
+        var transferResult;
+        try {
+            transferResult = _updateHouseholdWealth(
+                householdId, calc.profit, 'Profit from ' + inst.name
+            );
+        } catch (e) {
+            return _fail('Private school profit transfer failed: ' +
+                (e && e.message ? e.message : 'unknown error'));
+        }
+        if (!transferResult || transferResult.success !== true) {
+            return _fail('Private school profit transfer failed', {
+                householdResult: transferResult || null
+            });
+        }
+
         history.push({
             year: calc.year,
             profit: calc.profit,
@@ -2029,26 +2107,24 @@
             students: calc.studentCount
         });
         if (history.length > 40) history = history.slice(-40);
-
-        _state()._updateInstitution(institutionId, {
+        var updated = _state()._updateInstitution(institutionId, {
             annualIncome: calc.income,
             annualExpenses: calc.expenses,
             netProfit: calc.profit,
             profitHistory: history
         });
-
-        if (inst.ownerType === 'character') {
-            var owner = _getCharacterById(inst.ownerId);
-            if (owner) {
-                var household = _getCharacterHousehold(owner.id);
-                if (household) {
-                    _updateHouseholdWealth(household.id, calc.profit,
-                        'Profit from ' + inst.name);
-                }
+        if (!updated) {
+            try {
+                _updateHouseholdWealth(
+                    householdId, -calc.profit,
+                    'Rollback failed private school profit record for ' + inst.name
+                );
+            } catch (rollbackError) {
+                return _fail('Profit record failed and household rollback threw', {
+                    rollbackError: rollbackError.message || 'unknown error'
+                });
             }
-        } else if (inst.ownerType === 'household') {
-            _updateHouseholdWealth(inst.ownerId, calc.profit,
-                'Profit from ' + inst.name);
+            return _fail('Profit record failed; owner transfer was reversed');
         }
 
         return _ok({
