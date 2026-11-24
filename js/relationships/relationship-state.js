@@ -392,16 +392,16 @@
         }
 
         var staged = [];
-        var seen = {};
+        var seen = new Set();
         for (var v = 0; v < records.length; v++) {
             var record = records[v];
             if (!_isStructurallyValid(record)) {
                 return { success: false, reason: 'structurally_invalid_record_at_index:' + v };
             }
-            if (_byId.has(record.id) || seen[record.id]) {
+            if (_byId.has(record.id) || seen.has(record.id)) {
                 return { success: false, reason: 'duplicate_id:' + record.id };
             }
-            seen[record.id] = true;
+            seen.add(record.id);
             try {
                 staged.push(_cloneRecord(record));
             } catch (e) {
@@ -427,16 +427,16 @@
         }
 
         var staged = [];
-        var seen = {};
+        var seen = new Set();
         for (var v = 0; v < updates.length; v++) {
             var update = updates[v];
             if (!update || typeof update.id !== 'string' || !update.id.length) {
                 return { success: false, reason: 'malformed_update_at_index:' + v };
             }
-            if (seen[update.id]) {
+            if (seen.has(update.id)) {
                 return { success: false, reason: 'duplicate_update_id:' + update.id };
             }
-            seen[update.id] = true;
+            seen.add(update.id);
             var current = _byId.get(update.id);
             if (!current) {
                 return { success: false, reason: 'unknown_id:' + update.id };
