@@ -115,7 +115,7 @@
     }
 
     function _placeName(locationId) {
-        var pq = window.PlaceQueries;
+        var pq = typeof window.getPlaceById === 'function' ? { getPlaceById: window.getPlaceById } : null;
         if (!pq || typeof pq.getPlaceById !== 'function') return null;
         var place = pq.getPlaceById(locationId);
         return place ? (place.displayName || place.name || null) : null;
