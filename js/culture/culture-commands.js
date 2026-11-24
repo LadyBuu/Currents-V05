@@ -641,6 +641,113 @@
         return updateCulture(cultureId, updates);
     }
 
+    /**
+     * Removes deleted Location IDs from Culture-owned location associations.
+     * The complete batch is validated before any Culture record is changed.
+     */
+    function reconcileDeletedLocations(locationIds) {
+        if (!Array.isArray(locationIds) || locationIds.length === 0) {
+            return { success: false, reason: 'locationIds must be a non-empty array.' };
+        }
+        var removeSet = {};
+        for (var i = 0; i < locationIds.length; i++) {
+            if (typeof locationIds[i] !== 'string' || !locationIds[i].trim()) {
+                return { success: false, reason: 'Every Location ID must be a non-empty string.' };
+            }
+            if (removeSet[locationIds[i]]) {
+                return { success: false, reason: 'Duplicate Location ID: ' + locationIds[i] };
+            }
+            removeSet[locationIds[i]] = true;
+        }
+
+        var validation = _requireCultureValidation();
+        var state = _requireCultureState();
+        var cultures = _readCanonicalCultures();
+        var staged = [];
+        var removedAssociations = 0;
+
+        for (var j = 0; j < cultures.length; j++) {
+            var original = cultures[j];
+            if (!original || typeof original !== 'object' || !original.id) {
+                return { success: false, reason: 'Cannot safely reconcile Location associations: malformed Culture record at index ' + j + '.' };
+            }
+            if (original.locations !== undefined && original.locations !== null &&
+                !Array.isArray(original.locations)) {
+                return { success: false, reason: 'Cannot safely reconcile Location associations: Culture "' + original.id + '" has a malformed locations field.' };
+            }
+
+            var current = Array.isArray(original.locations) ? original.locations : [];
+            var next = current.filter(function(locationId) {
+                return !Object.prototype.hasOwnProperty.call(removeSet, locationId);
+            });
+            if (next.length === current.length) continue;
+
+            var candidate = _clone(original);
+            candidate.locations = next;
+            var result = validation.validateUpdate(candidate, {
+                cultures: cultures,
+                index: j
+            });
+            if (!result.valid) {
+                return {
+                    success: false,
+                    reason: 'Culture validation failed while reconciling "' + original.id + '".',
+                    errors: result.errors
+                };
+            }
+            var associations = _validateAssociations(candidate);
+            if (!associations.valid) {
+                return {
+                    success: false,
+                    reason: 'Remaining associations could not be verified for Culture "' + original.id + '".',
+                    errors: associations.errors
+                };
+            }
+            staged.push({ id: original.id, before: _clone(original), after: candidate });
+            removedAssociations += current.length - next.length;
+        }
+
+        if (staged.length === 0) {
+            return { success: true, data: { updatedCultureIds: [], removedAssociations: 0 } };
+        }
+
+        var applied = [];
+        try {
+            for (var k = 0; k < staged.length; k++) {
+                state._updateCulture(staged[k].id, staged[k].after);
+                applied.push(staged[k]);
+            }
+        } catch (e) {
+            var rollbackErrors = [];
+            for (var r = applied.length - 1; r >= 0; r--) {
+                try { state._updateCulture(applied[r].id, applied[r].before); }
+                catch (rollbackError) {
+                    rollbackErrors.push(applied[r].id + ': ' +
+                        (rollbackError.message || String(rollbackError)));
+                }
+            }
+            return {
+                success: false,
+                reason: 'Culture association reconciliation failed: ' + (e.message || String(e)),
+                rollbackErrors: rollbackErrors
+            };
+        }
+
+        var updatedIds = staged.map(function(item) { return item.id; });
+        _commit('cultureLocationsReconciled', {
+            locationIds: locationIds.slice(),
+            updatedCultureIds: updatedIds,
+            removedAssociations: removedAssociations
+        });
+        return {
+            success: true,
+            data: {
+                updatedCultureIds: updatedIds,
+                removedAssociations: removedAssociations
+            }
+        };
+    }
+
     // =========================================================================
     // 9. APPEARANCE OPTIONS
     // =========================================================================
@@ -789,7 +896,7 @@
 
         // Associations
         addLocationToCulture: addLocationToCulture,
-        removeLocationFromCulture: removeLocationFromCulture,
+        removeLocationFromCulture: removeLocationFromCulture,\n        reconcileDeletedLocations: reconcileDeletedLocations,
         addReligionToCulture: addReligionToCulture,
         removeReligionFromCulture: removeReligionFromCulture,
 
