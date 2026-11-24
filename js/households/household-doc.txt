@@ -2860,6 +2860,60 @@ PART 8 — KNOWN HAZARDS
       assume multiple simultaneous mounts on different containers.
 
 
+ 41.  HOUSEHOLD DELETION, MEMBER TRANSFER, AND RESIDENCE OCCUPANCY
+      FAILURE HANDLING (REVISED).
+      The previous notes describing deletion and Residence reverse-index
+      failures as warning-only or partial-tolerant are superseded.
+
+      deleteHousehold now:
+        - Preflights ResidenceSystem methods and every member Character
+          before changing records.
+        - Stops if a member Character cannot be resolved.
+        - Snapshots Character household fields and householdHistory.
+        - Restores earlier Character references if a later Character
+          update or Residence cleanup fails.
+        - Does not remove the Household record unless all required
+          cross-domain cleanup succeeds.
+        - Returns ROLLBACK_FAILED with the affected Character ids if
+          restoration itself fails.
+
+      transferMember now:
+        - Rejects a Character listed in multiple current households.
+        - Snapshots source and target member arrays, timestamps, and
+          Character membership fields before mutation.
+        - Restores the exact original member records and head flags on
+          failure, including source head succession changes.
+        - Restores Character membership fields if the destination
+          reverse-index write fails.
+        - Reports ROLLBACK_FAILED if Character restoration is refused.
+
+      _getCharacterHistory clones both the array and its entry objects.
+      A failed CharacterCommands write can therefore no longer leave
+      an entry mutated through a shared object reference.
+
+      assignHouseholdToUnit now requires HouseholdQueries and
+      HouseholdCommands at call time, verifies the canonical Household
+      record, rejects cross-residence reassignment without first
+      vacating the old residence, and writes the Household reverse
+      reference before changing Residence occupancy. Moving a household
+      between units in the same Residence closes the old unit history
+      without clearing the newly-written reverse reference.
+
+      _disassociateHouseholdFromUnit now clears the Household reverse
+      reference BEFORE changing unit occupancy or association history.
+      A failed reverse-index write leaves the Residence unit unchanged.
+
+      markResidenceVacant preflights all occupied Household references,
+      rejects duplicate or mismatched occupancy, and rolls back earlier
+      unit and reverse-index changes if a later disassociation fails.
+      If rollback itself fails, it returns ROLLBACK_FAILED.
+
+      These operations remain in-memory mutation boundaries. Callers
+      must still check the structured result and persist at their
+      established orchestration boundary. This does not create a
+      cross-domain storage transaction.
+
+
 ================================================================================
 END OF DOCUMENT
 ================================================================================
