@@ -7,10 +7,10 @@
  *
  * LOCATION: js/tabs/location-leadership-tab.js
  *
- * Displays the current leader and past leaders for a location. Provides
- * "Assign Leader" and "End Term" actions. Both actions call
- * LocationCommands.assignLeader / endLeaderTerm and then persist exactly
- * once via LocationCommands.persist().
+ * Displays the current leader and past leaders for a location. New
+ * appointments route through GovernmentCommands.assignLeader so Government
+ * rank policy is enforced. Term endings use LocationCommands.endLeaderTerm.
+ * Each action persists exactly once through its owning command module.
  *
  * RENDERER CONTRACT (from LocationManagerBootstrap):
  *   fn(container, context) where context = { locationId, locationName }
@@ -20,10 +20,12 @@
  *   - LocationQueries.getCurrentLeader(id)
  *   - LocationQueries.getLeaderHistory(id)
  *
- * WRITES (this tab is the inline writer for leader assignments):
- *   - LocationCommands.assignLeader(locationId, characterId, year, title)
+ * WRITES:
+ *   - GovernmentCommands.assignLeader(locationId, characterId, year, title)
+ *     for policy-checked appointments
  *   - LocationCommands.endLeaderTerm(locationId, characterId, year)
- *   - LocationCommands.persist()  ← exactly once per user action
+ *     for canonical term endings
+ *   - Persist exactly once through the corresponding command module
  *
  * FILTERS: none.
  *
