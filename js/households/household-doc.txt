@@ -3108,3 +3108,30 @@ record changed without normal dirty tracking or notification.
 
 No automatic repair is performed. Resolve each conflict explicitly through
 the relevant Household and Character commands after reviewing the record.
+
+
+================================================================================
+INDUSTRY ENTERPRISE OWNERSHIP TRANSACTIONS
+================================================================================
+
+HouseholdCommands.addEnterpriseToHousehold and
+removeEnterpriseFromHousehold accept { deferCommit: true } only while
+CrossDomainTransaction is active. In this mode they perform their canonical
+reverse-index mutation and audit-history update without hydrating, marking
+dirty, invalidating accessor caches or publishing events.
+
+IndustryCommands.updateEnterprise uses this mode when an Enterprise changes
+to or from Household ownership. It snapshots all affected Household records
+and the Enterprise before mutation. After all participants succeed,
+HouseholdCommands.commitTransactionEnterpriseOwnership(changes) performs the
+normal Household commit and publishes the existing
+householdEnterpriseAdded / householdEnterpriseRemoved events.
+
+The commit method also refuses to run outside an active transaction.
+These methods are coordinator adapters, not ordinary UI command options.
+Do not use deferCommit directly from UI code.
+
+If the transaction fails, HouseholdState restores the complete Household
+snapshots, rebuilds its indexes and invalidates accessor caches. A failed
+restore is surfaced as ROLLBACK_FAILED by CrossDomainTransaction.
+
