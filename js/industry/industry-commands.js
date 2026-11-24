@@ -823,8 +823,9 @@
      *
      * OWNER CHANGE RECONCILIATION: if ownerType / ownerId change, the
      * household reverse index is reconciled after the industry record is
-     * updated. See _reconcileHouseholdOwnership and REVERSE-INDEX
-     * RECONCILIATION in the header.
+     * updated. Household-owned transitions use
+     * _runHouseholdOwnershipTransaction so both reverse-index sides and the
+     * Enterprise record share one rollback boundary.
      */
     var _ALLOWED_UPDATE_FIELDS = {
         name: true,
