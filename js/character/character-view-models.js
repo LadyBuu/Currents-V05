@@ -87,6 +87,19 @@
         return v === undefined || v === null;
     }
 
+    // Keep identity projection independent of the page-level formatting
+    // globals. The formatter is shared by many legacy modules and can be
+    // replaced at runtime; calling it here allowed an unrelated global
+    // override to break the entire Name & Title section.
+    function _genderLabel(gender) {
+        switch (gender) {
+            case 'male': return 'Male';
+            case 'female': return 'Female';
+            case 'unknown': return 'Unknown';
+            default: return 'Unknown';
+        }
+    }
+
     function _hasId(v) {
         return typeof v === 'string' && v.length > 0;
     }
@@ -297,9 +310,7 @@
                     ? null : summary.surnameSource,
                 epithet: summary.epithet || '',
                 gender: summary.gender || 'unknown',
-                genderLabel: (typeof window.getGenderLabel === 'function')
-                    ? window.getGenderLabel(summary.gender)
-                    : (summary.gender || 'Unknown'),
+                genderLabel: _genderLabel(summary.gender),
                 traits: Array.isArray(summary.traits) ? summary.traits.slice() : [],
                 religionId: summary.religionId || null,
                 religionName: religionName,
