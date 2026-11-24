@@ -117,7 +117,7 @@
 
     function _getViewModels()       { return window.SettlementViewModels; }
     function _getSettlementQueries(){ return window.SettlementQueries; }
-    function _getPlaceQueries()     { return window.PlaceQueries; }
+    function _getPlaceQueries() { return typeof window.getPlaceById === 'function' ? { getPlaceById: window.getPlaceById } : null; }
     function _getFeatureQueries()   { return window.SettlementFeatureQueries; }
     function _getFeatureCommands()  { return window.SettlementFeatureCommands; }
     function _getRankCommands()     { return window.SettlementRankCommands; }
@@ -142,7 +142,8 @@
     }
 
     function _placeName(locationId) {
-        var place = _getPlaceQueries().getPlaceById(locationId);
+        var places = _getPlaceQueries();
+        var place = places ? places.getPlaceById(locationId) : null;
         return place ? place.displayName : null;
     }
 
