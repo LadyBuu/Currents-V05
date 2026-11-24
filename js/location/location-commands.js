@@ -110,9 +110,11 @@
  *        wants residences removed too, that is a separate orchestration
  *        above this command.
  *
- *   Household cleanup is best-effort. Character cleanup is required
- *   (CharacterCommands is a load-time dependency). See HOUSEHOLD
- *   RECONCILIATION in the header for the household side.
+ *   Character and Household cleanup are both required before the Location
+ *   graph is mutated. Any query, dependency, or reconciliation failure
+ *   aborts deletion. Earlier successful cleanup may leave harmless cleared
+ *   references while the Location itself remains. This is deliberately
+ *   fail-closed; it is not a cross-domain rollback transaction.
  *
  * CHARACTER CLEANUP SEMANTIC RESOLUTION:
  *   Prior revisions of _cleanupCharactersAtPlaces read the raw
@@ -156,11 +158,9 @@
  *   hard-deleted mid-cascade between enumeration and commit), the whole
  *   batch fails. In that case, _cleanupCharactersAtPlaces reports
  *   `failed: changes.length, reconciled: 0, failedIds: <all ids>`, so
- *   the caller still sees a nonzero failure count. The alternative —
- *   per-character retry after batch failure — would double the commit
- *   count in the rare failure case without meaningfully improving the
- *   user-visible outcome (the place is being deleted regardless; the
- *   caller already treats failed > 0 as "surface the failure").
+ *   the caller sees a nonzero failure count and aborts Location deletion.
+ *   The alternative — per-character retry after batch failure — would
+ *   weaken the batch's all-or-nothing guarantee.
  *
  * CROSS-DOMAIN LEADER CLEANUP (NEW):
  *   When a character dies, the character-lifecycle death dispatch
