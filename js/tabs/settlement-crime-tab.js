@@ -591,6 +591,7 @@
     }
 
     function _wireActions(container, locationId) {
+        container.__stCurrentLocationId = locationId;
         if (container.__stCrimeWired) return;
         container.__stCrimeWired = true;
         container.addEventListener('click', function (event) {
@@ -598,7 +599,7 @@
             if (!btn || !container.contains(btn)) return;
             if (btn.disabled) return;
             event.preventDefault();
-            _handleAction(btn.dataset.action, locationId);
+            _handleAction(btn.dataset.action, container.__stCurrentLocationId);
         });
     }
 
