@@ -1895,16 +1895,20 @@ Settlement subsystem (Location loads first):
     1–3.
   - updateLocationType refuses to change a used type to priority 1–3 when
     any place using that type has a Settlement.
-  - deletePlace first rebuilds Location indexes as a read-only preflight,
-    then reconciles Character, Household, Government, Religion, and Culture
-    references. Settlement records are removed only after those domain
-    reconciliations succeed, immediately before the atomic Location batch
-    removal. This prevents a later Government/Religion/Culture rejection
-    from deleting a Settlement while leaving its Location in place.
-  - The deletion flow is still not a globally atomic cross-domain
-    transaction. A failure after an earlier domain has committed may leave
-    that domain's reference cleanup applied; durable coordinated rollback
-    remains outstanding.
+  - deletePlace rebuilds Location indexes and runs read-only Government,
+    Religion, Culture, and Character preflights before mutation.
+  - The mutation phase is executed by CrossDomainTransaction as one
+    synchronous in-memory transaction spanning Government, Religion, Culture,
+    Character, Household, Settlement, and Location. All seven snapshots are
+    captured before the first write. Owning commands defer notifications;
+    domain events are published only after every apply step succeeds.
+  - If an apply step fails, the transaction restores snapshots in reverse
+    domain order. A rollback failure is surfaced as ROLLBACK_FAILED rather
+    than being reported as a successful deletion.
+  - LocationCommands.persist() remains the caller-owned save boundary. This
+    transaction does not save automatically, is not crash-consistent, and
+    does not provide a durable journal or cross-tab lock. Callers must persist
+    after the successful deletion as before.
 
 The canonical settlementData store is inspected for these guards. Do not
 add a load-time dependency from LocationCommands to Settlement modules.
@@ -1924,12 +1928,14 @@ option to stage Religion association and worship-place history changes in
 memory without replacing either canonical collection or publishing an event.
 Culture reconciliation already supports this dry-run contract.
 
-The real reconciliation calls still run through each owning domain's command
-boundary after preflight. A dry run detects predictable validation and data-
-shape failures; it is not a lock and cannot guarantee that a later write,
-hydration, or event listener will succeed. Location deletion therefore remains
-non-atomic across domains. A later runtime failure can still leave earlier
-successful cleanup committed. Durable coordinated rollback remains outstanding.
+The real reconciliation calls run through each owning domain's command
+boundary inside CrossDomainTransaction, with deferred notifications. The
+transaction captures all seven domain snapshots before mutation and restores
+them in reverse order if an apply step fails. A dry run detects predictable
+validation and data-shape failures; it is not a lock and cannot guarantee that
+a later write or hydration will succeed. The transaction is synchronous and
+in-memory only: it is not crash-consistent, has no durable journal or
+cross-tab lock, and leaves persistence to LocationCommands.persist().
 
 ================================================================================
 END OF DOCUMENT
