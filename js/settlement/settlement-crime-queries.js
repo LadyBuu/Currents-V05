@@ -196,7 +196,8 @@
             militarySpending: 0,
             justiceSeverity: 0,
             religiousUnity: 0,
-            placesOfWorship: 0
+            placesOfWorship: 0,
+            disasters: 0
         };
 
         var crimeRate = BASE_CRIME_RATE;
@@ -277,6 +278,15 @@
             modifiers.placesOfWorship = placeDelta;
             crimeRate += placeDelta;
         }
+
+        var disasterImpacts = Array.isArray(settlement.disasterImpacts) ? settlement.disasterImpacts : [];
+        for (var di = 0; di < disasterImpacts.length; di++) {
+            var disasterImpact = disasterImpacts[di];
+            if (disasterImpact && _isFiniteNumber(disasterImpact.crimeIncrease)) {
+                modifiers.disasters += disasterImpact.crimeIncrease;
+            }
+        }
+        crimeRate += modifiers.disasters;
 
         // --- Justice severity effect ---
         // The justice severity is a multiplier applied to the
