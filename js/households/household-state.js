@@ -431,15 +431,19 @@
                 );
             }
 
-            // Commit all three canonical collections together only after
-            // every identity check succeeds.
+            // Validation used detached copies. Now apply legacy shape
+            // defaults to the original records, preserving canonical object
+            // identity for callers holding live references.
             var master = _getMasterData();
-            master.data.households = households;
-            master.data.householdPositions = positions;
-            master.data.householdAssignments = assignments;
-            _state.households = households;
-            _state.householdPositions = positions;
-            _state.householdAssignments = assignments;
+            if (!Array.isArray(master.data.households)) master.data.households = [];
+            if (!Array.isArray(master.data.householdPositions)) master.data.householdPositions = [];
+            if (!Array.isArray(master.data.householdAssignments)) master.data.householdAssignments = [];
+            master.data.households.forEach(_ensureHouseholdShape);
+            master.data.householdPositions.forEach(_ensurePositionShape);
+            master.data.householdAssignments.forEach(_ensureAssignmentShape);
+            _state.households = master.data.households;
+            _state.householdPositions = master.data.householdPositions;
+            _state.householdAssignments = master.data.householdAssignments;
             _rebuildCaches();
             _state.timestamp = Date.now();
         } catch (e) {
