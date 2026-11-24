@@ -552,12 +552,12 @@
             }
             if (action === 'add') {
                 event.preventDefault();
-                _handleAdd(locationId);
+                _handleAdd(container.__stCurrentLocationId);
                 return;
             }
             if (action === 'clear-filters') {
                 event.preventDefault();
-                _writeFilterState(locationId,
+                _writeFilterState(container.__stCurrentLocationId,
                     { search: '', status: 'all', condition: 'all' });
                 refresh();
                 return;
