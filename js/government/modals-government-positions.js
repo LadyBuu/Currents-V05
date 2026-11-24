@@ -302,13 +302,16 @@
         var position = Queries.getPosition(deptId, positionId);
         if (!position) { _toast('Position not found', 'error'); return; }
 
-        var activeAssignments = position.activeAssignmentCount;
+        if (position.assignmentCount > 0) {
+            _toast(
+                'This position has ' + position.assignmentCount +
+                ' assignment record(s). It cannot be deleted because assignment history must be preserved.',
+                'error'
+            );
+            return;
+        }
 
         var message = 'Delete position "' + position.name + '"?';
-        if (activeAssignments > 0) {
-            message = 'This position has ' + activeAssignments + ' active assignment(s).\n\n' +
-                'Deleting it will also remove all assignments. Continue?';
-        }
 
         _confirmDialog(message, 'Delete Position', function() {
             var result = Commands.deletePosition(deptId, positionId);
