@@ -1805,11 +1805,77 @@
         if (!place) return _deny('Place of worship not found');
 
         var resolvedYear = _resolveYear(year, _getCurrentYear());
+        if (typeof resolvedYear !== 'number' ||
+            !Number.isFinite(resolvedYear) ||
+            !Number.isInteger(resolvedYear)) {
+            return _deny('Collection year must be a finite integer');
+        }
+        if (place.isActive === false) {
+            return _deny('Cannot collect tithes from an inactive place of worship');
+        }
+        if (place.producesIncome === false) {
+            return _deny('This place of worship is not configured to produce income');
+        }
+
         var income = calculateTitheIncome(placeId);
+        if (!Number.isFinite(income) || income < 0) {
+            return _deny('Calculated tithe income is invalid');
+        }
+
+        var canonical = _state()._getPlaceOfWorshipCanonical(placeId);
+        if (!canonical) return _deny('Place of worship not found');
+
+        // Collection is a real ledger operation, not a toast-producing
+        // calculator. Annual counters reset when the collection year changes;
+        // lifetime wealth and the collection history remain cumulative.
+        var candidate = _clone(canonical);
+        var sameYear = candidate.lastCollectionYear === resolvedYear;
+        var previousAnnualIncome = sameYear && Number.isFinite(candidate.annualIncome)
+            ? candidate.annualIncome : 0;
+        var previousCollected = sameYear && Number.isFinite(candidate.collectedThisYear)
+            ? candidate.collectedThisYear : 0;
+        var previousWealth = Number.isFinite(candidate.wealth) ? candidate.wealth : 0;
+
+        candidate.annualIncome = previousAnnualIncome + income;
+        candidate.collectedThisYear = previousCollected + income;
+        candidate.wealth = previousWealth + income;
+        candidate.currentFollowers = _queries().getFollowerCount(candidate.religionId);
+        candidate.lastCollectionYear = resolvedYear;
+        candidate.history = Array.isArray(candidate.history) ? candidate.history.slice() : [];
+        candidate.history.push({
+            type: 'tithe_collection',
+            year: resolvedYear,
+            amount: income,
+            followerCount: candidate.currentFollowers,
+            collectedAt: Date.now()
+        });
+        candidate.updatedAt = Date.now();
+
+        try {
+            _state()._updatePlaceOfWorship(placeId, candidate);
+        } catch (e) {
+            return _deny(e && e.message ? e.message : String(e));
+        }
+
+        _commit('religionTithesCollected', {
+            religionId: candidate.religionId,
+            placeId: placeId,
+            year: resolvedYear,
+            amount: income,
+            place: _clone(candidate)
+        });
 
         return {
             success: true,
-            data: { placeId: placeId, year: resolvedYear, amount: income },
+            data: {
+                placeId: placeId,
+                year: resolvedYear,
+                amount: income,
+                annualIncome: candidate.annualIncome,
+                collectedThisYear: candidate.collectedThisYear,
+                wealth: candidate.wealth,
+                place: _clone(candidate)
+            },
             reason: 'Tithes collected successfully'
         };
     }
