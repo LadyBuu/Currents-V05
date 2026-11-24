@@ -888,6 +888,42 @@
             );
         }
 
+        var religionStoreForPreflight = window.masterData && window.masterData.data
+            ? window.masterData.data.religions
+            : [];
+        var worshipStoreForPreflight = window.masterData && window.masterData.data
+            ? window.masterData.data.placesOfWorship
+            : [];
+        if (religionStoreForPreflight != null && !Array.isArray(religionStoreForPreflight)) {
+            return _fail('deletePlace: cannot verify Religion associations because the Religion store is malformed');
+        }
+        if (worshipStoreForPreflight != null && !Array.isArray(worshipStoreForPreflight)) {
+            return _fail('deletePlace: cannot verify worship-place associations because the store is malformed');
+        }
+        var religionReferencesForPreflight = false;
+        try {
+        [religionStoreForPreflight || [], worshipStoreForPreflight || []].forEach(function(records, groupIndex) {
+            for (var ri = 0; ri < records.length; ri++) {
+                var record = records[ri];
+                if (!record || typeof record !== 'object') {
+                    throw new Error('Malformed Religion or worship-place record at index ' + ri);
+                }
+                if (groupIndex === 0) {
+                    if (record.locations !== undefined && record.locations !== null &&
+                        !Array.isArray(record.locations)) {
+                        throw new Error('Religion "' + (record.id || ri) + '" has malformed locations');
+                    }
+                    if (Array.isArray(record.locations) && record.locations.some(function(id) {
+                        return Object.prototype.hasOwnProperty.call(toRemove, id);
+                    })) religionReferencesForPreflight = true;
+                } else if (Object.prototype.hasOwnProperty.call(toRemove, record.locationId)) {
+                    religionReferencesForPreflight = true;
+                }
+            }
+        });
+        } catch (religionDataError) {
+            return _fail('deletePlace: ' + (religionDataError.message || String(religionDataError)));
+        }
         var religionPreflight = {
             success: true,
             data: { updatedReligionIds: [], removedAssociations: 0, worshipPlacesUnassigned: 0 }
@@ -904,7 +940,7 @@
                     ((religionPreflight && religionPreflight.reason) || 'unknown error')
                 );
             }
-        } else if (hasReligionLocationReferences) {
+        } else if (religionReferencesForPreflight) {
             return _fail(
                 'deletePlace: ReligionCommands.reconcileDeletedLocations is required ' +
                 'to safely delete locations with religion associations'
