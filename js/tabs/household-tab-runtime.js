@@ -453,7 +453,7 @@
             if (button.id && currentHandlers['#' + button.id]) {
                 event.preventDefault();
                 event.stopPropagation();
-                handlers['#' + button.id](event, button);
+                currentHandlers['#' + button.id](event, button);
                 return;
             }
 
@@ -464,7 +464,7 @@
                     if (currentHandlers[clsKey]) {
                         event.preventDefault();
                         event.stopPropagation();
-                        handlers[clsKey](event, button);
+                        currentHandlers[clsKey](event, button);
                         return;
                     }
                 }
@@ -475,7 +475,7 @@
             if (action && currentHandlers['[data-action="' + action + '"]']) {
                 event.preventDefault();
                 event.stopPropagation();
-                handlers['[data-action="' + action + '"]'](event, button);
+                currentHandlers['[data-action="' + action + '"]'](event, button);
                 return;
             }
         });
