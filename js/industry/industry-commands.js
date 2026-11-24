@@ -49,16 +49,15 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (P1 + P2 from the cross-domain compatibility review):
- *     - updateEnterprise now reconciles the household reverse index when
- *       ownerType / ownerId change. Prior revisions changed the enterprise
- *       record's owner fields but left household A's enterprises[] still
- *       listing the enterprise and household B's enterprises[] missing it,
- *       producing a silent reverse-index desync on both sides. The new
- *       _reconcileHouseholdOwnership helper runs after IS._updateEnterprise
- *       succeeds, and rolls back the industry record (and, for the target
- *       side, the source removal) on any cross-domain failure. See
- *       REVERSE-INDEX RECONCILIATION in the header.
+ *   Current revision (shared cross-domain ownership transaction):
+ *     - updateEnterprise routes every ownership transition involving a
+ *       Household through CrossDomainTransaction. The source Household,
+ *       target Household and Enterprise are snapshotted before mutation.
+ *       Reverse-index changes and the Enterprise owner patch are applied
+ *       silently; notifications are published only after all participants
+ *       succeed. Any apply failure restores all attempted participants.
+ *       A failed restoration is reported as ROLLBACK_FAILED. This replaces
+ *       the former best-effort source-side repair.
  *     - workerList and workerWages removed from _ALLOWED_UPDATE_FIELDS.
  *       Callers must go through addWorkerToEnterprise /
  *       removeWorkerFromEnterprise / setWorkerWage. This eliminates the
@@ -276,9 +275,9 @@
     //   2. Wealth transfer (annual processing).
     //   3. Reverse-index reconciliation on owner change (updateEnterprise).
     //
-    // The first two are single-hop: one command mutates one household. The
-    // third is multi-hop and must roll back on partial failure. See
-    // REVERSE-INDEX RECONCILIATION in the header.
+    // Annual wealth transfers and ownership changes use the shared
+    // CrossDomainTransaction service. Ownership changes snapshot the source
+    // Household, target Household and Enterprise before applying any write.
 
     function _registerWithHousehold(householdId, enterpriseId, year) {
         var hc = _requireHouseholdCommands();
@@ -511,8 +510,19 @@
                 return { success: true };
             },
             rollback: function(snapshots) {
+                var rollbackErrors = [];
                 for (var i = snapshots.length - 1; i >= 0; i--) {
-                    householdInternal.transactionRestoreHousehold(snapshots[i]);
+                    try {
+                        householdInternal.transactionRestoreHousehold(snapshots[i]);
+                    } catch (rollbackError) {
+                        rollbackErrors.push(
+                            rollbackError && rollbackError.message
+                                ? rollbackError.message : 'Household restore failed.'
+                        );
+                    }
+                }
+                if (rollbackErrors.length) {
+                    throw new Error(rollbackErrors.join('; '));
                 }
                 return true;
             },
