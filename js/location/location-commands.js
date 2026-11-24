@@ -2370,7 +2370,7 @@
                 var year = info && typeof info.deathYear === 'number'
                     ? info.deathYear
                     : null;
-                handleCharacterDeath(characterId, year);
+                return handleCharacterDeath(characterId, year);
             });
         } catch (e) {
             if (typeof console !== 'undefined' && console.warn) {
