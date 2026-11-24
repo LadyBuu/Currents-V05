@@ -2440,6 +2440,60 @@
         return character.educationHistory.slice();
     }
 
+    /**
+     * Completes graduation in one CharacterState write so the education
+     * record and its history entry cannot diverge on a partial command failure.
+     */
+    function completeEducationGraduation(characterId, institutionId, data, historyEntry) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_hasId(institutionId)) return _fail('Institution id is required.');
+        if (!_isPlainObject(data) || !_isPlainObject(historyEntry)) {
+            return _fail('Graduation data and history entry must be plain objects.');
+        }
+
+        var character = CS.getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var current = _isPlainObject(character.education)
+            ? character.education[institutionId]
+            : null;
+        if (!_isPlainObject(current)) {
+            return _fail('Character is not enrolled at this institution.');
+        }
+        if (current.graduated === true) {
+            return _fail('Character has already graduated from this institution.');
+        }
+
+        var entry = _normaliseEducationEntry(current, {
+            graduated: true,
+            graduationYear: _isMissing(data.graduationYear)
+                ? window.getCurrentYear()
+                : data.graduationYear,
+            grantedRole: _isMissing(data.grantedRole) ? null : data.grantedRole
+        });
+        var education = Object.assign({}, character.education);
+        education[institutionId] = entry;
+        var history = Array.isArray(character.educationHistory)
+            ? character.educationHistory.slice()
+            : [];
+        history.push(Object.assign({}, historyEntry));
+
+        var update = CS.updateCharacter(characterId, {
+            education: education,
+            educationHistory: history,
+            updatedAt: Date.now()
+        });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the combined graduation write.');
+        }
+        return _ok({ institutionId: institutionId, entry: entry, historyCount: history.length });
+    }
+
     function appendEducationHistory(characterId, entry) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_isPlainObject(entry)) {
@@ -3243,6 +3297,7 @@
         getEducationRecords: getEducationRecords,
         recordEducationEnrollment: recordEducationEnrollment,
         recordEducationGraduation: recordEducationGraduation,
+        completeEducationGraduation: completeEducationGraduation,
         recordEducationWithdrawal: recordEducationWithdrawal,
 
         getEducationHistory: getEducationHistory,
