@@ -1295,7 +1295,7 @@
     // 14. TERMINATE / CANCEL
     // =========================================================================
 
-    function terminateApprenticeship(masterId, apprenticeId, roleId, reason) {
+    function terminateApprenticeship(masterId, apprenticeId, roleId, reason, endYear) {
         if (!roleId) {
             return fail('MISSING_ROLE', 'roleId is required to identify the apprenticeship');
         }
@@ -1306,8 +1306,11 @@
         var transition = _rules().validateStatusTransition(rel.status, STATUS.ENDED);
         if (!transition.valid) return fail(transition.code, transition.reason);
 
+        var terminationYear = typeof endYear === 'number'
+            ? endYear
+            : _getCurrentYear();
         var endResult = _professionalCommands().endEdge(
-            rel.id, _getCurrentYear(), reason || 'Terminated'
+            rel.id, terminationYear, reason || 'Terminated'
         );
         if (!endResult.success) {
             return fail(endResult.code || 'END_FAILED',
