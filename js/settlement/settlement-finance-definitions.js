@@ -11,9 +11,10 @@
  * are currently duplicated across economy, debt management, and annual
  * processing modules.
  *
- * It is pure data. It has no dependencies. It does not read state. It does
- * not mutate anything. It does not calculate interest. It does not compute
- * a debt ratio. It does not clamp.
+ * It has no dependencies. It does not read state or mutate anything.
+ * It owns the debt-interest formula and rounding rule through a pure
+ * calculation helper, alongside the financial constants and bands.
+ * It does not compute a debt ratio or clamp balances.
  *
  * Contract reference: Settlement Architecture Contracts §8 (Definitions),
  * §18 (Debt Contract), §22 (Prosperity Contract analog for centralized
