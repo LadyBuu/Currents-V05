@@ -2375,5 +2375,32 @@ crash consistency, durable journaling or cross-tab locking.
 
 
 ================================================================================
+PART 35 — TRANSACTIONAL DEMOLITION AND REBUILDING
+================================================================================
+
+Demolition and rebuilding use the shared CrossDomainTransaction coordinator.
+
+For a Household-owned Enterprise, both the Household and Enterprise are
+snapshotted before mutation. Demolition removes exactly one Household reverse
+reference and silently applies the demolished Enterprise state. Rebuilding
+requires that the demolished Enterprise is absent from the Household reverse
+index, adds the reference with deferred notification, and silently restores
+the Enterprise to active status.
+
+The Industry subscriber notification and Household ownership event are
+published only after both domain writes succeed. On failure, attempted
+participants restore in reverse order. Corrupt or contradictory Household
+reverse references fail closed during preparation.
+
+Non-Household-owned lifecycle changes still run through the coordinator as
+Industry-only transactions. The existing persistence boundary is unchanged:
+these commands do not save and their caller remains responsible for persist().
+
+Rollback failures return ROLLBACK_FAILED with rollbackErrors. The coordinator
+is synchronous and does not provide crash consistency, durable journaling or
+cross-tab locking.
+
+
+================================================================================
 END OF DOCUMENT
 ================================================================================
