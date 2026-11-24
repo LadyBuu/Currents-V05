@@ -1069,6 +1069,34 @@
         return normalised;
     }
 
+    function _transactionRestoreDeletedEnterprise(snapshot) {
+        _assertHydrated();
+        if (!snapshot || typeof snapshot.enterpriseId !== 'string' ||
+            !snapshot.record || snapshot.record.id !== snapshot.enterpriseId ||
+            !Number.isInteger(snapshot.index) || snapshot.index < 0 ||
+            snapshot.index > _enterprises.length) {
+            throw new Error('IndustryState deleted-Enterprise snapshot is invalid.');
+        }
+        if (_cache.byId.has(snapshot.enterpriseId)) {
+            throw new Error('Cannot restore deleted Enterprise; id already exists: ' +
+                snapshot.enterpriseId);
+        }
+        var records = _enterprises.slice();
+        records.splice(snapshot.index, 0, snapshot.record);
+        _enterprises = records;
+        _indexesRebuild();
+        _requireMasterData();
+        window.masterData.data.enterprises = _enterprises.slice();
+        _markDataDirty();
+        return true;
+    }
+
+    function _notifyTransactionEnterpriseDeleted(enterpriseId) {
+        _assertHydrated();
+        _notify('enterpriseDeleted', { enterpriseId: enterpriseId });
+        return true;
+    }
+
     function _notifyTransactionEnterpriseAdded(enterpriseId) {
         _assertHydrated();
         var record = _cache.byId.get(enterpriseId);
@@ -1341,7 +1369,9 @@
         _updateEnterprise: _updateEnterprise,
         _transactionSnapshotEnterprise: _transactionSnapshotEnterprise,
         _transactionRestoreEnterprise: _transactionRestoreEnterprise,
+        _transactionRestoreDeletedEnterprise: _transactionRestoreDeletedEnterprise,
         _notifyTransactionEnterpriseUpdated: _notifyTransactionEnterpriseUpdated,
+        _notifyTransactionEnterpriseDeleted: _notifyTransactionEnterpriseDeleted,
         _removeEnterprise: _removeEnterprise,
         _addEnterpriseType: _addEnterpriseType,
         _updateEnterpriseType: _updateEnterpriseType,
