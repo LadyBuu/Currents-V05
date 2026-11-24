@@ -257,6 +257,30 @@
             }
         }
 
+        // Reject malformed numeric values and nested destruction payloads.
+        ['year', 'severity', 'deaths', 'population', 'prosperityLoss', 'crimeIncrease',
+         'schoolsDestroyed', 'actualDeaths', 'featuresDestroyed', 'enterprisesDestroyed',
+         'residencesDemolished', 'householdsDestroyed', 'totalLoss'].forEach(function(key) {
+            if (record[key] != null && (typeof record[key] !== 'number' || !isFinite(record[key]))) {
+                throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid ' + key);
+            }
+        });
+        ['featuresDestroyed', 'schoolsDestroyed', 'enterprisesDestroyed',
+         'residencesDemolished', 'householdsDestroyed', 'totalLoss'].forEach(function(key) {
+            var value = record.structuralDamage[key];
+            if (typeof value !== 'number' || !isFinite(value) || value < 0) {
+                throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid structuralDamage.' + key);
+            }
+        });
+        ['features', 'schools', 'enterprises', 'residences', 'households'].forEach(function(key) {
+            if (!Array.isArray(record.structuralDamage.destructionList[key])) {
+                throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid destructionList.' + key);
+            }
+        });
+        if (record.year != null && typeof record.year !== 'number') {
+            throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid year');
+        }
+
         // Keep convenience mirrors aligned with structuralDamage.
         record.featuresDestroyed    = record.structuralDamage.featuresDestroyed;
         record.schoolsDestroyed     = record.structuralDamage.schoolsDestroyed;
@@ -349,8 +373,11 @@
             // Normalise a detached copy. Hydration must not mutate the live
             // canonical dataset until every record has passed validation.
             var record = _normaliseRecord(_clone(saved[i]));
-            if (!record || !record.id) {
-                throw new Error('disaster-state.js: disaster record missing id at index ' + i);
+            if (!record || typeof record !== 'object' || typeof record.id !== 'string' || !record.id.trim()) {
+                throw new Error('disaster-state.js: disaster record missing valid id at index ' + i);
+            }
+            if (record.year != null && (typeof record.year !== 'number' || !isFinite(record.year))) {
+                throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid year');
             }
             if (!_indexInto(next, record)) {
                 throw new Error('disaster-state.js: duplicate disaster id: ' + record.id);
@@ -398,67 +425,58 @@
     // =========================================================================
 
     function validateIntegrity() {
+        hydrateFromMasterData(false);
         var warnings = [];
+        var expected = _emptyIndexes();
 
-        for (var i = 0; i < _state.disasters.all.length; i++) {
-            var d = _state.disasters.all[i];
-            if (!d.id) {
-                warnings.push('disaster at index ' + i + ' is missing id');
-            }
-            if (typeof d.year !== 'number') {
-                warnings.push('disaster ' + d.id + ' has non-numeric year');
-            }
-            if (typeof d.severity !== 'number') {
-                warnings.push('disaster ' + d.id + ' has non-numeric severity');
-            }
-            if (typeof d.deaths !== 'number') {
-                warnings.push('disaster ' + d.id + ' has non-numeric deaths');
-            }
-            if (d.structuralDamage) {
-                var sd = d.structuralDamage;
+        _state.disasters.all.forEach(function(record, index) {
+            if (!record || !record.id) warnings.push('disaster at index ' + index + ' is missing id');
+            ['year', 'severity', 'deaths', 'population', 'prosperityLoss', 'crimeIncrease',
+             'schoolsDestroyed', 'actualDeaths', 'featuresDestroyed', 'enterprisesDestroyed',
+             'residencesDemolished', 'householdsDestroyed', 'totalLoss'].forEach(function(key) {
+                if (record[key] != null && (typeof record[key] !== 'number' || !isFinite(record[key]))) {
+                    warnings.push('disaster ' + record.id + ' has invalid ' + key);
+                }
+            });
+            var sd = record.structuralDamage;
+            if (!sd || typeof sd !== 'object') {
+                warnings.push('disaster ' + record.id + ' has no structuralDamage object');
+            } else {
                 var lists = sd.destructionList || {};
-                var cf = lists.features    ? lists.features.length    : 0;
-                var cs = lists.schools     ? lists.schools.length     : 0;
-                var ce = lists.enterprises ? lists.enterprises.length : 0;
-                var cr = lists.residences  ? lists.residences.length  : 0;
-                var ch = lists.households  ? lists.households.length  : 0;
-
-                if (sd.featuresDestroyed !== cf) {
-                    warnings.push(
-                        'disaster ' + d.id + ' featuresDestroyed (' + sd.featuresDestroyed +
-                        ') disagrees with destructionList (' + cf + ')'
-                    );
-                }
-                if (sd.schoolsDestroyed !== cs) {
-                    warnings.push(
-                        'disaster ' + d.id + ' schoolsDestroyed (' + sd.schoolsDestroyed +
-                        ') disagrees with destructionList (' + cs + ')'
-                    );
-                }
-                if (sd.enterprisesDestroyed !== ce) {
-                    warnings.push(
-                        'disaster ' + d.id + ' enterprisesDestroyed (' + sd.enterprisesDestroyed +
-                        ') disagrees with destructionList (' + ce + ')'
-                    );
-                }
-                if (sd.residencesDemolished !== cr) {
-                    warnings.push(
-                        'disaster ' + d.id + ' residencesDemolished (' + sd.residencesDemolished +
-                        ') disagrees with destructionList (' + cr + ')'
-                    );
-                }
-                if (sd.householdsDestroyed !== ch) {
-                    warnings.push(
-                        'disaster ' + d.id + ' householdsDestroyed (' + sd.householdsDestroyed +
-                        ') disagrees with destructionList (' + ch + ')'
-                    );
-                }
+                ['features', 'schools', 'enterprises', 'residences', 'households'].forEach(function(key) {
+                    if (!Array.isArray(lists[key])) warnings.push('disaster ' + record.id + ' has invalid destructionList.' + key);
+                });
+                ['featuresDestroyed', 'schoolsDestroyed', 'enterprisesDestroyed', 'residencesDemolished', 'householdsDestroyed'].forEach(function(key) {
+                    var listKey = key === 'featuresDestroyed' ? 'features'
+                        : key === 'schoolsDestroyed' ? 'schools'
+                        : key === 'enterprisesDestroyed' ? 'enterprises'
+                        : key === 'residencesDemolished' ? 'residences' : 'households';
+                    if (typeof sd[key] !== 'number' || !isFinite(sd[key])) warnings.push('disaster ' + record.id + ' has invalid structuralDamage.' + key);
+                    else if (Array.isArray(lists[listKey]) && sd[key] !== lists[listKey].length) warnings.push('disaster ' + record.id + ' ' + key + ' disagrees with destructionList (' + lists[listKey].length + ')');
+                });
+                if (typeof sd.totalLoss !== 'number' || !isFinite(sd.totalLoss)) warnings.push('disaster ' + record.id + ' has invalid structuralDamage.totalLoss');
             }
-        }
+            if (record.year != null && typeof record.year === 'number' && record.year !== record.year) warnings.push('disaster ' + record.id + ' has invalid year');
+            if (!_indexInto(expected, record)) warnings.push('disaster index contains duplicate id ' + record.id);
+        });
 
-        if (typeof console !== 'undefined' && console.warn && warnings.length > 0) {
-            console.warn('disaster-state.js: integrity warnings', warnings);
+        function compareLists(label, actual, wanted) {
+            if (actual.size !== wanted.size) warnings.push(label + ' index key count mismatch');
+            wanted.forEach(function(records, key) {
+                var got = actual.get(key);
+                if (!got || got.length !== records.length || records.some(function(record, index) { return got[index] !== record; })) {
+                    warnings.push(label + ' index mismatch for ' + key);
+                }
+            });
         }
+        if (_state.disasters.byId.size !== expected.byId.size) warnings.push('disaster byId index size mismatch');
+        expected.byId.forEach(function(record, id) {
+            if (_state.disasters.byId.get(id) !== record) warnings.push('disaster byId index mismatch for ' + id);
+        });
+        compareLists('disaster location', _state.disasters.byLocation, expected.byLocation);
+        compareLists('disaster year', _state.disasters.byYear, expected.byYear);
+
+        if (typeof console !== 'undefined' && console.warn && warnings.length > 0) console.warn('disaster-state.js: integrity warnings', warnings);
         return warnings;
     }
 
