@@ -341,18 +341,38 @@
 
         var year = options.year !== undefined ? options.year : _getCurrentYear();
 
+        // Create the replacement first so a validation failure cannot
+        // destroy the existing rivalry. If ending the old record fails,
+        // compensate by removing the staged enmity.
+        var createResult = _createInternal(
+            ENMITY, idA, idB, { startYear: year }, RR.canCreateEnmity
+        );
+        if (!createResult.success) return createResult;
+
         var endResult = endRivalry(idA, idB, {
             endYear: year,
             reason: 'escalated_to_enmity'
         });
-        if (!endResult.success) return endResult;
+        if (!endResult.success) {
+            var rollback = RC.remove(
+                createResult.relationship.relationshipId || createResult.relationship.id
+            );
+            if (!rollback.success) {
+                return _fail(
+                    'PARTIAL_RIVALRY_ESCALATION',
+                    'The enmity was created but the rivalry could not be ended, and cleanup of the new enmity also failed. ' +
+                    'End failure: ' + (endResult.message || endResult.code || 'unknown') +
+                    '; cleanup failure: ' + (rollback.message || rollback.code || 'unknown')
+                );
+            }
+            return endResult;
+        }
 
-        var createResult = createEnmity(idA, idB, { startYear: year });
-        if (!createResult.success) return createResult;
+        _logEvent('rivalry', 'Enmity Formed',
+            _getCharacterName(idA) + ' and ' + _getCharacterName(idB) + ' became enemies',
+            [_getCharacter(idA), _getCharacter(idB)]);
 
-        return _ok({
-            relationship: createResult.relationship
-        });
+        return _ok({ relationship: createResult.relationship });
     }
 
     function deEscalateEnmityToRivalry(idA, idB, options) {
@@ -368,18 +388,38 @@
 
         var year = options.year !== undefined ? options.year : _getCurrentYear();
 
+        // Create the replacement first so a validation failure cannot
+        // destroy the existing enmity. If ending the old record fails,
+        // compensate by removing the staged rivalry.
+        var createResult = _createInternal(
+            RIVALRY, idA, idB, { startYear: year }, RR.canCreateRivalry
+        );
+        if (!createResult.success) return createResult;
+
         var endResult = endEnmity(idA, idB, {
             endYear: year,
             reason: 'deescalated_to_rivalry'
         });
-        if (!endResult.success) return endResult;
+        if (!endResult.success) {
+            var rollback = RC.remove(
+                createResult.relationship.relationshipId || createResult.relationship.id
+            );
+            if (!rollback.success) {
+                return _fail(
+                    'PARTIAL_RIVALRY_DEESCALATION',
+                    'The rivalry was created but the enmity could not be ended, and cleanup of the new rivalry also failed. ' +
+                    'End failure: ' + (endResult.message || endResult.code || 'unknown') +
+                    '; cleanup failure: ' + (rollback.message || rollback.code || 'unknown')
+                );
+            }
+            return endResult;
+        }
 
-        var createResult = createRivalry(idA, idB, { startYear: year });
-        if (!createResult.success) return createResult;
+        _logEvent('rivalry', 'Rivalry Formed',
+            _getCharacterName(idA) + ' and ' + _getCharacterName(idB) + ' became rivals',
+            [_getCharacter(idA), _getCharacter(idB)]);
 
-        return _ok({
-            relationship: createResult.relationship
-        });
+        return _ok({ relationship: createResult.relationship });
     }
 
     // -------------------------------------------------------------------------
