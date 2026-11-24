@@ -974,25 +974,16 @@
             );
         }
 
-        // Character and Household references are required cleanup, not
-        // best-effort housekeeping. Run them before mutating other domains so
-        // a failure cannot leave a deleted Location with dangling references.
-        var characterCleanup = _cleanupCharactersAtPlaces(toRemove);
-        if (characterCleanup.failed > 0 || characterCleanup.status === 'unavailable') {
+        // Character cleanup is planned without writes before any domain
+        // mutation. The actual write is deferred until Government, Religion
+        // and Culture have all accepted and applied their own reconciliation.
+        var characterPreflight = _cleanupCharactersAtPlaces(toRemove, { dryRun: true });
+        if (characterPreflight.failed > 0 || characterPreflight.status === 'unavailable') {
             return _fail(
-                'deletePlace: character cleanup failed; no locations were deleted: ' +
-                (characterCleanup.reason || characterCleanup.failedIds.join(', ') || 'character data unavailable')
+                'deletePlace: character cleanup preflight failed: ' +
+                (characterPreflight.reason || characterPreflight.failedIds.join(', ') || 'character data unavailable')
             );
         }
-
-        var householdCleanup = _cleanupHouseholdsAtPlaces(toRemove);
-        if (householdCleanup.status === 'failed' || householdCleanup.status === 'unavailable') {
-            return _fail(
-                'deletePlace: household cleanup failed; no locations were deleted: ' +
-                (householdCleanup.reason || 'Household references could not be verified')
-            );
-        }
-
 
         // Government departments are anchored to locations. Remove affected
         // departments and their dependent child departments before deleting
@@ -1090,6 +1081,26 @@
                 );
             }
             cultureCleanup = cultureResult.data || cultureCleanup;
+        }
+
+        // Character and Household cleanup is deliberately deferred until
+        // after Government, Religion and Culture have successfully reconciled.
+        // Their read-only preflights ran above, so predictable data/dependency
+        // failures are caught before the first mutation.
+        var characterCleanup = _cleanupCharactersAtPlaces(toRemove);
+        if (characterCleanup.failed > 0 || characterCleanup.status === 'unavailable') {
+            return _fail(
+                'deletePlace: character cleanup failed; no locations were deleted: ' +
+                (characterCleanup.reason || characterCleanup.failedIds.join(', ') || 'character data unavailable')
+            );
+        }
+
+        var householdCleanup = _cleanupHouseholdsAtPlaces(toRemove);
+        if (householdCleanup.status === 'failed' || householdCleanup.status === 'unavailable') {
+            return _fail(
+                'deletePlace: household cleanup failed; no locations were deleted: ' +
+                (householdCleanup.reason || 'Household references could not be verified')
+            );
         }
 
         // A settlement is owned by its location. Reconcile settlement
@@ -1286,7 +1297,8 @@
      * @param {Object} removeSet - id -> true
      * @returns {{ reconciled: number, failed: number, failedIds: string[] }}
      */
-    function _cleanupCharactersAtPlaces(removeSet) {
+    function _cleanupCharactersAtPlaces(removeSet, options) {
+        options = options || {};
         var reconciled = 0;
         var failed = 0;
         var failedIds = [];
@@ -1363,10 +1375,32 @@
         }
 
         if (changes.length === 0) {
-            return { reconciled: 0, failed: 0, failedIds: [] };
+            return { reconciled: 0, failed: 0, failedIds: [], status: 'planned' };
         }
 
-        // Batched path (preferred): one commit for the whole sweep.
+        if (options.dryRun === true) {
+            return {
+                reconciled: 0,
+                failed: 0,
+                failedIds: [],
+                status: 'planned',
+                plannedCount: changes.length
+            };
+        }
+
+        // A per-record fallback can partially commit before a later record
+        // fails. Location deletion requires the atomic Character batch API.
+        if (!_hasBatchCharacterUpdate) {
+            return {
+                reconciled: 0,
+                failed: changes.length,
+                failedIds: changes.map(function(change) { return change.id; }),
+                status: 'unavailable',
+                reason: 'CharacterCommands.updateCharacters is required for atomic Location cleanup'
+            };
+        }
+
+        // Batched path: one all-or-nothing write for the whole sweep.
         if (_hasBatchCharacterUpdate) {
             var batchResult;
             try {
@@ -1396,23 +1430,14 @@
             return { reconciled: 0, failed: failed, failedIds: failedIds };
         }
 
-        // Fallback path (per-character). Reached only when the batch API
-        // is missing; load-time warning already logged.
-        for (var j = 0; j < changes.length; j++) {
-            var change = changes[j];
-            var res = CC.updateCharacterFields(change.id, change.updates);
-            if (res && res.success === true) {
-                reconciled++;
-            } else {
-                failed++;
-                failedIds.push(change.id);
-            }
-        }
-
         return {
-            reconciled: reconciled,
-            failed: failed,
-            failedIds: failedIds
+            reconciled: 0,
+            failed: changes.length,
+            failedIds: failedIds,
+            status: 'failed',
+            reason: batchResult && batchResult.reason
+                ? batchResult.reason
+                : 'Character batch update failed'
         };
     }
 
