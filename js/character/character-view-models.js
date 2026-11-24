@@ -367,6 +367,10 @@
                 var e = h[i];
                 if (!e || typeof e !== 'object') continue;
                 entries.push({
+                    // Keep the canonical array position separate from the
+                    // chronological display order. Command writers address
+                    // history by its stored index, not its sorted position.
+                    sourceIndex: i,
                     id: _isMissing(e.id) ? null : e.id,
                     year: _isMissing(e.year) ? null : e.year,
                     fromReligionId: _isMissing(e.fromReligionId) ? null : e.fromReligionId,
