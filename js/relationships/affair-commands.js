@@ -163,8 +163,12 @@
     // RESULT HELPERS
     // -------------------------------------------------------------------------
 
-    function _fail(code, message) {
-        return { success: false, code: code, message: message };
+    function _fail(code, message, details) {
+        var result = { success: false, code: code, message: message };
+        if (details && typeof details === 'object') {
+            Object.assign(result, details);
+        }
+        return result;
     }
 
     function _ok(data) {
