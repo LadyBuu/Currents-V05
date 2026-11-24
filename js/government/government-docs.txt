@@ -1951,16 +1951,13 @@ PART 7 — KNOWN HAZARDS
     load. Government-docs.txt §21 lists SettlementQueries as
     required; if that changes, update the load order.
 
-11. modals-government-positions.js delete-position message.
-    The confirm message says "Deleting it will also remove all
-    assignments. Continue?" but the command
-    (Commands.deletePosition) refuses when active assignments
-    exist. The message is misleading. The command's refusal
-    comes first; the modal displays a toast on failure. This is
-    a stale string, not a functional bug — either update the
-    message to match the refusal, or add a cascade option to
-    deletePosition (out of scope of the current refactor).
-    [Follow-up item, not a blocker.]
+11. Position deletion and assignment history.
+    Resolved. Commands.deletePosition now refuses deletion while
+    any assignment record references the position, including ended
+    historical assignments. The modal displays that refusal directly
+    and no longer claims that deleting a position cascades through
+    assignment history. Positions with assignment history must remain
+    in place so Government queries and reports retain their references.
 
 12. government-commands.js settlement mutation methods.
     updateJusticeSeverity / updateWatch delegate to
@@ -2350,4 +2347,13 @@ integrity diagnostics report missing role references, missing position
 parents and position hierarchy cycles. RoleQueries remains optional for
 Government bootstrap and unrelated reads, but any command that explicitly
 requires a role fails closed when the Role query is unavailable.
+
+PART 37 — POSITION DELETION PRESERVES ASSIGNMENT HISTORY
+
+GovernmentCommands.deletePosition refuses deletion when any assignment
+record references the position, whether active or ended. Removing a position
+with ended assignments would otherwise leave those assignment records with
+dangling positionId references. The position modal reports the restriction
+before opening a confirmation dialog. A position with no assignment records
+can still be deleted normally.
 
