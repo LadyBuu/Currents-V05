@@ -514,36 +514,28 @@
             }
         });
 
-        // Debounced input: coalesce keystrokes via requestAnimationFrame.
-        var searchEl = container.querySelector('[data-filter="search"]');
-        if (searchEl) {
-            var rafHandle = null;
-            searchEl.addEventListener('input', function () {
-                if (rafHandle !== null) return;
-                rafHandle = requestAnimationFrame(function () {
-                    rafHandle = null;
-                    _rerenderTimeline(container, locationId);
-                });
+        // Delegate filter events from the persistent tab container. The
+        // controls themselves are replaced on every render, so binding
+        // directly to them leaves later renders inert and captures an old
+        // settlement id.
+        var rafHandle = null;
+        container.addEventListener('input', function (event) {
+            var filter = event.target && event.target.dataset
+                ? event.target.dataset.filter : null;
+            if (filter !== 'search' && filter !== 'yearStart'
+                && filter !== 'yearEnd') return;
+            if (rafHandle !== null) return;
+            rafHandle = requestAnimationFrame(function () {
+                rafHandle = null;
+                _rerenderTimeline(container, container.__stCurrentLocationId);
             });
-        }
-        var kindEl = container.querySelector('[data-filter="kind"]');
-        if (kindEl) {
-            kindEl.addEventListener('change', function () {
-                _rerenderTimeline(container, locationId);
-            });
-        }
-        var yearStartEl = container.querySelector('[data-filter="yearStart"]');
-        if (yearStartEl) {
-            yearStartEl.addEventListener('input', function () {
-                _rerenderTimeline(container, locationId);
-            });
-        }
-        var yearEndEl = container.querySelector('[data-filter="yearEnd"]');
-        if (yearEndEl) {
-            yearEndEl.addEventListener('input', function () {
-                _rerenderTimeline(container, locationId);
-            });
-        }
+        });
+        container.addEventListener('change', function (event) {
+            var filter = event.target && event.target.dataset
+                ? event.target.dataset.filter : null;
+            if (filter !== 'kind') return;
+            _rerenderTimeline(container, container.__stCurrentLocationId);
+        });
     }
 
     // -------------------------------------------------------------------
