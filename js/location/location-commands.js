@@ -1002,10 +1002,7 @@
         };
         var snapshots = null;
         var cultureTransactionEnabled = !!(window.CultureCommands &&
-            typeof window.CultureCommands.reconcileDeletedLocations === 'function' &&
-            window.CultureState &&
-            typeof window.CultureState._transactionSnapshotDeletedLocations === 'function' &&
-            typeof window.CultureState._transactionRestoreDeletedLocations === 'function');
+            typeof window.CultureCommands.reconcileDeletedLocations === 'function');
         var outcomes = {
             government: { removedDepartmentIds: [] },
             religion: { updatedReligionIds: [], removedAssociations: 0, worshipPlacesUnassigned: 0 },
@@ -1032,6 +1029,12 @@
                         typeof required[ri][0][required[ri][2]] !== 'function') {
                         return { success: false, reason: 'A required domain transaction adapter is unavailable at index ' + ri };
                     }
+                }
+                if (cultureTransactionEnabled &&
+                    (!window.CultureState ||
+                     typeof window.CultureState._transactionSnapshotDeletedLocations !== 'function' ||
+                     typeof window.CultureState._transactionRestoreDeletedLocations !== 'function')) {
+                    return { success: false, reason: 'Culture transaction adapters are unavailable.' };
                 }
                 if (!window.GovernmentCommands ||
                     typeof window.GovernmentCommands.reconcileDeletedLocations !== 'function' ||
