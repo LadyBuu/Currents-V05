@@ -1255,7 +1255,45 @@
     }
 
     // =========================================================================
-    // 15. EXPORTS
+    // 15. FOLLOWER DATA REFRESH
+    // =========================================================================
+    //
+    // ReligionState rebuilds followersByReligion from canonical Character
+    // records and publishes followersChanged after characterChanged and
+    // masterDataUpdated. Character movement also passes through the
+    // CharacterCommands writer, so it produces the same notification.
+    // Refresh only when this tab is visible; inactive tabs read current
+    // canonical projections when the user opens them.
+    //
+    if (!window.__religionFollowersRefreshBound &&
+        typeof window.addEventListener === 'function') {
+        window.__religionFollowersRefreshBound = true;
+
+        window.addEventListener('followersChanged', function () {
+            var TM = window.TabManager;
+            if (!TM ||
+                typeof TM.getActiveTabId !== 'function' ||
+                typeof TM.renderActive !== 'function') {
+                return;
+            }
+
+            if (TM.getActiveTabId('religion') !== 'followers') return;
+
+            try {
+                TM.renderActive('religion');
+            } catch (err) {
+                if (window.console && typeof window.console.error === 'function') {
+                    window.console.error(
+                        'religion-followers-tab: failed to refresh follower data:',
+                        err
+                    );
+                }
+            }
+        });
+    }
+
+    // =========================================================================
+    // 16. EXPORTS
     // =========================================================================
 
     window.ReligionFollowersTab = {
