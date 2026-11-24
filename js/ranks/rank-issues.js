@@ -1165,6 +1165,7 @@
         var allCharacters = _readAllCharacters();
         var touchedRanks = {};
         var cleaned = 0;
+        var updateErrors = [];
 
         for (var i = 0; i < allCharacters.length; i++) {
             var c = allCharacters[i];
@@ -1182,6 +1183,13 @@
                 if (update && update.success === true) {
                     cleaned++;
                     touchedRanks[a.rankId] = true;
+                } else {
+                    updateErrors.push({
+                        characterId: c.id,
+                        rankId: a.rankId,
+                        reason: update && update.reason
+                            ? update.reason : 'Rank assignment update failed.'
+                    });
                 }
             }
         }
@@ -1196,9 +1204,11 @@
         }
 
         return {
-            success: true,
+            success: updateErrors.length === 0 && renumberErrors.length === 0,
+            partial: updateErrors.length > 0 || renumberErrors.length > 0,
             cleaned: cleaned,
             ranksRenumbered: Object.keys(touchedRanks).length,
+            updateErrors: updateErrors,
             renumberErrors: renumberErrors
         };
     }
