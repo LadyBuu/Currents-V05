@@ -1031,8 +1031,15 @@
     // start a trade that cannot finish.
 
     function executeTrade(sourceId, targetId, trade, options) {
-        if (!trade || typeof trade !== 'object') {
-            return _fail('INVALID_TRADE', 'Trade data required');
+        if (!trade || typeof trade !== 'object' || Array.isArray(trade)) {
+            return _fail('INVALID_TRADE', 'Trade data must be an object');
+        }
+        if (typeof sourceId !== 'string' || !sourceId
+            || typeof targetId !== 'string' || !targetId) {
+            return _fail('INVALID_TRADE_PARTIES', 'Source and target household ids are required');
+        }
+        if (sourceId === targetId) {
+            return _fail('SELF_TRADE', 'A household cannot trade with itself');
         }
         var source = _queries.getHousehold(sourceId);
         var target = _queries.getHousehold(targetId);
@@ -1042,8 +1049,33 @@
         var year = _effectiveYear(options);
         if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
-        var sourceGives = trade.sourceGives || {};
-        var targetGives = trade.targetGives || {};
+        var sourceGives = trade.sourceGives === undefined ? {} : trade.sourceGives;
+        var targetGives = trade.targetGives === undefined ? {} : trade.targetGives;
+        var tradeKeys = ['wealth', 'food', 'livestock', 'goods'];
+        function validateSide(side, label) {
+            if (!side || typeof side !== 'object' || Array.isArray(side)) {
+                return _fail('INVALID_TRADE', label + ' must be an object');
+            }
+            var keys = Object.keys(side);
+            for (var i = 0; i < keys.length; i++) {
+                if (tradeKeys.indexOf(keys[i]) === -1) {
+                    return _fail('INVALID_TRADE', label + ' contains unsupported field "' + keys[i] + '"');
+                }
+            }
+            for (var j = 0; j < tradeKeys.length; j++) {
+                var value = side[tradeKeys[j]];
+                if (value !== undefined
+                    && (!_isFiniteNumber(value) || value < 0)) {
+                    return _fail('INVALID_TRADE_AMOUNT',
+                        label + '.' + tradeKeys[j] + ' must be a finite non-negative number');
+                }
+            }
+            return null;
+        }
+        var sourceValidation = validateSide(sourceGives, 'sourceGives');
+        if (sourceValidation) return sourceValidation;
+        var targetValidation = validateSide(targetGives, 'targetGives');
+        if (targetValidation) return targetValidation;
 
         var sourceResources = getHouseholdResources(sourceId);
         var targetResources = getHouseholdResources(targetId);
@@ -1085,6 +1117,39 @@
                 goods: sourceResources.goods
             }
         };
+        var targetSnapshot = {
+            wealth: targetWealth,
+            resources: {
+                food: targetResources.food,
+                livestock: targetResources.livestock,
+                goods: targetResources.goods
+            }
+        };
+        var projectedSource = {
+            wealth: sourceWealth - (sourceGives.wealth || 0) + (targetGives.wealth || 0),
+            food: sourceResources.food - (sourceGives.food || 0) + (targetGives.food || 0),
+            livestock: sourceResources.livestock - (sourceGives.livestock || 0) + (targetGives.livestock || 0),
+            goods: sourceResources.goods - (sourceGives.goods || 0) + (targetGives.goods || 0)
+        };
+        var projectedTarget = {
+            wealth: targetWealth - (targetGives.wealth || 0) + (sourceGives.wealth || 0),
+            food: targetResources.food - (targetGives.food || 0) + (sourceGives.food || 0),
+            livestock: targetResources.livestock - (targetGives.livestock || 0) + (sourceGives.goods || 0)
+        };
+        projectedTarget.livestock = targetResources.livestock
+            - (targetGives.livestock || 0) + (sourceGives.livestock || 0);
+        projectedTarget.goods = targetResources.goods
+            - (targetGives.goods || 0) + (sourceGives.goods || 0);
+        var projectedValues = [
+            projectedSource.wealth, projectedSource.food, projectedSource.livestock, projectedSource.goods,
+            projectedTarget.wealth, projectedTarget.food, projectedTarget.livestock, projectedTarget.goods
+        ];
+        if (projectedValues.some(function(value) {
+            return !_isFiniteNumber(value) || value < 0;
+        })) {
+            return _fail('INVALID_TRADE_TOTAL',
+                'Trade results must remain finite and non-negative');
+        }
 
         // Apply source side.
         var sourceResult = _applyTradeSide(
@@ -1128,32 +1193,51 @@
             }
         );
         if (!targetResult.success) {
-            // Best-effort rollback of source.
+            // Either side may have changed in memory before a persistence
+            // failure was reported. Compensate both sides, and report any
+            // compensation failure instead of pretending the trade vanished.
+            var rollbackResults = [];
             try {
-                _applyTradeSide(
-                    sourceId,
-                    sourceSnapshot.wealth,
-                    sourceSnapshot.resources,
-                    {
-                        year: year,
-                        partnerId: targetId,
-                        type: 'rollback',
-                        gave: {},
-                        received: {},
-                        reason: 'Target update failed'
-                    }
-                );
-            } catch (e) {
-                if (typeof console !== 'undefined' && console.error) {
-                    console.error(
-                        'HouseholdEconomy.executeTrade: rollback failed',
-                        e
-                    );
-                }
+                rollbackResults.push({
+                    householdId: sourceId,
+                    result: _applyTradeSide(sourceId, sourceSnapshot.wealth,
+                        sourceSnapshot.resources, {
+                            year: year, partnerId: targetId, type: 'rollback',
+                            gave: {}, received: {}, reason: 'Trade compensation'
+                        })
+                });
+            } catch (sourceRollbackError) {
+                rollbackResults.push({
+                    householdId: sourceId,
+                    result: { success: false, reason: sourceRollbackError.message || String(sourceRollbackError) }
+                });
             }
+            try {
+                rollbackResults.push({
+                    householdId: targetId,
+                    result: _applyTradeSide(targetId, targetSnapshot.wealth,
+                        targetSnapshot.resources, {
+                            year: year, partnerId: sourceId, type: 'rollback',
+                            gave: {}, received: {}, reason: 'Trade compensation'
+                        })
+                });
+            } catch (targetRollbackError) {
+                rollbackResults.push({
+                    householdId: targetId,
+                    result: { success: false, reason: targetRollbackError.message || String(targetRollbackError) }
+                });
+            }
+            var rollbackFailures = rollbackResults.filter(function(item) {
+                return !item.result || item.result.success !== true;
+            });
             return _fail(
                 'TARGET_UPDATE_FAILED',
-                targetResult.reason || 'Failed to update target'
+                targetResult.reason || 'Failed to update target',
+                {
+                    compensated: rollbackFailures.length === 0,
+                    partial: rollbackFailures.length > 0,
+                    rollbackFailures: rollbackFailures
+                }
             );
         }
 
