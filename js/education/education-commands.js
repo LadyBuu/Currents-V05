@@ -892,6 +892,9 @@
         }
 
         var patch = Object.assign({}, updates);
+        var previousName = inst.name;
+        var previousLocationId = inst.locationId;
+        var previousLocationName = inst.locationName;
         var year = _getCurrentYear();
         if (patch.name !== undefined &&
             (typeof patch.name !== 'string' || !patch.name.trim())) {
@@ -974,12 +977,27 @@
             (!Number.isFinite(patch.maxStudents) || patch.maxStudents < 0)) {
             return _fail('maxStudents must be a non-negative finite number');
         }
-        ['requiredYears', 'skillGainPerYear', 'reputation', 'tuitionPerYear'].forEach(function (field) {
-            if (patch[field] !== undefined &&
-                (!Number.isFinite(patch[field]) || patch[field] < 0)) {
-                throw new Error(field + ' must be a non-negative finite number');
+        var numericFields = ['requiredYears', 'skillGainPerYear', 'reputation', 'tuitionPerYear'];
+        for (var numericIndex = 0; numericIndex < numericFields.length; numericIndex++) {
+            var numericField = numericFields[numericIndex];
+            if (patch[numericField] !== undefined &&
+                (!Number.isFinite(patch[numericField]) || patch[numericField] < 0)) {
+                return _fail(numericField + ' must be a non-negative finite number');
             }
-        });
+        }
+        var ownershipFieldsChanged = patch.ownerId !== undefined ||
+            patch.ownerType !== undefined || patch.ownerName !== undefined;
+        if (ownershipFieldsChanged && patch.ownershipType === undefined) {
+            return _fail('Owner fields can only be changed together with ownershipType');
+        }
+        if (inst.ownershipType === 'religious' && patch.religionId !== undefined &&
+            patch.ownershipType === undefined) {
+            var revisedReligion = patch.religionId ? _getReligionById(patch.religionId) : null;
+            if (!revisedReligion) return _fail('Religious institutions require a valid religionId');
+            patch.ownerId = revisedReligion.id;
+            patch.ownerType = 'religion';
+            patch.ownerName = revisedReligion.name;
+        }
         if (patch.specializationCategory !== undefined || patch.taughtRoles !== undefined) {
             var category = patch.specializationCategory !== undefined
                 ? patch.specializationCategory : inst.specializationCategory;
@@ -1015,12 +1033,12 @@
         }
         if (!result) return _fail('EducationState refused the institution update');
 
-        if (updates.name !== undefined && updates.name !== inst.name) {
-            _history().recordInstitutionRenamed(institutionId, inst.name, updates.name.trim(), year, 'Renamed');
+        if (updates.name !== undefined && updates.name.trim() !== previousName) {
+            _history().recordInstitutionRenamed(institutionId, previousName, updates.name.trim(), year, 'Renamed');
         }
-        if (updates.locationId !== undefined && updates.locationId !== inst.locationId) {
+        if (updates.locationId !== undefined && updates.locationId !== previousLocationId) {
             _history().recordInstitutionMoved(
-                institutionId, inst.locationName, result.locationName, year, 'Moved'
+                institutionId, previousLocationName, result.locationName, year, 'Moved'
             );
         }
         return _ok({ institutionId: institutionId });
