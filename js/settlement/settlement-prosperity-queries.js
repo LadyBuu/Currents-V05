@@ -362,7 +362,8 @@
             religiousUnity: 0,
             placesOfWorship: 0,
             dominantReligion: 0,
-            publicEnterprises: 0
+            publicEnterprises: 0,
+            disasters: 0
         };
 
         var rank = _getRankRules().getRankById(settlement.rankId);
@@ -498,6 +499,14 @@
         }
         if (publicProfit > 100) modifiers.publicEnterprises = 3;
         else if (publicProfit > 50) modifiers.publicEnterprises = 1;
+
+        var disasterImpacts = Array.isArray(settlement.disasterImpacts) ? settlement.disasterImpacts : [];
+        for (var di = 0; di < disasterImpacts.length; di++) {
+            var disasterImpact = disasterImpacts[di];
+            if (disasterImpact && _isFiniteNumber(disasterImpact.prosperityLoss)) {
+                modifiers.disasters -= disasterImpact.prosperityLoss;
+            }
+        }
 
         var value = base;
         for (var key in modifiers) {
