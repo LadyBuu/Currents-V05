@@ -468,7 +468,7 @@
     // Actions (delegated to modals)
     // -------------------------------------------------------------------
 
-    function _handleAdd(container.__stCurrentLocationId) {
+    function _handleAdd(locationId) {
         var open = _resolveModal('openNewResidenceModal');
         if (!open) return;
         var place = _getPlaceById(locationId);
