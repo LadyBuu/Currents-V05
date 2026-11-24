@@ -1711,10 +1711,9 @@
                     var previous = snapshots[rb];
                     var old = previous.householdState;
                     var restore = _associateHouseholdReverseIndex(
-                        previous.unit.householdId || previous.unitState.householdId,
+                        previous.unitState.householdId,
                         r,
-                        previous.unitState.householdId
-                            ? previous.unit.unitNumber : previous.unit.unitNumber,
+                        previous.unit.unitNumber,
                         old.associatedYear !== null && old.associatedYear !== undefined
                             ? old.associatedYear : y,
                         old.residenceNotes || ''
