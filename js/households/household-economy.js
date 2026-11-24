@@ -1166,9 +1166,31 @@
             }
         );
         if (!sourceResult.success) {
+            var sourceRollback;
+            try {
+                sourceRollback = _applyTradeSide(sourceId,
+                    sourceSnapshot.wealth, sourceSnapshot.resources, {
+                        year: year, partnerId: targetId, type: 'rollback',
+                        gave: {}, received: {}, reason: 'Source trade compensation'
+                    });
+            } catch (sourceRollbackError) {
+                sourceRollback = {
+                    success: false,
+                    reason: sourceRollbackError.message || String(sourceRollbackError)
+                };
+            }
+            var sourceCompensated = !!sourceRollback && sourceRollback.success === true;
             return _fail(
                 'SOURCE_UPDATE_FAILED',
-                sourceResult.reason || 'Failed to update source'
+                sourceResult.reason || 'Failed to update source',
+                {
+                    compensated: sourceCompensated,
+                    partial: !sourceCompensated,
+                    rollbackFailures: sourceCompensated ? [] : [{
+                        householdId: sourceId,
+                        reason: (sourceRollback && sourceRollback.reason) || 'Source compensation failed'
+                    }]
+                }
             );
         }
 
