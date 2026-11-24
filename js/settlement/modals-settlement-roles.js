@@ -137,7 +137,7 @@
     // =========================================================================
 
     function _getSettlementQueries()   { return window.SettlementQueries; }
-    function _getPlaceQueries()        { return window.PlaceQueries; }
+    function _getPlaceQueries() { return typeof window.getPlaceById === 'function' ? { getPlaceById: window.getPlaceById } : null; }
     function _getEducationQueries()    { return window.SettlementEducationQueries; }
     function _getRoleQueries()         { return window.RoleQueries; }
 
@@ -156,7 +156,8 @@
     }
 
     function _placeName(locationId) {
-        var place = _getPlaceQueries().getPlaceById(locationId);
+        var places = _getPlaceQueries();
+        var place = places ? places.getPlaceById(locationId) : null;
         return place ? place.displayName : null;
     }
 
