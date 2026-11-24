@@ -1044,7 +1044,7 @@
         return _ok({ institutionId: institutionId });
     }
 
-    function deleteInstitution(institutionId, cascade) {
+    function _deleteInstitutionWithinTransaction(institutionId, cascade) {
         if (!institutionId) return _fail('institutionId is required');
         var inst = _state()._getInstitutionCanonical(institutionId);
         if (!inst) return _fail('Institution not found');
@@ -2582,7 +2582,7 @@
     // 14. DEMOLISH / REBUILD
     // =========================================================================
 
-    function demolishInstitution(institutionId, reason, year, options) {
+    function _demolishInstitutionWithinTransaction(institutionId, reason, year, options) {
         options = options || {};
         if (!institutionId) return _fail('institutionId is required');
 
@@ -2868,6 +2868,99 @@
     // =========================================================================
     // 16. EXPORTS
     // =========================================================================
+
+    function _runInstitutionLifecycleTransaction(label, operation) {
+        var ES = _state();
+        var CS = window.CharacterState;
+        var TX = window.CrossDomainTransaction;
+        if (!TX || typeof TX.execute !== 'function' ||
+            typeof ES._transactionSnapshotInstitutionState !== 'function' ||
+            typeof ES._transactionRestoreInstitutionState !== 'function' ||
+            !CS || typeof CS._transactionSnapshotEducationFields !== 'function' ||
+            typeof CS._transactionRestoreEducationFields !== 'function' ||
+            typeof ES._transactionFlushNotifications !== 'function' ||
+            typeof ES._transactionDiscardNotifications !== 'function' ||
+            typeof CS._transactionFlushChanges !== 'function' ||
+            typeof CS._transactionDiscardChanges !== 'function') {
+            return _fail('Institution lifecycle transaction dependencies are unavailable; no changes were made.');
+        }
+
+        var result = null;
+        var transaction = TX.execute({
+            id: 'education-' + label + '-' + Date.now(),
+            context: { operation: label },
+            participants: [{
+                name: 'education-institution-lifecycle',
+                prepare: function () {
+                    if (!ES.isHydrated || ES.isHydrated() !== true) {
+                        return { success: false, reason: 'Education state is not hydrated.' };
+                    }
+                    return { success: true };
+                },
+                snapshot: function () {
+                    return {
+                        institutions: ES._transactionSnapshotInstitutionState(),
+                        characters: CS._transactionSnapshotEducationFields()
+                    };
+                },
+                apply: function () {
+                    result = operation();
+                    return result && result.success === true
+                        ? { success: true }
+                        : { success: false, reason: result && (result.reason || result.error)
+                            ? (result.reason || result.error)
+                            : 'Institution lifecycle operation failed.' };
+                },
+                rollback: function (snapshot) {
+                    var errors = [];
+                    var characterRestore = CS._transactionRestoreEducationFields(snapshot.characters);
+                    if (!characterRestore || characterRestore.success !== true) {
+                        errors.push(characterRestore && characterRestore.reason || 'Character education restore failed.');
+                    }
+                    var educationRestore = ES._transactionRestoreInstitutionState(snapshot.institutions);
+                    if (!educationRestore || educationRestore.success !== true) {
+                        errors.push(educationRestore && educationRestore.reason || 'Education institution restore failed.');
+                    }
+                    ES._transactionDiscardNotifications();
+                    CS._transactionDiscardChanges();
+                    return errors.length
+                        ? { success: false, reason: errors.join(' | ') }
+                        : { success: true };
+                },
+                afterCommit: function () {
+                    ES._transactionFlushNotifications();
+                    CS._transactionFlushChanges();
+                }
+            }]
+        });
+
+        if (!transaction || transaction.success !== true) {
+            return _fail(
+                (transaction && transaction.reason) || 'Institution lifecycle transaction failed.',
+                {
+                    transactionCode: transaction && transaction.code,
+                    rolledBack: transaction && transaction.rolledBack === true,
+                    rollbackErrors: transaction && transaction.rollbackErrors || [],
+                    institutionResult: result
+                }
+            );
+        }
+        return result || _ok({ transactionId: transaction.transactionId });
+    }
+
+    function deleteInstitution(institutionId, cascade) {
+        if (!institutionId) return _fail('institutionId is required');
+        return _runInstitutionLifecycleTransaction('delete', function () {
+            return _deleteInstitutionWithinTransaction(institutionId, cascade);
+        });
+    }
+
+    function demolishInstitution(institutionId, reason, year, options) {
+        if (!institutionId) return _fail('institutionId is required');
+        return _runInstitutionLifecycleTransaction('demolish', function () {
+            return _demolishInstitutionWithinTransaction(institutionId, reason, year, options);
+        });
+    }
 
     window.EducationCommands = {
         // Institution CRUD
