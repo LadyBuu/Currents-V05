@@ -2239,6 +2239,54 @@ PART 7 — KNOWN HAZARDS
       ("only string IDs are indexed").
 
 
+
+================================================================================
+PART 32 — ANNUAL ENTERPRISE + HOUSEHOLD TRANSACTION
+================================================================================
+
+Annual processing is coordinated through CrossDomainTransaction.
+
+For a household-owned Enterprise, applyAnnualProcessing stages two
+participants:
+  1. Household wealth transfer.
+  2. Enterprise annual result (wealth, debt, status, lastProcessedYear,
+     history and updatedAt).
+
+Both participants are snapshotted before either is mutated. Household
+updates use HouseholdCommands.updateHousehold(..., { deferCommit: true });
+IndustryState updates suppress their subscriber notification. The shared
+IndustryCommands.persist boundary runs once after both in-memory applies.
+Only after persistence succeeds are Household and Industry notifications
+published.
+
+On an apply or persistence failure:
+  - attempted participants restore in reverse order;
+  - Household restoration replaces the complete prior Household record,
+    rebuilds HouseholdState caches and invalidates accessor caches;
+  - Industry restoration reinstates the prior canonical Enterprise record
+    and rebuilds Industry indexes;
+  - if persistence was attempted and failed, the coordinator attempts to
+    save the restored in-memory state;
+  - any failed restoration or failed compensating save returns
+    ROLLBACK_FAILED. The caller must treat this as an integrity incident.
+
+For Enterprises without a Household owner, the same coordinator protects
+the Enterprise update and persistence as a one-participant transaction.
+
+Batch processing passes persist:false to each individual transaction and
+performs one save after the batch, preserving the existing partial-success
+batch policy. Each Enterprise + Household pair is atomic in memory. The
+entire multi-Enterprise batch is NOT one atomic transaction: if the final
+batch save fails, the already-applied per-enterprise in-memory transactions
+remain applied and the batch reports persistence failure. This is retained
+to avoid changing batch semantics in this step.
+
+The transaction coordinator is synchronous. It does not provide crash
+consistency, durable journaling, or cross-tab locking. The transaction
+guarantee covers in-memory domain state and the synchronous persistence
+attempt, subject to the explicit ROLLBACK_FAILED outcome.
+
+
 ================================================================================
 END OF DOCUMENT
 ================================================================================
