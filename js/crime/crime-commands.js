@@ -244,7 +244,11 @@
     }
 
     function _ok(data) { return { success: true, data: data }; }
-    function _fail(reason, code) { return { success: false, reason: reason, code: code || null }; }
+    function _fail(reason, code, data) {
+        var result = { success: false, reason: reason, code: code || null };
+        if (data && typeof data === 'object') result.data = data;
+        return result;
+    }
 
     function _normaliseOptions(options) {
         return (options && typeof options === 'object') ? options : {};
