@@ -843,16 +843,27 @@
                 murderMethod: options.murderMethod || 'unknown'
             });
 
+            var deathCascadeFailure = null;
             if (!killResult || killResult.success === false) {
-                State.deleteCrime(crime.id);
-                return _fail(
-                    'Failed to kill victim: ' +
-                    (killResult && (killResult.reason || killResult.error)
-                        ? (killResult.reason || killResult.error)
-                        : 'unknown'),
-                    C.CODES.KILL_FAILED
-                );
+                if (killResult && killResult.deathRecorded === true) {
+                    deathCascadeFailure = {
+                        system: 'character-death-cascade',
+                        code: killResult.code || 'DEATH_CASCADE_PARTIAL_FAILURE',
+                        reason: killResult.reason || 'Death was recorded but cleanup was incomplete.'
+                    };
+                } else {
+                    State.deleteCrime(crime.id);
+                    return _fail(
+                        'Failed to kill victim: ' +
+                        (killResult && (killResult.reason || killResult.error)
+                            ? (killResult.reason || killResult.error)
+                            : 'unknown'),
+                        C.CODES.KILL_FAILED
+                    );
+                }
             }
+
+            if (deathCascadeFailure) partialFailures.push(deathCascadeFailure);
 
             var consequenceResults = [];
             var executionResult = null;
@@ -874,6 +885,7 @@
             }
 
             var vendettaResult = null;
+            var partialFailures = [];
             if (startVendetta) {
                 var victimHouseholdId = _getHouseholdIdForCharacter(victim);
                 var killerHouseholdId = _getHouseholdIdForCharacter(killer);
@@ -885,6 +897,14 @@
                         crimeId: crime.id,
                         locationId: locationId
                     });
+                    if (!vendettaResult || vendettaResult.success !== true) {
+                        partialFailures.push({
+                            system: 'vendetta',
+                            reason: (vendettaResult && vendettaResult.reason) ||
+                                'Murder was recorded, but the blood feud could not be fully recorded.',
+                            code: vendettaResult && vendettaResult.code || null
+                        });
+                    }
                 }
             }
 
@@ -951,6 +971,8 @@
                 vendetta: vendettaResult && vendettaResult.success
                     ? vendettaResult.data
                     : null,
+                partial: partialFailures.length > 0,
+                partialFailures: partialFailures,
                 householdUpdates: {
                     victimHouseholdId: vHouseholdId,
                     killerHouseholdId: kHouseholdId
@@ -1058,16 +1080,26 @@
                 executionLocation: options.executionLocation || null
             });
 
+            var deathCascadeFailure = null;
             if (!killResult || killResult.success === false) {
-                State.deleteCrime(crime.id);
-                return _fail(
-                    'Failed to kill condemned: ' +
-                    (killResult && (killResult.reason || killResult.error)
-                        ? (killResult.reason || killResult.error)
-                        : 'unknown'),
-                    C.CODES.KILL_FAILED
-                );
+                if (killResult && killResult.deathRecorded === true) {
+                    deathCascadeFailure = {
+                        system: 'character-death-cascade',
+                        code: killResult.code || 'DEATH_CASCADE_PARTIAL_FAILURE',
+                        reason: killResult.reason || 'Death was recorded but cleanup was incomplete.'
+                    };
+                } else {
+                    State.deleteCrime(crime.id);
+                    return _fail(
+                        'Failed to kill condemned: ' +
+                        (killResult && (killResult.reason || killResult.error)
+                            ? (killResult.reason || killResult.error)
+                            : 'unknown'),
+                        C.CODES.KILL_FAILED
+                    );
+                }
             }
+            var partialFailures = deathCascadeFailure ? [deathCascadeFailure] : [];
 
             if (options.endRelationships !== false) {
                 try {
@@ -1128,7 +1160,9 @@
                 method: method,
                 executionerId: executionerId,
                 householdId: householdId,
-                legalEvaluation: evaluation
+                legalEvaluation: evaluation,
+                partial: partialFailures.length > 0,
+                partialFailures: partialFailures
             });
 
         } catch (e) {
