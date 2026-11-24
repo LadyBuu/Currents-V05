@@ -675,6 +675,7 @@
         var allIds = FS.allIds();
         var removed = 0;
         var affected = {};
+        var failures = [];
 
         for (var i = 0; i < allIds.length; i++) {
             var edge = FS.getEdgeCopy(allIds[i]);
@@ -682,8 +683,14 @@
             if (edge.parentId !== characterId && edge.childId !== characterId) continue;
             if (edge.parentId !== characterId) affected[edge.parentId] = true;
             if (edge.childId !== characterId) affected[edge.childId] = true;
-            FS._remove(edge.id);
-            removed++;
+            if (FS._remove(edge.id) === true) {
+                removed++;
+            } else {
+                failures.push({
+                    edgeId: edge.id,
+                    reason: 'FamilyState refused to remove the edge.'
+                });
+            }
         }
 
         if (removed > 0) {
@@ -691,7 +698,12 @@
             _commitAndNotify('removeAllReferences', ids);
         }
 
-        return { success: true, removedCount: removed };
+        return {
+            success: failures.length === 0,
+            partial: failures.length > 0 && removed > 0,
+            removedCount: removed,
+            failures: failures
+        };
     }
 
     // =========================================================================
