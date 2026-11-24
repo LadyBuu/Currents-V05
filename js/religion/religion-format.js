@@ -129,7 +129,7 @@
                 if (Object.prototype.hasOwnProperty.call(source, key) &&
                     source[key] === value) {
                     return key.toLowerCase().replace(/_/g, ' ')
-                        .replace(/\\b\\w/g, function (letter) { return letter.toUpperCase(); });
+                        .replace(/\b\w/g, function (letter) { return letter.toUpperCase(); });
                 }
             }
         }
