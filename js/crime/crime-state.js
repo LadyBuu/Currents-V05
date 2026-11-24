@@ -142,15 +142,31 @@
     // =========================================================================
 
     var _mutatingState = false;
+    var _mutationSnapshot = null;
 
     function _beginMutation() {
         if (_mutatingState) return false;
+
+        var masterData = window.masterData;
+        var hasCanonicalStore = !!(masterData && masterData.data);
+        _mutationSnapshot = {
+            masterData: masterData || null,
+            hasCanonicalStore: hasCanonicalStore,
+            crimes: hasCanonicalStore
+                ? _clone(Array.isArray(masterData.data.crimes) ? masterData.data.crimes : [])
+                : [],
+            vendettas: hasCanonicalStore
+                ? _clone(Array.isArray(masterData.data.vendettas) ? masterData.data.vendettas : [])
+                : []
+        };
+
         _mutatingState = true;
         return true;
     }
 
     function _endMutation() {
         _mutatingState = false;
+        _mutationSnapshot = null;
     }
 
     // =========================================================================
@@ -224,15 +240,7 @@
      *   PERSIST CONTRACT.
      */
     function _markDirty() {
-        var masterData = window.masterData;
-        var hasCanonicalStore = !!(masterData && masterData.data);
-        var priorCrimes = hasCanonicalStore
-            ? _clone(Array.isArray(masterData.data.crimes) ? masterData.data.crimes : [])
-            : [];
-        var priorVendettas = hasCanonicalStore
-            ? _clone(Array.isArray(masterData.data.vendettas) ? masterData.data.vendettas : [])
-            : [];
-
+        var snapshot = _mutationSnapshot;
         try {
             _syncToCanonical();
 
@@ -241,21 +249,26 @@
             }
             window.markDataDirty();
         } catch (error) {
-            // A failed commit tail must not leave the in-memory indexes ahead
-            // of canonical storage. Restore a detached snapshot and rebuild
-            // both indexes together before returning the failure to Commands.
-            if (hasCanonicalStore) {
-                masterData.data.crimes = priorCrimes;
-                masterData.data.vendettas = priorVendettas;
+            // Roll back to the state captured before the primitive changed
+            // any live record or index. Capturing at _markDirty time would be
+            // too late for in-place lifecycle updates such as solveCrime().
+            if (snapshot && snapshot.hasCanonicalStore
+                && snapshot.masterData && snapshot.masterData.data) {
+                snapshot.masterData.data.crimes = snapshot.crimes;
+                snapshot.masterData.data.vendettas = snapshot.vendettas;
 
                 var restoredCrimes = _emptyCrimeIndexes();
                 var restoredVendettas = _emptyVendettaIndexes();
                 try {
-                    for (var i = 0; i < priorCrimes.length; i++) {
-                        _indexCrimeInto(restoredCrimes, priorCrimes[i]);
+                    for (var i = 0; i < snapshot.crimes.length; i++) {
+                        if (!_indexCrimeInto(restoredCrimes, snapshot.crimes[i])) {
+                            throw new Error('Could not restore crime index');
+                        }
                     }
-                    for (var j = 0; j < priorVendettas.length; j++) {
-                        _indexVendettaInto(restoredVendettas, priorVendettas[j]);
+                    for (var j = 0; j < snapshot.vendettas.length; j++) {
+                        if (!_indexVendettaInto(restoredVendettas, snapshot.vendettas[j])) {
+                            throw new Error('Could not restore vendetta index');
+                        }
                     }
                     _state.crimes = restoredCrimes;
                     _state.vendettas = restoredVendettas;
