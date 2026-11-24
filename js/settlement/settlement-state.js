@@ -301,6 +301,17 @@
     // =========================================================================
 
     window.SettlementState = Object.freeze({
+        _transactionSnapshotDeletedLocations: function () {
+            var store = _getCanonicalStore();
+            if (!store || typeof store !== 'object' || Array.isArray(store)) throw new Error('Settlement canonical store unavailable.');
+            return Object.assign({}, store);
+        },
+        _transactionRestoreDeletedLocations: function (snapshot) {
+            if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot) || !window.masterData || !window.masterData.data) return { success: false, reason: 'Invalid Settlement transaction snapshot.' };
+            window.masterData.data.settlementData = Object.assign({}, snapshot);
+            try { rebuildIndexes(); return { success: true }; } catch (error) { return { success: false, reason: error.message || String(error) }; }
+        },
+
         // Index rebuild
         rebuildIndexes: rebuildIndexes,
 
