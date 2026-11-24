@@ -1918,17 +1918,12 @@
                 characterId, curriculumItem.id, result.newLevel
             );
             if (!progressResult || progressResult.success !== true) {
-                return _ok({
-                    characterId: characterId,
-                    subjectId: key,
-                    subjectName: curriculumItem.name,
-                    oldLevel: result.oldLevel,
-                    newLevel: result.newLevel,
-                    increased: result.increased,
-                    roleSkillError: progressResult && progressResult.reason
+                return _fail(
+                    'Role skill progression failed after subject progress was written: ' +
+                    (progressResult && progressResult.reason
                         ? progressResult.reason
-                        : 'Role skill progression failed for unknown reason'
-                });
+                        : 'unknown reason')
+                );
             }
         }
 
@@ -1936,7 +1931,12 @@
             var wasLiterate = _cc('isLiterate')(characterId);
             var nowLiterate = _rules().isLiterateAtLevel(result.newLevel);
             if (nowLiterate && !wasLiterate) {
-                _cc('setLiterate')(characterId, true);
+                var literacyUpdate = _cc('setLiterate')(characterId, true);
+                if (!literacyUpdate || literacyUpdate.success !== true) {
+                    return _fail('Literacy flag update failed after subject progress was written: ' +
+                        (literacyUpdate && literacyUpdate.reason
+                            ? literacyUpdate.reason : 'unknown error'));
+                }
 
                 // Emit STUDENT_BECAME_LITERATE only if HISTORY_EVENT_TYPES
                 // is available. See HISTORY EVENT TYPES in the header.
