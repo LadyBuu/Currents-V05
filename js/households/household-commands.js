@@ -959,6 +959,35 @@
         var year = _resolveYear(options.year);
         if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
+        // Private Education institutions may be owned by a Household.
+        // Refuse deletion until ownership is reassigned; never leave an orphan ownerId.
+        var educationData = window.masterData && window.masterData.data;
+        var educationInstitutions = educationData
+            ? educationData.educationalInstitutions : [];
+        if (educationInstitutions === undefined || educationInstitutions === null) {
+            educationInstitutions = [];
+        }
+        if (!Array.isArray(educationInstitutions)) {
+            return _fail('EDUCATION_REFERENCE_CHECK_FAILED',
+                'Cannot verify private Education ownership because educationalInstitutions is malformed');
+        }
+        for (var ei = 0; ei < educationInstitutions.length; ei++) {
+            var educationInstitution = educationInstitutions[ei];
+            if (!educationInstitution || typeof educationInstitution !== 'object') {
+                return _fail('EDUCATION_REFERENCE_CHECK_FAILED',
+                    'Cannot verify private Education ownership: malformed institution at index ' + ei);
+            }
+            if (educationInstitution.ownershipType === 'private' &&
+                educationInstitution.ownerType === 'household' &&
+                educationInstitution.ownerId === householdId) {
+                return _fail('EDUCATION_OWNER_REFERENCE',
+                    'Household owns private Education institution "' +
+                    (educationInstitution.name || educationInstitution.id || ei) +
+                    '". Reassign ownership before deleting this Household.',
+                    { institutionId: educationInstitution.id || null });
+            }
+        }
+
         // Preflight every cross-domain dependency before making any writes.
         var residenceId = household.residenceId || null;
         var unitNumber = household.residenceUnitNumber;
