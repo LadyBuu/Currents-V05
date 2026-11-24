@@ -146,7 +146,8 @@
         var required = [
             'addEnterpriseToHousehold',
             'removeEnterpriseFromHousehold',
-            'updateHousehold'
+            'updateHousehold',
+            'commitTransactionEnterpriseOwnership'
         ];
         for (var i = 0; i < required.length; i++) {
             if (typeof hc[required[i]] !== 'function') {
