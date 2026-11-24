@@ -677,6 +677,7 @@
 
             // ---- Settlement side effects -------------------------------
             var settlementImpactResult = _recordSettlementCrimeImpact(crimeLocationId, {
+                crimeId: crime.id,
                 type: data.type,
                 victimId: data.victimId || null,
                 killerId: data.perpetratorId || null,
@@ -968,6 +969,7 @@
 
             if (locationId) {
                 var murderSettlementImpact = _recordSettlementCrimeImpact(locationId, {
+                    crimeId: crime.id,
                     type: 'murder',
                     victimId: victimId,
                     killerId: killerId,
@@ -1153,6 +1155,7 @@
 
             if (locationId) {
                 var executionSettlementImpact = _recordSettlementCrimeImpact(locationId, {
+                    crimeId: crime.id,
                     type: 'execution',
                     condemnedId: condemnedId,
                     year: year,
