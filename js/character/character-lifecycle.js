@@ -898,10 +898,13 @@
         );
         if (!cascadeResult || cascadeResult.success !== true) {
             return {
-                ok: false,
-                code: 'DEATH_CASCADE_PARTIAL_FAILURE',
-                reason: 'Character was marked deceased, but one or more death consequences failed.',
-                deathRecorded: true,
+                ok: true,
+                cascadeFailure: {
+                    code: 'DEATH_CASCADE_PARTIAL_FAILURE',
+                    reason: 'Character was marked deceased, but one or more death consequences failed.',
+                    deathRecorded: true,
+                    cascade: cascadeResult
+                },
                 deathResult: deathResult,
                 cascade: cascadeResult
             };
@@ -1057,6 +1060,7 @@
 
         var deaths = [];
         var skipped = [];
+        var cascadeFailures = [];
         var settlementFailures = [];
         var settlementsSkipped = options.skipSettlements === true;
         var maxDeaths = typeof options.maxDeaths === 'number'
@@ -1104,6 +1108,16 @@
                     deathCauseDetail: evaluation.causeDetail,
                     ageAtDeath: evaluation.ageAtDeath
                 });
+                if (dieResult.cascadeFailure) {
+                    cascadeFailures.push({
+                        characterId: live.id,
+                        name: live.name,
+                        year: year,
+                        code: dieResult.cascadeFailure.code,
+                        reason: dieResult.cascadeFailure.reason,
+                        cascade: dieResult.cascadeFailure.cascade
+                    });
+                }
             }
 
             // Settlement annual step. Runs once per simulated year, after
@@ -1150,6 +1164,7 @@
             deaths: deaths,
             deathCount: deaths.length,
             skipped: skipped,
+            cascadeFailures: cascadeFailures,
             settlementFailures: settlementFailures,
             settlementsSkipped: settlementsSkipped
         };
