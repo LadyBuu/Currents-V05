@@ -1959,3 +1959,14 @@ reports missing religions referenced by conversion histories and by
 Settlement stateReligionId fields. These diagnostics are read-only and do
 not rewrite Character or Settlement data.
 
+PART 40 — INHERITANCE LIFECYCLE SAFETY
+
+ReligionInheritance validates the child and any explicitly supplied parents
+before resolving inheritance. A missing child or missing supplied parent is
+an error, not an unaffiliated-parent case that may silently fall back to local
+religious dominance. A child who already has the resolved religion is treated
+as an idempotent no-op, so retrying a birth/adoption workflow does not create a
+second conversion. A child with a different existing religion is not silently
+converted by the inheritance adapter. The inheritance year must be a finite
+integer; year zero remains valid.
+
