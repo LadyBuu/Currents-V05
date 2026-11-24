@@ -446,6 +446,17 @@
             evaluated: false,
             error: null
         };
+        var preflightStudent = _getCharacterById(studentRecord.studentId);
+        if (!preflightStudent || preflightStudent.isDeceased ||
+            currentYear - studentRecord.enrollmentYear < 1 ||
+            (typeof studentRecord.lastAnnualProcessedYear === 'number' &&
+                studentRecord.lastAnnualProcessedYear >= currentYear) ||
+            typeof institution.skillGainPerYear !== 'number' ||
+            !isFinite(institution.skillGainPerYear) ||
+            institution.skillGainPerYear < 0) {
+            return _advanceStudentYearWithinTransaction(studentRecord, institution, currentYear);
+        }
+
         var TX = window.CrossDomainTransaction;
         var ES = window.EducationState;
         var CS = window.CharacterState;
