@@ -382,14 +382,41 @@
         if (!id) {
             throw new Error('CultureState._removeCulture requires an id.');
         }
+        var master = _requireMasterData();
+        if (!master.data) {
+            throw new Error('CultureState._removeCulture requires masterData.data.');
+        }
         var cultures = _readCanonicalCultures();
         var index = _findIndex(cultures, id);
         if (index === -1) {
             throw new Error('CultureState._removeCulture: culture not found: ' + id);
         }
+
+        // Stage the removal on a separate array. Hydration can throw when
+        // unrelated canonical corruption (for example, a duplicate Culture
+        // ID) is present. Never let that leave the target Culture deleted
+        // merely because the derived indexes could not be rebuilt.
         var removed = cultures[index];
-        cultures.splice(index, 1);
-        hydrateFromMasterData();
+        var nextCultures = cultures.slice();
+        nextCultures.splice(index, 1);
+        master.data.cultures = nextCultures;
+
+        try {
+            hydrateFromMasterData();
+        } catch (error) {
+            master.data.cultures = cultures;
+            try {
+                hydrateFromMasterData();
+            } catch (restoreError) {
+                throw new Error(
+                    'Culture removal failed and the previous indexes could not be restored: ' +
+                    (restoreError.message || String(restoreError)) +
+                    '. Canonical Culture data was restored.'
+                );
+            }
+            throw error;
+        }
+
         _markDirty();
         return removed;
     }
