@@ -2455,3 +2455,44 @@ or protection against external side effects performed by subscribers after
 notifications are released.
 
 ================================================================================
+
+
+================================================================================
+PART 37 — HOUSEHOLD ENTERPRISE OWNERSHIP DIAGNOSTICS AND REPAIR
+================================================================================
+
+IndustryState.getOwnershipIntegrityReport() audits both directions of the
+Enterprise <-> Household ownership relationship. Enterprise.ownerType and
+ownerId are authoritative. Household.enterprises is a derived reverse index.
+
+The report detects:
+  - Household-owned Enterprises with missing or nonexistent owner Households
+  - invalid or duplicate Household ids
+  - missing, malformed, stale or duplicate Household Enterprise references
+  - canonical Household ownership missing from the reverse index
+
+The report returns valid, repairable, issues and expectedByHousehold.
+repairable is false when canonical ownership cannot be resolved safely,
+including duplicate/invalid Household ids or Enterprises pointing to a
+missing Household. These cases require explicit data correction first.
+
+IndustryState.validateIntegrity() now includes this ownership report and
+adds its issues to the normal errors list.
+
+IndustryCommands.reconcileHouseholdEnterpriseIndexes(options) supports:
+  - { dryRun: true }: returns the report and whether repair is safe; no writes.
+  - no options / { dryRun: false }: rebuilds every Household.enterprises
+    array from canonical Enterprise ownership, preserving all other Household
+    fields and ordering Enterprises in Industry catalogue order.
+
+Repair runs through CrossDomainTransaction. It snapshots all Household
+records, stages the rebuilt reverse indexes, persists once, and restores the
+snapshots plus caches if apply or persistence fails. The Household repair
+event is published only after persistence succeeds. A rollback or
+compensation failure is surfaced as ROLLBACK_FAILED by the coordinator.
+
+The repair does not guess missing owner IDs, create missing Households,
+change Enterprise owner fields, or resolve duplicate Household identities.
+Review and correct those canonical conflicts before retrying.
+
+================================================================================
