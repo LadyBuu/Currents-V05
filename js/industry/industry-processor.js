@@ -241,9 +241,13 @@
         if (!applyResult || applyResult.success !== true) {
             return {
                 success: false,
+                code: applyResult && applyResult.code
+                    ? applyResult.code : 'ANNUAL_PROCESSING_FAILED',
                 reason: applyResult && applyResult.reason
                     ? applyResult.reason
-                    : 'Annual processing command failed'
+                    : 'Annual processing command failed',
+                transaction: applyResult && applyResult.transaction
+                    ? applyResult.transaction : null
             };
         }
 
@@ -347,7 +351,9 @@
                 failures.push({
                     enterpriseId: list[i].id,
                     enterpriseName: list[i].name,
-                    reason: result.reason
+                    code: result.code || 'ANNUAL_PROCESSING_FAILED',
+                    reason: result.reason,
+                    transaction: result.transaction || null
                 });
             }
         }
