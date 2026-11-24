@@ -359,18 +359,33 @@
     // =========================================================================
 
     function _applyPerpetratorHouseholdEffects(householdId, params) {
-        if (!householdId) return;
-        window.HouseholdCommands.applyPerpetratorCrime(householdId, params);
+        if (!householdId) return { success: true, skipped: true };
+        var commands = window.HouseholdCommands;
+        if (!commands || typeof commands.applyPerpetratorCrime !== 'function') {
+            return { success: false, reason: 'HouseholdCommands.applyPerpetratorCrime is unavailable.' };
+        }
+        try { return commands.applyPerpetratorCrime(householdId, params) || { success: false, reason: 'Household perpetrator effect returned no result.' }; }
+        catch (e) { return { success: false, reason: e && e.message ? e.message : String(e) }; }
     }
 
     function _applyVictimHouseholdEffects(householdId, params) {
-        if (!householdId) return;
-        window.HouseholdCommands.applyVictimCrime(householdId, params);
+        if (!householdId) return { success: true, skipped: true };
+        var commands = window.HouseholdCommands;
+        if (!commands || typeof commands.applyVictimCrime !== 'function') {
+            return { success: false, reason: 'HouseholdCommands.applyVictimCrime is unavailable.' };
+        }
+        try { return commands.applyVictimCrime(householdId, params) || { success: false, reason: 'Household victim effect returned no result.' }; }
+        catch (e) { return { success: false, reason: e && e.message ? e.message : String(e) }; }
     }
 
     function _applyExecutionHouseholdEffects(householdId, params) {
-        if (!householdId) return;
-        window.HouseholdCommands.applyExecutionToHousehold(householdId, params);
+        if (!householdId) return { success: true, skipped: true };
+        var commands = window.HouseholdCommands;
+        if (!commands || typeof commands.applyExecutionToHousehold !== 'function') {
+            return { success: false, reason: 'HouseholdCommands.applyExecutionToHousehold is unavailable.' };
+        }
+        try { return commands.applyExecutionToHousehold(householdId, params) || { success: false, reason: 'Household execution effect returned no result.' }; }
+        catch (e) { return { success: false, reason: e && e.message ? e.message : String(e) }; }
     }
 
     // =========================================================================
@@ -378,15 +393,20 @@
     // =========================================================================
 
     function _recordSettlementCrimeImpact(locationId, eventData) {
-        if (!locationId) return;
+        if (!locationId) return { success: true, skipped: true };
         var impact = _getSettlementRecordImpact();
-        if (!impact) return;
+        if (!impact) return { success: false, reason: 'Settlement crime-impact command is unavailable.' };
         try {
-            impact(locationId, eventData);
-        } catch (e) {
-            if (typeof console !== 'undefined' && console.error) {
-                console.error('crime-commands.js: recordCrimeImpact threw', e);
+            var result = impact(locationId, eventData);
+            if (result === false || (result && result.success === false)) {
+                return { success: false, reason: (result && result.reason) || 'Settlement rejected the crime impact.', code: result && result.code || null };
             }
+            if (result === undefined || result === null) {
+                return { success: false, reason: 'Settlement crime-impact command returned no confirmation.' };
+            }
+            return { success: true, data: result };
+        } catch (e) {
+            return { success: false, reason: e && e.message ? e.message : String(e) };
         }
     }
 
