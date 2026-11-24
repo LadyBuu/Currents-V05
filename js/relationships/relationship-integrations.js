@@ -518,7 +518,8 @@
                                 p.participantA,
                                 p.participantB,
                                 roleId,
-                                'death_of_participant'
+                                'death_of_participant',
+                                deathYear
                             );
                         } catch (e) {
                             endResult = { success: false, code: 'APPRENTICESHIP_COMMAND_THROWN', message: e && e.message ? e.message : String(e) };
