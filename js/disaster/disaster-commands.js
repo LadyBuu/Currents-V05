@@ -697,6 +697,11 @@
                     throw new Error('Structural-damage command returned success without a report.');
                 } else {
                     results.structuralDamage = damageResult || null;
+                    results.failures.push({
+                        system: 'structural-damage',
+                        reason: (damageResult && (damageResult.reason || damageResult.error)) ||
+                            'Structural-damage command did not confirm success.'
+                    });
                 }
             } catch (e) {
                 results.failures.push({
