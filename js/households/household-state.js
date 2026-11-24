@@ -795,6 +795,9 @@
         _getMasterData().data.households = records;
         _rebuildCaches();
         markDirty();
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            window.invalidateAccessorCaches();
+        }
         return true;
     }
 
