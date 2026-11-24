@@ -2273,13 +2273,27 @@ On an apply or persistence failure:
 For Enterprises without a Household owner, the same coordinator protects
 the Enterprise update and persistence as a one-participant transaction.
 
-Batch processing passes persist:false to each individual transaction and
-performs one save after the batch, preserving the existing partial-success
-batch policy. Each Enterprise + Household pair is atomic in memory. The
-entire multi-Enterprise batch is NOT one atomic transaction: if the final
-batch save fails, the already-applied per-enterprise in-memory transactions
-remain applied and the batch reports persistence failure. This is retained
-to avoid changing batch semantics in this step.
+Batch processing passes persist:false to each individual transaction
+and performs one save after the batch. Before each eligible entry, the
+processor snapshots the Enterprise and (when household-owned) its Household.
+Individual transaction notifications are queued rather than published.
+
+If the final batch save succeeds, queued notifications are published in
+processing order. If the final save fails, the processor restores successful
+entries in reverse order, including repeated transfers to the same Household,
+then attempts one compensating save of the restored state. The batch returns
+BATCH_PERSIST_FAILED when memory restoration and compensation succeed, or
+ROLLBACK_FAILED when any restoration or compensation step fails. Failed batch
+persistence returns no successful result rows because those in-memory changes
+have been reverted.
+
+Per-enterprise calculation or apply failures remain non-fatal: other
+enterprises continue processing, and successful entries are saved together.
+Thus the batch is atomic with respect to its final persistence boundary, but
+it retains partial-success semantics for individual domain failures.
+A caller using { persist: false } explicitly accepts responsibility for the
+later persistence boundary; notifications are still published after all
+entries have been staged because no save is requested by that call.
 
 The transaction coordinator is synchronous. It does not provide crash
 consistency, durable journaling, or cross-tab locking. The transaction
@@ -2403,4 +2417,41 @@ cross-tab locking.
 
 ================================================================================
 END OF DOCUMENT
+================================================================================
+
+
+================================================================================
+PART 36 — ATOMIC ANNUAL PROCESSING BATCH PERSISTENCE
+================================================================================
+
+The world-wide and location-scoped annual processing batch now protects its
+single final persistence boundary across all successfully processed entries.
+
+Before applying each eligible Enterprise, IndustryProcessor snapshots its
+canonical Enterprise record and, when household-owned, the complete owning
+Household record. Each Enterprise + Household pair still uses the normal
+CrossDomainTransaction for its individual in-memory apply. The resulting
+post-commit notifications are queued until the batch persistence boundary.
+
+On successful persistence, notifications are released in processing order.
+On failed persistence, successful entries are restored in reverse order.
+This ordering is important when several Enterprises transfer wealth to the
+same Household: each snapshot restores the preceding intermediate state,
+ultimately returning the Household to its original value. The processor then
+attempts a compensating save of the restored state.
+
+Results:
+  - BATCH_PERSIST_FAILED: all in-memory restorations and the compensating
+    save succeeded. No queued notifications were published.
+  - ROLLBACK_FAILED: at least one record restoration or the compensating
+    save failed. The caller must treat the result as an integrity incident.
+  - Individual calculation/apply failures remain isolated. Other successful
+    entries can still be persisted, and the overall batch reports those
+    per-enterprise failures separately.
+
+The guarantee is synchronous and in-memory plus best-effort compensation.
+It does not provide crash consistency, durable journaling, cross-tab locking,
+or protection against external side effects performed by subscribers after
+notifications are released.
+
 ================================================================================
