@@ -491,11 +491,27 @@
     }
 
     function _markDirty() {
-        if (typeof window.markDataDirty === 'function') {
-            try { window.markDataDirty(); } catch (e) { /* non-fatal */ }
-        }
+        // HouseholdState owns the dirty flag and forwards to the global
+        // dirty tracker. Calling both here marked the same mutation twice
+        // and could dispatch duplicate storage notifications.
         if (typeof _state.markDirty === 'function') {
-            try { _state.markDirty(); } catch (e) { /* non-fatal */ }
+            try {
+                _state.markDirty();
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn('HouseholdCommands: HouseholdState.markDirty failed', e);
+                }
+            }
+            return;
+        }
+        if (typeof window.markDataDirty === 'function') {
+            try {
+                window.markDataDirty();
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn('HouseholdCommands: markDataDirty failed', e);
+                }
+            }
         }
     }
 
