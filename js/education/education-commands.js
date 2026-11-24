@@ -348,7 +348,7 @@
             var result = window.CharacterCommands.removeEducationRecord(
                 characterId, institutionId
             );
-            return !result || result.success !== false;
+            return result === true || !!(result && result.success === true);
         } catch (e) {
             if (typeof console !== 'undefined' && console.error) {
                 console.error(
