@@ -1114,6 +1114,157 @@
         return result;
     }
 
+    /**
+     * Cross-checks Household.members[] against Character household fields.
+     * Both directions are inspected from canonical masterData arrays.
+     * This is read-only: ambiguous legacy records are reported, never fixed.
+     */
+    function _checkHouseholdMemberReverseIndex(canonicalHouseholds,
+                                               canonicalCharacters) {
+        var result = {
+            available: false,
+            householdMembersWithMissingCharacter: [],
+            duplicateHouseholdMemberReferences: [],
+            charactersAssignedToMultipleHouseholds: [],
+            householdMembersWithMismatchedCharacterReference: [],
+            charactersWithOrphanHouseholdReference: [],
+            charactersWithMissingHouseholdMember: [],
+            charactersWithConflictingHouseholdFields: []
+        };
+        if (!Array.isArray(canonicalHouseholds) ||
+            !Array.isArray(canonicalCharacters)) return result;
+
+        result.available = true;
+        var characterById = new Map();
+        var householdById = new Map();
+        var memberHouseholdsByCharacter = new Map();
+
+        for (var hi = 0; hi < canonicalHouseholds.length; hi++) {
+            var h = canonicalHouseholds[hi];
+            if (h && typeof h.id === 'string' && h.id !== '' &&
+                !householdById.has(h.id)) householdById.set(h.id, h);
+        }
+        for (var ci = 0; ci < canonicalCharacters.length; ci++) {
+            var c = canonicalCharacters[ci];
+            if (c && typeof c.id === 'string' && c.id !== '' &&
+                !characterById.has(c.id)) characterById.set(c.id, c);
+        }
+
+        // Household → Character.
+        for (var hi2 = 0; hi2 < canonicalHouseholds.length; hi2++) {
+            var household = canonicalHouseholds[hi2];
+            if (!household || typeof household.id !== 'string') continue;
+            if (!Array.isArray(household.members)) continue;
+            var seenMembers = new Map();
+
+            for (var mi = 0; mi < household.members.length; mi++) {
+                var member = household.members[mi];
+                var characterId = member && member.characterId;
+                if (typeof characterId !== 'string' || characterId === '') {
+                    result.householdMembersWithMissingCharacter.push({
+                        householdId: household.id, index: mi,
+                        reason: 'missing or invalid characterId'
+                    });
+                    continue;
+                }
+                if (!seenMembers.has(characterId)) seenMembers.set(characterId, []);
+                seenMembers.get(characterId).push(mi);
+
+                if (!memberHouseholdsByCharacter.has(characterId)) {
+                    memberHouseholdsByCharacter.set(characterId, []);
+                }
+                var householdRefs = memberHouseholdsByCharacter.get(characterId);
+                if (householdRefs.indexOf(household.id) === -1) {
+                    householdRefs.push(household.id);
+                }
+
+                var character = characterById.get(characterId);
+                if (!character) {
+                    result.householdMembersWithMissingCharacter.push({
+                        householdId: household.id, characterId: characterId,
+                        index: mi, reason: 'character not found'
+                    });
+                    continue;
+                }
+                var charHousehold = typeof character.household === 'string'
+                    ? character.household : '';
+                var charHouseholdId = typeof character.householdId === 'string'
+                    ? character.householdId : '';
+                if (charHousehold && charHouseholdId &&
+                    charHousehold !== charHouseholdId) {
+                    result.charactersWithConflictingHouseholdFields.push({
+                        characterId: characterId, household: charHousehold,
+                        householdId: charHouseholdId
+                    });
+                }
+                var reverseId = charHouseholdId || charHousehold;
+                if (reverseId !== household.id) {
+                    result.householdMembersWithMismatchedCharacterReference.push({
+                        householdId: household.id, characterId: characterId,
+                        characterHousehold: charHousehold || null,
+                        characterHouseholdId: charHouseholdId || null
+                    });
+                }
+            }
+            seenMembers.forEach(function(indices, characterId) {
+                if (indices.length > 1) {
+                    result.duplicateHouseholdMemberReferences.push({
+                        householdId: household.id, characterId: characterId,
+                        indices: indices.slice()
+                    });
+                }
+            });
+        }
+
+        memberHouseholdsByCharacter.forEach(function(householdIds, characterId) {
+            if (householdIds.length > 1) {
+                result.charactersAssignedToMultipleHouseholds.push({
+                    characterId: characterId, householdIds: householdIds.slice()
+                });
+            }
+        });
+
+        // Character → Household.
+        for (var ci2 = 0; ci2 < canonicalCharacters.length; ci2++) {
+            var characterRecord = canonicalCharacters[ci2];
+            if (!characterRecord || typeof characterRecord.id !== 'string') continue;
+            var householdField = typeof characterRecord.household === 'string'
+                ? characterRecord.household : '';
+            var householdIdField = typeof characterRecord.householdId === 'string'
+                ? characterRecord.householdId : '';
+            if (householdField && householdIdField &&
+                householdField !== householdIdField) continue;
+            var currentHouseholdId = householdIdField || householdField;
+            if (!currentHouseholdId) continue;
+
+            if (!householdById.has(currentHouseholdId)) {
+                result.charactersWithOrphanHouseholdReference.push({
+                    characterId: characterRecord.id,
+                    householdId: currentHouseholdId
+                });
+                continue;
+            }
+            var expectedHousehold = householdById.get(currentHouseholdId);
+            var matches = 0;
+            if (Array.isArray(expectedHousehold.members)) {
+                for (var em = 0; em < expectedHousehold.members.length; em++) {
+                    if (expectedHousehold.members[em] &&
+                        expectedHousehold.members[em].characterId === characterRecord.id) {
+                        matches++;
+                    }
+                }
+            }
+            if (matches !== 1) {
+                result.charactersWithMissingHouseholdMember.push({
+                    characterId: characterRecord.id,
+                    householdId: currentHouseholdId,
+                    matchingMemberCount: matches
+                });
+            }
+        }
+        return result;
+    }
+
     var _diagnostics = {
         getHouseholdCount: function() { return _state.households.length; },
         getPositionCount: function() { return _state.householdPositions.length; },
@@ -1141,6 +1292,14 @@
          *   householdsWithOrphanEnterpriseRef: [],
          *   enterprisesOrphanedFromHousehold: [],
          *   enterpriseReverseIndexAvailable: boolean,
+         *   householdMembersWithMissingCharacter: [],
+         *   duplicateHouseholdMemberReferences: [],
+         *   charactersAssignedToMultipleHouseholds: [],
+         *   householdMembersWithMismatchedCharacterReference: [],
+         *   charactersWithOrphanHouseholdReference: [],
+         *   charactersWithMissingHouseholdMember: [],
+         *   charactersWithConflictingHouseholdFields: [],
+         *   householdMemberReverseIndexAvailable: boolean,
          *   counts: {
          *     households, positions, assignments
          *   },
@@ -1191,6 +1350,10 @@
 
             var residenceIndex = _checkResidenceReverseIndex();
             var enterpriseIndex = _checkEnterpriseReverseIndex();
+            var memberIndex = _checkHouseholdMemberReverseIndex(
+                Array.isArray(master.data.households) ? master.data.households : null,
+                Array.isArray(master.data.characters) ? master.data.characters : null
+            );
 
             var ok =
                 hDup.length === 0 &&
@@ -1200,7 +1363,15 @@
                 residenceIndex.householdsWithMissingResidence.length === 0 &&
                 residenceIndex.residencesWithOrphanHouseholdOccupancy.length === 0 &&
                 enterpriseIndex.householdsWithOrphanEnterpriseRef.length === 0 &&
-                enterpriseIndex.enterprisesOrphanedFromHousehold.length === 0;
+                enterpriseIndex.enterprisesOrphanedFromHousehold.length === 0 &&
+                memberIndex.available === true &&
+                memberIndex.householdMembersWithMissingCharacter.length === 0 &&
+                memberIndex.duplicateHouseholdMemberReferences.length === 0 &&
+                memberIndex.charactersAssignedToMultipleHouseholds.length === 0 &&
+                memberIndex.householdMembersWithMismatchedCharacterReference.length === 0 &&
+                memberIndex.charactersWithOrphanHouseholdReference.length === 0 &&
+                memberIndex.charactersWithMissingHouseholdMember.length === 0 &&
+                memberIndex.charactersWithConflictingHouseholdFields.length === 0;
 
             return {
                 ok: ok,
@@ -1220,6 +1391,14 @@
                 enterprisesOrphanedFromHousehold:
                     enterpriseIndex.enterprisesOrphanedFromHousehold,
                 enterpriseReverseIndexAvailable: enterpriseIndex.available,
+                householdMembersWithMissingCharacter: memberIndex.householdMembersWithMissingCharacter,
+                duplicateHouseholdMemberReferences: memberIndex.duplicateHouseholdMemberReferences,
+                charactersAssignedToMultipleHouseholds: memberIndex.charactersAssignedToMultipleHouseholds,
+                householdMembersWithMismatchedCharacterReference: memberIndex.householdMembersWithMismatchedCharacterReference,
+                charactersWithOrphanHouseholdReference: memberIndex.charactersWithOrphanHouseholdReference,
+                charactersWithMissingHouseholdMember: memberIndex.charactersWithMissingHouseholdMember,
+                charactersWithConflictingHouseholdFields: memberIndex.charactersWithConflictingHouseholdFields,
+                householdMemberReverseIndexAvailable: memberIndex.available,
                 counts: {
                     households: households.length,
                     positions: positions.length,
