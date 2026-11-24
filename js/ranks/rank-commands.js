@@ -439,24 +439,40 @@
         // when the caller requests force deletion of character assignments.
         var governmentQueries = window.GovernmentQueries;
         var governmentPositions = [];
+        var governmentTypes = [];
         if (governmentQueries) {
-            if (typeof governmentQueries.getPositionsByRankRequirement !== 'function') {
+            if (typeof governmentQueries.getPositionsByRankRequirement !== 'function' ||
+                typeof governmentQueries.getGovernmentTypesByAllowedRank !== 'function') {
                 return _fail('Government rank references cannot be checked; deletion is blocked.');
             }
             try {
                 governmentPositions = governmentQueries.getPositionsByRankRequirement(rankId);
+                governmentTypes = governmentQueries.getGovernmentTypesByAllowedRank(rankId);
             } catch (e) {
                 return _fail('Government rank references could not be read; deletion is blocked.');
             }
-            if (!Array.isArray(governmentPositions)) {
+            if (!Array.isArray(governmentPositions) || !Array.isArray(governmentTypes)) {
                 return _fail('Government rank references could not be read; deletion is blocked.');
             }
         } else {
             var master = window.masterData && window.masterData.data;
             var departments = master && master.governmentDepartments;
-            if (Array.isArray(departments) && departments.length > 0) {
+            var types = master && master.governmentTypes;
+            if ((Array.isArray(departments) && departments.length > 0) ||
+                (Array.isArray(types) && types.length > 0)) {
                 return _fail('Government queries are unavailable; cannot verify rank references. Deletion is blocked.');
             }
+        }
+        if (governmentTypes.length > 0) {
+            var typeExamples = governmentTypes.slice(0, 3).map(function(type) {
+                return '"' + (type.name || type.id) + '"';
+            });
+            return _fail(
+                'Cannot delete rank referenced by ' + governmentTypes.length +
+                ' Government Type allowed-rank list(s): ' + typeExamples.join(', ') +
+                (governmentTypes.length > 3 ? ', and others' : '') +
+                '. Update those Government Types first.'
+            );
         }
         if (governmentPositions.length > 0) {
             var examples = governmentPositions.slice(0, 3).map(function(position) {
