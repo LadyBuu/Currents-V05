@@ -755,36 +755,91 @@
             return _failWith(validation.errors);
         }
 
-        try {
-            IS._addEnterprise(candidate);
-        } catch (e) {
-            return _fail(e && e.message
-                ? e.message
-                : 'IndustryState refused the write.');
+        var transaction = window.CrossDomainTransaction;
+        if (!transaction || typeof transaction.execute !== 'function' ||
+            typeof transaction.isActive !== 'function' ||
+            typeof IS._addEnterprise !== 'function' ||
+            typeof IS._removeEnterprise !== 'function' ||
+            typeof IS._notifyTransactionEnterpriseAdded !== 'function') {
+            return _fail('Cross-domain transaction support is unavailable.');
         }
 
-        if (ownerType === C.OWNER_TYPE.HOUSEHOLD && ownerId) {
-            try {
-                _registerWithHousehold(ownerId, candidate.id, foundedYear);
-            } catch (e) {
-                // Roll back the enterprise add. This is the only
-                // compensating path in this file; household registration is
-                // a cross-domain invariant that must be all-or-nothing.
-                try {
-                    IS._removeEnterprise(candidate.id);
-                } catch (rollbackErr) {
-                    if (typeof console !== 'undefined' && console.error) {
-                        console.error(
-                            'industry-commands.js: createEnterprise ' +
-                            'rollback (_removeEnterprise) failed after a ' +
-                            'household registration failure:', rollbackErr
-                        );
+        var householdOwned = ownerType === C.OWNER_TYPE.HOUSEHOLD && !!ownerId;
+        var householdState = window.HouseholdState;
+        var householdInternal = householdState && householdState._internal;
+        var householdCommands = householdOwned ? _requireHouseholdCommands() : null;
+        if (householdOwned && (!householdInternal ||
+            typeof householdInternal.transactionSnapshotHousehold !== 'function' ||
+            typeof householdInternal.transactionRestoreHousehold !== 'function')) {
+            return _fail('Household transaction support is unavailable.');
+        }
+
+        var participants = [];
+        if (householdOwned) {
+            participants.push({
+                name: 'household',
+                prepare: function() {
+                    var household = householdInternal.getHouseholdRecord(ownerId);
+                    if (!household) return { success: false, reason: 'Owner household not found.' };
+                    if (Array.isArray(household.enterprises) &&
+                        household.enterprises.indexOf(candidate.id) !== -1) {
+                        return { success: false, reason: 'Household already references the new Enterprise ID.' };
                     }
+                    return true;
+                },
+                snapshot: function() {
+                    return householdInternal.transactionSnapshotHousehold(ownerId);
+                },
+                apply: function() {
+                    var result = householdCommands.addEnterpriseToHousehold(
+                        ownerId, candidate.id, { year: foundedYear, deferCommit: true }
+                    );
+                    return result && result.success === true
+                        ? true
+                        : { success: false, reason: result && result.reason || 'Household registration failed.' };
+                },
+                rollback: function(snapshot) {
+                    return householdInternal.transactionRestoreHousehold(snapshot);
+                },
+                afterCommit: function() {
+                    var result = householdCommands.commitTransactionEnterpriseOwnership([{
+                        householdId: ownerId, enterpriseId: candidate.id,
+                        action: 'added', year: foundedYear
+                    }]);
+                    if (!result || result.success !== true) throw new Error(result && result.reason || 'Household notification failed.');
                 }
-                return _fail(e && e.message
-                    ? e.message
-                    : 'Household registration failed.');
+            });
+        }
+
+        participants.push({
+            name: 'industry',
+            prepare: function() {
+                if (IS.getEnterprise(candidate.id)) {
+                    return { success: false, reason: 'Generated Enterprise ID already exists.' };
+                }
+                return true;
+            },
+            snapshot: function() { return null; },
+            apply: function() {
+                IS._addEnterprise(candidate, { silent: true });
+                return true;
+            },
+            rollback: function() {
+                return IS._removeEnterprise(candidate.id, { silent: true });
+            },
+            afterCommit: function() {
+                IS._notifyTransactionEnterpriseAdded(candidate.id);
             }
+        });
+
+        var result = transaction.execute({ participants: participants });
+        if (!result || result.success !== true) {
+            return {
+                success: false,
+                code: result && result.code || 'TRANSACTION_FAILED',
+                reason: result && result.reason || 'Enterprise creation transaction failed.',
+                rollbackErrors: result && result.rollbackErrors || []
+            };
         }
 
         _commit(C.EVENT.ENTERPRISE_ADDED, {
