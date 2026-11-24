@@ -1771,9 +1771,20 @@
 
         var householdState = window.HouseholdState;
         var internal = householdState && householdState._internal;
-        var householdCommands = _requireHouseholdCommands();
+        var householdCommands;
+        try {
+            householdCommands = _requireHouseholdCommands();
+        } catch (dependencyError) {
+            return {
+                success: false,
+                code: 'TRANSACTION_UNAVAILABLE',
+                reason: dependencyError && dependencyError.message
+                    ? dependencyError.message : 'Household command dependencies are unavailable.'
+            };
+        }
         var transaction = window.CrossDomainTransaction;
         if (!internal ||
+            typeof internal.getAllHouseholdRecords !== 'function' ||
             typeof internal.transactionSnapshotEnterpriseIndexes !== 'function' ||
             typeof internal.transactionRebuildEnterpriseIndexes !== 'function' ||
             typeof internal.transactionRestoreEnterpriseIndexes !== 'function' ||
