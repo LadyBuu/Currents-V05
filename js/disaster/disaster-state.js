@@ -334,6 +334,11 @@
             && ['in_progress', 'complete', 'partial'].indexOf(record.structuralDamageStatus) === -1) {
             throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid structuralDamageStatus');
         }
+        ['structuralDamageSkippedSystems', 'structuralDamageFailures'].forEach(function(key) {
+            if (record[key] != null && !Array.isArray(record[key])) {
+                throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid ' + key);
+            }
+        });
         ['structuralDamageStartedAt', 'structuralDamageCompletedAt'].forEach(function(key) {
             if (record[key] != null && (typeof record[key] !== 'number' || !isFinite(record[key]))) {
                 throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid ' + key);
@@ -509,6 +514,9 @@
                 && ['in_progress', 'complete', 'partial'].indexOf(record.structuralDamageStatus) === -1) {
                 warnings.push('disaster ' + record.id + ' has invalid structuralDamageStatus');
             }
+            ['structuralDamageSkippedSystems', 'structuralDamageFailures'].forEach(function(key) {
+                if (record[key] != null && !Array.isArray(record[key])) warnings.push('disaster ' + record.id + ' has invalid ' + key);
+            });
             if (record.structuralDamageStatus === 'in_progress' && record.structuralDamageStartedAt == null) {
                 warnings.push('disaster ' + record.id + ' is in progress without structuralDamageStartedAt');
             }
@@ -767,7 +775,7 @@
                 actualDeaths: true, metadata: true, structuralDamageSkippedSystems: true,
                 effectsStatus: true, effectFailures: true, structuralDamage: true,
                 structuralDamageStatus: true, structuralDamageStartedAt: true,
-                structuralDamageCompletedAt: true
+                structuralDamageCompletedAt: true, structuralDamageFailures: true
             };
             var numeric = ['year', 'severity', 'deaths', 'population', 'prosperityLoss',
                 'crimeIncrease', 'actualDeaths'];
@@ -795,7 +803,7 @@
             if (updates.metadata != null && (typeof updates.metadata !== 'object' || Array.isArray(updates.metadata))) {
                 throw new Error('Disaster metadata must be an object');
             }
-            ['structuralDamageSkippedSystems', 'effectFailures'].forEach(function(key) {
+            ['structuralDamageSkippedSystems', 'structuralDamageFailures', 'effectFailures'].forEach(function(key) {
                 if (updates[key] != null && !Array.isArray(updates[key])) {
                     throw new Error('Disaster ' + key + ' must be an array');
                 }
