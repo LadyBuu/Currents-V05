@@ -358,7 +358,7 @@
         _attachEvents(container, culture);
 
         // Immediately sync so the working culture has the current shape.
-        _syncToWorkingCulture(container, culture);
+        _syncToWorkingCulture(container, container.__ctAppearanceCulture);
     }
 
     function _renderCategory(cat, items) {
@@ -451,6 +451,9 @@
     // =========================================================================
 
     function _attachEvents(container, culture) {
+        container.__ctAppearanceCulture = culture;
+        if (container.__ctAppearanceEventsAttached) return;
+        container.__ctAppearanceEventsAttached = true;
         // Delegated input listener: any change or input inside the tab
         // re-syncs the working culture. This is what makes tab-switch
         // preservation work — user input goes into _state.culture.appearance
@@ -471,7 +474,7 @@
             if (addBtn) {
                 e.preventDefault();
                 var categoryKey = addBtn.getAttribute('data-category');
-                if (categoryKey) _handleAdd(container, culture, categoryKey);
+                if (categoryKey) _handleAdd(container, container.__ctAppearanceCulture, categoryKey);
                 return;
             }
 
@@ -479,7 +482,7 @@
             if (removeBtn) {
                 e.preventDefault();
                 var row = removeBtn.closest('.ct-appearance-row');
-                if (row) _handleRemove(container, culture, row);
+                if (row) _handleRemove(container, container.__ctAppearanceCulture, row);
                 return;
             }
         });
