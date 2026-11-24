@@ -2279,3 +2279,15 @@ the Government policy boundary.
 ================================================================================
 END OF DOCUMENT
 ================================================================================
+
+
+PART 29 — ATOMIC LOCATION-DELETION RECONCILIATION
+
+GovernmentCommands.reconcileDeletedLocations delegates to
+GovernmentState._reconcileDeletedLocations. The state operation discovers all
+departments assigned to deleted locations and their organizational descendants,
+then stages one filtered canonical department array. It replaces the array and
+rebuilds Government indexes once. If hydration fails, it restores the original
+canonical array and attempts to restore the previous indexes before reporting
+failure. Government history is deliberately retained. The command publishes its
+reconciliation event only after the state mutation succeeds.
