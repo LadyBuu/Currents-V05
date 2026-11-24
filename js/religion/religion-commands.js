@@ -1206,13 +1206,17 @@
      * Remove deleted location associations while preserving religion history.
      * Called by LocationCommands before the location records are removed.
      */
-    function reconcileDeletedLocations(locationIds) {
+    function reconcileDeletedLocations(locationIds, options) {
+        options = options || {};
         if (!Array.isArray(locationIds) || locationIds.length === 0) {
             return { success: true, data: { updatedReligionIds: [], removedAssociations: 0, worshipPlacesUnassigned: 0 } };
         }
 
         try {
-            var result = _state()._reconcileDeletedLocations(locationIds);
+            var result = _state()._reconcileDeletedLocations(locationIds, options);
+            if (options.dryRun === true) {
+                return { success: true, data: result, dryRun: true };
+            }
             if (result.updatedReligionIds.length > 0 || result.worshipPlacesUnassigned > 0) {
                 _commit('religionLocationsReconciled', {
                     locationIds: locationIds.slice(),
