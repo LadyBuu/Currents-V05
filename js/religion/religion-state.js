@@ -643,7 +643,8 @@
         return place;
     }
 
-    function _reconcileDeletedLocations(locationIds) {
+    function _reconcileDeletedLocations(locationIds, options) {
+        options = options || {};
         var removed = Object.create(null);
         if (!Array.isArray(locationIds)) {
             throw new Error('ReligionState._reconcileDeletedLocations requires an array.');
@@ -707,8 +708,14 @@
             worshipPlacesUpdated++;
         }
 
-        if (updatedReligionIds.length === 0 && worshipPlacesUpdated === 0) {
-            return { updatedReligionIds: [], removedAssociations: 0, worshipPlacesUnassigned: 0 };
+        var plan = {
+            updatedReligionIds: updatedReligionIds,
+            removedAssociations: removedAssociations,
+            worshipPlacesUnassigned: worshipPlacesUpdated
+        };
+        if (options.dryRun === true ||
+            (updatedReligionIds.length === 0 && worshipPlacesUpdated === 0)) {
+            return plan;
         }
 
         try {
