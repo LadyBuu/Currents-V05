@@ -1391,7 +1391,8 @@
         return _ok({
             enterprise: IS.getEnterprise(enterpriseId),
             transactionId: transaction.transactionId,
-            householdId: householdId
+            householdId: householdId,
+            notificationErrors: transaction.notificationErrors || []
         });
     }
 
