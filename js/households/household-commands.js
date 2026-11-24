@@ -3146,64 +3146,102 @@
     //     commit.
 
     function clearLocationReferences(locationId) {
-        if (!_hasId(locationId)) {
-            return _fail('INVALID_INPUT', 'locationId is required');
+        return clearLocationReferencesMany([locationId]);
+    }
+
+    /**
+     * Clears Household location references for a complete Location deletion
+     * set in one staged replacement and one command commit.
+     *
+     * Records are copied before mutation. If the Household index rebuild
+     * rejects the staged collection, the original canonical array is restored
+     * and the index rebuild is retried before the failure is returned.
+     */
+    function clearLocationReferencesMany(locationIds) {
+        if (!Array.isArray(locationIds) || locationIds.length === 0) {
+            return _fail('INVALID_INPUT', 'locationIds must be a non-empty array');
+        }
+
+        var removeSet = Object.create(null);
+        for (var i = 0; i < locationIds.length; i++) {
+            if (!_hasId(locationIds[i])) {
+                return _fail('INVALID_INPUT', 'Every locationId must be a non-empty string');
+            }
+            removeSet[locationIds[i]] = true;
         }
 
         var year = _getCurrentYear();
         var all = _internal.getAllHouseholdRecords({ includeDeprecated: true });
+        var next = all.slice();
         var affectedHouseholds = [];
         var clearedCount = 0;
+        var now = Date.now();
 
-        for (var i = 0; i < all.length; i++) {
-            var household = all[i];
-            if (household.locationId !== locationId) continue;
+        for (var j = 0; j < all.length; j++) {
+            var original = all[j];
+            if (!original || !removeSet[original.locationId]) continue;
 
-            var previousLocationName = household.locationName || null;
+            var previousLocationId = original.locationId;
+            var previousLocationName = original.locationName || null;
+            var candidate = Object.assign({}, original);
+            var history = Array.isArray(original.residenceHistory)
+                ? original.residenceHistory.slice()
+                : [];
 
-            household.locationId = null;
-            household.locationName = null;
-
-            if (!Array.isArray(household.residenceHistory)) {
-                // residenceHistory is the closest existing "location
-                // history" container on the household record. Reusing it
-                // here keeps the schema stable; the entry's action field
-                // disambiguates residence-from-location events.
-                household.residenceHistory = [];
-            }
-            household.residenceHistory.push({
+            history.push({
                 action: 'location_cleared',
                 year: year,
-                previousLocationId: locationId,
+                previousLocationId: previousLocationId,
                 previousLocationName: previousLocationName,
                 reason: 'Location deleted',
-                timestamp: Date.now()
+                timestamp: now
             });
 
-            household.updatedAt = Date.now();
+            candidate.locationId = null;
+            candidate.locationName = null;
+            candidate.residenceHistory = history;
+            candidate.updatedAt = now;
+            next[j] = candidate;
             clearedCount++;
 
             affectedHouseholds.push({
-                householdId: household.id,
-                householdName: household.name,
+                householdId: candidate.id,
+                householdName: candidate.name,
+                previousLocationId: previousLocationId,
                 previousLocationName: previousLocationName
             });
         }
 
         if (clearedCount === 0) {
-            // Idempotent: nothing to clear, nothing to commit.
-            return _ok({
-                clearedCount: 0,
-                households: []
-            });
+            return _ok({ clearedCount: 0, households: [] });
         }
 
-        _commit('householdsLocationCleared', {
-            locationId: locationId,
-            clearedCount: clearedCount,
-            households: affectedHouseholds,
-            year: year
-        });
+        try {
+            _internal.replaceHouseholds(next);
+            _commit('householdsLocationCleared', {
+                locationIds: Object.keys(removeSet),
+                clearedCount: clearedCount,
+                households: affectedHouseholds,
+                year: year
+            });
+        } catch (error) {
+            var rollbackError = null;
+            try {
+                _internal.replaceHouseholds(all);
+                _hydrateState();
+                _invalidateAccessorCaches();
+            } catch (restoreError) {
+                rollbackError = restoreError;
+            }
+            return _fail(
+                'RECONCILIATION_FAILED',
+                'Household location cleanup failed: ' +
+                    (error && error.message ? error.message : String(error)) +
+                    (rollbackError
+                        ? '; rollback failed: ' + (rollbackError.message || String(rollbackError))
+                        : '; original Household records were restored')
+            );
+        }
 
         return _ok({
             clearedCount: clearedCount,
@@ -3293,7 +3331,8 @@
 
         // Cross-domain reference cleanup
         removeCharacterReferences: removeCharacterReferences,
-        clearLocationReferences: clearLocationReferences
+        clearLocationReferences: clearLocationReferences,
+        clearLocationReferencesMany: clearLocationReferencesMany
     };
 
     if (typeof module !== 'undefined' && module.exports) {
