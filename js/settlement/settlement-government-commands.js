@@ -264,12 +264,61 @@
         };
     }
 
+    function recordDisasterImpact(locationId, input) {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+            return _failure('INVALID_DISASTER_IMPACT', { reason: 'Impact data must be an object.' });
+        }
+        if (typeof input.disasterId !== 'string' || !input.disasterId.trim()) {
+            return _failure('INVALID_DISASTER_ID', { disasterId: input.disasterId });
+        }
+        var prosperityLoss = input.prosperityLoss;
+        var crimeIncrease = input.crimeIncrease;
+        if (typeof prosperityLoss !== 'number' || !isFinite(prosperityLoss) || prosperityLoss < 0 ||
+            typeof crimeIncrease !== 'number' || !isFinite(crimeIncrease) || crimeIncrease < 0) {
+            return _failure('INVALID_DISASTER_IMPACT_VALUES', {
+                prosperityLoss: prosperityLoss,
+                crimeIncrease: crimeIncrease
+            });
+        }
+
+        var settlement = _getSettlementQueries().getSettlementData(locationId);
+        if (!settlement) return _failure('SETTLEMENT_NOT_FOUND', { locationId: locationId });
+
+        var impacts = Array.isArray(settlement.disasterImpacts) ? settlement.disasterImpacts.slice() : [];
+        for (var i = 0; i < impacts.length; i++) {
+            if (impacts[i] && impacts[i].disasterId === input.disasterId) {
+                return _failure('DISASTER_IMPACT_ALREADY_RECORDED', {
+                    locationId: locationId, disasterId: input.disasterId
+                });
+            }
+        }
+
+        var impact = {
+            disasterId: input.disasterId,
+            year: (typeof input.year === 'number' && isFinite(input.year)) ? input.year : _currentYear(),
+            disasterType: typeof input.disasterType === 'string' ? input.disasterType : 'Disaster',
+            prosperityLoss: prosperityLoss,
+            crimeIncrease: crimeIncrease
+        };
+        impacts.push(impact);
+        var candidate = _copyWith(settlement, { disasterImpacts: impacts });
+        var event = _getCommit().commit(locationId, candidate, {
+            type: 'disasterImpactRecorded',
+            disasterId: impact.disasterId,
+            year: impact.year,
+            prosperityLoss: impact.prosperityLoss,
+            crimeIncrease: impact.crimeIncrease
+        });
+        return { success: true, locationId: locationId, impact: impact, event: event };
+    }
+
     window.SettlementGovernmentCommands = Object.freeze({
         setGovernmentType: setGovernmentType,
         setUseReligiousLawsAsCivil: setUseReligiousLawsAsCivil,
         setStateReligion: setStateReligion,
         setJusticeSeverity: setJusticeSeverity,
-        setWatch: setWatch
+        setWatch: setWatch,
+        recordDisasterImpact: recordDisasterImpact
     });
 
 })();
