@@ -271,6 +271,24 @@
             content += _detail('Description', _escape(vm.description));
         }
 
+        if (vm.effectsStatus === 'partial' || (vm.effectFailures && vm.effectFailures.length > 0)) {
+            var failureLines = [];
+            for (var fi = 0; fi < vm.effectFailures.length; fi++) {
+                failureLines.push(
+                    '<div style="padding:4px 0;border-top:1px solid var(--border);">' +
+                    '<strong>' + _escape(vm.effectFailures[fi].system) + '</strong>: ' +
+                    _escape(vm.effectFailures[fi].reason) + '</div>'
+                );
+            }
+            content +=
+                '<div style="margin-top:8px;padding:8px;background:var(--bg3);' +
+                'border-radius:6px;border-left:3px solid var(--warning, #c98a35);">' +
+                '<div style="font-size:0.65rem;font-weight:bold;margin-bottom:5px;">' +
+                'Partial effects (' + vm.effectFailures.length + ' failure(s))</div>' +
+                (failureLines.join('') || '<div>Some effects were incomplete.</div>') +
+                '</div>';
+        }
+
         if (vm.metadata && (vm.metadata.severityText || vm.metadata.locationModifier != null)) {
             var metaParts = [];
             if (vm.metadata.severityText) {
