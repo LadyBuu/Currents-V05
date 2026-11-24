@@ -339,6 +339,13 @@
                 throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid ' + key);
             }
         });
+        if (record.structuralDamageStatus === 'in_progress' && record.structuralDamageStartedAt == null) {
+            throw new Error('disaster-state.js: in-progress structural damage requires structuralDamageStartedAt');
+        }
+        if (['complete', 'partial'].indexOf(record.structuralDamageStatus) !== -1
+            && record.structuralDamageCompletedAt == null) {
+            throw new Error('disaster-state.js: completed structural damage requires structuralDamageCompletedAt');
+        }
 
         // Keep convenience mirrors aligned with structuralDamage.
         record.featuresDestroyed    = record.structuralDamage.featuresDestroyed;
@@ -501,6 +508,13 @@
             if (record.structuralDamageStatus != null
                 && ['in_progress', 'complete', 'partial'].indexOf(record.structuralDamageStatus) === -1) {
                 warnings.push('disaster ' + record.id + ' has invalid structuralDamageStatus');
+            }
+            if (record.structuralDamageStatus === 'in_progress' && record.structuralDamageStartedAt == null) {
+                warnings.push('disaster ' + record.id + ' is in progress without structuralDamageStartedAt');
+            }
+            if (['complete', 'partial'].indexOf(record.structuralDamageStatus) !== -1
+                && record.structuralDamageCompletedAt == null) {
+                warnings.push('disaster ' + record.id + ' has no structuralDamageCompletedAt');
             }
             var sd = record.structuralDamage;
             if (!sd || typeof sd !== 'object') {
