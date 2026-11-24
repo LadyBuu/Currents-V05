@@ -896,7 +896,8 @@
 
         // Associations
         addLocationToCulture: addLocationToCulture,
-        removeLocationFromCulture: removeLocationFromCulture,\n        reconcileDeletedLocations: reconcileDeletedLocations,
+        removeLocationFromCulture: removeLocationFromCulture,
+        reconcileDeletedLocations: reconcileDeletedLocations,
         addReligionToCulture: addReligionToCulture,
         removeReligionFromCulture: removeReligionFromCulture,
 
