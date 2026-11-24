@@ -349,12 +349,13 @@
     // =========================================================================
 
     function _inheritReligionForChild(childId, motherId, fatherId, year) {
-        if (typeof window.ReligionCommands === 'undefined') return;
-        if (typeof CC.assignCharacterReligion !== 'function') return;
+        if (typeof window.ReligionCommands === 'undefined') return { success: true, skipped: true };
+        if (typeof CC.assignCharacterReligion !== 'function') {
+            return { success: false, reason: 'CharacterCommands.assignCharacterReligion is unavailable.' };
+        }
 
         var mother = motherId ? _getCharacter(motherId) : null;
         var father = fatherId ? _getCharacter(fatherId) : null;
-
         var religionId = null;
         var source = null;
 
@@ -366,13 +367,20 @@
             source = 'father';
         }
 
-        if (!religionId) return;
+        if (!religionId) return { success: true, skipped: true };
 
-        CC.assignCharacterReligion(childId, religionId, {
+        var result = CC.assignCharacterReligion(childId, religionId, {
             year: year,
             reason: 'inheritance',
             notes: 'Inherited from ' + source + ' at birth'
         });
+        if (!result || result.success !== true) {
+            return {
+                success: false,
+                reason: result && result.reason ? result.reason : 'Religion assignment returned an invalid result.'
+            };
+        }
+        return { success: true, religionId: religionId, source: source };
     }
 
     // =========================================================================
@@ -532,12 +540,22 @@
         }
 
         if (!isStillborn) {
-            _inheritReligionForChild(
+            var religionResult = _inheritReligionForChild(
                 childId,
                 motherId,
                 _hasId(fatherId) ? fatherId : null,
                 birthYear
             );
+            if (religionResult && religionResult.success === false) {
+                var religionRollback = _rollbackChild(childId, parentsEstablished);
+                return {
+                    success: false,
+                    reason: 'Religion inheritance failed: ' + religionResult.reason,
+                    rollback: religionRollback,
+                    childId: childId,
+                    partial: !religionRollback.success
+                };
+            }
         }
 
         var pregnancyId = window.generateId('preg');
@@ -595,13 +613,33 @@
      * domain-owned fields including isDeleted and deletedAt).
      */
     function _rollbackChild(childId, edgeIds) {
+        var failures = [];
         for (var i = edgeIds.length - 1; i >= 0; i--) {
-            FC.removeParent(edgeIds[i], { reason: 'birth rollback' });
+            var edgeResult = FC.removeParent(edgeIds[i], { reason: 'birth rollback' });
+            if (!edgeResult || edgeResult.success !== true) {
+                failures.push({
+                    step: 'remove-parent-edge',
+                    edgeId: edgeIds[i],
+                    reason: edgeResult && edgeResult.reason ? edgeResult.reason : 'Parent edge removal failed.'
+                });
+            }
         }
-        CS.applyDomainFieldPatch(childId, {
+
+        var deleteResult = CS.applyDomainFieldPatch(childId, {
             isDeleted: true,
             deletedAt: Date.now()
         });
+        if (deleteResult !== true && (!deleteResult || deleteResult.success !== true)) {
+            failures.push({
+                step: 'soft-delete-child',
+                reason: deleteResult && deleteResult.reason ? deleteResult.reason : 'Child soft-delete failed.'
+            });
+        }
+
+        return {
+            success: failures.length === 0,
+            failures: failures
+        };
     }
 
     // =========================================================================
@@ -685,7 +723,19 @@
                 notes: 'Specified outcome: ' + outcome
                     + (fetusCount > 1 ? ' (' + (i + 1) + ' of ' + fetusCount + ')' : '')
             });
-            if (birthResult.success) childIds.push(birthResult.childId);
+            if (birthResult && birthResult.success === true) {
+                childIds.push(birthResult.childId);
+            } else {
+                return {
+                    success: false,
+                    reason: 'Multiple-birth outcome was only partially recorded.',
+                    code: childIds.length > 0 ? 'PARTIAL_MULTIPLE_BIRTH' : 'MULTIPLE_BIRTH_FAILED',
+                    recordedChildIds: childIds.slice(),
+                    failedFetus: i + 1,
+                    fetusCount: fetusCount,
+                    birthFailure: birthResult || null
+                };
+            }
         }
 
         if (maternalDeath) {
@@ -825,7 +875,17 @@
                     maternalDeath: outcome.maternalDeath,
                     notes: 'Multiple birth ' + (i + 1) + ' of ' + outcome.fetusCount
                 });
-                if (!birthResult.success) continue;
+                if (!birthResult || birthResult.success !== true) {
+                    return {
+                        success: false,
+                        reason: 'Multiple-birth outcome was only partially recorded.',
+                        code: childIds.length > 0 ? 'PARTIAL_MULTIPLE_BIRTH' : 'MULTIPLE_BIRTH_FAILED',
+                        recordedChildIds: childIds.slice(),
+                        failedFetus: i + 1,
+                        fetusCount: outcome.fetusCount,
+                        birthFailure: birthResult || null
+                    };
+                }
                 childIds.push(birthResult.childId);
             }
         } else {
