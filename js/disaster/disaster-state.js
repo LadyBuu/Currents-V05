@@ -318,6 +318,16 @@
             throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid year');
         }
 
+        if (record.structuralDamageStatus != null
+            && ['in_progress', 'complete', 'partial'].indexOf(record.structuralDamageStatus) === -1) {
+            throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid structuralDamageStatus');
+        }
+        ['structuralDamageStartedAt', 'structuralDamageCompletedAt'].forEach(function(key) {
+            if (record[key] != null && (typeof record[key] !== 'number' || !isFinite(record[key]))) {
+                throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid ' + key);
+            }
+        });
+
         // Keep convenience mirrors aligned with structuralDamage.
         record.featuresDestroyed    = record.structuralDamage.featuresDestroyed;
         record.schoolsDestroyed     = record.structuralDamage.schoolsDestroyed;
@@ -470,11 +480,16 @@
             if (!record || !record.id) warnings.push('disaster at index ' + index + ' is missing id');
             ['year', 'severity', 'deaths', 'population', 'prosperityLoss', 'crimeIncrease',
              'schoolsDestroyed', 'actualDeaths', 'featuresDestroyed', 'enterprisesDestroyed',
-             'residencesDemolished', 'householdsDestroyed', 'totalLoss'].forEach(function(key) {
+             'residencesDemolished', 'householdsDestroyed', 'totalLoss',
+             'structuralDamageStartedAt', 'structuralDamageCompletedAt'].forEach(function(key) {
                 if (record[key] != null && (typeof record[key] !== 'number' || !isFinite(record[key]))) {
                     warnings.push('disaster ' + record.id + ' has invalid ' + key);
                 }
             });
+            if (record.structuralDamageStatus != null
+                && ['in_progress', 'complete', 'partial'].indexOf(record.structuralDamageStatus) === -1) {
+                warnings.push('disaster ' + record.id + ' has invalid structuralDamageStatus');
+            }
             var sd = record.structuralDamage;
             if (!sd || typeof sd !== 'object') {
                 warnings.push('disaster ' + record.id + ' has no structuralDamage object');
