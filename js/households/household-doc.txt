@@ -3106,8 +3106,10 @@ A caller that uses deferCommit without a coordinator can leave the Household
 record changed without normal dirty tracking or notification.
 
 
-No automatic repair is performed. Resolve each conflict explicitly through
-the relevant Household and Character commands after reviewing the record.
+No automatic repair is performed for Household/Character membership conflicts.
+Resolve those explicitly through the relevant Household and Character commands
+after reviewing the record. Enterprise reverse-index repair is documented in
+the separate adapter section below.
 
 
 ================================================================================
