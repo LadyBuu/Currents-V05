@@ -1300,10 +1300,9 @@ GROUP H1 — HOUSEHOLD FILES USED BY LOCATION-COMMANDS (CALL-TIME ONLY)
       clearLocationReferences in deletePlace's household cleanup
       step. This is a CALL-TIME lookup via _householdCommands(),
       which returns the module or null.
-    - If HouseholdCommands is absent, the location subsystem still
-      works: deletePlace's result reports
-      householdReconciliation.status === 'unavailable', and the
-      delete proceeds.
+    - If HouseholdCommands.clearLocationReferencesMany is absent,
+      deletePlace fails closed before deleting any Location. Household
+      references are required cleanup, not best-effort housekeeping.
     - Loading household-commands.js requires the household domain
       to be present (household-state, household-rules,
       household-queries). That is the domain's own load order, not
@@ -1896,8 +1895,16 @@ Settlement subsystem (Location loads first):
     1–3.
   - updateLocationType refuses to change a used type to priority 1–3 when
     any place using that type has a Settlement.
-  - deletePlace continues to reconcile Settlement records before removing
-    the place.
+  - deletePlace first rebuilds Location indexes as a read-only preflight,
+    then reconciles Character, Household, Government, Religion, and Culture
+    references. Settlement records are removed only after those domain
+    reconciliations succeed, immediately before the atomic Location batch
+    removal. This prevents a later Government/Religion/Culture rejection
+    from deleting a Settlement while leaving its Location in place.
+  - The deletion flow is still not a globally atomic cross-domain
+    transaction. A failure after an earlier domain has committed may leave
+    that domain's reference cleanup applied; durable coordinated rollback
+    remains outstanding.
 
 The canonical settlementData store is inspected for these guards. Do not
 add a load-time dependency from LocationCommands to Settlement modules.
