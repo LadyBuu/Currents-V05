@@ -603,26 +603,24 @@
             startYear: startYear
         });
 
+        // One-night stands are historical from creation. Store their
+        // terminal status and end reason in the initial insert so the
+        // record cannot be stranded as an active relationship if a second
+        // commit fails.
         var createResult = RC.create({
             participantA: idA,
             participantB: idB,
             type: ONE_NIGHT,
-            status: STATUS.ONGOING,
+            status: STATUS.ENDED,
             startYear: startYear,
+            endYear: startYear,
             attributes: [],
-            metadata: { notes: typeof options.notes === 'string' ? options.notes : '' }
+            metadata: {
+                notes: typeof options.notes === 'string' ? options.notes : '',
+                endReason: 'one_night_stand'
+            }
         });
         if (!createResult.success) return createResult;
-
-        // One-night stands end immediately; the record is historical from
-        // the start. Two commits for this command (create then end); see
-        // the COMMIT SEMANTICS section of the module header.
-        var endResult = RC.end(
-            createResult.relationship.relationshipId || createResult.relationship.id,
-            startYear,
-            'one_night_stand'
-        );
-        if (!endResult.success) return endResult;
 
         _logEvent('romance', 'One Night Stand',
             _getCharacterName(idA) + ' and ' + _getCharacterName(idB) +
