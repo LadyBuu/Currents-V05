@@ -1318,6 +1318,16 @@
     // =========================================================================
 
     window.ReligionState = {
+        _transactionSnapshotDeletedLocations: function () {
+            if (!window.masterData || !window.masterData.data || !Array.isArray(window.masterData.data.religions) || !Array.isArray(window.masterData.data.placesOfWorship)) throw new Error('Religion canonical stores unavailable.');
+            return { religions: window.masterData.data.religions, placesOfWorship: window.masterData.data.placesOfWorship };
+        },
+        _transactionRestoreDeletedLocations: function (snapshot) {
+            if (!snapshot || !Array.isArray(snapshot.religions) || !Array.isArray(snapshot.placesOfWorship) || !window.masterData || !window.masterData.data) return { success: false, reason: 'Invalid Religion transaction snapshot.' };
+            window.masterData.data.religions = snapshot.religions; window.masterData.data.placesOfWorship = snapshot.placesOfWorship;
+            try { hydrateFromMasterData(); return { success: true }; } catch (error) { return { success: false, reason: error.message || String(error) }; }
+        },
+
         // ---- Lifecycle ----
         hydrateFromMasterData: hydrateFromMasterData,
         rebuildIndexes: rebuildIndexes,              // deprecated alias
