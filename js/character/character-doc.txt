@@ -1461,3 +1461,10 @@ BIRTH FAILURE HANDLING (UPDATED):
 - Child rollback checks every parent-edge removal and the CharacterState soft-delete result. A failed compensation is returned as BIRTH_ROLLBACK_FAILED with the child id and per-step failures; callers must not treat that child as cleanly removed.
 - Multiple-birth processing no longer silently skips a failed fetus. It returns MULTIPLE_BIRTH_FAILED or PARTIAL_MULTIPLE_BIRTH with the already-recorded child ids and failed fetus index. Because each recordBirth call commits independently, earlier births remain recorded on a partial failure. Maternal death is not applied after a partial multiple-birth failure.
 - This is explicit partial-failure reporting and compensation, not a cross-domain atomic transaction.
+
+HARD-DELETION CLEANUP (UPDATED):
+- Hard deletion is irreversible once CharacterState removes the character. The command reports deletionComplete separately from cleanup success; cleanup failures do not restore the character.
+- Every named cleanup and registered handler must return an explicit { success: true } result. Missing, malformed, failed, and throwing handlers are reported. Skipped cleanup modules also make the cleanup report incomplete.
+- Bulk deletion and soft-deleted purge aggregate cleanup failures while retaining the IDs already removed. Callers must inspect success, partial, deletionComplete, and per-character cleanup reports rather than relying only on count.
+- RelationshipIntegrations is dispatched only through its registered delete handler, not also through the named cleanup table.
+- Family, Children, and Rank cleanup now surface failed underlying removals/updates instead of reporting unconditional success.
