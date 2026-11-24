@@ -493,6 +493,11 @@
                         studentRecord, institution, currentYear
                     );
                     if (innerResult && innerResult.error) {
+                        if (innerResult.error === 'student_not_found' ||
+                            innerResult.error === 'student_deceased' ||
+                            innerResult.error === 'invalid_skill_gain_configuration') {
+                            return { success: true };
+                        }
                         return { success: false, reason: innerResult.error };
                     }
                     return { success: true };
@@ -869,8 +874,16 @@
                 continue;
             }
 
-            if (r.error === 'invalid_skill_gain_configuration') {
-                results.errors.push({ scope: 'learning', error: r.error });
+            if (r.error) {
+                results.errors.push({
+                    scope: 'learning',
+                    institutionId: inst.id,
+                    institutionName: inst.name,
+                    studentId: rec.studentId,
+                    error: r.error,
+                    rolledBack: r.rolledBack === true,
+                    rollbackErrors: r.rollbackErrors || []
+                });
                 continue;
             }
 
