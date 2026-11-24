@@ -1215,26 +1215,21 @@
      */
     function applyAnnualProcessing(enterpriseId, result) {
         if (!_hasId(enterpriseId)) return _fail('Enterprise id is required.');
+        if (!window.CrossDomainTransaction ||
+            typeof window.CrossDomainTransaction.execute !== 'function') {
+            return _fail('CrossDomainTransaction is required for annual processing.');
+        }
 
         var validation = RULES.validateAnnualTransitionResult(result);
-        if (!validation.valid) {
-            return _failWith(validation.errors);
-        }
+        if (!validation.valid) return _failWith(validation.errors);
 
         var enterprise = IS.getEnterprise(enterpriseId);
         if (!enterprise) return _fail('Enterprise not found.');
 
         var patch = { updatedAt: Date.now() };
-
-        if (typeof result.newWealth === 'number') {
-            patch.wealth = result.newWealth;
-        }
-        if (typeof result.newDebt === 'number') {
-            patch.debt = result.newDebt;
-        }
-        if (!_isMissing(result.nextStatus)) {
-            patch.status = result.nextStatus;
-        }
+        if (typeof result.newWealth === 'number') patch.wealth = result.newWealth;
+        if (typeof result.newDebt === 'number') patch.debt = result.newDebt;
+        if (!_isMissing(result.nextStatus)) patch.status = result.nextStatus;
         if (typeof result.currentYear === 'number') {
             patch.lastProcessedYear = result.currentYear;
         }
@@ -1249,44 +1244,150 @@
 
         var candidate = Object.assign({}, enterprise, patch);
         var enterpriseValidation = RULES.validateEnterprise(candidate);
-        if (!enterpriseValidation.valid) {
-            return _failWith(enterpriseValidation.errors);
+        if (!enterpriseValidation.valid) return _failWith(enterpriseValidation.errors);
+
+        var householdId = _hasId(result.householdId) ? result.householdId : null;
+        var householdTransfer = householdId ? result.householdTransfer : null;
+        if (householdId && (typeof householdTransfer !== 'number' ||
+            !Number.isFinite(householdTransfer))) {
+            return _fail('Household transfer must be a finite number.');
         }
 
-        // Household transfer first — if it fails, enterprise is untouched.
-        if (!_isMissing(result.householdId) && _hasId(result.householdId)) {
-            try {
-                _applyHouseholdTransfer(
-                    result.householdId,
-                    result.householdTransfer,
-                    _isMissing(result.householdReason)
-                        ? 'Enterprise annual processing'
-                        : result.householdReason
+        var participants = [];
+
+        if (householdId) {
+            var householdCommands = window.HouseholdCommands;
+            var householdState = window.HouseholdState;
+            var householdInternal = householdState && householdState._internal;
+            if (!householdCommands ||
+                typeof householdCommands.updateHousehold !== 'function' ||
+                typeof householdCommands.commitTransactionUpdate !== 'function' ||
+                !householdInternal ||
+                typeof householdInternal.transactionSnapshotHousehold !== 'function' ||
+                typeof householdInternal.transactionRestoreHousehold !== 'function' ||
+                typeof window.getHouseholdById !== 'function') {
+                return _fail(
+                    'Household transaction support is unavailable; annual processing was not applied.'
                 );
-            } catch (e) {
-                return _fail(e && e.message
-                    ? e.message
-                    : 'Household transfer failed.');
             }
+
+            participants.push({
+                name: 'household',
+                prepare: function () {
+                    var household = window.getHouseholdById(householdId);
+                    return household
+                        ? { success: true }
+                        : { success: false, reason: 'Household not found: ' + householdId };
+                },
+                snapshot: function () {
+                    var snapshot = householdInternal.transactionSnapshotHousehold(
+                        householdId
+                    );
+                    if (!snapshot) {
+                        throw new Error('Could not snapshot household: ' + householdId);
+                    }
+                    return snapshot;
+                },
+                apply: function () {
+                    var household = window.getHouseholdById(householdId);
+                    if (!household) {
+                        return { success: false, reason: 'Household disappeared before transfer.' };
+                    }
+                    var currentWealth = typeof household.wealth === 'number' &&
+                        Number.isFinite(household.wealth) ? household.wealth : 0;
+                    var update = householdCommands.updateHousehold(householdId, {
+                        wealth: currentWealth + householdTransfer
+                    }, { deferCommit: true });
+                    return update && update.success === true
+                        ? { success: true }
+                        : {
+                            success: false,
+                            reason: update && update.reason
+                                ? update.reason
+                                : 'Household wealth update failed.'
+                        };
+                },
+                rollback: function (snapshot) {
+                    return householdInternal.transactionRestoreHousehold(snapshot);
+                },
+                afterCommit: function () {
+                    var committed = householdCommands.commitTransactionUpdate(
+                        householdId,
+                        ['wealth']
+                    );
+                    if (!committed || committed.success !== true) {
+                        throw new Error(
+                            committed && committed.reason
+                                ? committed.reason
+                                : 'Household transaction notification failed.'
+                        );
+                    }
+                }
+            });
         }
 
-        try {
-            IS._updateEnterprise(enterpriseId, patch);
-        } catch (e) {
-            return _fail(e && e.message
-                ? e.message
-                : 'IndustryState refused the write.');
-        }
-
-        _commit(C.EVENT.ENTERPRISE_PROCESSED, {
-            enterpriseId: enterpriseId,
-            currentYear: result.currentYear,
-            newWealth: result.newWealth,
-            newDebt: result.newDebt,
-            nextStatus: result.nextStatus
+        participants.push({
+            name: 'industry',
+            prepare: function () {
+                return IS.getEnterprise(enterpriseId)
+                    ? { success: true }
+                    : { success: false, reason: 'Enterprise disappeared before processing.' };
+            },
+            snapshot: function () {
+                var snapshot = IS._transactionSnapshotEnterprise(enterpriseId);
+                if (!snapshot) throw new Error('Could not snapshot enterprise: ' + enterpriseId);
+                return snapshot;
+            },
+            apply: function () {
+                var updated = IS._updateEnterprise(enterpriseId, patch, {
+                    silent: true
+                });
+                return updated
+                    ? { success: true }
+                    : { success: false, reason: 'IndustryState refused the annual update.' };
+            },
+            rollback: function (snapshot) {
+                return IS._transactionRestoreEnterprise(snapshot);
+            },
+            afterCommit: function () {
+                _commit(C.EVENT.ENTERPRISE_PROCESSED, {
+                    enterpriseId: enterpriseId,
+                    currentYear: result.currentYear,
+                    newWealth: result.newWealth,
+                    newDebt: result.newDebt,
+                    nextStatus: result.nextStatus,
+                    transaction: true
+                });
+            }
         });
 
-        return _ok({ enterprise: IS.getEnterprise(enterpriseId) });
+        var transaction = window.CrossDomainTransaction.execute({
+            id: 'industry-annual-' + enterpriseId + '-' + result.currentYear,
+            context: {
+                enterpriseId: enterpriseId,
+                householdId: householdId,
+                currentYear: result.currentYear
+            },
+            participants: participants,
+            persist: persist
+        });
+
+        if (!transaction || transaction.success !== true) {
+            return {
+                success: false,
+                code: transaction && transaction.code
+                    ? transaction.code : 'TRANSACTION_FAILED',
+                reason: transaction && transaction.reason
+                    ? transaction.reason : 'Annual processing transaction failed.',
+                transaction: transaction || null
+            };
+        }
+
+        return _ok({
+            enterprise: IS.getEnterprise(enterpriseId),
+            transactionId: transaction.transactionId,
+            householdId: householdId
+        });
     }
 
     // =========================================================================
