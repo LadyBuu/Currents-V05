@@ -356,11 +356,6 @@
             methodName: 'removeAllReferencesTo'
         },
         {
-            label: 'relationships',
-            moduleName: 'RelationshipIntegrations',
-            methodName: 'removeAllReferencesTo'
-        },
-        {
             label: 'households',
             moduleName: 'HouseholdCommands',
             methodName: 'removeCharacterReferences'
@@ -436,7 +431,7 @@
         // after this file (notably the relationship domain).
         var handlers = _invokeDeleteHandlers(characterId);
         cleanup.handlers = handlers;
-        cleanup.success = cleanup.failed.length === 0 && handlers.success;
+        cleanup.success = cleanup.failed.length === 0 && cleanup.skipped.length === 0 && handlers.success;
         cleanup.partial = !cleanup.success;
 
         return _ok({
@@ -556,7 +551,7 @@
         for (var j = 0; j < toPurge.length; j++) {
             var purgeReport = _dispatchCleanup(toPurge[j]);
             purgeReport.handlers = _invokeDeleteHandlers(toPurge[j]);
-            purgeReport.success = purgeReport.failed.length === 0 && purgeReport.handlers.success;
+            purgeReport.success = purgeReport.failed.length === 0 && purgeReport.skipped.length === 0 && purgeReport.handlers.success;
             purgeReport.partial = !purgeReport.success;
             cleanupReports.push({
                 characterId: toPurge[j],
@@ -564,8 +559,14 @@
             });
         }
 
+        var cleanupFailed = cleanupReports.some(function (entry) {
+            return !entry.report.success;
+        });
         return {
-            success: true,
+            success: !cleanupFailed,
+            partial: cleanupFailed,
+            deletionComplete: true,
+            cleanupFailed: cleanupFailed,
             count: toPurge.length,
             purgedIds: toPurge,
             cleanup: cleanupReports
@@ -676,7 +677,7 @@
         for (var j = 0; j < existingIds.length; j++) {
             var bulkReport = _dispatchCleanup(existingIds[j]);
             bulkReport.handlers = _invokeDeleteHandlers(existingIds[j]);
-            bulkReport.success = bulkReport.failed.length === 0 && bulkReport.handlers.success;
+            bulkReport.success = bulkReport.failed.length === 0 && bulkReport.skipped.length === 0 && bulkReport.handlers.success;
             bulkReport.partial = !bulkReport.success;
             cleanupReports.push({
                 characterId: existingIds[j],
@@ -684,9 +685,14 @@
             });
         }
 
+        var cleanupFailed = cleanupReports.some(function (entry) {
+            return !entry.report.success;
+        });
         return {
-            success: errors.length === 0,
-            partial: errors.length > 0 && existingIds.length > 0,
+            success: errors.length === 0 && !cleanupFailed,
+            partial: (errors.length > 0 && existingIds.length > 0) || cleanupFailed,
+            deletionComplete: true,
+            cleanupFailed: cleanupFailed,
             count: existingIds.length,
             deletedIds: existingIds,
             errors: errors,
