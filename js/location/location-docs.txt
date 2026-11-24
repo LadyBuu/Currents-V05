@@ -1913,6 +1913,24 @@ ensuring a Settlement, and fails closed if LocationQueries is unavailable.
 Settlement Rank is a separate population/status tier and does not affect
 Location Type eligibility.
 
+PART — CROSS-DOMAIN LOCATION DELETION PREFLIGHT
+
+Before LocationCommands.deletePlace mutates Character or Household data, it
+runs read-only reconciliation plans for Culture, Government and Religion.
+GovernmentCommands.reconcileDeletedLocations(locationIds, { dryRun: true })
+checks the affected department subtree, including cycle detection, without
+replacing canonical data or publishing an event. ReligionCommands uses the same
+option to stage Religion association and worship-place history changes in
+memory without replacing either canonical collection or publishing an event.
+Culture reconciliation already supports this dry-run contract.
+
+The real reconciliation calls still run through each owning domain's command
+boundary after preflight. A dry run detects predictable validation and data-
+shape failures; it is not a lock and cannot guarantee that a later write,
+hydration, or event listener will succeed. Location deletion therefore remains
+non-atomic across domains. A later runtime failure can still leave earlier
+successful cleanup committed. Durable coordinated rollback remains outstanding.
+
 ================================================================================
 END OF DOCUMENT
 ================================================================================
