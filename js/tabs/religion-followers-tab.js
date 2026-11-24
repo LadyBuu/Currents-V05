@@ -1261,9 +1261,9 @@
     //
     // ReligionState rebuilds followersByReligion from canonical Character
     // records and publishes followersChanged after characterChanged and
-    // masterDataUpdated. Movement does not change membership, so it emits
-    // followerLocationsChanged instead. Both events affect this tab's
-    // visible projections and location filters.
+    // masterDataUpdated. LocationCommands writes movement history through
+    // CharacterCommands.updateCharacterFields, which emits characterChanged.
+    // That single notification refreshes location-based projections too.
     // Refresh only when this tab is visible; inactive tabs read current
     // canonical projections when the user opens them.
     //
@@ -1272,9 +1272,7 @@
         typeof window.ReligionState.subscribe === 'function') {
         window.__religionFollowersRefreshUnsubscribe =
             window.ReligionState.subscribe(function (event) {
-                if (!event ||
-                    (event.type !== 'followersChanged' &&
-                     event.type !== 'followerLocationsChanged')) return;
+                if (!event || event.type !== 'followersChanged') return;
 
                 var TM = window.TabManager;
                 if (!TM ||
