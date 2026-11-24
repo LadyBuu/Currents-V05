@@ -2326,6 +2326,36 @@
         return out;
     }
 
+    function removeEducationRecord(characterId, institutionId) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_hasId(institutionId)) return _fail('Institution id is required.');
+
+        var character = CS.getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var education = _isPlainObject(character.education)
+            ? Object.assign({}, character.education)
+            : {};
+        if (!Object.prototype.hasOwnProperty.call(education, institutionId)) {
+            return _ok({ characterId: characterId, institutionId: institutionId, alreadyAbsent: true });
+        }
+
+        delete education[institutionId];
+        var update = CS.updateCharacter(characterId, {
+            education: education,
+            updatedAt: Date.now()
+        });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the education record removal.');
+        }
+        return _ok({ characterId: characterId, institutionId: institutionId });
+    }
+
     function recordEducationEnrollment(characterId, institutionId, data) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(institutionId)) return _fail('Institution id is required.');
@@ -3332,6 +3362,7 @@
 
         getEducationRecord: getEducationRecord,
         getEducationRecords: getEducationRecords,
+        removeEducationRecord: removeEducationRecord,
         recordEducationEnrollment: recordEducationEnrollment,
         recordEducationGraduation: recordEducationGraduation,
         completeEducationGraduation: completeEducationGraduation,
