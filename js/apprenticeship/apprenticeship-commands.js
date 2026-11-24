@@ -771,13 +771,21 @@
 
         var rel = _queries().getApprenticeship(masterId, apprenticeId, updates.roleId);
         if (!rel) return fail('NOT_FOUND', 'Apprenticeship not found');
-
         if (rel.status !== STATUS.ONGOING) {
             return fail('NOT_ONGOING', 'Cannot update a non-ongoing apprenticeship');
         }
 
-        var meta = _readMetadata(rel);
-        var metaChanged = false;
+        // Validate every supplied field before the first write.
+        if (updates.skillLevel !== undefined &&
+            !_rules().isSkillInRange(updates.skillLevel)) {
+            return fail('INVALID_SKILL', 'Skill must be 0-100');
+        }
+        var startYearChanged = updates.startYear !== undefined &&
+            updates.startYear !== rel.startYear;
+        if (startYearChanged &&
+            (typeof updates.startYear !== 'number' || !isFinite(updates.startYear))) {
+            return fail('INVALID_START_YEAR', 'startYear must be a finite number');
+        }
 
         var statusChanged = false;
         if (updates.status && updates.status !== rel.status) {
@@ -786,69 +794,141 @@
             statusChanged = true;
         }
 
-        // ---- Skill ----
-        if (updates.skillLevel !== undefined) {
-            if (!_rules().isSkillInRange(updates.skillLevel)) {
-                return fail('INVALID_SKILL', 'Skill must be 0-100');
+        var meta = _readMetadata(rel);
+        var metaChanged = false;
+        var previousProfession = null;
+        var skillRequested = updates.skillLevel !== undefined;
+
+        if (skillRequested) {
+            previousProfession = _getProfession(apprenticeId, meta.roleId);
+            if (!previousProfession || typeof previousProfession.skillLevel !== 'number') {
+                return fail('MISSING_PROFESSION',
+                    'Apprentice profession record is missing or has an invalid skill level');
             }
-            var progressResult = _roleCommands().recordCharacterSkillProgress(
-                apprenticeId, meta.roleId, updates.skillLevel
-            );
-            if (!progressResult || progressResult.success !== true) {
-                return fail(
-                    'SKILL_UPDATE_FAILED',
-                    (progressResult && progressResult.reason)
-                        ? progressResult.reason
-                        : 'Skill update failed'
-                );
-            }
-            var newStage = _rules().getStageForSkill(updates.skillLevel).id;
-            if (meta.stage !== newStage) {
-                meta.stage = newStage;
+            var requestedStage = _rules().getStageForSkill(updates.skillLevel).id;
+            if (meta.stage !== requestedStage) {
+                meta.stage = requestedStage;
                 metaChanged = true;
             }
         }
 
-        // ---- Notes ----
         if (typeof updates.notes === 'string' && updates.notes !== meta.notes) {
             meta.notes = updates.notes;
             metaChanged = true;
         }
 
-        // ---- Edge-level fields (startYear) ----
-        if (updates.startYear !== undefined &&
-            updates.startYear !== rel.startYear) {
+        var fieldWritten = false;
+        var metadataWritten = false;
+        var skillWritten = false;
 
-            if (typeof updates.startYear !== 'number' || !isFinite(updates.startYear)) {
-                return fail('INVALID_START_YEAR', 'startYear must be a finite number');
+        function rollbackPriorWrites() {
+            var errors = [];
+            if (skillWritten) {
+                var skillRollback = _restoreProfessionSkill(
+                    apprenticeId, meta.roleId, previousProfession
+                );
+                if (!skillRollback.success) errors.push('skill: ' + skillRollback.reason);
             }
-
-            var fieldResult = _professionalCommands().updateEdgeFields(rel.id, {
-                startYear: updates.startYear
-            });
-            if (!fieldResult.success) {
-                return fail(fieldResult.code || 'START_YEAR_UPDATE_FAILED',
-                    fieldResult.message || 'Failed to update start year');
+            if (metadataWritten) {
+                var metadataRollback = _metadataWrite(rel.id, rel.metadata || {});
+                if (!metadataRollback.success) {
+                    errors.push('metadata: ' +
+                        (metadataRollback.message || 'restore rejected'));
+                }
             }
+            if (fieldWritten) {
+                var oldStartYear = rel.startYear == null ? null : rel.startYear;
+                var fieldRollback;
+                try {
+                    fieldRollback = _professionalCommands().updateEdgeFields(
+                        rel.id, { startYear: oldStartYear }
+                    );
+                } catch (e) {
+                    fieldRollback = { success: false, message: e.message };
+                }
+                if (!fieldRollback || fieldRollback.success !== true) {
+                    errors.push('startYear: ' +
+                        (fieldRollback && fieldRollback.message
+                            ? fieldRollback.message
+                            : 'restore rejected'));
+                }
+            }
+            return errors;
         }
 
-        // ---- Metadata (conditional write) ----
+        // Edge-owned writes happen before the Character-owned skill write.
+        if (startYearChanged) {
+            var fieldResult;
+            try {
+                fieldResult = _professionalCommands().updateEdgeFields(rel.id, {
+                    startYear: updates.startYear
+                });
+            } catch (e) {
+                fieldResult = { success: false, message: e.message };
+            }
+            if (!fieldResult || fieldResult.success !== true) {
+                return fail(
+                    (fieldResult && fieldResult.code) || 'START_YEAR_UPDATE_FAILED',
+                    (fieldResult && fieldResult.message) || 'Failed to update start year'
+                );
+            }
+            fieldWritten = true;
+        }
+
         if (metaChanged) {
-            var metaResult = _professionalCommands().updateEdgeMetadata(rel.id, meta);
+            var metaResult = _metadataWrite(rel.id, meta);
             if (!metaResult.success) {
-                return fail(metaResult.code || 'METADATA_UPDATE_FAILED',
-                    metaResult.message || 'Failed to update apprenticeship metadata');
+                var metadataErrors = rollbackPriorWrites();
+                return fail(
+                    metaResult.code || 'METADATA_UPDATE_FAILED',
+                    (metaResult.message || 'Failed to update apprenticeship metadata') +
+                    (metadataErrors.length
+                        ? ' Rollback failed: ' + metadataErrors.join('; ')
+                        : '')
+                );
             }
+            metadataWritten = true;
         }
 
-        // ---- Status (only when it actually changed) ----
-        if (statusChanged) {
-            var statusResult = _professionalCommands().endEdge(
-                rel.id, _getCurrentYear(), updates.status
+        if (skillRequested) {
+            var progressResult = _roleCommands().recordCharacterSkillProgress(
+                apprenticeId, meta.roleId, updates.skillLevel
             );
-            if (!statusResult.success) {
-                return fail(statusResult.code || 'STATUS_UPDATE_FAILED',
-                    statusResult.message || 'Failed to update apprenticeship status');
+            if (!progressResult || progressResult.success !== true) {
+                var skillErrors = rollbackPriorWrites();
+                return fail(
+                    'SKILL_UPDATE_FAILED',
+                    (progressResult && progressResult.reason
+                        ? progressResult.reason
+                        : 'Skill update failed') +
+                    (skillErrors.length
+                        ? ' Rollback failed: ' + skillErrors.join('; ')
+                        : '')
+                );
+            }
+            skillWritten = progressResult.unchanged !== true;
+        }
+
+        // Status is terminal and deliberately last.
+        if (statusChanged) {
+            var statusResult;
+            try {
+                statusResult = _professionalCommands().endEdge(
+                    rel.id, _getCurrentYear(), updates.status
+                );
+            } catch (e) {
+                statusResult = { success: false, message: e.message };
+            }
+            if (!statusResult || statusResult.success !== true) {
+                var statusErrors = rollbackPriorWrites();
+                return fail(
+                    (statusResult && statusResult.code) || 'STATUS_UPDATE_FAILED',
+                    ((statusResult && statusResult.message) ||
+                        'Failed to update apprenticeship status') +
+                    (statusErrors.length
+                        ? ' Rollback failed: ' + statusErrors.join('; ')
+                        : '')
+                );
             }
         }
 
@@ -1344,7 +1424,22 @@
             if (effectiveNewSkill <= currentSkill) continue;
 
             var rel = _queries().getApprenticeshipById(projected.id);
-            if (!rel) continue;
+            if (!rel) {
+                var missingEdgeRollback = _restoreProfessionSkill(
+                    projected.apprenticeId,
+                    projected.roleId,
+                    previousProfession
+                );
+                failed.push({
+                    apprenticeshipId: projected.id,
+                    code: 'APPRENTICESHIP_NOT_FOUND',
+                    reason: _skillRollbackFailure(
+                        'Apprenticeship edge disappeared before its metadata could be updated.',
+                        missingEdgeRollback
+                    )
+                });
+                continue;
+            }
             var meta = _readMetadata(rel);
             meta.stage = _rules().getStageForSkill(effectiveNewSkill).id;
             meta.teachingHistory.push({
