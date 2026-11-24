@@ -35,9 +35,6 @@
  * cultureCreated / cultureUpdated / cultureDeleted on window. Other domains
  * listen if they care. They do not get called directly from here.
  *
- * (The duplicate notification paragraph formerly below this section is
- * intentionally consolidated here.)
- *
  * Cross-domain notification is via CustomEvent. CultureCommands dispatches
  * cultureCreated / cultureUpdated / cultureDeleted on window. Other domains
  * listen if they care. They do not get called directly from here.
