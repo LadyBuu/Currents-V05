@@ -691,7 +691,9 @@
     // =========================================================================
 
     function _attachHandlers(container) {
-        container.addEventListener('click', function (e) {
+        if (!container.__categoryManagerClickWired) {
+            container.__categoryManagerClickWired = true;
+            container.addEventListener('click', function (e) {
             var btn = e.target && e.target.closest
                 ? e.target.closest('[data-action]')
                 : null;
@@ -728,7 +730,8 @@
                 );
                 return;
             }
-        });
+            });
+        }
 
         // Enter in the inline input triggers Save.
         var input = container.querySelector('#rcat-inline-name');
