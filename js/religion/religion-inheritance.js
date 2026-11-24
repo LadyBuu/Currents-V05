@@ -162,6 +162,49 @@
     function inheritReligionForChild(childId, motherId, fatherId, locationId, options) {
         options = options || {};
 
+        // Validate the child before resolving anything. A missing child must
+        // never be reported as a successful "nothing to inherit" result.
+        var child = _getCharacterById(childId);
+        if (!child) {
+            return {
+                success: false,
+                inherited: false,
+                religion: null,
+                source: null,
+                rule: 'none',
+                data: null,
+                reason: 'Child not found'
+            };
+        }
+        if (child.isDeleted === true) {
+            return {
+                success: false,
+                inherited: false,
+                religion: null,
+                source: null,
+                rule: 'none',
+                data: null,
+                reason: 'Child is soft-deleted. Restore first to assign inherited religion.'
+            };
+        }
+
+        // An explicitly supplied but missing parent is not the same thing as
+        // an unaffiliated parent. Do not silently fall back to local dominance.
+        if (motherId && !_getCharacterById(motherId)) {
+            return {
+                success: false, inherited: false, religion: null,
+                source: null, rule: 'none', data: null,
+                reason: 'Mother not found'
+            };
+        }
+        if (fatherId && !_getCharacterById(fatherId)) {
+            return {
+                success: false, inherited: false, religion: null,
+                source: null, rule: 'none', data: null,
+                reason: 'Father not found'
+            };
+        }
+
         var resolution = _rules().resolveInheritanceForChild(
             childId, motherId, fatherId, locationId
         );
@@ -171,23 +214,10 @@
                 success: true,
                 inherited: false,
                 religion: null,
-                source: null,
+                source: resolution.source || null,
                 rule: resolution.rule,
                 data: null,
                 reason: 'No religion to inherit'
-            };
-        }
-
-        var child = _getCharacterById(childId);
-        if (!child) {
-            return {
-                success: false,
-                inherited: false,
-                religion: null,
-                source: resolution.source,
-                rule: resolution.rule,
-                data: null,
-                reason: 'Child not found'
             };
         }
 
@@ -204,6 +234,31 @@
             };
         }
 
+        // Birth/adoption inheritance is not a conversion workflow. Make
+        // retries idempotent and never overwrite an existing affiliation.
+        if (child.religionId) {
+            if (child.religionId === resolution.religionId) {
+                return {
+                    success: true,
+                    inherited: false,
+                    religion: religion,
+                    source: resolution.source,
+                    rule: resolution.rule,
+                    data: null,
+                    reason: 'Child already has the resolved inherited religion'
+                };
+            }
+            return {
+                success: false,
+                inherited: false,
+                religion: null,
+                source: resolution.source,
+                rule: resolution.rule,
+                data: null,
+                reason: 'Child already has a different religion; inheritance will not overwrite it'
+            };
+        }
+
         // Year: explicit missing-value checks. Year 0 is valid.
         var resolvedYear;
         if (options.year !== undefined && options.year !== null) {
@@ -212,6 +267,19 @@
             resolvedYear = child.birthYear;
         } else {
             resolvedYear = 0;
+        }
+        if (typeof resolvedYear !== 'number' ||
+            !Number.isFinite(resolvedYear) ||
+            !Number.isInteger(resolvedYear)) {
+            return {
+                success: false,
+                inherited: false,
+                religion: null,
+                source: resolution.source,
+                rule: resolution.rule,
+                data: null,
+                reason: 'Inheritance year must be a finite integer'
+            };
         }
 
         var result = _commands().assignReligionToCharacter(
@@ -233,7 +301,9 @@
             source: resolution.source,
             rule: resolution.rule,
             data: result.data,
-            reason: result.reason
+            reason: result.reason || (result.success
+                ? 'Religion inherited successfully'
+                : 'Religion inheritance failed')
         };
     }
 
