@@ -362,20 +362,33 @@
     // 8. NOTIFICATIONS
     // =========================================================================
 
-    function _notify(eventType, data) {
-        _notifyQueue.push({ type: eventType, data: data, timestamp: Date.now() });
+    var _transactionNotifications = [];
 
+    function _notify(eventType, data) {
+        if (window.CrossDomainTransaction &&
+            typeof window.CrossDomainTransaction.isActive === 'function' &&
+            window.CrossDomainTransaction.isActive() === true) {
+            _transactionNotifications.push({
+                type: eventType,
+                data: _cloneValue(data),
+                timestamp: Date.now()
+            });
+            return;
+        }
+        _dispatchNotification({ type: eventType, data: data, timestamp: Date.now() });
+    }
+
+    function _dispatchNotification(evt) {
+        _notifyQueue.push(evt);
         if (_notifying) return;
         _notifying = true;
-
         try {
             while (_notifyQueue.length > 0) {
-                var evt = _notifyQueue.shift();
+                var current = _notifyQueue.shift();
                 var subscribers = _subscribers.slice();
                 for (var i = 0; i < subscribers.length; i++) {
-                    try {
-                        subscribers[i](evt);
-                    } catch (err) {
+                    try { subscribers[i](current); }
+                    catch (err) {
                         if (typeof window.onError === 'function') {
                             try { window.onError(err); } catch (ignored) {}
                         }
@@ -385,9 +398,20 @@
                     }
                 }
             }
-        } finally {
-            _notifying = false;
-        }
+        } finally { _notifying = false; }
+    }
+
+    function _transactionFlushNotifications() {
+        var pending = _transactionNotifications.slice();
+        _transactionNotifications = [];
+        pending.forEach(_dispatchNotification);
+        return { success: true, count: pending.length };
+    }
+
+    function _transactionDiscardNotifications() {
+        var discarded = _transactionNotifications.length;
+        _transactionNotifications = [];
+        return { success: true, discarded: discarded };
     }
 
     // =========================================================================
@@ -939,6 +963,8 @@
         _removeInstitution: _removeInstitution,
         _transactionSnapshotInstitutionState: _transactionSnapshotInstitutionState,
         _transactionRestoreInstitutionState: _transactionRestoreInstitutionState,
+        _transactionFlushNotifications: _transactionFlushNotifications,
+        _transactionDiscardNotifications: _transactionDiscardNotifications,
 
         // Kept for education-commands.js callers. Forces a reindex. Does
         // NOT sync to masterData.
