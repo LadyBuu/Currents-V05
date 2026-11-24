@@ -646,30 +646,37 @@
             }
 
             // ---- Household side effects --------------------------------
+            var partialFailures = [];
             var vHouseholdId = _getHouseholdIdForCharacter(victim);
             var kHouseholdId = _getHouseholdIdForCharacter(perpetrator);
 
             if (vHouseholdId) {
-                _applyVictimHouseholdEffects(vHouseholdId, {
+                var victimHouseholdResult = _applyVictimHouseholdEffects(vHouseholdId, {
                     eventType: data.type,
                     perpetratorId: data.perpetratorId || null,
                     victimId: data.victimId || null,
                     year: year,
                     prestigeLoss: 5
                 });
+                if (!victimHouseholdResult || victimHouseholdResult.success !== true) {
+                    partialFailures.push({ system: 'victim-household', reason: (victimHouseholdResult && victimHouseholdResult.reason) || 'Victim household effect failed.' });
+                }
             }
             if (kHouseholdId && kHouseholdId !== vHouseholdId) {
-                _applyPerpetratorHouseholdEffects(kHouseholdId, {
+                var perpetratorHouseholdResult = _applyPerpetratorHouseholdEffects(kHouseholdId, {
                     eventType: data.type,
                     perpetratorId: data.perpetratorId || null,
                     victimId: data.victimId || null,
                     year: year,
                     prestigeLoss: 5
                 });
+                if (!perpetratorHouseholdResult || perpetratorHouseholdResult.success !== true) {
+                    partialFailures.push({ system: 'perpetrator-household', reason: (perpetratorHouseholdResult && perpetratorHouseholdResult.reason) || 'Perpetrator household effect failed.' });
+                }
             }
 
             // ---- Settlement side effects -------------------------------
-            _recordSettlementCrimeImpact(crimeLocationId, {
+            var settlementImpactResult = _recordSettlementCrimeImpact(crimeLocationId, {
                 type: data.type,
                 victimId: data.victimId || null,
                 killerId: data.perpetratorId || null,
@@ -678,6 +685,9 @@
                 solved: data.solved === true,
                 lawViolations: evaluation.violations.length
             });
+            if (!settlementImpactResult || settlementImpactResult.success !== true) {
+                partialFailures.push({ system: 'settlement-crime-impact', reason: (settlementImpactResult && settlementImpactResult.reason) || 'Settlement crime impact failed.' });
+            }
 
             // ---- Logging -----------------------------------------------
             var subjects = [];
@@ -702,6 +712,8 @@
 
             return _ok({
                 crime: crime,
+                partial: partialFailures.length > 0,
+                partialFailures: partialFailures,
                 year: year,
                 locationId: crimeLocationId,
                 legalEvaluation: evaluation,
@@ -930,26 +942,32 @@
             var kHouseholdId = _getHouseholdIdForCharacter(killer);
 
             if (vHouseholdId) {
-                _applyVictimHouseholdEffects(vHouseholdId, {
+                var murderVictimHouseholdResult = _applyVictimHouseholdEffects(vHouseholdId, {
                     eventType: 'murder',
                     perpetratorId: killerId,
                     victimId: victimId,
                     year: year,
                     prestigeLoss: 10
                 });
+                if (!murderVictimHouseholdResult || murderVictimHouseholdResult.success !== true) {
+                    partialFailures.push({ system: 'victim-household', reason: (murderVictimHouseholdResult && murderVictimHouseholdResult.reason) || 'Victim household effect failed.' });
+                }
             }
             if (kHouseholdId && kHouseholdId !== vHouseholdId) {
-                _applyPerpetratorHouseholdEffects(kHouseholdId, {
+                var murderPerpetratorHouseholdResult = _applyPerpetratorHouseholdEffects(kHouseholdId, {
                     eventType: 'murder',
                     perpetratorId: killerId,
                     victimId: victimId,
                     year: year,
                     prestigeLoss: 15
                 });
+                if (!murderPerpetratorHouseholdResult || murderPerpetratorHouseholdResult.success !== true) {
+                    partialFailures.push({ system: 'perpetrator-household', reason: (murderPerpetratorHouseholdResult && murderPerpetratorHouseholdResult.reason) || 'Perpetrator household effect failed.' });
+                }
             }
 
             if (locationId) {
-                _recordSettlementCrimeImpact(locationId, {
+                var murderSettlementImpact = _recordSettlementCrimeImpact(locationId, {
                     type: 'murder',
                     victimId: victimId,
                     killerId: killerId,
@@ -958,6 +976,9 @@
                     solved: !killerGotAway,
                     lawViolations: evaluation.violations.length
                 });
+                if (!murderSettlementImpact || murderSettlementImpact.success !== true) {
+                    partialFailures.push({ system: 'settlement-crime-impact', reason: (murderSettlementImpact && murderSettlementImpact.reason) || 'Settlement crime impact failed.' });
+                }
             }
 
             _log('murder', 'Murder',
@@ -1121,14 +1142,17 @@
 
             var householdId = _getHouseholdIdForCharacter(condemned);
             if (householdId) {
-                _applyExecutionHouseholdEffects(householdId, {
+                var executionHouseholdResult = _applyExecutionHouseholdEffects(householdId, {
                     condemnedId: condemnedId,
                     year: year
                 });
+                if (!executionHouseholdResult || executionHouseholdResult.success !== true) {
+                    partialFailures.push({ system: 'execution-household', reason: (executionHouseholdResult && executionHouseholdResult.reason) || 'Execution household effect failed.' });
+                }
             }
 
             if (locationId) {
-                _recordSettlementCrimeImpact(locationId, {
+                var executionSettlementImpact = _recordSettlementCrimeImpact(locationId, {
                     type: 'execution',
                     condemnedId: condemnedId,
                     year: year,
@@ -1136,6 +1160,9 @@
                     method: method,
                     lawViolations: evaluation.violations.length
                 });
+                if (!executionSettlementImpact || executionSettlementImpact.success !== true) {
+                    partialFailures.push({ system: 'settlement-crime-impact', reason: (executionSettlementImpact && executionSettlementImpact.reason) || 'Settlement crime impact failed.' });
+                }
             }
 
             _log('execution', 'Execution',
