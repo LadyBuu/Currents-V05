@@ -640,11 +640,21 @@
 
         try {
             hydrateFromMasterData(false);
-            updates = updates || {};
+            // Work on a detached input object. Structural-damage merging below
+            // removes its nested payload and must not mutate caller-owned data.
+            updates = _clone(updates || {});
 
             var record = _state.disasters.byId.get(disasterId);
             if (!record) {
                 return _fail('Disaster not found', C.CODES.NOT_FOUND);
+            }
+            if (Object.prototype.hasOwnProperty.call(updates, 'id')
+                && updates.id !== record.id) {
+                return _fail('Disaster id is immutable', C.CODES.VALIDATION);
+            }
+            if (Object.prototype.hasOwnProperty.call(updates, 'year')
+                && (typeof updates.year !== 'number' || !isFinite(updates.year))) {
+                return _fail('Disaster year must be a finite number', C.CODES.VALIDATION);
             }
 
             var oldLocationId = record.locationId;
