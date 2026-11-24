@@ -442,14 +442,32 @@
         catch (e) { religions = []; }
 
         var html = '<option value="">— None —</option>';
+        var currentIncluded = false;
         for (var i = 0; i < religions.length; i++) {
             var r = religions[i];
             if (!r || !_hasId(r.id)) continue;
             var selected = (r.id === currentId) ? ' selected' : '';
+            if (r.id === currentId) currentIncluded = true;
             var name = (typeof r.name === 'string' && r.name.length > 0)
                 ? r.name : r.id;
             html += '<option value="' + _esc(r.id) + '"' + selected + '>' +
                 _esc(name) + '</option>';
+        }
+
+        // Deprecated religions are excluded from the active picker, but a
+        // character may legitimately still follow one. Keep that existing
+        // value selectable so saving an unrelated field cannot silently
+        // replace it with "None".
+        if (_hasId(currentId) && !currentIncluded) {
+            var currentReligion = null;
+            if (typeof window.ReligionQueries.getReligion === 'function') {
+                try { currentReligion = window.ReligionQueries.getReligion(currentId); }
+                catch (e) { currentReligion = null; }
+            }
+            var currentName = currentReligion && currentReligion.name
+                ? currentReligion.name : currentId;
+            html += '<option value="' + _esc(currentId) + '" selected>' +
+                _esc(currentName) + ' (deprecated or unavailable)</option>';
         }
         return html;
     }
