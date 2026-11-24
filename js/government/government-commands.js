@@ -933,7 +933,16 @@
             }
         }
 
-        State._updateGovernmentType(typeId, updates, C.ALLOWED_GOVERNMENT_TYPE_FIELDS);
+        var normalizedUpdates = Object.assign({}, updates);
+        if (Object.prototype.hasOwnProperty.call(normalizedUpdates, 'allowedRankIds') &&
+            normalizedUpdates.allowedRankIds == null) {
+            normalizedUpdates.allowedRankIds = [];
+        }
+        State._updateGovernmentType(
+            typeId,
+            normalizedUpdates,
+            C.ALLOWED_GOVERNMENT_TYPE_FIELDS
+        );
         _commit(C.EVENTS.TYPE_UPDATED, { governmentTypeId: typeId });
 
         _log('government', 'type_updated', 'Government type "' + type.name + '" updated', []);
