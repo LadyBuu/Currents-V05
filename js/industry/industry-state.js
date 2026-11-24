@@ -1001,10 +1001,178 @@
             }
         }
 
+        var ownershipReport = getOwnershipIntegrityReport();
+        if (!ownershipReport.valid) {
+            ownershipReport.issues.forEach(function(issue) {
+                if (errors.indexOf(issue.message) === -1) errors.push(issue.message);
+            });
+        }
+
         return {
             valid: errors.length === 0,
             errors: errors,
-            checksSkipped: checksSkipped
+            checksSkipped: checksSkipped,
+            ownership: ownershipReport
+        };
+    }
+
+    /**
+     * Audits both directions of the Household <-> Enterprise ownership index.
+     * Enterprise.ownerType/ownerId is authoritative; Household.enterprises
+     * is a derived reverse index and may be rebuilt only when every owner
+     * reference resolves unambiguously.
+     */
+    function getOwnershipIntegrityReport() {
+        if (!_hydrated) {
+            return {
+                valid: false,
+                repairable: false,
+                issues: [{ code: 'STATE_NOT_HYDRATED', message: 'Industry state is not hydrated.' }],
+                expectedByHousehold: {}
+            };
+        }
+        var households = window.masterData && window.masterData.data &&
+            window.masterData.data.households;
+        if (!Array.isArray(households)) {
+            return {
+                valid: false,
+                repairable: false,
+                issues: [{ code: 'HOUSEHOLDS_UNAVAILABLE', message: 'Canonical Household collection is unavailable.' }],
+                expectedByHousehold: {}
+            };
+        }
+
+        var issues = [];
+        var householdById = Object.create(null);
+        var expected = Object.create(null);
+        for (var h = 0; h < households.length; h++) {
+            var household = households[h];
+            if (!household || !_hasId(household.id)) {
+                issues.push({
+                    code: 'INVALID_HOUSEHOLD_ID',
+                    householdIndex: h,
+                    message: 'Household at index ' + h + ' has no valid id.'
+                });
+                continue;
+            }
+            if (householdById[household.id]) {
+                issues.push({
+                    code: 'DUPLICATE_HOUSEHOLD_ID',
+                    householdId: household.id,
+                    message: 'Duplicate Household id "' + household.id + '".'
+                });
+                continue;
+            }
+            householdById[household.id] = household;
+            expected[household.id] = [];
+            if (!Array.isArray(household.enterprises)) {
+                issues.push({
+                    code: 'MALFORMED_REVERSE_INDEX',
+                    householdId: household.id,
+                    message: 'Household "' + household.id + '" has no valid enterprises array.'
+                });
+            }
+        }
+
+        for (var e = 0; e < _enterprises.length; e++) {
+            var enterprise = _enterprises[e];
+            if (!enterprise || !_hasId(enterprise.id)) continue;
+            if (enterprise.ownerType !== C.OWNER_TYPE.HOUSEHOLD) continue;
+            if (!_hasId(enterprise.ownerId)) {
+                issues.push({
+                    code: 'MISSING_HOUSEHOLD_OWNER_ID',
+                    enterpriseId: enterprise.id,
+                    message: 'Enterprise "' + enterprise.id + '" is Household-owned but has no ownerId.'
+                });
+                continue;
+            }
+            if (!householdById[enterprise.ownerId]) {
+                issues.push({
+                    code: 'MISSING_OWNER_HOUSEHOLD',
+                    enterpriseId: enterprise.id,
+                    householdId: enterprise.ownerId,
+                    message: 'Enterprise "' + enterprise.id + '" references missing Household "' + enterprise.ownerId + '".'
+                });
+                continue;
+            }
+            expected[enterprise.ownerId].push(enterprise.id);
+        }
+
+        var expectedCounts = Object.create(null);
+        Object.keys(expected).forEach(function(householdId) {
+            expectedCounts[householdId] = Object.create(null);
+            expected[householdId].forEach(function(enterpriseId) {
+                expectedCounts[householdId][enterpriseId] =
+                    (expectedCounts[householdId][enterpriseId] || 0) + 1;
+            });
+        });
+
+        for (var hi = 0; hi < households.length; hi++) {
+            var current = households[hi];
+            if (!current || !_hasId(current.id) || householdById[current.id] !== current) continue;
+            var refs = Array.isArray(current.enterprises) ? current.enterprises : [];
+            var seen = Object.create(null);
+            for (var ri = 0; ri < refs.length; ri++) {
+                var refId = refs[ri];
+                if (!_hasId(refId)) {
+                    issues.push({
+                        code: 'INVALID_ENTERPRISE_REFERENCE',
+                        householdId: current.id,
+                        index: ri,
+                        message: 'Household "' + current.id + '" has an invalid Enterprise reference at index ' + ri + '.'
+                    });
+                    continue;
+                }
+                if (seen[refId]) {
+                    issues.push({
+                        code: 'DUPLICATE_ENTERPRISE_REFERENCE',
+                        householdId: current.id,
+                        enterpriseId: refId,
+                        message: 'Household "' + current.id + '" contains duplicate reference to Enterprise "' + refId + '".'
+                    });
+                }
+                seen[refId] = true;
+                if (!expectedCounts[current.id] || !expectedCounts[current.id][refId]) {
+                    issues.push({
+                        code: 'STALE_ENTERPRISE_REFERENCE',
+                        householdId: current.id,
+                        enterpriseId: refId,
+                        message: 'Household "' + current.id + '" references Enterprise "' + refId + '" but is not its canonical owner.'
+                    });
+                }
+            }
+            var wanted = expected[current.id] || [];
+            for (var wi = 0; wi < wanted.length; wi++) {
+                var count = refs.filter(function(id) { return id === wanted[wi]; }).length;
+                if (count !== 1) {
+                    issues.push({
+                        code: count === 0 ? 'MISSING_ENTERPRISE_REFERENCE' : 'DUPLICATE_ENTERPRISE_REFERENCE',
+                        householdId: current.id,
+                        enterpriseId: wanted[wi],
+                        message: count === 0
+                            ? 'Household "' + current.id + '" is missing Enterprise "' + wanted[wi] + '" in its reverse index.'
+                            : 'Household "' + current.id + '" has ' + count + ' references to Enterprise "' + wanted[wi] + '".'
+                    });
+                }
+            }
+        }
+
+        var blockingCodes = {
+            STATE_NOT_HYDRATED: true,
+            HOUSEHOLDS_UNAVAILABLE: true,
+            INVALID_HOUSEHOLD_ID: true,
+            DUPLICATE_HOUSEHOLD_ID: true,
+            MISSING_HOUSEHOLD_OWNER_ID: true,
+            MISSING_OWNER_HOUSEHOLD: true
+        };
+        var repairable = issues.every(function(issue) {
+            return !blockingCodes[issue.code];
+        });
+        return {
+            valid: issues.length === 0,
+            repairable: repairable,
+            issues: issues,
+            expectedByHousehold: expected
         };
     }
 
@@ -1358,6 +1526,7 @@
 
         // Diagnostics
         validateIntegrity: validateIntegrity,
+        getOwnershipIntegrityReport: getOwnershipIntegrityReport,
 
         // Internal — reserved for commands + bootstrap
         _getEnterpriseCanonical: _getEnterpriseCanonical,
