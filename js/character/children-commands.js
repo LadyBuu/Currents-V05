@@ -516,10 +516,15 @@
             notes: 'Birth mother'
         });
         if (!motherEdge || motherEdge.success !== true) {
-            _rollbackChild(childId, parentsEstablished);
-            return _fail(motherEdge && motherEdge.reason
-                ? motherEdge.reason
-                : 'Failed to establish mother edge.');
+            var motherRollback = _rollbackChild(childId, parentsEstablished);
+            return {
+                success: false,
+                reason: motherEdge && motherEdge.reason ? motherEdge.reason : 'Failed to establish mother edge.',
+                code: motherRollback.success ? 'BIRTH_PARENT_SETUP_FAILED' : 'BIRTH_ROLLBACK_FAILED',
+                rollback: motherRollback,
+                childId: childId,
+                partial: !motherRollback.success
+            };
         }
         if (!motherEdge.unchanged) parentsEstablished.push(motherEdge.edgeId);
 
@@ -531,10 +536,15 @@
                 notes: 'Birth father'
             });
             if (!fatherEdge || fatherEdge.success !== true) {
-                _rollbackChild(childId, parentsEstablished);
-                return _fail(fatherEdge && fatherEdge.reason
-                    ? fatherEdge.reason
-                    : 'Failed to establish father edge.');
+                var fatherRollback = _rollbackChild(childId, parentsEstablished);
+                return {
+                    success: false,
+                    reason: fatherEdge && fatherEdge.reason ? fatherEdge.reason : 'Failed to establish father edge.',
+                    code: fatherRollback.success ? 'BIRTH_PARENT_SETUP_FAILED' : 'BIRTH_ROLLBACK_FAILED',
+                    rollback: fatherRollback,
+                    childId: childId,
+                    partial: !fatherRollback.success
+                };
             }
             if (!fatherEdge.unchanged) parentsEstablished.push(fatherEdge.edgeId);
         }
@@ -560,8 +570,15 @@
 
         var pregnancyId = window.generateId('preg');
         if (!_hasId(pregnancyId)) {
-            _rollbackChild(childId, parentsEstablished);
-            return _fail('Pregnancy id generation failed.');
+            var idRollback = _rollbackChild(childId, parentsEstablished);
+            return {
+                success: false,
+                reason: 'Pregnancy id generation failed.',
+                code: idRollback.success ? 'BIRTH_ID_GENERATION_FAILED' : 'BIRTH_ROLLBACK_FAILED',
+                rollback: idRollback,
+                childId: childId,
+                partial: !idRollback.success
+            };
         }
 
         var pregnancyRecord = {
