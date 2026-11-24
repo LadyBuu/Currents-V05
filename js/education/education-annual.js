@@ -299,7 +299,7 @@
      *   error: string|null
      * }}
      */
-    function _advanceStudentYear(studentRecord, institution, currentYear) {
+    function _advanceStudentYearWithinTransaction(studentRecord, institution, currentYear) {
         var result = {
             studentId: studentRecord.studentId,
             skillGains: [],
@@ -346,7 +346,17 @@
         for (var k = 0; k < curriculum.length; k++) {
             var item = curriculum[k];
             var advance = _commands().advanceLearning(student.id, item, skillGainPerYear);
-            if (advance.success && advance.increased > 0) {
+            if (!advance || advance.success !== true || advance.roleSkillError) {
+                result.error = advance && advance.reason
+                    ? advance.reason
+                    : (advance && advance.roleSkillError
+                        ? advance.roleSkillError
+                        : 'learning_advance_failed');
+                result.evaluated = false;
+                result.skillGains = [];
+                return result;
+            }
+            if (advance.increased > 0) {
                 result.skillGains.push({
                     studentId: student.id,
                     studentName: student.name,
@@ -426,6 +436,104 @@
         return result;
     }
 
+    function _advanceStudentYear(studentRecord, institution, currentYear) {
+        var failureResult = {
+            studentId: studentRecord && studentRecord.studentId,
+            skillGains: [],
+            readyForGraduation: false,
+            readyDetails: null,
+            stage: null,
+            evaluated: false,
+            error: null
+        };
+        var TX = window.CrossDomainTransaction;
+        var ES = window.EducationState;
+        var CS = window.CharacterState;
+        var RC = window.RoleCommands;
+        if (!TX || typeof TX.execute !== 'function' ||
+            !ES || typeof ES._transactionSnapshotInstitution !== 'function' ||
+            typeof ES._transactionRestoreInstitution !== 'function' ||
+            typeof ES._transactionDiscardNotifications !== 'function' ||
+            typeof ES._transactionFlushNotifications !== 'function' ||
+            !CS || typeof CS._transactionSnapshotCharacter !== 'function' ||
+            typeof CS._transactionRestoreCharacter !== 'function' ||
+            typeof CS._transactionDiscardChanges !== 'function' ||
+            typeof CS._transactionFlushChanges !== 'function' ||
+            !RC || typeof RC._transactionDiscardEvents !== 'function' ||
+            typeof RC._transactionFlushEvents !== 'function') {
+            failureResult.error = 'annual_learning_transaction_dependencies_missing';
+            return failureResult;
+        }
+
+        var characterSnapshot = null;
+        var institutionSnapshot = null;
+        var innerResult = null;
+        var transaction = TX.execute({
+            id: 'education-annual-student-' + studentRecord.studentId + '-' + currentYear,
+            context: {
+                studentId: studentRecord.studentId,
+                institutionId: institution.id,
+                year: currentYear
+            },
+            participants: [{
+                name: 'annual-student-learning',
+                prepare: function () {
+                    if (TX.isActive() !== true) return { success: false, reason: 'Transaction did not activate.' };
+                    return { success: true };
+                },
+                snapshot: function () {
+                    characterSnapshot = CS._transactionSnapshotCharacter(studentRecord.studentId);
+                    institutionSnapshot = ES._transactionSnapshotInstitution(institution.id);
+                    if (!characterSnapshot) throw new Error('Student character snapshot unavailable.');
+                    if (!institutionSnapshot) throw new Error('Institution snapshot unavailable.');
+                    return { character: characterSnapshot, institution: institutionSnapshot };
+                },
+                apply: function () {
+                    innerResult = _advanceStudentYearWithinTransaction(
+                        studentRecord, institution, currentYear
+                    );
+                    if (innerResult && innerResult.error) {
+                        return { success: false, reason: innerResult.error };
+                    }
+                    return { success: true };
+                },
+                rollback: function (snapshot) {
+                    var errors = [];
+                    var characterRestore = CS._transactionRestoreCharacter(snapshot.character);
+                    if (!characterRestore || characterRestore.success !== true) {
+                        errors.push(characterRestore && characterRestore.reason || 'Character rollback failed.');
+                    }
+                    var institutionRestore = ES._transactionRestoreInstitution(snapshot.institution);
+                    if (!institutionRestore || institutionRestore.success !== true) {
+                        errors.push(institutionRestore && institutionRestore.reason || 'Institution rollback failed.');
+                    }
+                    ES._transactionDiscardNotifications();
+                    CS._transactionDiscardChanges();
+                    RC._transactionDiscardEvents();
+                    return errors.length
+                        ? { success: false, reason: errors.join(' | ') }
+                        : { success: true };
+                },
+                afterCommit: function () {
+                    ES._transactionFlushNotifications();
+                    CS._transactionFlushChanges();
+                    RC._transactionFlushEvents();
+                }
+            }]
+        });
+
+        if (!transaction || transaction.success !== true) {
+            failureResult.error = transaction && transaction.reason
+                ? transaction.reason
+                : 'annual_learning_transaction_failed';
+            failureResult.transactionCode = transaction && transaction.code;
+            failureResult.rolledBack = transaction && transaction.rolledBack === true;
+            failureResult.rollbackErrors = transaction && transaction.rollbackErrors || [];
+            return failureResult;
+        }
+        return innerResult || failureResult;
+    }
+
     // =========================================================================
     // 3. PIPELINE STEPS
     // =========================================================================
@@ -463,12 +571,15 @@
                     continue;
                 }
 
-                if (r.error === 'invalid_skill_gain_configuration') {
+                if (r.error) {
                     results.errors.push({
                         scope: 'learning',
                         institutionId: inst.id,
                         institutionName: inst.name,
-                        error: r.error
+                        studentId: rec.studentId,
+                        error: r.error,
+                        rolledBack: r.rolledBack === true,
+                        rollbackErrors: r.rollbackErrors || []
                     });
                     continue;
                 }
