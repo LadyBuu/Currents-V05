@@ -87,6 +87,22 @@
         return null;
     }
 
+    function _validateRequiredRoleReference(roleId) {
+        if (roleId == null || roleId === '') return null;
+        var roleQueries = window.RoleQueries;
+        if (!roleQueries || typeof roleQueries.getRoleSummary !== 'function') {
+            return 'Role queries are unavailable; cannot validate the required role';
+        }
+        try {
+            if (!roleQueries.getRoleSummary(roleId)) {
+                return 'Required role "' + roleId + '" does not exist';
+            }
+        } catch (e) {
+            return 'Required role could not be verified; role queries failed';
+        }
+        return null;
+    }
+
     function _validateAllowedRankReferences(rankIds) {
         if (rankIds == null) return null;
         if (!Array.isArray(rankIds)) return 'Allowed ranks must be an array';
@@ -441,6 +457,12 @@
 
         var rankError = _validateRequiredRankReference(data && data.requiredRankId);
         if (rankError) return _fail(rankError, C.CODES.VALIDATION);
+        var roleError = _validateRequiredRoleReference(data && data.requiredRoleId);
+        if (roleError) return _fail(roleError, C.CODES.VALIDATION);
+        if (data && data.parentPositionId &&
+            !State._getPositionCanonical(departmentId, data.parentPositionId)) {
+            return _fail('Parent position does not exist in this department', C.CODES.NOT_FOUND);
+        }
 
         var v = Rules.validatePosition(data, false);
         if (!v.valid) return _fail(v.reason, C.CODES.VALIDATION);
@@ -481,6 +503,10 @@
         if (Object.prototype.hasOwnProperty.call(updates, 'requiredRankId')) {
             var rankError = _validateRequiredRankReference(updates.requiredRankId);
             if (rankError) return _fail(rankError, C.CODES.VALIDATION);
+        }
+        if (Object.prototype.hasOwnProperty.call(updates, 'requiredRoleId')) {
+            var roleError = _validateRequiredRoleReference(updates.requiredRoleId);
+            if (roleError) return _fail(roleError, C.CODES.VALIDATION);
         }
 
         var v = Rules.validatePosition(updates, true);
