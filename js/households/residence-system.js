@@ -1323,19 +1323,39 @@
 
         var resolvedHouseholdName = householdName || household.name || 'Unknown';
 
-        // Write the reverse index before changing canonical unit occupancy.
-        // A rejected Household write therefore leaves the Residence untouched.
-        var reverseIndexResult = _associateHouseholdReverseIndex(
-            householdId, r, unitNumber, y, options.notes || ''
-        );
-        if (!reverseIndexResult || reverseIndexResult.success !== true) {
-            return _fail(
-                reverseIndexResult && reverseIndexResult.code
-                    ? reverseIndexResult.code : 'HOUSEHOLD_ASSOCIATION_FAILED',
-                reverseIndexResult && reverseIndexResult.reason
-                    ? reverseIndexResult.reason
-                    : 'Could not update the Household residence reference'
-            );
+        // Snapshot the Residence side. The unit changes are staged first so
+        // Household subscribers never observe a reverse reference to a unit
+        // that is still vacant. If the Household write fails, restore these
+        // exact Residence fields before returning.
+        var residenceAssociationSnapshot = Array.isArray(r.associationHistory)
+            ? r.associationHistory.map(function (entry) {
+                if (!entry || typeof entry !== 'object') return entry;
+                var copy = {};
+                Object.keys(entry).forEach(function (key) { copy[key] = entry[key]; });
+                return copy;
+            }) : [];
+        var unitSnapshots = [];
+        for (var si = 0; si < r.units.length; si++) {
+            var snapshotUnit = r.units[si];
+            if (snapshotUnit === unit || (snapshotUnit.householdId === householdId
+                && !snapshotUnit.isVacant)) {
+                unitSnapshots.push({
+                    unit: snapshotUnit,
+                    householdId: snapshotUnit.householdId,
+                    householdName: snapshotUnit.householdName,
+                    isVacant: snapshotUnit.isVacant,
+                    assignedYear: snapshotUnit.assignedYear,
+                    vacantYear: snapshotUnit.vacantYear,
+                    notes: snapshotUnit.notes,
+                    associationHistory: Array.isArray(snapshotUnit.associationHistory)
+                        ? snapshotUnit.associationHistory.map(function (entry) {
+                            if (!entry || typeof entry !== 'object') return entry;
+                            var copy = {};
+                            Object.keys(entry).forEach(function (key) { copy[key] = entry[key]; });
+                            return copy;
+                        }) : []
+                });
+            }
         }
 
         var vacatedOthers = [];
@@ -1408,6 +1428,30 @@
             reason: options.reason || 'Assigned',
             timestamp: Date.now()
         });
+
+        var reverseIndexResult = _associateHouseholdReverseIndex(
+            householdId, r, unitNumber, y, options.notes || ''
+        );
+        if (!reverseIndexResult || reverseIndexResult.success !== true) {
+            for (var restoreIndex = 0; restoreIndex < unitSnapshots.length; restoreIndex++) {
+                var savedUnit = unitSnapshots[restoreIndex];
+                savedUnit.unit.householdId = savedUnit.householdId;
+                savedUnit.unit.householdName = savedUnit.householdName;
+                savedUnit.unit.isVacant = savedUnit.isVacant;
+                savedUnit.unit.assignedYear = savedUnit.assignedYear;
+                savedUnit.unit.vacantYear = savedUnit.vacantYear;
+                savedUnit.unit.notes = savedUnit.notes;
+                savedUnit.unit.associationHistory = savedUnit.associationHistory;
+            }
+            r.associationHistory = residenceAssociationSnapshot;
+            return _fail(
+                reverseIndexResult && reverseIndexResult.code
+                    ? reverseIndexResult.code : 'HOUSEHOLD_ASSOCIATION_FAILED',
+                reverseIndexResult && reverseIndexResult.reason
+                    ? reverseIndexResult.reason
+                    : 'Could not update the Household residence reference'
+            );
+        }
 
         r.lastUpdated = y;
         _pushHistory(r, 'unit_assigned',
