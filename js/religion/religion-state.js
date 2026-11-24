@@ -452,7 +452,10 @@
 
         for (var i = 0; i < characters.length; i++) {
             var char = characters[i];
-            if (char && char.religionId) {
+            // Soft-deleted characters are outside the active follower set.
+            // Deceased characters remain indexed so historical follower
+            // views can opt into them; query projections filter them by default.
+            if (char && char.isDeleted !== true && char.religionId) {
                 if (!_indexes.followersByReligion.has(char.religionId)) {
                     _indexes.followersByReligion.set(char.religionId, []);
                 }
@@ -463,6 +466,30 @@
 
     function _invalidateFollowerIndex() {
         _buildFollowersIndex();
+    }
+
+    // CharacterState emits characterChanged after every canonical character
+    // write, including creation, conversion, death, soft deletion, restore,
+    // and hard deletion. Rebuild from the canonical collection rather than
+    // trying to patch individual buckets from partial event payloads.
+    function _handleCharacterChanged(event) {
+        _invalidateFollowerIndex();
+        publish('followersChanged', {
+            action: event && event.detail ? event.detail.action : null,
+            characterIds: event && event.detail &&
+                Array.isArray(event.detail.characterIds)
+                ? event.detail.characterIds.slice()
+                : []
+        });
+    }
+
+    // A move changes a follower's resolved location, not their religion
+    // membership. Keep the religion index intact and notify view subscribers
+    // that location-based follower projections need refreshing.
+    function _handleFollowerMovement(event) {
+        publish('followerLocationsChanged', event && event.detail
+            ? event.detail
+            : null);
     }
 
     // =========================================================================
@@ -1162,6 +1189,20 @@
         window.addEventListener('load', function() {
             if (!_initialized) _init();
         });
+
+        window.addEventListener('characterChanged', _handleCharacterChanged);
+        window.addEventListener('masterDataUpdated', function() {
+            _invalidateFollowerIndex();
+            publish('followersChanged', { action: 'reload', characterIds: [] });
+        });
+
+        // LocationCommands publishes these after its canonical move writes.
+        // Movement affects location filters and counts, but not the
+        // religion-keyed follower index itself.
+        window.addEventListener('moveRecorded', _handleFollowerMovement);
+        window.addEventListener('movesRecordedBulk', _handleFollowerMovement);
+        window.addEventListener('moveUpdated', _handleFollowerMovement);
+        window.addEventListener('moveDeleted', _handleFollowerMovement);
     }
 
     // =========================================================================
