@@ -17,8 +17,8 @@
  *
  * OUT OF SCOPE:
  *   - Schema shape and default data -> storage-schema.js
- *   - Migration between schema versions -> database.js (or the schema
- *     module if migration is co-located there)
+ *   - Schema migration -> no migration module currently exists; older
+ *     numbered schemas are rejected rather than silently relabelled
  *   - Export/download -> exportUtils.js
  *   - Cache invalidation orchestration -> mutation boundaries (but
  *     storage.js performs the invalidation at the cross-tab boundary)
@@ -84,7 +84,7 @@
  *       Set when the persisted blob had no envelope wrapper (a save
  *       predating the current envelope format). The envelope is
  *       wrapped with the current STORAGE_SCHEMA_VERSION, but the label
- *       is synthetic — migration tooling (database.js) reads this
+ *       is synthetic — future migration tooling reads this
  *       marker to know the declared version is a guess.
  *
  *     _yearCoerced
@@ -169,11 +169,11 @@
  *   storage-schema.js, which is a required dependency.
  *
  * MIGRATION:
- *   storage.js orchestrates the load -> migrate -> normalize -> install
- *   pipeline. Actual migration transformations live with the schema.
- *   Assigning the current version label to a legacy envelope is NOT
- *   migration; if the persisted data is at an older schema version,
- *   storage.js must not pretend it is current.
+ *   No version-to-version migration implementation currently exists.
+ *   Numbered envelopes must match the running schema version; older and
+ *   newer versions are rejected until an explicit migration is added.
+ *   Envelope-less legacy blobs remain a separately marked compatibility
+ *   path and are never confused with numbered older envelopes.
  *
  * DEPENDENCIES (REQUIRED):
  *   - time.js:          TIME_CONSTANTS (for schema defaults via storage-schema)
@@ -323,10 +323,9 @@
     // =========================================================================
 
     function _isMasterDataEnvelope(value) {
-        if (!value || typeof value !== 'object') return false;
-        if (!value.data || typeof value.data !== 'object') return false;
-        if (Array.isArray(value.data)) return false;
-        return true;
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+        if (!value.data || typeof value.data !== 'object' || Array.isArray(value.data)) return false;
+        return Number.isInteger(value.schemaVersion) && value.schemaVersion > 0;
     }
 
     function _isEnvelopeLessDataBlob(value) {
@@ -419,24 +418,17 @@
                     schemaVersion: window.STORAGE_SCHEMA_VERSION,
                     data: parsed
                 };
-            } else if (_isMasterDataEnvelope({ data: parsed })) {
-                isLegacyEnvelopeLess = true;
-                envelope = {
-                    schemaVersion: window.STORAGE_SCHEMA_VERSION,
-                    data: parsed
-                };
             } else {
                 console.error('storage.js: persisted data has unrecognized shape');
                 return { ok: false, error: 'schema' };
             }
 
-            // Reject data from a newer schema than this build understands.
-            if (typeof envelope.schemaVersion === 'number'
-                && envelope.schemaVersion > window.STORAGE_SCHEMA_VERSION) {
+            // Do not silently reinterpret a numbered save from another schema.
+            if (envelope.schemaVersion !== window.STORAGE_SCHEMA_VERSION) {
                 console.error(
                     'storage.js: persisted schema version ' +
-                    envelope.schemaVersion + ' is newer than this build ' +
-                    '(' + window.STORAGE_SCHEMA_VERSION + ')'
+                    envelope.schemaVersion + ' does not match this build ' +
+                    '(' + window.STORAGE_SCHEMA_VERSION + '); an explicit migration is required.'
                 );
                 return { ok: false, error: 'version' };
             }
@@ -511,6 +503,10 @@
         // write to masterData.data directly (its header forbids it).
         // Pull its current snapshot into the save envelope.
         if (typeof window.RelationshipState.snapshot === 'function') {
+            if (typeof window.RelationshipState.isInitialized === 'function'
+                && window.RelationshipState.isInitialized() !== true) {
+                throw new Error('RelationshipState is not synchronized with masterData; refusing to save stale relationship records.');
+            }
             window.masterData.data.relationships =
                 window.RelationshipState.snapshot();
         }
@@ -711,12 +707,23 @@
             };
         }
 
+        var incomingVersion = (parsed && Number.isInteger(parsed.schemaVersion))
+            ? parsed.schemaVersion
+            : null;
+        if (incomingVersion !== null && incomingVersion !== window.STORAGE_SCHEMA_VERSION) {
+            return {
+                ok: false,
+                error: 'version',
+                message: 'Import schema version ' + incomingVersion +
+                    ' does not match this build (' + window.STORAGE_SCHEMA_VERSION + ').'
+            };
+        }
+
         var envelope = {
             schemaVersion: window.STORAGE_SCHEMA_VERSION,
             savedAt: new Date().toISOString(),
             data: sourceData
         };
-        envelope = window.normalizeMasterData(envelope);
 
         if (typeof window.validateImportData === 'function') {
             var validation;
@@ -752,14 +759,45 @@
             };
         }
 
+        // Normalize only after validating the unmodified import payload.
+        try {
+            envelope = window.normalizeMasterData(envelope);
+        } catch (normalizeError) {
+            return {
+                ok: false,
+                error: 'normalization-failed',
+                message: normalizeError && normalizeError.message
+                    ? normalizeError.message : String(normalizeError)
+            };
+        }
+
         var prior = window.masterData;
         window.masterData = envelope;
+        try {
+            if (window.RelationshipState
+                && typeof window.RelationshipState.reload === 'function') {
+                window.RelationshipState.reload();
+                if (window.RelationshipState.isInitialized
+                    && window.RelationshipState.isInitialized() !== true) {
+                    throw new Error('Imported relationship records could not be loaded.');
+                }
+            }
+        } catch (relationshipError) {
+            window.masterData = prior;
+            if (window.RelationshipState && typeof window.RelationshipState.reload === 'function') {
+                window.RelationshipState.reload();
+            }
+            return { ok: false, error: 'relationship-state-failed', message: relationshipError.message };
+        }
         _isDirty = true;
 
         var saveOk = saveMasterData();
 
         if (!saveOk) {
             window.masterData = prior;
+            if (window.RelationshipState && typeof window.RelationshipState.reload === 'function') {
+                window.RelationshipState.reload();
+            }
             _isDirty = false;
             return {
                 ok: false,
@@ -789,11 +827,17 @@
 
         try {
             window.masterData = createDefaultMasterData();
+            if (window.RelationshipState && typeof window.RelationshipState.replaceAll === 'function') {
+                window.RelationshipState.replaceAll([]);
+            }
             _isDirty = true;
 
             var saved = saveMasterData();
             if (!saved) {
                 window.masterData = prior;
+                if (window.RelationshipState && typeof window.RelationshipState.reload === 'function') {
+                    window.RelationshipState.reload();
+                }
                 _isDirty = false;
                 return {
                     ok: false,
@@ -809,6 +853,9 @@
         } catch (e) {
             console.error('storage.js: reset failed:', e);
             window.masterData = prior;
+            if (window.RelationshipState && typeof window.RelationshipState.reload === 'function') {
+                window.RelationshipState.reload();
+            }
             _isDirty = false;
             return { ok: false, error: 'unknown' };
         }
@@ -879,8 +926,9 @@
 
     function initialize() {
         _requireAll();
-        loadMasterData();
+        var result = loadMasterData();
         initCrossTabSync();
+        return result;
     }
 
     // =========================================================================
