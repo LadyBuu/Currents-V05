@@ -31,7 +31,8 @@
  *
  * DEPENDENCIES (all soft; guarded at call time):
  *   - LocationQueries   — REQUIRED
- *   - LocationCommands  — REQUIRED
+ *   - LocationCommands  — REQUIRED for ending terms
+ *   - GovernmentCommands — REQUIRED for policy-checked appointments
  *   - TabManager        — REQUIRED
  *   - formatting.js     (escapeHtml) — REQUIRED
  *   - icons.js          (Icons)      — soft
