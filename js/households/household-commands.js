@@ -886,6 +886,36 @@
         // Preflight every cross-domain dependency before making any writes.
         var residenceId = household.residenceId || null;
         var unitNumber = household.residenceUnitNumber;
+        var occupiedResidenceMatches = [];
+        var residenceRecords = window.masterData && window.masterData.data
+            && Array.isArray(window.masterData.data.residences)
+            ? window.masterData.data.residences : [];
+        for (var ri = 0; ri < residenceRecords.length; ri++) {
+            var residenceRecord = residenceRecords[ri];
+            if (!residenceRecord || !Array.isArray(residenceRecord.units)) continue;
+            for (var ui = 0; ui < residenceRecord.units.length; ui++) {
+                var residenceUnit = residenceRecord.units[ui];
+                if (residenceUnit && residenceUnit.householdId === householdId
+                    && residenceUnit.isVacant !== true) {
+                    occupiedResidenceMatches.push({
+                        residenceId: residenceRecord.id,
+                        unitNumber: residenceUnit.unitNumber
+                    });
+                }
+            }
+        }
+        if (occupiedResidenceMatches.length > 1) {
+            return _fail('DUPLICATE_RESIDENCE_OCCUPANCY',
+                'Household occupies multiple Residence units; repair occupancy before deletion');
+        }
+        if (occupiedResidenceMatches.length === 1
+            && (!residenceId
+                || occupiedResidenceMatches[0].residenceId !== residenceId
+                || occupiedResidenceMatches[0].unitNumber !== unitNumber)) {
+            return _fail('RESIDENCE_REFERENCE_MISMATCH',
+                'Residence unit occupancy does not match the Household residence reference');
+        }
+
         var rs = null;
         if (residenceId) {
             if (!_residenceSystemAvailable()) {
