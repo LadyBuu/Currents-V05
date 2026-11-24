@@ -40,6 +40,26 @@
         unit: 'fraction-per-year'
     });
 
+    /**
+     * Computes one annual interest amount using the canonical rate and
+     * rounding rule. Both ad-hoc debt commands and the annual processor
+     * call this pure helper, while retaining their own transaction boundary.
+     *
+     * @param {number} debtBefore
+     * @returns {number}
+     */
+    function calculateAnnualInterest(debtBefore) {
+        if (typeof debtBefore !== 'number' || !isFinite(debtBefore)) {
+            throw new TypeError('calculateAnnualInterest requires finite debt.');
+        }
+        if (debtBefore <= 0) return 0;
+        var rate = DEBT_INTEREST_RATE.annualFraction;
+        if (typeof rate !== 'number' || !isFinite(rate)) {
+            throw new Error('SettlementFinanceDefinitions: invalid annual interest rate.');
+        }
+        return Math.floor(debtBefore * rate);
+    }
+
     // =========================================================================
     // EFFICIENCY SCORING
     // =========================================================================
@@ -84,6 +104,7 @@
 
     window.SettlementFinanceDefinitions = Object.freeze({
         DEBT_INTEREST_RATE: DEBT_INTEREST_RATE,
+        calculateAnnualInterest: calculateAnnualInterest,
         EFFICIENCY_BANDS: EFFICIENCY_BANDS,
         DEBT_RATIO_BANDS: DEBT_RATIO_BANDS
     });
