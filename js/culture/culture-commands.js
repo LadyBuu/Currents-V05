@@ -227,6 +227,66 @@
     }
 
     // =========================================================================
+    // 5. CROSS-DOMAIN ASSOCIATION VALIDATION
+    // =========================================================================
+
+    function _validateAssociations(candidate) {
+        var errors = [];
+        var locations = candidate.locations || [];
+        var religions = candidate.religions || [];
+
+        if (locations.length > 0) {
+            var lq = window.LocationQueries;
+            if (!lq || typeof lq.getPlace !== 'function') {
+                return {
+                    valid: false,
+                    errors: [{ field: 'locations', message: 'LocationQueries.getPlace is required to validate culture location associations.' }]
+                };
+            }
+            for (var i = 0; i < locations.length; i++) {
+                var place;
+                try { place = lq.getPlace(locations[i]); }
+                catch (e) {
+                    return {
+                        valid: false,
+                        errors: [{ field: 'locations', message: 'Could not verify location "' + locations[i] + '": ' + (e.message || String(e)) }]
+                    };
+                }
+                if (!place) errors.push({
+                    field: 'locations',
+                    message: 'Location does not exist: ' + locations[i]
+                });
+            }
+        }
+
+        if (religions.length > 0) {
+            var rq = window.ReligionQueries;
+            if (!rq || typeof rq.getReligion !== 'function') {
+                return {
+                    valid: false,
+                    errors: [{ field: 'religions', message: 'ReligionQueries.getReligion is required to validate culture religion associations.' }]
+                };
+            }
+            for (var j = 0; j < religions.length; j++) {
+                var religion;
+                try { religion = rq.getReligion(religions[j]); }
+                catch (e) {
+                    return {
+                        valid: false,
+                        errors: [{ field: 'religions', message: 'Could not verify religion "' + religions[j] + '": ' + (e.message || String(e)) }]
+                    };
+                }
+                if (!religion) errors.push({
+                    field: 'religions',
+                    message: 'Religion does not exist: ' + religions[j]
+                });
+            }
+        }
+
+        return { valid: errors.length === 0, errors: errors };
+    }
+
+    // =========================================================================
     // 5. CREATE
     // =========================================================================
 
@@ -273,6 +333,11 @@
         var result = validation.validateCreate(candidate, { cultures: cultures });
         if (!result.valid) {
             return { success: false, reason: 'Validation failed', errors: result.errors };
+        }
+
+        var associationResult = _validateAssociations(candidate);
+        if (!associationResult.valid) {
+            return { success: false, reason: 'Cross-domain association validation failed', errors: associationResult.errors };
         }
 
         try {
@@ -360,6 +425,11 @@
         });
         if (!result.valid) {
             return { success: false, reason: 'Validation failed', errors: result.errors };
+        }
+
+        var associationResult = _validateAssociations(candidate);
+        if (!associationResult.valid) {
+            return { success: false, reason: 'Cross-domain association validation failed', errors: associationResult.errors };
         }
 
         candidate.updatedAt = Date.now();
