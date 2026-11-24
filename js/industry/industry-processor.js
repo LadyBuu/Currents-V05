@@ -236,7 +236,7 @@
             householdTransfer: householdTransfer,
             householdId: householdId,
             householdReason: householdReason
-        });
+        }, { persist: shouldPersist });
 
         if (!applyResult || applyResult.success !== true) {
             return {
@@ -247,23 +247,10 @@
             };
         }
 
-        // Persist once per single-enterprise call, unless suppressed.
-        var persistResult = null;
-        if (shouldPersist) {
-            persistResult = IC.persist();
-            if (!persistResult || persistResult.success !== true) {
-                return {
-                    success: false,
-                    reason: persistResult && persistResult.reason
-                        ? 'Processing succeeded but persist failed: ' +
-                            persistResult.reason
-                        : 'Processing succeeded but persist failed',
-                    applied: true,
-                    enterpriseId: enterprise.id,
-                    currentYear: currentYear
-                };
-            }
-        }
+        // applyAnnualProcessing owns the coordinated Enterprise +
+        // Household transaction and performs the single-entry save when
+        // shouldPersist is true. Batch callers suppress it and save once
+        // after all individual transactions have been attempted.
 
         return {
             success: true,
