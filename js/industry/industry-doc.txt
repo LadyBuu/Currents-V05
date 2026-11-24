@@ -2288,5 +2288,56 @@ attempt, subject to the explicit ROLLBACK_FAILED outcome.
 
 
 ================================================================================
+PART 33 — TRANSACTIONAL HOUSEHOLD OWNERSHIP CHANGES
+================================================================================
+
+IndustryCommands.updateEnterprise routes every ownership transition that
+starts or ends with a Household through CrossDomainTransaction.
+
+Covered transitions:
+  - Household A -> Household B
+  - Household -> Character
+  - Household -> Place / public owner
+  - Household -> no owner
+  - Character / Place / no owner -> Household
+
+Before mutation, the transaction validates the source and target Household
+reverse indexes and snapshots:
+  - the source Household, when present;
+  - the target Household, when present;
+  - the Enterprise record.
+
+The source Household reverse reference is removed and the target reverse
+reference is added through HouseholdCommands with deferred notifications.
+IndustryState applies the Enterprise owner patch silently. Only after all
+participants apply successfully are Household events, IndustryState
+subscriber notifications and the Enterprise updated event published.
+
+If an apply fails, attempted participants restore their snapshots in reverse
+order. If any restoration fails, the command returns ROLLBACK_FAILED and
+includes the coordinator result. Callers must treat this as an integrity
+incident rather than retrying blindly.
+
+Preparation fails closed when:
+  - a referenced Household does not exist;
+  - the source Household does not contain exactly one Enterprise reference;
+  - the target Household already contains the Enterprise;
+  - transaction support is unavailable.
+
+Non-Household -> non-Household ownership changes remain Industry-only writes
+because they do not mutate the Household reverse index.
+
+This command follows the existing Industry persistence contract: it marks
+canonical data dirty but does not save. Its caller remains responsible for
+the eventual persist() boundary.
+
+The coordinator is synchronous and does not provide crash consistency,
+durable journaling or cross-tab locking. Post-commit notification failures
+are reported separately and do not roll back already committed canonical
+state.
+
+
+
+================================================================================
 END OF DOCUMENT
 ================================================================================
