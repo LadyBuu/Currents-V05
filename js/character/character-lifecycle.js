@@ -1287,6 +1287,51 @@
         });
     }
 
+    /**
+     * Retries domain cleanup for a character whose death was already
+     * recorded but whose first cascade returned partial failure.
+     *
+     * Cleanup handlers are required to be idempotent. This method does
+     * not rewrite the death record or emit a second death log entry.
+     */
+    function retryDeathCascade(characterId) {
+        if (!_hasId(characterId)) {
+            return { success: false, code: 'INVALID_CHARACTER_ID', reason: 'characterId is required.' };
+        }
+        var character = CS.getLiveCharacterForMutation(characterId);
+        if (!character) {
+            return { success: false, code: 'CHARACTER_NOT_FOUND', reason: 'Character not found.' };
+        }
+        if (character.isDeceased !== true) {
+            return { success: false, code: 'CHARACTER_NOT_DECEASED', reason: 'Character must already be deceased.' };
+        }
+        if (typeof character.deathYear !== 'number' || !isFinite(character.deathYear)) {
+            return { success: false, code: 'INVALID_DEATH_YEAR', reason: 'Deceased character has no valid deathYear.' };
+        }
+
+        var named = _notifyCrossDomainDeath(characterId, character.deathYear);
+        var registered = _invokeDeathHandlers(characterId, character.deathYear);
+        var failures = (named.failures || []).slice();
+        for (var i = 0; i < registered.length; i++) {
+            if (registered[i].success !== true) {
+                failures.push({
+                    handler: 'registered:' + registered[i].handlerIndex,
+                    code: registered[i].code,
+                    reason: registered[i].reason
+                });
+            }
+        }
+        return {
+            success: failures.length === 0,
+            code: failures.length ? 'DEATH_CASCADE_PARTIAL_FAILURE' : 'DEATH_CASCADE_REPAIRED',
+            characterId: characterId,
+            deathYear: character.deathYear,
+            failures: failures,
+            namedOutcomes: named.outcomes || [],
+            registeredOutcomes: registered
+        };
+    }
+
     function triggerNaturalDeath(characterId, options) {
         if (!_hasId(characterId)) {
             return { success: false, reason: 'characterId is required.' };
@@ -1417,6 +1462,7 @@
         advanceMortality: advanceMortality,
 
         killCharacter: killCharacter,
+        retryDeathCascade: retryDeathCascade,
         killCharacterRandomCause: killCharacterRandomCause,
         triggerNaturalDeath: triggerNaturalDeath,
         triggerAccidentalDeath: triggerAccidentalDeath,
