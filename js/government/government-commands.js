@@ -384,12 +384,16 @@
      * descendants so no child department is left with a dangling parent.
      * Government history is deliberately retained as an audit record.
      */
-    function reconcileDeletedLocations(locationIds) {
+    function reconcileDeletedLocations(locationIds, options) {
+        options = options || {};
         if (!Array.isArray(locationIds) || locationIds.length === 0) {
             return _ok({ removedDepartmentIds: [] });
         }
         try {
-            var removedDepartmentIds = State._reconcileDeletedLocations(locationIds);
+            var removedDepartmentIds = State._reconcileDeletedLocations(locationIds, options);
+            if (options.dryRun === true) {
+                return _ok({ removedDepartmentIds: removedDepartmentIds, dryRun: true });
+            }
             if (removedDepartmentIds.length > 0) {
                 _commit('governmentDepartmentsReconciled', {
                     departmentIds: removedDepartmentIds,
