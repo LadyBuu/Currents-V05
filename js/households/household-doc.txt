@@ -2972,6 +2972,31 @@ Resolve reported conflicts through the relevant Household and Residence
 commands after reviewing both records. Do not manually clear one side
 without checking occupancy and association history.
 
+
+================================================================================
+PART 45: RESIDENCE-SIDE INTEGRITY REPORT
+================================================================================
+
+ResidenceSystem._diagnostics.getIntegrityReport() independently audits
+the Residence-owned unit collection. It now reports:
+  - duplicateUnitIds and duplicateUnitNumbers within a Residence;
+  - unitsWithStaleHouseholdReference for vacant/demolished units retaining
+    householdId;
+  - unitsWithMissingHousehold for explicitly occupied units without a
+    householdId, and (when the Household collection is available) active
+    unit references to nonexistent Households;
+  - householdsOccupyingMultipleUnits for duplicate active occupancy;
+  - householdReverseReferenceMismatches when a Household's
+    residenceId/residenceUnitNumber does not resolve to its active unit;
+  - householdIndexAvailable to distinguish a clean cross-check from an
+    unavailable Household collection.
+
+The Residence-side report is not a substitute for
+HouseholdState._diagnostics.getIntegrityReport(). The Household report
+also checks the reverse direction, including Household records that
+claim a missing Residence or unit. Run both reports for a complete
+cross-domain audit. Both are read-only and neither repairs records.
+
 ================================================================================
 END OF DOCUMENT
 ================================================================================
