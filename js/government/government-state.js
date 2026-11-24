@@ -524,7 +524,8 @@
         }
     }
 
-    function _reconcileDeletedLocations(locationIds) {
+    function _reconcileDeletedLocations(locationIds, options) {
+        options = options || {};
         if (!Array.isArray(locationIds)) {
             throw new Error('GovernmentState._reconcileDeletedLocations requires an array.');
         }
@@ -553,7 +554,9 @@
         }
         for (var r = 0; r < roots.length; r++) collect(roots[r], new Set());
 
-        if (removed.size === 0) return [];
+        if (options.dryRun === true || removed.size === 0) {
+            return Array.from(removed);
+        }
         var next = current.filter(function(department) {
             return !department || !removed.has(department.id);
         });
