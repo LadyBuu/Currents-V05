@@ -281,9 +281,8 @@ Cross-domain references are labeled with their subsystem:
                                             getActiveLeaderCount,
                                             getLeadersByLocation,
                                             getPlaceGovernmentSummary)
-      window.RoleQueries                   ([roles]
-                                            getRoleSummary,
-                                            getRankSummary)
+      window.RoleQueries                   ([roles], OPTIONAL)
+                                            getRoleSummary
       window.SettlementQueries             ([settlement]
                                             getIndustryTaxRate,
                                             getGovernmentSalaryBudget)
@@ -334,11 +333,9 @@ Cross-domain references are labeled with their subsystem:
         getCurrentLeader + getDepartmentsByLocation. See
         government-docs.txt §7 Known deferrals point 2.
       - getIndustryTaxRevenue / getIndustryEnterpriseStats return
-        0 / null when the corresponding IndustryQueries method is
-        missing (guarded with typeof === 'function'). IndustryQueries
-        ITSELF is a HARD load-time dependency (§21 of
-        government-docs.txt); the individual methods are guarded at
-        call time.
+        null when IndustryQueries or the corresponding method is
+        unavailable. IndustryQueries is an optional call-time
+        dependency; the core Government query module still loads.
       - getSalaryBudgetSufficiency returns
         { locationId, allocatedBudget, prosperity } — NOT a
         sufficiency ratio. The view model
@@ -484,13 +481,13 @@ Cross-domain references are labeled with their subsystem:
       window.LocationQueries.getPlaceSummary
       window.LocationCommands.assignLeader /
         endLeaderTerm / assignGovernment
-      window.RoleQueries.getRoleSummary /
-        getRankSummary
+      window.RoleQueries.getRoleSummary (optional projection)
+      window.RankQueries.getRankSummary (required rank projection)
       window.SettlementQueries.getIndustryTaxRate
       window.SettlementProsperityQueries.getProsperityValue
       window.SettlementGovernmentCommands.setJusticeSeverity /
         setWatch
-      window.IndustryQueries                    (presence only)
+      window.IndustryQueries                    (optional; null projections when absent)
       window.HouseholdQueries.getCharacterHousehold
       window.HouseholdCommands                   (presence only)
       window.masterData.data (governmentDepartments,
@@ -1044,31 +1041,29 @@ Legend for each file:
   IndustryQueries.getIndustryTaxRevenue
   IndustryQueries.getIndustryEnterpriseStats
     Used by:
-      [load] government-queries.js (getIndustryTaxRevenue /
+      [call] government-queries.js (getIndustryTaxRevenue /
         getIndustryEnterpriseStats / getGovernmentIndustrySummary /
         getIndustryHealthScore)
       [call] modals-government-economy.js (openTaxRevenueModal,
         openGovernmentSummaryModal)
     Notes:
-      IndustryQueries ITSELF is a load-time dependency of
-      government-queries.js (module guard throws if it is
-      absent). The individual methods are typeof-guarded at call
-      time (fall back to 0 / null).
-      Government-docs.txt §7 Known deferrals point 3 flags
-      IndustryQueries as a hard dependency with the option to
-      move it behind a flag.
+      IndustryQueries is an optional call-time dependency. When it
+      is absent, or either method is unavailable, the corresponding
+      projection returns null. Government queries do not fabricate
+      zero revenue or empty enterprise statistics.
 
 --------------------------------------------------------------------------------
 3.8 ROLES DEPENDENCIES
 --------------------------------------------------------------------------------
 
   RoleQueries.getRoleSummary
-  RoleQueries.getRankSummary
     Used by:
-      [load] government-queries.js (via _roleSummary /
-        _rankSummary helpers; used in _projectPosition and
-        _projectAssignment, and in getQualifiedCandidates for
-        rankSummary)
+      [call] government-queries.js (optional role-name projection)
+      [call] government-bootstrap.js (_verifyCrossDomain)
+
+  RankQueries.getRankSummary
+    Used by:
+      [load] government-queries.js (required rank projection)
       [call] government-bootstrap.js (_verifyCrossDomain)
 
   RoleQueries.getAllRankSummaries
@@ -1783,13 +1778,13 @@ Each invariant names the failure mode it prevents.
     "SettlementGovernmentCommands.setJusticeSeverity required" /
     etc).
 
- 9. Every cross-domain module in GovernmentQueries's load-time
-    guard block before GovernmentQueries.
-    Failure without them: GovernmentQueries throws at load
-    ("requires CharacterQueries" / "requires LocationQueries" /
-    "requires RoleQueries" / "requires SettlementQueries" /
-    "requires SettlementProsperityQueries" /
-    "requires IndustryQueries").
+ 9. Required cross-domain modules in GovernmentQueries's load-time
+    guard block before GovernmentQueries:
+    CharacterQueries, LocationQueries, RankQueries, SettlementQueries
+    and SettlementProsperityQueries.
+    RoleQueries and IndustryQueries are optional call-time projections;
+    their absence does not prevent the core Government query module
+    from loading.
 
 10. GovernmentConstants, GovernmentRules, GovernmentQueries,
     LocationQueries, SettlementProsperityQueries before
@@ -2043,22 +2038,12 @@ PART 7 — KNOWN HAZARDS
     Delete them once every caller migrates. See
     government-docs.txt §7 Known deferrals point 5.
 
-18. IndustryQueries hard dependency.
-    government-queries.js throws at load if
-    window.IndustryQueries is missing. Only two of its methods
-    (getIndustryTaxRevenue / getIndustryEnterpriseStats) are
-    called, and both are typeof-guarded at call time. If a build
-    ships Government without Industry, either load a stub with
-    those two methods or hoist the IndustryQueries dependency
-    out of the module guard (see government-docs.txt §7 Known
-    deferrals point 3).
-
-19. RoleQueries and IndustryQueries are not in the supplied
-    batch.
-    Both are hard load-time dependencies of government-queries.js.
-    [UNVERIFIED]: the exact implementations and their own
-    prerequisites. Confirm they are loaded before
-    government-queries.js in your build.
+18. Optional query projections.
+    RoleQueries and IndustryQueries are resolved at call time by
+    GovernmentQueries. Missing role summaries return null; missing
+    industry revenue/statistics return null. Neither module is a
+    GovernmentQueries load-time dependency. The required rank
+    projection is supplied by RankQueries.
 
 20. LocationCommands throw/boolean contract.
     LocationCommands.assignLeader / endLeaderTerm /
@@ -2320,3 +2305,44 @@ participants commit. The existing { dryRun: true } behavior is unchanged.
 LOCATION DELETION TRANSACTION ADAPTER
 
 GovernmentState now exposes internal snapshot/restore adapters for Location deletion. The snapshot retains the canonical department array; restoration reinstalls it and rebuilds Government indexes. This does not change ordinary reconciliation behavior and does not itself coordinate a Location deletion transaction.
+
+PART 32 — ATOMIC GOVERNMENT INDEX HYDRATION
+
+GovernmentState.hydrateFromMasterData now builds every department, position,
+assignment and government-type index in temporary Maps. The new set replaces
+the previous set only after every canonical record passes identity validation.
+A duplicate position, assignment, department or government-type ID therefore
+cannot leave queries reading a partially rebuilt index. Failed hydration keeps
+the previous valid indexes available while the caller handles malformed
+canonical data.
+
+PART 33 — EXPANDED GOVERNMENT INTEGRITY DIAGNOSTICS
+
+GovernmentState.validateIntegrity now checks malformed collection shapes,
+missing department locations, dangling department parents, department hierarchy
+cycles, globally duplicated position and assignment IDs, missing position
+parents, position hierarchy cycles, dangling assignment position/character
+references, required-rank references, malformed/duplicate/unknown government
+type rank allowlists, and Location records that reference missing government
+types. These checks are diagnostic and read-only. They do not rewrite
+Location-owned governmentTypeId fields or Government canonical records.
+
+PART 34 — GOVERNMENT TYPE HISTORY RETENTION
+
+A Government Type cannot be hard-deleted while any Government history record
+still references its governmentTypeId. The deletion command also requires a
+successful array result from LocationQueries.getPlacesUsingGovernmentType;
+an unavailable, throwing or malformed usage lookup blocks deletion. This
+preserves historical government assignments and avoids treating an
+unverifiable type as unused.
+
+PART 35 — FAIL-CLOSED GOVERNMENT RANK ALLOWLISTS
+
+Government leader assignment and government-type changes now distinguish an
+explicit empty allowedRankIds array (unrestricted) from a missing or malformed
+allowlist (unverifiable). A malformed allowlist blocks the operation instead
+of silently being treated as unrestricted. Department location validation
+also fails with a command result if the Location query is unavailable or
+throws, rather than leaking an exception or accepting an unverifiable
+reference.
+
