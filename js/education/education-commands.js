@@ -476,14 +476,14 @@
         );
     }
 
-    function _trackTuitionExpense(householdId, tuition, institutionId, studentId) {
+    function _trackTuitionExpense(householdId, tuition, institutionId, studentId, year) {
         if (typeof window.HouseholdEconomy !== 'undefined' &&
             typeof window.HouseholdEconomy.trackTuitionExpense === 'function') {
             return window.HouseholdEconomy.trackTuitionExpense(
-                householdId, tuition, institutionId, studentId
+                householdId, tuition, institutionId, studentId, year
             );
         }
-        return false;
+        return { success: false, reason: 'HouseholdEconomy.trackTuitionExpense unavailable' };
     }
 
     function _getSettlementProsperity(locationId) {
@@ -1220,7 +1220,7 @@
             graduationYear: null,
             attendance: 100,
             notes: '',
-            tuitionPaid: tuitionResult.success ? tuitionResult.tuition : 0,
+            tuitionPaid: 0,
             tuitionYear: year,
             tuitionWaived: inst.waiveTuition === true ||
                 inst.ownershipType === 'public'
@@ -1242,49 +1242,64 @@
                     : 'unknown error'));
         }
 
-        // Step 4: debit the household.
+        // Step 4: record tuition through the single HouseholdEconomy
+        // operation that both debits wealth and records the expense. Calling
+        // updateHouseholdWealth separately would charge the household twice.
         if (tuitionResult.success && tuitionResult.tuition > 0 && household) {
-            var debitOk = false;
+            var tuitionRecordResult = null;
             try {
-                var debitResult = _updateHouseholdWealth(
-                    household.id, -tuitionResult.tuition,
-                    'Tuition for ' + inst.name + ' - ' + student.name
+                tuitionRecordResult = _trackTuitionExpense(
+                    household.id, tuitionResult.tuition, institutionId, studentId, year
                 );
-                debitOk = (debitResult !== false);
             } catch (e) {
-                debitOk = false;
+                tuitionRecordResult = {
+                    success: false,
+                    reason: e && e.message ? e.message : 'Tuition recording threw'
+                };
                 if (typeof console !== 'undefined' && console.error) {
                     console.error(
-                        'education-commands.js: household debit failed for ' +
+                        'education-commands.js: tuition recording failed for ' +
                         'household ' + household.id + ' on enrollment of ' +
                         studentId + ':', e
                     );
                 }
             }
 
-            if (!debitOk) {
-                // Roll back step 3 then step 2.
+            if (!tuitionRecordResult || tuitionRecordResult.success !== true) {
+                // Roll back the character-side enrollment and institution roster.
+                var withdrawalRollback = null;
                 try {
-                    _cc('recordEducationWithdrawal')(studentId, institutionId, {
-                        reason: 'Enrollment rolled back: household debit failed',
-                        year: year
-                    });
+                    withdrawalRollback = _cc('recordEducationWithdrawal')(
+                        studentId, institutionId, {
+                            reason: 'Enrollment rolled back: tuition payment failed',
+                            year: year
+                        }
+                    );
                 } catch (e2) {
-                    if (typeof console !== 'undefined' && console.error) {
-                        console.error(
-                            'education-commands.js: rollback withdrawal failed for ' +
-                            'student ' + studentId + ': ', e2
-                        );
-                    }
+                    withdrawalRollback = { success: false, reason: e2.message };
                 }
                 _state()._updateInstitution(institutionId, { students: previousStudents });
-                return _fail('Household debit failed; enrollment rolled back');
+                return _fail(
+                    'Tuition payment failed; enrollment rolled back',
+                    {
+                        tuitionError: tuitionRecordResult && tuitionRecordResult.reason
+                            ? tuitionRecordResult.reason
+                            : 'Unknown tuition recording failure',
+                        characterRollbackSucceeded: !!(
+                            withdrawalRollback && withdrawalRollback.success === true
+                        )
+                    }
+                );
             }
 
-            _trackTuitionExpense(
-                household.id, tuitionResult.tuition, institutionId, studentId
-            );
             tuitionPaid = tuitionResult.tuition;
+            var paidStudents = (students || []).map(function(record) {
+                if (record && record.studentId === studentId && !record.graduated) {
+                    return Object.assign({}, record, { tuitionPaid: tuitionPaid });
+                }
+                return record;
+            });
+            _state()._updateInstitution(institutionId, { students: paidStudents });
         }
 
         _history().recordStudentEnrolled(institutionId, studentId, year, 'Enrolled');
