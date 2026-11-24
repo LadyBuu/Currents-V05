@@ -453,6 +453,64 @@
         return _characterCommands().getProfession(characterId, roleId);
     }
 
+    /**
+     * Compensates a skill progression write when the apprenticeship edge
+     * cannot be updated. Character skill is owned by CharacterCommands;
+     * this module may restore only the exact pre-write skill value.
+     */
+    function _restoreProfessionSkill(characterId, roleId, previousProfession) {
+        if (!previousProfession ||
+            typeof previousProfession.skillLevel !== 'number') {
+            return {
+                success: false,
+                reason: 'The previous profession skill could not be verified.'
+            };
+        }
+        try {
+            var result = _characterCommands().updateProfession(
+                characterId,
+                roleId,
+                { skillLevel: previousProfession.skillLevel }
+            );
+            if (result && result.success === true) return { success: true };
+            return {
+                success: false,
+                reason: result && result.reason
+                    ? result.reason
+                    : 'CharacterCommands.updateProfession rejected skill restoration.'
+            };
+        } catch (e) {
+            return {
+                success: false,
+                reason: e && e.message ? e.message : 'Skill restoration threw.'
+            };
+        }
+    }
+
+    function _metadataWrite(relId, metadata) {
+        try {
+            var result = _professionalCommands().updateEdgeMetadata(relId, metadata);
+            if (result && result.success === true) return result;
+            return result || {
+                success: false,
+                code: 'METADATA_UPDATE_FAILED',
+                message: 'ProfessionalCommands returned no metadata result.'
+            };
+        } catch (e) {
+            return {
+                success: false,
+                code: 'METADATA_UPDATE_FAILED',
+                message: e && e.message ? e.message : 'Metadata update threw.'
+            };
+        }
+    }
+
+    function _skillRollbackFailure(reason, rollback) {
+        if (rollback && rollback.success === true) return reason;
+        return reason + ' Skill rollback also failed: ' +
+            (rollback && rollback.reason ? rollback.reason : 'unknown rollback error');
+    }
+
     function _readMetadata(rel) {
         var meta = rel && rel.metadata ? rel.metadata : {};
         return {
@@ -845,8 +903,11 @@
         var meta = _readMetadata(rel);
         if (!meta.roleId) return fail('NO_ROLE', 'Apprenticeship has no role');
 
-        var currentSkill = _getSkill(apprenticeId, meta.roleId);
-        if (currentSkill === null) currentSkill = 0;
+        var previousProfession = _getProfession(apprenticeId, meta.roleId);
+        if (!previousProfession || typeof previousProfession.skillLevel !== 'number') {
+            return fail('MISSING_PROFESSION', 'Apprentice profession record is missing or has an invalid skill level');
+        }
+        var currentSkill = previousProfession.skillLevel;
 
         var newSkill = _rules().clampSkill(currentSkill + amount);
         var newStage = _rules().getStageForSkill(newSkill);
@@ -876,10 +937,18 @@
             year: _getCurrentYear()
         });
 
-        var metaResult = _professionalCommands().updateEdgeMetadata(rel.id, meta);
+        var metaResult = _metadataWrite(rel.id, meta);
         if (!metaResult.success) {
-            return fail(metaResult.code || 'METADATA_UPDATE_FAILED',
-                metaResult.message || 'Failed to update apprenticeship metadata');
+            var rollback = progressResult.unchanged === true
+                ? { success: true }
+                : _restoreProfessionSkill(apprenticeId, meta.roleId, previousProfession);
+            return fail(
+                metaResult.code || 'METADATA_UPDATE_FAILED',
+                _skillRollbackFailure(
+                    metaResult.message || 'Failed to update apprenticeship metadata.',
+                    rollback
+                )
+            );
         }
 
         _commitAndNotify({
@@ -945,8 +1014,11 @@
         }
         if (!method) return fail('UNKNOWN_METHOD', 'Unknown teaching method: ' + methodId);
 
-        var currentSkill = _getSkill(apprenticeId, meta.roleId);
-        if (currentSkill === null) currentSkill = 0;
+        var previousProfession = _getProfession(apprenticeId, meta.roleId);
+        if (!previousProfession || typeof previousProfession.skillLevel !== 'number') {
+            return fail('MISSING_PROFESSION', 'Apprentice profession record is missing or has an invalid skill level');
+        }
+        var currentSkill = previousProfession.skillLevel;
 
         var outcome = _rules().calculateTeachingOutcome({
             currentSkill: currentSkill,
@@ -982,10 +1054,18 @@
             year: _getCurrentYear()
         });
 
-        var metaResult = _professionalCommands().updateEdgeMetadata(rel.id, meta);
+        var metaResult = _metadataWrite(rel.id, meta);
         if (!metaResult.success) {
-            return fail(metaResult.code || 'METADATA_UPDATE_FAILED',
-                metaResult.message || 'Failed to update apprenticeship metadata');
+            var rollback = !outcome.success || effectiveNewSkill === currentSkill
+                ? { success: true }
+                : _restoreProfessionSkill(apprenticeId, meta.roleId, previousProfession);
+            return fail(
+                metaResult.code || 'METADATA_UPDATE_FAILED',
+                _skillRollbackFailure(
+                    metaResult.message || 'Failed to update apprenticeship metadata.',
+                    rollback
+                )
+            );
         }
 
         _commitAndNotify({
@@ -1235,6 +1315,7 @@
         if (!active.length) return ok({ year: year, advanced: [] });
 
         var advanced = [];
+        var failed = [];
         for (var i = 0; i < active.length; i++) {
             var projected = active[i];
             if (!projected.roleId) continue;
@@ -1242,8 +1323,9 @@
             var masterSkill = _getSkill(projected.masterId, projected.roleId);
             if (masterSkill === null) masterSkill = 0;
 
-            var currentSkill = _getSkill(projected.apprenticeId, projected.roleId);
-            if (currentSkill === null) currentSkill = 0;
+            var previousProfession = _getProfession(projected.apprenticeId, projected.roleId);
+            if (!previousProfession || typeof previousProfession.skillLevel !== 'number') continue;
+            var currentSkill = previousProfession.skillLevel;
 
             var progress = _rules().calculateAnnualProgress({
                 masterSkill: masterSkill,
@@ -1272,8 +1354,23 @@
                 year: year
             });
 
-            var metaResult = _professionalCommands().updateEdgeMetadata(rel.id, meta);
-            if (!metaResult.success) continue;
+            var metaResult = _metadataWrite(rel.id, meta);
+            if (!metaResult.success) {
+                var rollback = _restoreProfessionSkill(
+                    projected.apprenticeId,
+                    projected.roleId,
+                    previousProfession
+                );
+                failed.push({
+                    apprenticeshipId: rel.id,
+                    code: metaResult.code || 'METADATA_UPDATE_FAILED',
+                    reason: _skillRollbackFailure(
+                        metaResult.message || 'Failed to update apprenticeship metadata.',
+                        rollback
+                    )
+                });
+                continue;
+            }
 
             advanced.push({
                 apprenticeshipId: rel.id,
@@ -1293,6 +1390,14 @@
                 year: year,
                 count: advanced.length
             });
+        }
+        if (failed.length > 0) {
+            return {
+                success: false,
+                code: 'PARTIAL_ADVANCE',
+                reason: failed.length + ' apprenticeship progression update(s) failed.',
+                data: { year: year, advanced: advanced, failed: failed }
+            };
         }
         return ok({ year: year, advanced: advanced });
     }
