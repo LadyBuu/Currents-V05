@@ -1883,3 +1883,18 @@ verification and state hydration rather than UI wiring. Only the active
 Religion tab is re-rendered; inactive tabs render from current data when
 opened. The bridge is guarded so reduced test harnesses without TabManager
 remain loadable.
+
+
+PART 34 — ATOMIC LOCATION-REFERENCE RECONCILIATION
+
+ReligionCommands.reconcileDeletedLocations(locationIds) delegates to the single
+ReligionState._reconcileDeletedLocations mutation boundary. The state operation
+stages all Religion location-list changes and worship-place location/history
+changes before replacing either canonical collection. It hydrates the Religion
+indexes once after both collections have been replaced. If hydration fails, it
+restores both original canonical arrays and attempts to rebuild the prior
+indexes before returning failure. The command publishes one reconciliation
+event only after the combined state mutation succeeds. This prevents a failure
+partway through a location deletion from leaving only some Religion records
+reconciled. If restoration hydration also fails, the returned failure includes
+the rollback error and the original canonical arrays are still restored.
