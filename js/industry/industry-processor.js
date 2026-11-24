@@ -236,7 +236,11 @@
             householdTransfer: householdTransfer,
             householdId: householdId,
             householdReason: householdReason
-        }, { persist: shouldPersist });
+        }, {
+            persist: shouldPersist,
+            notificationQueue: Array.isArray(options.notificationQueue)
+                ? options.notificationQueue : null
+        });
 
         if (!applyResult || applyResult.success !== true) {
             return {
