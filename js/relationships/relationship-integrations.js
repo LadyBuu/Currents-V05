@@ -363,6 +363,7 @@
         // is not exposed on its return value, so we re-derive it by
         // projecting each ended id's record type. That is a cheap
         // projection: getById on the relationship query.
+        try {
         var romanceActive = RoQ.getActiveRomanticRelationships(characterId);
         if (romanceActive.length > 0) {
             var romanceBatch = RoC.endAllRomanticForCharacter(characterId, {
@@ -397,7 +398,12 @@
             }
         }
 
+        } catch (e) {
+            summary.romance.failed.push({ id: null, code: 'ROMANCE_CLEANUP_THROWN', message: e && e.message ? e.message : String(e) });
+        }
+
         // ---- FRIENDSHIP ----
+        try {
         var friends = FQ.getFriendshipsForCharacter(characterId);
         for (var j = 0; j < friends.length; j++) {
             var fr = friends[j];
@@ -415,7 +421,12 @@
             });
         }
 
+        } catch (e) {
+            summary.friendship.failed.push({ id: null, code: 'FRIENDSHIP_CLEANUP_THROWN', message: e && e.message ? e.message : String(e) });
+        }
+
         // ---- RIVALRY / ENMITY ----
+        try {
         var rivals = RvQ.getRivalries(characterId);
         for (var k = 0; k < rivals.length; k++) {
             var rv = rivals[k];
@@ -448,7 +459,12 @@
             });
         }
 
+        } catch (e) {
+            summary.rivalry.failed.push({ id: null, code: 'RIVALRY_CLEANUP_THROWN', message: e && e.message ? e.message : String(e) });
+        }
+
         // ---- PROFESSIONAL ----
+        try {
         var apprenticeshipCommands = _getApprenticeshipCommands();
         var professional = PQ.getProfessionalRelationships(characterId);
         for (var n = 0; n < professional.length; n++) {
@@ -518,6 +534,10 @@
                 code: endResult.code,
                 message: endResult.message
             });
+        }
+
+        } catch (e) {
+            summary.professional.failed.push({ id: null, code: 'PROFESSIONAL_CLEANUP_THROWN', message: e && e.message ? e.message : String(e) });
         }
 
         var totalEnded =
