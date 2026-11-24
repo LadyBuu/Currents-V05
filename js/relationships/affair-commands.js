@@ -490,10 +490,21 @@
                     var victimId = options.victimId || rec.participantA;
                     var killerId = options.discovererId || rec.participantB;
                     if (victimId !== killerId) {
-                        var murderResult = murderCmds.commitMurder(victimId, killerId, {
-                            year: rec.metadata.discoveryYear,
-                            reason: 'affair discovery'
-                        });
+                        var murderResult = null;
+                        try {
+                            murderResult = murderCmds.commitMurder(victimId, killerId, {
+                                year: rec.metadata.discoveryYear,
+                                reason: 'affair discovery'
+                            });
+                        } catch (murderError) {
+                            murderResult = {
+                                success: false,
+                                reason: 'command_threw',
+                                message: murderError && murderError.message
+                                    ? murderError.message
+                                    : String(murderError)
+                            };
+                        }
                         consequences.push({
                             type: AR.CONSEQUENCE.MURDER,
                             success: !!(murderResult && murderResult.success),
@@ -535,11 +546,22 @@
 
                 if (execRoll < execChance) {
                     var rulerId = options.rulerId || options.discovererId || null;
-                    var execResult = execCmds.execute(rec.participantA, rec.participantB, {
-                        year: rec.metadata.discoveryYear,
-                        rulerId: rulerId,
-                        reason: 'adultery'
-                    });
+                    var execResult = null;
+                    try {
+                        execResult = execCmds.execute(rec.participantA, rec.participantB, {
+                            year: rec.metadata.discoveryYear,
+                            rulerId: rulerId,
+                            reason: 'adultery'
+                        });
+                    } catch (executionError) {
+                        execResult = {
+                            success: false,
+                            reason: 'command_threw',
+                            message: executionError && executionError.message
+                                ? executionError.message
+                                : String(executionError)
+                        };
+                    }
                     consequences.push({
                         type: AR.CONSEQUENCE.EXECUTION,
                         success: !!(execResult && execResult.success),
@@ -667,10 +689,21 @@
 
         function attempt(partner) {
             var relationshipId = partner.relationshipId;
-            var result = RoC.breakUp(relationshipId, {
-                endYear: year,
-                reason: 'affair discovered'
-            });
+            var result = null;
+            try {
+                result = RoC.breakUp(relationshipId, {
+                    endYear: year,
+                    reason: 'affair discovered'
+                });
+            } catch (breakupError) {
+                result = {
+                    success: false,
+                    code: 'COMMAND_THROWN',
+                    message: breakupError && breakupError.message
+                        ? breakupError.message
+                        : String(breakupError)
+                };
+            }
             if (result && result.success) {
                 ended.push(relationshipId);
             } else {
