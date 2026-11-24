@@ -254,7 +254,11 @@
         if (!Array.isArray(value)) {
             return { ok: false, reason: name + ' must be an array when provided' };
         }
-        return { ok: true, value: value };
+        var cloned = _safeClone(value);
+        if (cloned === null) {
+            return { ok: false, reason: name + ' contains a cyclic or unsupported structure' };
+        }
+        return { ok: true, value: cloned };
     }
 
     function _validateOptionalObject(value, name) {
@@ -513,12 +517,22 @@
         'isDeceased': function (v) { return _validateOptionalBoolean(v, 'isDeceased'); },
         'deathYear': function (v) { return _validateOptionalYear(v, 'deathYear'); },
         'deathCause': function (v) { return _validateOptionalString(v, 'deathCause'); },
+        'deathCauseDetail': function (v) { return _validateOptionalString(v, 'deathCauseDetail'); },
         'deathNotes': function (v) { return _validateOptionalString(v, 'deathNotes'); },
+        'isMurder': function (v) { return _validateOptionalBoolean(v, 'isMurder'); },
+        'killerId': function (v) { return _validateOptionalId(v, 'killerId'); },
+        'murderMotive': function (v) { return _validateOptionalString(v, 'murderMotive'); },
+        'murderMethod': function (v) { return _validateOptionalString(v, 'murderMethod'); },
+        'isExecution': function (v) { return _validateOptionalBoolean(v, 'isExecution'); },
+        'executionReason': function (v) { return _validateOptionalString(v, 'executionReason'); },
+        'executionMethod': function (v) { return _validateOptionalString(v, 'executionMethod'); },
+        'executionLocation': function (v) { return _validateOptionalString(v, 'executionLocation'); },
 
         // Location and movement
         'birthplaceId': function (v) { return _validateOptionalId(v, 'birthplaceId'); },
         'currentLocationId': function (v) { return _validateOptionalId(v, 'currentLocationId'); },
         'household': function (v) { return _validateOptionalId(v, 'household'); },
+        'householdId': function (v) { return _validateOptionalId(v, 'householdId'); },
         'householdHistory': function (v) { return _validateOptionalArray(v, 'householdHistory'); },
         'moves': function (v) { return _validateOptionalArray(v, 'moves'); },
 
@@ -543,8 +557,65 @@
         'apprenticeshipDetails': function (v) { return _validateDeepObject(v, 'apprenticeshipDetails'); },
 
         // Friendship details blob
-        'friendshipDetails': function (v) { return _validateDeepObject(v, 'friendshipDetails'); }
+        'friendshipDetails': function (v) { return _validateDeepObject(v, 'friendshipDetails'); },
+        'createdAt': function (v) {
+            if (typeof v !== 'number' || !Number.isFinite(v)) {
+                return { ok: false, reason: 'createdAt must be a finite number' };
+            }
+            return { ok: true, value: v };
+        },
+        'updatedAt': function (v) {
+            if (typeof v !== 'number' || !Number.isFinite(v)) {
+                return { ok: false, reason: 'updatedAt must be a finite number' };
+            }
+            return { ok: true, value: v };
+        }
     };
+
+    /**
+     * Validates and defensively clones a patch containing character-owned
+     * fields. Unknown fields are rejected rather than silently ignored.
+     * Domain-owned fields are intentionally absent from FIELD_VALIDATORS.
+     */
+    function validateCharacterFieldUpdates(updates) {
+        if (!_isPlainObject(updates)) {
+            return { success: false, reason: 'Character updates must be a plain object.' };
+        }
+        if (Object.prototype.hasOwnProperty.call(updates, 'id')) {
+            return { success: false, reason: 'Character id cannot be changed.' };
+        }
+        var validated = {};
+        var keys = Object.keys(updates);
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i];
+            var validator = FIELD_VALIDATORS[key];
+            if (typeof validator !== 'function') {
+                return { success: false, reason: 'Field "' + key + '" has no character-field validator.' };
+            }
+            var result = validator(updates[key]);
+            if (!result || result.ok !== true) {
+                return { success: false, reason: result && result.reason
+                    ? result.reason
+                    : 'Field "' + key + '" failed validation.' };
+            }
+            validated[key] = result.value;
+        }
+        if (Object.prototype.hasOwnProperty.call(validated, 'isDeceased')
+            || Object.prototype.hasOwnProperty.call(validated, 'deathYear')) {
+            if (validated.isDeceased === true && _isMissing(validated.deathYear)) {
+                return { success: false, reason: 'deathYear is required for a deceased character.' };
+            }
+            if (validated.isDeceased === false && !_isMissing(validated.deathYear)) {
+                return { success: false, reason: 'deathYear cannot be set on a living character.' };
+            }
+        }
+        if (typeof validated.name === 'string') {
+            var nameResult = _validateName({ name: validated.name });
+            if (!nameResult.ok) return { success: false, reason: nameResult.reason };
+            validated.name = nameResult.value;
+        }
+        return { success: true, updates: validated };
+    }
 
     // =========================================================================
     // 8. DEFAULT APPLICATION
@@ -798,12 +869,14 @@
 
     window.buildCharacter = buildCharacter;
     window.validateBuiltCharacter = validateBuiltCharacter;
+    window.validateCharacterFieldUpdates = validateCharacterFieldUpdates;
     window.CHARACTER_SCHEMA_FIELDS = Object.keys(FIELD_VALIDATORS);
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             buildCharacter: buildCharacter,
             validateBuiltCharacter: validateBuiltCharacter,
+            validateCharacterFieldUpdates: validateCharacterFieldUpdates,
             CHARACTER_SCHEMA_FIELDS: window.CHARACTER_SCHEMA_FIELDS
         };
     }
