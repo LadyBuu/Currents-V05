@@ -259,6 +259,12 @@
     function _invokeDeleteHandlers(characterId) {
         var report = { applied: 0, failed: [] };
         var snapshot = _deleteHandlers.slice();
+        if (snapshot.length === 0) {
+            report.failed.push({
+                handler: 'registry',
+                reason: 'No cross-domain delete handlers are registered.'
+            });
+        }
         for (var i = 0; i < snapshot.length; i++) {
             try {
                 var result = snapshot[i](characterId);
