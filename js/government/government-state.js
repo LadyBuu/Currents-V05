@@ -988,6 +988,16 @@
     // ---- Export --------------------------------------------------------------
 
     window.GovernmentState = {
+        _transactionSnapshotDeletedLocations: function () {
+            if (!window.masterData || !window.masterData.data || !Array.isArray(window.masterData.data.governmentDepartments)) throw new Error('Government canonical departments unavailable.');
+            return window.masterData.data.governmentDepartments;
+        },
+        _transactionRestoreDeletedLocations: function (snapshot) {
+            if (!Array.isArray(snapshot) || !window.masterData || !window.masterData.data) return { success: false, reason: 'Invalid Government transaction snapshot.' };
+            window.masterData.data.governmentDepartments = snapshot;
+            try { hydrateFromMasterData(); return { success: true }; } catch (error) { return { success: false, reason: error.message || String(error) }; }
+        },
+
         // Lifecycle
         hydrateFromMasterData: hydrateFromMasterData,
         validateIntegrity: validateIntegrity,
