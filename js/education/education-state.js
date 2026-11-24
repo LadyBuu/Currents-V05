@@ -608,6 +608,38 @@
         return true;
     }
 
+    function _transactionSnapshotInstitution(id) {
+        _assertHydrated();
+        var institution = _indexes.byId.get(id);
+        return institution ? _cloneValue(institution) : null;
+    }
+
+    function _transactionRestoreInstitution(snapshot) {
+        _assertHydrated();
+        if (!snapshot || !snapshot.id) {
+            return { success: false, reason: 'Invalid Education institution snapshot.' };
+        }
+        try {
+            var index = -1;
+            for (var i = 0; i < _institutions.length; i++) {
+                if (_institutions[i] && _institutions[i].id === snapshot.id) {
+                    index = i;
+                    break;
+                }
+            }
+            if (index === -1) return { success: false, reason: 'Institution missing during rollback: ' + snapshot.id };
+            _institutions[index] = _cloneValue(snapshot);
+            _indexesRebuild();
+            _writeToMasterData();
+            _markDirty();
+            _lastUpdated = Date.now();
+            _notify('institutionRestored', { id: snapshot.id });
+            return { success: true };
+        } catch (error) {
+            return { success: false, reason: error && error.message ? error.message : 'Education institution restore failed.' };
+        }
+    }
+
     function _transactionSnapshotInstitutionState() {
         _assertHydrated();
         return _cloneValue(_institutions);
@@ -961,6 +993,8 @@
         _addInstitution: _addInstitution,
         _updateInstitution: _updateInstitution,
         _removeInstitution: _removeInstitution,
+        _transactionSnapshotInstitution: _transactionSnapshotInstitution,
+        _transactionRestoreInstitution: _transactionRestoreInstitution,
         _transactionSnapshotInstitutionState: _transactionSnapshotInstitutionState,
         _transactionRestoreInstitutionState: _transactionRestoreInstitutionState,
         _transactionFlushNotifications: _transactionFlushNotifications,
