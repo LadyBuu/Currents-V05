@@ -831,7 +831,53 @@
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 7. LOCATION-DRIVEN REFRESH
+    // =========================================================================
+    //
+    // Location edits can change the labels, ancestry and validity of
+    // religion.locations associations and canonical worship-place records.
+    // Re-render only the active Religion tab; TabManager rebuilds its context
+    // from the current selection, so deleted/renamed locations are resolved
+    // against canonical data rather than a captured snapshot.
+    //
+    // Keep this bridge in one tab module so the five Religion tabs do not
+    // install duplicate listeners and trigger multiple renders per commit.
+    //
+    if (!window.__religionLocationRefreshBound &&
+        typeof window.addEventListener === 'function') {
+        window.__religionLocationRefreshBound = true;
+
+        [
+            'placeCreated',
+            'placeUpdated',
+            'placeDeleted',
+            'locationTypeCreated',
+            'locationTypeUpdated',
+            'locationTypeDeleted'
+        ].forEach(function (eventName) {
+            window.addEventListener(eventName, function () {
+                if (!window.TabManager ||
+                    typeof window.TabManager.renderActive !== 'function') {
+                    return;
+                }
+
+                try {
+                    window.TabManager.renderActive('religion');
+                } catch (err) {
+                    if (window.console && typeof window.console.error === 'function') {
+                        window.console.error(
+                            'religion-details-tab: failed to refresh after ' +
+                            eventName + ':',
+                            err
+                        );
+                    }
+                }
+            });
+        });
+    }
+
+    // =========================================================================
+    // 8. EXPORTS
     // =========================================================================
 
     window.ReligionDetailsTab = {
