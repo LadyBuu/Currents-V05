@@ -1596,16 +1596,23 @@
                     return householdInternal.transactionRestoreHousehold(snapshot);
                 },
                 afterCommit: function () {
-                    var committed = householdCommands.commitTransactionUpdate(
-                        householdId,
-                        ['wealth']
-                    );
-                    if (!committed || committed.success !== true) {
-                        throw new Error(
-                            committed && committed.reason
-                                ? committed.reason
-                                : 'Household transaction notification failed.'
+                    var publishHouseholdCommit = function () {
+                        var committed = householdCommands.commitTransactionUpdate(
+                            householdId,
+                            ['wealth']
                         );
+                        if (!committed || committed.success !== true) {
+                            throw new Error(
+                                committed && committed.reason
+                                    ? committed.reason
+                                    : 'Household transaction notification failed.'
+                            );
+                        }
+                    };
+                    if (Array.isArray(options.notificationQueue)) {
+                        options.notificationQueue.push(publishHouseholdCommit);
+                    } else {
+                        publishHouseholdCommit();
                     }
                 }
             });
@@ -1635,14 +1642,21 @@
                 return IS._transactionRestoreEnterprise(snapshot);
             },
             afterCommit: function () {
-                _commit(C.EVENT.ENTERPRISE_PROCESSED, {
-                    enterpriseId: enterpriseId,
-                    currentYear: result.currentYear,
-                    newWealth: result.newWealth,
-                    newDebt: result.newDebt,
-                    nextStatus: result.nextStatus,
-                    transaction: true
-                });
+                var publishEnterpriseCommit = function () {
+                    _commit(C.EVENT.ENTERPRISE_PROCESSED, {
+                        enterpriseId: enterpriseId,
+                        currentYear: result.currentYear,
+                        newWealth: result.newWealth,
+                        newDebt: result.newDebt,
+                        nextStatus: result.nextStatus,
+                        transaction: true
+                    });
+                };
+                if (Array.isArray(options.notificationQueue)) {
+                    options.notificationQueue.push(publishEnterpriseCommit);
+                } else {
+                    publishEnterpriseCommit();
+                }
             }
         });
 
