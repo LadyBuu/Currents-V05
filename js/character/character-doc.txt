@@ -928,6 +928,19 @@ Rationale:
       time to register cleanup. That is a load-order-independent
       contract; nothing in the character subsystem needs to know which
       modules registered.
+    - Every death handler must return an object with success:true.
+      Missing, malformed, failed, and throwing results are reported by
+      killCharacter as DEATH_CASCADE_PARTIAL_FAILURE after the death
+      record has been committed.
+    - CharacterLifecycle.retryDeathCascade(characterId) reruns the
+      registered and named cleanup handlers for a character already
+      marked deceased. Handlers must remain idempotent. This retries
+      cleanup only; it does not roll back the death or earlier
+      successful cleanup operations.
+    - Death cleanup is not yet an atomic cross-domain transaction.
+      A partial failure can leave some domain consequences committed.
+      The retry method is the current recovery path while transaction
+      snapshots and notification buffering are implemented.
 
 
 --------------------------------------------------------------------------------
