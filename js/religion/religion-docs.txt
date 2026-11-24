@@ -1813,9 +1813,14 @@ derived follower index and publishes followersChanged; it also publishes
 followerLocationsChanged for subscribers to the move-specific events
 (moveRecorded, movesRecordedBulk, moveUpdated, and moveDeleted).
 
-ReligionManager refreshes the active tab on characterChanged. It deliberately
-does not also subscribe to the move-specific events, because those follow the
-same characterChanged event and would render the same movement twice.
+ReligionState publishes followersChanged after rebuilding the index.
+religion-followers-tab.js listens for that event and re-renders only when the
+Followers tab is active. It does not subscribe to followerLocationsChanged or
+the move-specific events, because every supported movement writer first calls
+CharacterCommands.updateCharacterFields, which emits characterChanged. The
+resulting followersChanged notification already refreshes location-based
+follower projections; listening to both paths would render each move twice.
+Inactive tabs read current projections when opened.
 
 Do not patch follower buckets from event payloads. Rebuild from canonical
 Character records after characterChanged, because event payloads intentionally
