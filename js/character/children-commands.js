@@ -497,6 +497,13 @@
                 : (mother.currentLocationId || null)
         };
 
+        // Generate the pregnancy id before creating any cross-domain state,
+        // so an id-generation failure cannot strand a child or religion edge.
+        var pregnancyId = window.generateId('preg');
+        if (!_hasId(pregnancyId)) {
+            return _fail('Pregnancy id generation failed.');
+        }
+
         var createResult = CCC.createCharacter(childData, {
             currentYear: currentYear
         });
@@ -566,19 +573,6 @@
                     partial: !religionRollback.success
                 };
             }
-        }
-
-        var pregnancyId = window.generateId('preg');
-        if (!_hasId(pregnancyId)) {
-            var idRollback = _rollbackChild(childId, parentsEstablished);
-            return {
-                success: false,
-                reason: 'Pregnancy id generation failed.',
-                code: idRollback.success ? 'BIRTH_ID_GENERATION_FAILED' : 'BIRTH_ROLLBACK_FAILED',
-                rollback: idRollback,
-                childId: childId,
-                partial: !idRollback.success
-            };
         }
 
         var pregnancyRecord = {
