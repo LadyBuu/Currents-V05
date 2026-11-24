@@ -251,54 +251,77 @@
                 reader.onload = function(ev) {
                     try {
                         var parsed = JSON.parse(ev.target.result);
-                        var dataToInstall = parsed.data || parsed;
+                        var dataToInstall = parsed && parsed.data ? parsed.data : parsed;
 
-                        if (!dataToInstall || !Array.isArray(dataToInstall.places)) {
+                        if (!dataToInstall || typeof dataToInstall !== 'object'
+                            || Array.isArray(dataToInstall) || !Array.isArray(dataToInstall.places)) {
                             reject(new Error('Invalid JSON: not a Still Waters export'));
                             return;
                         }
 
-                        if (typeof window.normalizeMasterData !== 'function') {
-                            reject(new Error('storage-schema.js not loaded'));
+                        if (typeof window.normalizeMasterData !== 'function'
+                            || typeof window.validateImportData !== 'function'
+                            || typeof window.saveMasterData !== 'function') {
+                            reject(new Error('storage.js, storage-schema.js, and validation.js must be loaded'));
                             return;
                         }
 
-                        var envelope = window.normalizeMasterData({
+                        if (parsed && Number.isInteger(parsed.schemaVersion)
+                            && parsed.schemaVersion !== window.STORAGE_SCHEMA_VERSION) {
+                            reject(new Error('Import schema version ' + parsed.schemaVersion
+                                + ' does not match this build (' + window.STORAGE_SCHEMA_VERSION + ').'));
+                            return;
+                        }
+
+                        var candidate = {
                             schemaVersion: window.STORAGE_SCHEMA_VERSION,
                             savedAt: new Date().toISOString(),
                             data: dataToInstall
-                        });
+                        };
+                        var validation = window.validateImportData(candidate);
+                        if (!validation || validation.isValid !== true) {
+                            var errors = validation && Array.isArray(validation.errors)
+                                ? validation.errors : [];
+                            reject(new Error('Import validation failed: ' + errors.slice(0, 5).join('; ')));
+                            return;
+                        }
 
+                        // Normalize only after the original import has passed validation.
+                        var envelope = window.normalizeMasterData(candidate);
+                        var prior = window.masterData;
                         window.masterData = envelope;
 
-                        if (typeof window.invalidateAccessorCaches === 'function') {
-                            try { window.invalidateAccessorCaches(); } catch (e) { /* ignore */ }
-                        }
-
-                        // Reload closure-backed domain state from the new
-                        // masterData. Without this, imported relationships
-                        // exist in masterData.data.relationships but not in
-                        // RelationshipState's in-memory closure until the
-                        // next page refresh. See REFACTOR HISTORY.
-                        if (window.RelationshipState
-                            && typeof window.RelationshipState.reload === 'function') {
-                            try { window.RelationshipState.reload(); } catch (e) {
-                                // Non-fatal: the import still succeeded and
-                                // the next reload will rebuild the closure
-                                // from masterData.
+                        try {
+                            if (window.RelationshipState
+                                && typeof window.RelationshipState.reload === 'function') {
+                                window.RelationshipState.reload();
+                                if (window.RelationshipState.isInitialized
+                                    && window.RelationshipState.isInitialized() !== true) {
+                                    throw new Error('Imported relationship records could not be loaded');
+                                }
                             }
-                        }
 
-                        if (typeof window.markDataDirty === 'function') {
-                            try { window.markDataDirty(); } catch (e) { /* ignore */ }
-                        }
-                        if (typeof window.saveMasterData === 'function') {
                             var ok = window.saveMasterData();
-                            if (ok === false) {
-                                reject(new Error('Save failed after import'));
-                                return;
+                            if (ok !== true) {
+                                throw new Error('Save failed after import: '
+                                    + (window.getLastSaveError && window.getLastSaveError()
+                                        ? window.getLastSaveError().message : 'unknown error'));
                             }
+                        } catch (installError) {
+                            window.masterData = prior;
+                            if (window.RelationshipState
+                                && typeof window.RelationshipState.reload === 'function') {
+                                window.RelationshipState.reload();
+                            }
+                            throw installError;
                         }
+
+                        if (typeof window.invalidateAccessorCaches === 'function') {
+                            window.invalidateAccessorCaches();
+                        }
+                        window.dispatchEvent(new CustomEvent('masterDataUpdated', {
+                            detail: { source: 'import' }
+                        }));
 
                         resolve();
                     } catch (err) {
