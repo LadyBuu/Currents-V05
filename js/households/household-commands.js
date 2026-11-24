@@ -2503,6 +2503,26 @@
 
     // Publish Household ownership events only after the coordinating
     // cross-domain transaction has committed all canonical mutations.
+    function commitTransactionEnterpriseIndexRepair(householdIds, enterpriseCount) {
+        if (!window.CrossDomainTransaction ||
+            typeof window.CrossDomainTransaction.isActive !== 'function' ||
+            window.CrossDomainTransaction.isActive() !== true) {
+            return _fail('TRANSACTION_REQUIRED',
+                'Enterprise index repair notifications require an active CrossDomainTransaction.');
+        }
+        if (!Array.isArray(householdIds) ||
+            typeof enterpriseCount !== 'number' ||
+            !Number.isInteger(enterpriseCount) || enterpriseCount < 0) {
+            return _fail('INVALID_INPUT', 'Enterprise index repair summary is invalid.');
+        }
+        _commit('householdEnterpriseIndexesRebuilt', {
+            householdIds: householdIds.slice(),
+            enterpriseCount: enterpriseCount,
+            transaction: true
+        });
+        return _ok({ householdCount: householdIds.length });
+    }
+
     function commitTransactionEnterpriseOwnership(changes) {
         if (!window.CrossDomainTransaction ||
             typeof window.CrossDomainTransaction.isActive !== 'function' ||
@@ -3414,6 +3434,7 @@
         addEnterpriseToHousehold: addEnterpriseToHousehold,
         removeEnterpriseFromHousehold: removeEnterpriseFromHousehold,
         commitTransactionEnterpriseOwnership: commitTransactionEnterpriseOwnership,
+        commitTransactionEnterpriseIndexRepair: commitTransactionEnterpriseIndexRepair,
 
         // Positions
         createPosition: createPosition,
