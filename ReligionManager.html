@@ -2046,7 +2046,7 @@
         if (selectedReligionId) openDeleteReligion(selectedReligionId);
     });
 
-    window.addEventListener('masterDataUpdated', function () {
+    function refreshReligionManagerFromDomainChange() {
         renderReligionList();
 
         if (!selectedReligionId) {
@@ -2081,7 +2081,14 @@
                     '<div class="rt-empty">Select a religion to view its details.</div>';
             }
         }
-    });
+    }
+
+    // Full imports/reloads replace canonical data. Location commands publish
+    // narrower events after their writes; subscribe to those as well so
+    // religious presence and worship-place location labels never stay stale.
+    window.addEventListener('masterDataUpdated', refreshReligionManagerFromDomainChange);
+    window.addEventListener('placeUpdated', refreshReligionManagerFromDomainChange);
+    window.addEventListener('placeDeleted', refreshReligionManagerFromDomainChange);
 
     function onDomReady(fn) {
         if (document.readyState === 'loading') {
