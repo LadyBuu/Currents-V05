@@ -654,6 +654,13 @@
             if (id) _selectLocation(id);
         });
 
+        // Rank changes can alter a current leader's eligibility without
+        // ending the appointment. Re-render the leadership tab so its
+        // warning reflects the character's latest active rank.
+        window.addEventListener('characterChanged', function () {
+            if (_activeTabId === 'leadership') _requestRender();
+        });
+
         _setupTopbarText();
         _setupTopbarActions();
         _setupYearControl();
