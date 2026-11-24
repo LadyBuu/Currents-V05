@@ -800,6 +800,67 @@
             toRemove[placeId] = true;
         }
 
+        // Culture location associations are owned by Culture. Remove every
+        // deleted Location ID through the Culture command boundary before
+        // mutating the location graph. Refuse deletion if the data or command
+        // dependency cannot be verified safely.
+        var cultureStore = window.masterData && window.masterData.data
+            ? window.masterData.data.cultures
+            : [];
+        if (cultureStore !== undefined && cultureStore !== null &&
+            !Array.isArray(cultureStore)) {
+            return _fail(
+                'deletePlace: cannot verify Culture associations because masterData.data.cultures is malformed'
+            );
+        }
+        var hasCultureLocationReferences = false;
+        if (Array.isArray(cultureStore)) {
+            for (var ci = 0; ci < cultureStore.length; ci++) {
+                var cultureRecord = cultureStore[ci];
+                if (!cultureRecord || typeof cultureRecord !== 'object') {
+                    return _fail(
+                        'deletePlace: cannot verify Culture associations because a Culture record is malformed at index ' + ci
+                    );
+                }
+                if (cultureRecord.locations !== undefined &&
+                    cultureRecord.locations !== null &&
+                    !Array.isArray(cultureRecord.locations)) {
+                    return _fail(
+                        'deletePlace: cannot verify Culture associations because Culture "' +
+                        (cultureRecord.id || ci) + '" has a malformed locations field'
+                    );
+                }
+                if (Array.isArray(cultureRecord.locations) &&
+                    cultureRecord.locations.some(function(locationId) {
+                        return Object.prototype.hasOwnProperty.call(toRemove, locationId);
+                    })) {
+                    hasCultureLocationReferences = true;
+                }
+            }
+        }
+        if (hasCultureLocationReferences &&
+            (!window.CultureCommands ||
+             typeof window.CultureCommands.reconcileDeletedLocations !== 'function')) {
+            return _fail(
+                'deletePlace: CultureCommands.reconcileDeletedLocations is required ' +
+                'to safely delete locations with Culture associations'
+            );
+        }
+        var cultureCleanup = { updatedCultureIds: [], removedAssociations: 0 };
+        if (window.CultureCommands &&
+            typeof window.CultureCommands.reconcileDeletedLocations === 'function') {
+            var cultureResult = window.CultureCommands.reconcileDeletedLocations(
+                Object.keys(toRemove)
+            );
+            if (!cultureResult || cultureResult.success !== true) {
+                return _fail(
+                    'deletePlace: Culture cleanup failed: ' +
+                    ((cultureResult && cultureResult.reason) || 'unknown error')
+                );
+            }
+            cultureCleanup = cultureResult.data || cultureCleanup;
+        }
+
         // A settlement is owned by its location. Reconcile settlement
         // records before removing the place so no orphaned settlement can
         // survive a simple or cascade delete. This is coordinated through
@@ -954,7 +1015,7 @@
             removedCount: removed.length,
             settlementsRemoved: settlementCleanup.removedLocationIds.length,
             governmentDepartmentsRemoved: governmentCleanup.removedDepartmentIds.length,
-            religionAssociationsRemoved: religionCleanup.removedAssociations,
+            religionAssociationsRemoved: religionCleanup.removedAssociations,\n            cultureAssociationsRemoved: cultureCleanup.removedAssociations,
             characterReconciled: characterCleanup.reconciled,
             characterFailed: characterCleanup.failed,
             householdCleared: householdCleanup.clearedCount,
