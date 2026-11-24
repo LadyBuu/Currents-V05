@@ -1213,7 +1213,8 @@
      * transfer (when present) is applied before the enterprise record is
      * updated. If the household write fails, the enterprise is untouched.
      */
-    function applyAnnualProcessing(enterpriseId, result) {
+    function applyAnnualProcessing(enterpriseId, result, options) {
+        options = options || {};
         if (!_hasId(enterpriseId)) return _fail('Enterprise id is required.');
         if (!window.CrossDomainTransaction ||
             typeof window.CrossDomainTransaction.execute !== 'function') {
@@ -1369,7 +1370,7 @@
                 currentYear: result.currentYear
             },
             participants: participants,
-            persist: persist
+            persist: options.persist === false ? undefined : persist
         });
 
         if (!transaction || transaction.success !== true) {
