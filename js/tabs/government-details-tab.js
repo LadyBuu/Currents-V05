@@ -162,8 +162,26 @@
         );
     }
 
+    if (!window.GovernmentCommands
+        || typeof window.GovernmentCommands.assignLeader !== 'function'
+        || typeof window.GovernmentCommands.persist !== 'function') {
+        throw new Error(
+            'government-details-tab.js: government-commands.js must load first ' +
+            '(assignLeader / persist must be present).'
+        );
+    }
+    if (!window.GovernmentQueries
+        || typeof window.GovernmentQueries.getLeaderEligibilityStatus !== 'function') {
+        throw new Error(
+            'government-details-tab.js: government-queries.js must load first ' +
+            '(getLeaderEligibilityStatus must be present).'
+        );
+    }
+
     var GS = window.GovernmentState;
     var LC = window.LocationCommands;
+    var GC = window.GovernmentCommands;
+    var GQ = window.GovernmentQueries;
     var TM = window.TabManager;
 
     // =========================================================================
@@ -272,7 +290,7 @@
     // 4. RENDER HELPERS
     // =========================================================================
 
-    function _renderLeaderItem(assignment) {
+    function _renderLeaderItem(assignment, locationId) {
         var char = _getCharacterById(assignment.characterId);
         var charName = char
             ? (char.name + (char.surname ? ' ' + char.surname : ''))
@@ -299,6 +317,20 @@
                 (assignment.endYear || '?') + '</span>';
         }
         html += '</div>';
+
+        if (isActive && locationId) {
+            var eligibility = GQ.getLeaderEligibilityStatus(
+                locationId,
+                assignment.characterId
+            );
+            if (eligibility && eligibility.warning) {
+                html += '<div class="gov-leader-eligibility-warning" role="status" ' +
+                    'style="margin:8px 0;padding:8px;border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:0.8rem;">' +
+                    '<strong>Eligibility warning:</strong> ' +
+                    _esc(eligibility.warning) +
+                    '</div>';
+            }
+        }
 
         if (isActive) {
             html += '<div class="gov-leader-actions">';
@@ -404,7 +436,7 @@
                 html += '<div class="gov-leadership-subheader">' +
                     'Current Leaders</div>';
                 for (var i = 0; i < activeLeaders.length; i++) {
-                    html += _renderLeaderItem(activeLeaders[i]);
+                    html += _renderLeaderItem(activeLeaders[i], place.id);
                 }
                 html += '</div>';
             }
@@ -624,7 +656,7 @@
 
                         var result;
                         try {
-                            result = LC.assignLeader(
+                            result = GC.assignLeader(
                                 locationId, characterId, startYear, title
                             );
                         } catch (err) {
@@ -647,7 +679,7 @@
                         }
 
                         var persistResult;
-                        try { persistResult = LC.persist(); }
+                        try { persistResult = GC.persist(); }
                         catch (err) {
                             persistResult = { success: false, reason: 'persist threw' };
                         }
