@@ -1517,56 +1517,79 @@
             return _fail('characterId is required.');
         }
 
+        var pregnancyIds = Object.create(null);
+        var surrogacyIds = Object.create(null);
+        var adoptionIds = Object.create(null);
+        var failures = [];
         var removed = 0;
 
-        var motherPregnancies = ChS.pregnancyIdsForMother(characterId);
-        for (var i = 0; i < motherPregnancies.length; i++) {
-            if (ChS._removePregnancy(motherPregnancies[i])) removed++;
-        }
+        ChS.pregnancyIdsForMother(characterId).forEach(function (id) {
+            pregnancyIds[id] = true;
+        });
+        ChS.allPregnancyIds().forEach(function (id) {
+            var record = ChS.getPregnancyCopy(id);
+            if (record && record.fatherId === characterId) pregnancyIds[id] = true;
+        });
 
-        var allPregIds = ChS.allPregnancyIds();
-        for (var j = 0; j < allPregIds.length; j++) {
-            var p = ChS.getPregnancyCopy(allPregIds[j]);
-            if (!p) continue;
-            if (p.fatherId === characterId) {
-                if (ChS._removePregnancy(p.id)) removed++;
+        ChS.surrogacyIdsForIntendedParent(characterId).forEach(function (id) {
+            surrogacyIds[id] = true;
+        });
+        ChS.surrogacyIdsForSurrogate(characterId).forEach(function (id) {
+            surrogacyIds[id] = true;
+        });
+        ChS.allSurrogacyIds().forEach(function (id) {
+            var record = ChS.getSurrogacyCopy(id);
+            if (record && (record.spermDonorId === characterId || record.eggDonorId === characterId)) {
+                surrogacyIds[id] = true;
             }
+        });
+
+        ChS.adoptionIdsForChild(characterId).forEach(function (id) {
+            adoptionIds[id] = true;
+        });
+        ChS.adoptionIdsForAdopter(characterId).forEach(function (id) {
+            adoptionIds[id] = true;
+        });
+
+        function removeRecords(ids, removeFn, kind) {
+            Object.keys(ids).forEach(function (id) {
+                var result = false;
+                try {
+                    result = removeFn(id);
+                } catch (error) {
+                    failures.push({
+                        type: kind,
+                        id: id,
+                        reason: error && error.message ? error.message : 'Removal threw.'
+                    });
+                    return;
+                }
+                if (result === true) {
+                    removed++;
+                } else {
+                    failures.push({
+                        type: kind,
+                        id: id,
+                        reason: 'ChildrenState refused to remove the reference.'
+                    });
+                }
+            });
         }
 
-        var surrIntended = ChS.surrogacyIdsForIntendedParent(characterId);
-        for (var k = 0; k < surrIntended.length; k++) {
-            if (ChS._removeSurrogacy(surrIntended[k])) removed++;
-        }
-
-        var surrSurrogate = ChS.surrogacyIdsForSurrogate(characterId);
-        for (var m = 0; m < surrSurrogate.length; m++) {
-            if (ChS._removeSurrogacy(surrSurrogate[m])) removed++;
-        }
-
-        var allSurrIds = ChS.allSurrogacyIds();
-        for (var n = 0; n < allSurrIds.length; n++) {
-            var s = ChS.getSurrogacyCopy(allSurrIds[n]);
-            if (!s) continue;
-            if (s.spermDonorId === characterId || s.eggDonorId === characterId) {
-                if (ChS._removeSurrogacy(s.id)) removed++;
-            }
-        }
-
-        var adoptionsAsChild = ChS.adoptionIdsForChild(characterId);
-        for (var a = 0; a < adoptionsAsChild.length; a++) {
-            if (ChS._removeAdoption(adoptionsAsChild[a])) removed++;
-        }
-
-        var adoptionsAsAdopter = ChS.adoptionIdsForAdopter(characterId);
-        for (var b = 0; b < adoptionsAsAdopter.length; b++) {
-            if (ChS._removeAdoption(adoptionsAsAdopter[b])) removed++;
-        }
+        removeRecords(pregnancyIds, ChS._removePregnancy, 'pregnancy');
+        removeRecords(surrogacyIds, ChS._removeSurrogacy, 'surrogacy');
+        removeRecords(adoptionIds, ChS._removeAdoption, 'adoption');
 
         if (removed > 0) {
             _commitAndNotify('removeAllReferences', [characterId]);
         }
 
-        return { success: true, removedCount: removed };
+        return {
+            success: failures.length === 0,
+            partial: failures.length > 0 && removed > 0,
+            removedCount: removed,
+            failures: failures
+        };
     }
 
     // =========================================================================
