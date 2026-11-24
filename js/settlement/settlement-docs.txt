@@ -166,11 +166,11 @@ Load order among them is unimportant.
 
   js/settlement/settlement-finance-definitions.js
     Exports window.SettlementFinanceDefinitions
-      ({ DEBT_INTEREST_RATE, EFFICIENCY_BANDS, DEBT_RATIO_BANDS }).
+      ({ DEBT_INTEREST_RATE, calculateAnnualInterest, EFFICIENCY_BANDS,
+         DEBT_RATIO_BANDS }).
     Consumed by:
-      [call] settlement-debt-commands.js (DEBT_INTEREST_RATE)
-      [call] settlement-annual-processor.js
-             (DEBT_INTEREST_RATE.annualFraction)
+      [call] settlement-debt-commands.js (calculateAnnualInterest)
+      [call] settlement-annual-processor.js (calculateAnnualInterest)
       [call] settlement-view-models.js (DEBT_INTEREST_RATE,
              EFFICIENCY_BANDS, DEBT_RATIO_BANDS)
       [call] modals-settlement-economy.js
@@ -705,7 +705,7 @@ rules module.
         createSettlement's uniqueness check),
       window.SettlementRankRules (getAllRanks, getRankById),
       window.SettlementCommandCommit,
-      window.PlaceQueries (getPlaceById),
+      window.getPlaceById (getPlaceById),
       window.getCurrentYear (via _currentYear).
     Consumed by:
       [call] settlement-annual-processor.js? No — the processor
@@ -762,7 +762,7 @@ rules module.
     Requires at load: nothing.
     Reads at call:
       window.SettlementQueries,
-      window.PlaceQueries (getPlaceById),
+      window.getPlaceById (getPlaceById),
       window.SettlementRankRules (getRankById, getRankFromPopulation,
         getNextRank),
       window.SettlementFeatureQueries,
@@ -859,7 +859,7 @@ rules module.
     Reads at call:
       window.SettlementViewModels,
       window.SettlementQueries,
-      window.PlaceQueries,
+      window.getPlaceById,
       window.SettlementFeatureQueries,
       window.SettlementFeatureCommands,
       window.SettlementRankCommands,
@@ -879,7 +879,7 @@ rules module.
     Reads at call:
       window.SettlementViewModels,
       window.SettlementQueries,
-      window.PlaceQueries,
+      window.getPlaceById,
       window.SettlementFiscalCommands,
       window.SettlementFiscalRules,
       window.SettlementGovernmentCommands,
@@ -894,7 +894,7 @@ rules module.
     Owns window.SettlementRolesModals (frozen) plus flat aliases.
     Reads at call:
       window.SettlementQueries,
-      window.PlaceQueries,
+      window.getPlaceById,
       window.SettlementEducationQueries,
       window.RoleQueries,
       window.SettlementEducationDefinitions (EDUCATION_LEVELS).
@@ -1105,7 +1105,7 @@ Legend for each file:
     LocationQueries.getCurrentLocationId (which the settlement
     query modules call).
 
-  place-queries.js
+  core/accessors.js
     Used by:
       [call] settlement-factory.js (getPlaceById — existence check
              in createSettlement),
@@ -1113,17 +1113,12 @@ Legend for each file:
              name),
       [call] all three modals-*.js (getPlaceById — display name).
 
-  Note on PlaceQueries module name:
-    The code references window.PlaceQueries, not window.LocationQueries.
-    PlaceQueries is a cross-domain accessor, presumably provided by
-    world.js or a dedicated accessor facade. In the documented core
-    load order, world.js exports getPlaceById; the settlement
-    subsystem reads PlaceQueries.getPlaceById. If PlaceQueries is
-    not provided, the settlement factory and every view model that
-    shows a settlement name throws on first call.
-    [UNVERIFIED]: the exact module that installs window.PlaceQueries
-    is not in the supplied files. Confirm it exists before relying
-    on the settlement UI.
+  Note on place lookup:
+    Settlement view models, tabs, and modals use window.getPlaceById,
+    exported by js/core/accessors.js. SettlementFactory uses
+    LocationQueries.getPlace and getLocationTypePriority to validate
+    settlement-host eligibility. There is no PlaceQueries facade and
+    no separate place-queries.js module.
 
 --------------------------------------------------------------------------------
 3.4 SELECTOR DEPENDENCIES
@@ -1610,8 +1605,8 @@ GROUP S5 — SETTLEMENT FACTORY
     ← AFTER: js/settlement/settlement-command-commit.js
     ← AFTER: js/core/time.js
     ← after: js/location/location-queries.js (getPlaceById via
-             PlaceQueries — the accessor surface; ensure
-             window.PlaceQueries is installed)
+             core place accessor — the accessor surface; ensure
+             window.getPlaceById is installed)
 
   Notes:
     - The factory is not required for settlement UI to display
@@ -1777,7 +1772,7 @@ GROUP S9 — SETTLEMENT UI
     ← AFTER: js/settlement/settlement-government-definitions.js
     ← AFTER: js/settlement/settlement-finance-definitions.js
     ← after: js/location/location-queries.js (getPlaceById via
-             PlaceQueries)
+             core place accessor)
 
   js/settlement/modals-settlement-roles.js
     ← AFTER: js/core/modals-core.js
@@ -2037,13 +2032,11 @@ Each invariant names the failure mode it prevents.
 PART 7 — KNOWN HAZARDS
 ================================================================================
 
- 1. window.PlaceQueries is referenced by name in the settlement
-    subsystem (settlement-factory.js, settlement-view-models.js,
-    all three modals). No supplied file installs window.PlaceQueries.
-    [UNVERIFIED]: confirm the accessor exists in your build before
-    relying on settlement UI. The natural provider is world.js
-    (which exports getPlaceById); if PlaceQueries is a separate
-    facade, ensure it loads before settlement-factory.js.
+ 1. Place lookup.
+    Resolved: Settlement tabs, view models, and modals call the
+    canonical window.getPlaceById accessor from js/core/accessors.js.
+    SettlementFactory validates host eligibility through
+    LocationQueries. Do not introduce a separate PlaceQueries facade.
 
  2. Annual interest formula.
     Resolved: SettlementFinanceDefinitions.calculateAnnualInterest
