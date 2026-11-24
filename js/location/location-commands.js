@@ -863,6 +863,25 @@
             }
         }
 
+        // Character and Household references are required cleanup, not
+        // best-effort housekeeping. Run them before mutating other domains so
+        // a failure cannot leave a deleted Location with dangling references.
+        var characterCleanup = _cleanupCharactersAtPlaces(toRemove);
+        if (characterCleanup.failed > 0 || characterCleanup.status === 'unavailable') {
+            return _fail(
+                'deletePlace: character cleanup failed; no locations were deleted: ' +
+                (characterCleanup.reason || characterCleanup.failedIds.join(', ') || 'character data unavailable')
+            );
+        }
+
+        var householdCleanup = _cleanupHouseholdsAtPlaces(toRemove);
+        if (householdCleanup.status === 'failed' || householdCleanup.status === 'unavailable') {
+            return _fail(
+                'deletePlace: household cleanup failed; no locations were deleted: ' +
+                (householdCleanup.reason || 'Household references could not be verified')
+            );
+        }
+
         // A settlement is owned by its location. Reconcile settlement
         // records before removing the place so no orphaned settlement can
         // survive a simple or cascade delete. This is coordinated through
@@ -1011,9 +1030,6 @@
             cultureCleanup = cultureResult.data || cultureCleanup;
         }
 
-        var characterCleanup = _cleanupCharactersAtPlaces(toRemove);
-        var householdCleanup = _cleanupHouseholdsAtPlaces(toRemove);
-
         var removed = [];
         for (var rid in toRemove) {
             if (!Object.prototype.hasOwnProperty.call(toRemove, rid)) continue;
@@ -1141,7 +1157,9 @@
      * or both. When both apply, they are combined into a single updates
      * object so the batch sends one update per character.
      *
-     * Returns { reconciled, failed, failedIds }. Does not throw.
+     * Returns { reconciled, failed, failedIds, status?, reason? }. Does not throw.
+     * Query failure is explicit and fail-closed; it is never treated as an
+     * empty Character collection.
      *
      * @private
      * @param {Object} removeSet - id -> true
@@ -1156,10 +1174,22 @@
         try {
             allCharacters = CQ.getAllCharacters();
         } catch (e) {
-            return { reconciled: 0, failed: 0, failedIds: [] };
+            return {
+                reconciled: 0,
+                failed: 1,
+                failedIds: [],
+                status: 'unavailable',
+                reason: e && e.message ? e.message : 'Character query failed'
+            };
         }
         if (!Array.isArray(allCharacters)) {
-            return { reconciled: 0, failed: 0, failedIds: [] };
+            return {
+                reconciled: 0,
+                failed: 1,
+                failedIds: [],
+                status: 'unavailable',
+                reason: 'CharacterQueries.getAllCharacters did not return an array'
+            };
         }
 
         // Collect the characters that need cleanup. Pure read pass —
