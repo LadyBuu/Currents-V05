@@ -68,6 +68,13 @@
 
 <!-- 2. STORAGE & STATE (Depends on core utilities) -->
 <script src="js/core/storage.js"></script>
+<script>
+    (function () {
+        try {
+            if (typeof window.initializeStorage === 'function') window.initializeStorage();
+        } catch (e) { console.error('[boot] initializeStorage failed:', e); }
+    })();
+</script>
 <script src="js/core/state.js"></script>
 <script src="js/core/accessors.js"></script>
 <script src="js/core/icons.js"></script>
