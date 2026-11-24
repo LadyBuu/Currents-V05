@@ -1301,7 +1301,29 @@
             });
 
             if (!firstDeath.success) {
-                return _fail(firstDeath.reason, firstDeath.code);
+                // Compensate the newly created vendetta so callers never see
+                // an apparently valid feud with no originating death.
+                var rollback = State.deleteVendetta(vendettaResult.data.id);
+                if (rollback && rollback.success === true) {
+                    return _fail(
+                        'Vendetta creation was rolled back because its originating death could not be recorded: ' +
+                            firstDeath.reason,
+                        firstDeath.code || C.CODES.VALIDATION,
+                        { compensated: true, vendettaId: vendettaResult.data.id }
+                    );
+                }
+                return _fail(
+                    'Vendetta was created, but its originating death could not be recorded and rollback also failed: ' +
+                        firstDeath.reason + '; rollback: ' +
+                        ((rollback && rollback.reason) || 'unknown rollback failure'),
+                    C.CODES.VALIDATION,
+                    {
+                        partial: true,
+                        vendettaId: vendettaResult.data.id,
+                        deathFailure: firstDeath,
+                        rollbackFailure: rollback || null
+                    }
+                );
             }
 
             _log('vendetta', 'Blood Feud Created',
