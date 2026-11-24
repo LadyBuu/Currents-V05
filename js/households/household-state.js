@@ -745,6 +745,59 @@
         return _state.cache.byId.get(householdId) || null;
     }
 
+    // Transaction support for coordinated cross-domain operations.
+    // Snapshots are detached copies because household commands mutate records
+    // in place. Restoration replaces the canonical record without publishing;
+    // the transaction coordinator owns commit notifications.
+    function _cloneTransactionValue(value) {
+        if (value === null || typeof value !== 'object') return value;
+        if (Array.isArray(value)) {
+            return value.map(_cloneTransactionValue);
+        }
+        var copy = {};
+        Object.keys(value).forEach(function(key) {
+            copy[key] = _cloneTransactionValue(value[key]);
+        });
+        return copy;
+    }
+
+    function _transactionSnapshotHousehold(householdId) {
+        var record = _getHouseholdRecord(householdId);
+        if (!record) return null;
+        return {
+            householdId: householdId,
+            record: _cloneTransactionValue(record)
+        };
+    }
+
+    function _transactionRestoreHousehold(snapshot) {
+        if (!snapshot || !snapshot.record ||
+            typeof snapshot.householdId !== 'string') {
+            throw new Error('HouseholdState transaction snapshot is invalid.');
+        }
+        var records = _state.households.slice();
+        var index = -1;
+        for (var i = 0; i < records.length; i++) {
+            if (records[i] && records[i].id === snapshot.householdId) {
+                if (index !== -1) {
+                    throw new Error('Cannot restore household with duplicate id: ' +
+                        snapshot.householdId);
+                }
+                index = i;
+            }
+        }
+        if (index === -1) {
+            throw new Error('Household disappeared during transaction: ' +
+                snapshot.householdId);
+        }
+        records[index] = _cloneTransactionValue(snapshot.record);
+        _state.households = records;
+        _getMasterData().data.households = records;
+        _rebuildCaches();
+        markDirty();
+        return true;
+    }
+
     function _getAllHouseholdRecords(options) {
         options = options || {};
         var households = _state.households;
@@ -1554,6 +1607,8 @@
             replaceHouseholdAssignments: _replaceHouseholdAssignments,
 
             getHouseholdRecord: _getHouseholdRecord,
+            transactionSnapshotHousehold: _transactionSnapshotHousehold,
+            transactionRestoreHousehold: _transactionRestoreHousehold,
             getAllHouseholdRecords: _getAllHouseholdRecords,
             getPositionRecord: _getPositionRecord,
             getAllPositionRecords: _getAllPositionRecords,
