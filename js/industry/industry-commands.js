@@ -1124,25 +1124,95 @@
         if (!enterprise) return _fail('Enterprise not found.');
 
         var currentYear = window.getCurrentYear();
-
-        if (enterprise.ownerType === C.OWNER_TYPE.HOUSEHOLD && enterprise.ownerId) {
-            try {
-                _unregisterFromHousehold(
-                    enterprise.ownerId, enterprise.id, currentYear
-                );
-            } catch (e) {
-                return _fail(e && e.message
-                    ? e.message
-                    : 'Household unregistration failed.');
-            }
+        var householdOwned = enterprise.ownerType === C.OWNER_TYPE.HOUSEHOLD &&
+            _hasId(enterprise.ownerId);
+        var transaction = window.CrossDomainTransaction;
+        if (!transaction || typeof transaction.execute !== 'function' ||
+            typeof IS._transactionSnapshotEnterprise !== 'function' ||
+            typeof IS._transactionRestoreDeletedEnterprise !== 'function' ||
+            typeof IS._notifyTransactionEnterpriseDeleted !== 'function') {
+            return _fail('Cross-domain transaction support is unavailable.');
         }
 
-        try {
-            IS._removeEnterprise(enterpriseId);
-        } catch (e) {
-            return _fail(e && e.message
-                ? e.message
-                : 'IndustryState refused the delete.');
+        var householdState = window.HouseholdState;
+        var householdInternal = householdState && householdState._internal;
+        var householdCommands = householdOwned ? _requireHouseholdCommands() : null;
+        if (householdOwned && (!householdInternal ||
+            typeof householdInternal.transactionSnapshotHousehold !== 'function' ||
+            typeof householdInternal.transactionRestoreHousehold !== 'function')) {
+            return _fail('Household transaction support is unavailable.');
+        }
+
+        var participants = [];
+        if (householdOwned) {
+            participants.push({
+                name: 'household',
+                prepare: function() {
+                    var household = householdInternal.getHouseholdRecord(enterprise.ownerId);
+                    if (!household || !Array.isArray(household.enterprises)) {
+                        return { success: false, reason: 'Source Household has no valid Enterprise reverse index.' };
+                    }
+                    var count = household.enterprises.filter(function(id) {
+                        return id === enterpriseId;
+                    }).length;
+                    return count === 1
+                        ? true
+                        : { success: false, reason: 'Source Household must contain exactly one reference to this Enterprise.' };
+                },
+                snapshot: function() {
+                    return householdInternal.transactionSnapshotHousehold(enterprise.ownerId);
+                },
+                apply: function() {
+                    var result = householdCommands.removeEnterpriseFromHousehold(
+                        enterprise.ownerId, enterpriseId,
+                        { year: currentYear, deferCommit: true }
+                    );
+                    return result && result.success === true
+                        ? true
+                        : { success: false, reason: result && result.reason || 'Household unregistration failed.' };
+                },
+                rollback: function(snapshot) {
+                    return householdInternal.transactionRestoreHousehold(snapshot);
+                },
+                afterCommit: function() {
+                    var result = householdCommands.commitTransactionEnterpriseOwnership([{
+                        householdId: enterprise.ownerId, enterpriseId: enterpriseId,
+                        action: 'removed', year: currentYear
+                    }]);
+                    if (!result || result.success !== true) throw new Error(result && result.reason || 'Household notification failed.');
+                }
+            });
+        }
+
+        participants.push({
+            name: 'industry',
+            prepare: function() {
+                return IS.getEnterprise(enterpriseId)
+                    ? true
+                    : { success: false, reason: 'Enterprise no longer exists.' };
+            },
+            snapshot: function() {
+                return IS._transactionSnapshotEnterprise(enterpriseId);
+            },
+            apply: function() {
+                return IS._removeEnterprise(enterpriseId, { silent: true });
+            },
+            rollback: function(snapshot) {
+                return IS._transactionRestoreDeletedEnterprise(snapshot);
+            },
+            afterCommit: function() {
+                IS._notifyTransactionEnterpriseDeleted(enterpriseId);
+            }
+        });
+
+        var result = transaction.execute({ participants: participants });
+        if (!result || result.success !== true) {
+            return {
+                success: false,
+                code: result && result.code || 'TRANSACTION_FAILED',
+                reason: result && result.reason || 'Enterprise deletion transaction failed.',
+                rollbackErrors: result && result.rollbackErrors || []
+            };
         }
 
         _commit(C.EVENT.ENTERPRISE_DELETED, {
