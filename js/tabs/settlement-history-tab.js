@@ -501,7 +501,7 @@
             }
             if (action === 'export') {
                 event.preventDefault();
-                _exportHistory(locationId);
+                _exportHistory(container.__stCurrentLocationId);
                 return;
             }
             if (action === 'clear-filters') {
