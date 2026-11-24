@@ -391,24 +391,31 @@
             return { success: true, inserted: [] };
         }
 
+        var staged = [];
+        var seen = {};
         for (var v = 0; v < records.length; v++) {
-            if (!_isStructurallyValid(records[v])) {
+            var record = records[v];
+            if (!_isStructurallyValid(record)) {
                 return { success: false, reason: 'structurally_invalid_record_at_index:' + v };
             }
-            if (_byId.has(records[v].id)) {
-                return { success: false, reason: 'duplicate_id:' + records[v].id };
+            if (_byId.has(record.id) || seen[record.id]) {
+                return { success: false, reason: 'duplicate_id:' + record.id };
+            }
+            seen[record.id] = true;
+            try {
+                staged.push(_cloneRecord(record));
+            } catch (e) {
+                return { success: false, reason: 'invalid_record_at_index:' + v + ':' + e.message };
             }
         }
 
-        var inserted = [];
-        for (var i = 0; i < records.length; i++) {
-            var stored = _insert(records[i]);
-            if (!stored) {
-                return { success: false, reason: 'insert_failed_at_index:' + i };
-            }
-            inserted.push(stored.id);
+        // All records are cloned and validated before canonical state changes.
+        for (var i = 0; i < staged.length; i++) {
+            var stored = staged[i];
+            _byId.set(stored.id, stored);
+            _indexRecord(stored);
         }
-
+        var inserted = staged.map(function(record) { return record.id; });
         _markDirty();
         _notify('insert', inserted);
         return { success: true, inserted: inserted };
