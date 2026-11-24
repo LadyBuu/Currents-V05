@@ -2238,10 +2238,39 @@ Character Rank is not automatically required for Location leadership or
 religious offices. Only explicit Government position requirements and
 Government Type allowedRankIds impose rank restrictions.
 
-A character's rank changing after appointment is a separate lifecycle
-event. This rule validates eligibility at assignment and when the
-Government Type allowlist changes; ongoing revalidation after rank
-succession/change remains a separate integration task.
+A character's active rank may change after appointment through succession,
+deprecation, removal or explicit rank selection. Such a change does NOT
+automatically end the Location leadership appointment.
+
+GovernmentQueries.getLeaderEligibilityStatus(locationId) re-evaluates the
+current leader against the Location's current Government Type allowlist.
+GovernmentQueries.getCurrentLeader includes the resulting rankEligibility
+projection:
+
+  status: 'no-leader' | 'unrestricted' | 'eligible' | 'ineligible' | 'unknown'
+  eligible: true | false | null
+  warning: string | null
+
+An ineligible leader remains in office. The Location Leadership tab displays
+a warning explaining the mismatch, but the appointment and its history are
+preserved. This is intentional: a rank may be lost for reasons unrelated to
+the office, and the government may recognise an explicit exception based on
+the leader's competence or other circumstances. The warning is advisory,
+not an automatic removal or an assignment lock.
+
+An unknown status is also surfaced as a warning when the location, government
+type, rank allowlist or leader facts cannot be resolved. The application must
+not silently present an unverifiable appointment as eligible.
+
+Rank changes publish the existing CharacterState 'characterChanged' event.
+The Location Manager listens for that event and re-renders its Leadership tab
+when active, so the warning updates without requiring a manual refresh.
+
+The Location Leadership tab routes new appointments through
+GovernmentCommands.assignLeader, which enforces the Government Type allowlist.
+LocationCommands remains the canonical writer for Location-owned leader
+records, but direct calls to that lower-level writer are not a substitute for
+the Government policy boundary.
 
 ================================================================================
 END OF DOCUMENT
