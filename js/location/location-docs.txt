@@ -244,12 +244,16 @@ Terminology:
 --------------------------------------------------------------------------------
 
   js/households/household-commands.js
-    Provides: HouseholdCommands.clearLocationReferences(placeId).
+    Provides: HouseholdCommands.clearLocationReferencesMany(locationIds)
+             and the single-location clearLocationReferences(placeId)
+             compatibility wrapper.
     Used by: location-commands.js's deletePlace household cleanup
-             step. Resolved at CALL time via _householdCommands(),
-             which returns the module or null. If HouseholdCommands is
-             absent, the cleanup step reports status: 'unavailable' and
-             the delete proceeds.
+             step. The complete simple/cascade deletion set is passed
+             once, staged as copied Household records, and replaced in
+             one batch. A failed replacement attempts to restore the
+             original canonical Household array before reporting failure.
+             If the required batch command is unavailable, Location
+             deletion fails closed.
 
   Note: no other household file is used by the location subsystem.
         The location domain does not read household records; it only
