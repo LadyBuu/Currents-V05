@@ -2519,11 +2519,21 @@ transactionRestoreHousehold. It now treats false / { success: false } as a
 rollback error, causing CrossDomainTransaction to return ROLLBACK_FAILED
 rather than claiming a successful restoration.
 
-An isolated IndustryCommands.updateEnterprise failure-injection harness
-verified that an Industry apply failure combined with rejected Household
-restoration returns ROLLBACK_FAILED and releases the transaction lock.
+Isolated IndustryCommands failure-injection harnesses also exercised:
+  - updateEnterprise ownership transfer: Industry apply failure plus rejected
+    restoration of both Household snapshots returns ROLLBACK_FAILED.
+  - deleteEnterprise: Industry removal rejection after Household unregistration
+    does not publish events and reports rejected Household restoration.
+  - demolishEnterprise: Industry lifecycle update rejection after Household
+    unregistration does not publish events and reports rejected restoration.
+  - rebuildEnterprise: Industry lifecycle update rejection after Household
+    registration does not publish events and reports rejected restoration.
 
-These are isolated runtime harness tests, not browser end-to-end tests. The
+All tested paths release the CrossDomainTransaction active lock. These
+harnesses inject failures into the actual IndustryCommands entry points while
+using controlled domain dependencies. They are not browser end-to-end tests.
+Creation's Household/Industry partial-apply path still needs a dedicated
+runtime failure-injection case. The
 ordinary Industry lifecycle commands continue to leave durable persistence
 to their caller / batch boundary; only annual processing and explicit repair
 currently supply persistence directly to CrossDomainTransaction. A caller
