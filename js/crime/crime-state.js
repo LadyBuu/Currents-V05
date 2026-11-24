@@ -540,8 +540,28 @@
 
         for (var i = 0; i < savedCrimes.length; i++) {
             var crime = savedCrimes[i];
-            if (!crime || !crime.id) {
-                throw new Error('crime-state.js: crime record missing id at index ' + i);
+            if (!crime || typeof crime !== 'object' || typeof crime.id !== 'string' || !crime.id.trim()) {
+                throw new Error('crime-state.js: crime record missing valid id at index ' + i);
+            }
+            if (crime.year != null && (typeof crime.year !== 'number' || !isFinite(crime.year))) {
+                throw new Error('crime-state.js: crime ' + crime.id + ' has invalid year');
+            }
+            if (crime.solved != null && typeof crime.solved !== 'boolean') {
+                throw new Error('crime-state.js: crime ' + crime.id + ' has invalid solved flag');
+            }
+            if (crime.solved === true && (typeof crime.solvedAt !== 'number' || !isFinite(crime.solvedAt))) {
+                throw new Error('crime-state.js: solved crime ' + crime.id + ' requires a finite solvedAt');
+            }
+            if (crime.solved === false && crime.solvedAt != null) {
+                throw new Error('crime-state.js: unsolved crime ' + crime.id + ' cannot have solvedAt');
+            }
+            ['witnesses', 'evidence', 'violatedLaws'].forEach(function(key) {
+                if (crime[key] != null && !Array.isArray(crime[key])) {
+                    throw new Error('crime-state.js: crime ' + crime.id + ' has invalid ' + key);
+                }
+            });
+            if (crime.severity != null && (typeof crime.severity !== 'number' || !isFinite(crime.severity))) {
+                throw new Error('crime-state.js: crime ' + crime.id + ' has invalid severity');
             }
             if (!_indexCrimeInto(nextCrimes, crime)) {
                 throw new Error('crime-state.js: duplicate crime id: ' + crime.id);
@@ -550,8 +570,32 @@
 
         for (var j = 0; j < savedVendettas.length; j++) {
             var vendetta = savedVendettas[j];
-            if (!vendetta || !vendetta.id) {
-                throw new Error('crime-state.js: vendetta record missing id at index ' + j);
+            if (!vendetta || typeof vendetta !== 'object' || typeof vendetta.id !== 'string' || !vendetta.id.trim()) {
+                throw new Error('crime-state.js: vendetta record missing valid id at index ' + j);
+            }
+            if (vendetta.deaths != null && !Array.isArray(vendetta.deaths)) {
+                throw new Error('crime-state.js: vendetta ' + vendetta.id + ' has invalid deaths');
+            }
+            var validStatuses = C.VENDETTA_STATUS || {};
+            var statusValues = Object.keys(validStatuses).map(function(key) { return validStatuses[key]; });
+            if (vendetta.status != null && statusValues.indexOf(vendetta.status) === -1) {
+                throw new Error('crime-state.js: vendetta ' + vendetta.id + ' has invalid status');
+            }
+            ['startedYear', 'escalatedAt', 'resolvedAt'].forEach(function(key) {
+                if (vendetta[key] != null && (typeof vendetta[key] !== 'number' || !isFinite(vendetta[key]))) {
+                    throw new Error('crime-state.js: vendetta ' + vendetta.id + ' has invalid ' + key);
+                }
+            });
+            (vendetta.deaths || []).forEach(function(death, deathIndex) {
+                if (!death || typeof death !== 'object') {
+                    throw new Error('crime-state.js: vendetta ' + vendetta.id + ' has invalid death at index ' + deathIndex);
+                }
+                if (death.year != null && (typeof death.year !== 'number' || !isFinite(death.year))) {
+                    throw new Error('crime-state.js: vendetta ' + vendetta.id + ' has invalid death year');
+                }
+            });
+            if (vendetta.status === C.VENDETTA_STATUS.RESOLVED && vendetta.resolvedAt == null) {
+                throw new Error('crime-state.js: resolved vendetta ' + vendetta.id + ' requires resolvedAt');
             }
             if (!_indexVendettaInto(nextVendettas, vendetta)) {
                 throw new Error('crime-state.js: duplicate vendetta id: ' + vendetta.id);
@@ -576,49 +620,57 @@
     // =========================================================================
 
     function validateIntegrity() {
+        hydrateFromMasterData(false);
         var warnings = [];
+        var expectedCrimes = _emptyCrimeIndexes();
+        var expectedVendettas = _emptyVendettaIndexes();
 
-        // Crime invariants.
-        for (var i = 0; i < _state.crimes.all.length; i++) {
-            var c = _state.crimes.all[i];
-            if (c.solved === true && c.solvedAt == null) {
-                warnings.push('crime ' + c.id + ' is solved but has no solvedAt');
-            }
-            if (c.solved === false && c.solvedAt != null) {
-                warnings.push('crime ' + c.id + ' has solvedAt but is not solved');
-            }
-            if (c.year != null && c.solvedAt != null && c.solvedAt < c.year) {
-                warnings.push('crime ' + c.id + ' solved before recorded');
-            }
-        }
+        _state.crimes.all.forEach(function(record, index) {
+            if (!record || !record.id) warnings.push('crime at index ' + index + ' is missing id');
+            if (record.year != null && (typeof record.year !== 'number' || !isFinite(record.year))) warnings.push('crime ' + record.id + ' has invalid year');
+            if (record.solved === true && (typeof record.solvedAt !== 'number' || !isFinite(record.solvedAt))) warnings.push('crime ' + record.id + ' is solved but has invalid solvedAt');
+            if (record.solved === false && record.solvedAt != null) warnings.push('crime ' + record.id + ' has solvedAt but is not solved');
+            if (record.year != null && record.solvedAt != null && record.solvedAt < record.year) warnings.push('crime ' + record.id + ' solved before recorded');
+            if (!_indexCrimeInto(expectedCrimes, record)) warnings.push('crime index contains duplicate id ' + record.id);
+        });
 
-        // Vendetta invariants.
         var statuses = C.VENDETTA_STATUS;
         var threshold = C.VENDETTA_ESCALATION_THRESHOLD;
-        for (var j = 0; j < _state.vendettas.all.length; j++) {
-            var v = _state.vendettas.all[j];
+        _state.vendettas.all.forEach(function(v, index) {
+            if (!v || !v.id) warnings.push('vendetta at index ' + index + ' is missing id');
             var deaths = Array.isArray(v.deaths) ? v.deaths : [];
+            var allowed = Object.keys(statuses || {}).map(function(key) { return statuses[key]; });
+            if (v.status != null && allowed.indexOf(v.status) === -1) warnings.push('vendetta ' + v.id + ' has invalid status ' + v.status);
+            if (v.status === statuses.ESCALATED && deaths.length < threshold) warnings.push('vendetta ' + v.id + ' is escalated with ' + deaths.length + ' deaths (threshold ' + threshold + ')');
+            if (v.status === statuses.RESOLVED && (typeof v.resolvedAt !== 'number' || !isFinite(v.resolvedAt))) warnings.push('vendetta ' + v.id + ' is resolved but has invalid resolvedAt');
+            if (v.startedYear != null && (typeof v.startedYear !== 'number' || !isFinite(v.startedYear))) warnings.push('vendetta ' + v.id + ' has invalid startedYear');
+            deaths.forEach(function(death, deathIndex) {
+                if (!death || typeof death !== 'object') warnings.push('vendetta ' + v.id + ' has invalid death at index ' + deathIndex);
+                else if (death.year != null && (typeof death.year !== 'number' || !isFinite(death.year))) warnings.push('vendetta ' + v.id + ' has invalid death year at index ' + deathIndex);
+            });
+            if (v.householdAId && !window.getHouseholdById(v.householdAId)) warnings.push('vendetta ' + v.id + ' references missing householdA ' + v.householdAId);
+            if (v.householdBId && !window.getHouseholdById(v.householdBId)) warnings.push('vendetta ' + v.id + ' references missing householdB ' + v.householdBId);
+            if (!_indexVendettaInto(expectedVendettas, v)) warnings.push('vendetta index contains duplicate id ' + v.id);
+        });
 
-            if (v.status === statuses.ESCALATED && deaths.length < threshold) {
-                warnings.push(
-                    'vendetta ' + v.id + ' is escalated with ' + deaths.length +
-                    ' deaths (threshold ' + threshold + ')'
-                );
-            }
-            if (v.status === statuses.RESOLVED && v.resolvedAt == null) {
-                warnings.push('vendetta ' + v.id + ' is resolved but has no resolvedAt');
-            }
-            if (v.householdAId && !window.getHouseholdById(v.householdAId)) {
-                warnings.push('vendetta ' + v.id + ' references missing householdA ' + v.householdAId);
-            }
-            if (v.householdBId && !window.getHouseholdById(v.householdBId)) {
-                warnings.push('vendetta ' + v.id + ' references missing householdB ' + v.householdBId);
-            }
+        function compareMapSets(label, actual, expected) {
+            if (actual.size !== expected.size) warnings.push(label + ' index key count mismatch');
+            expected.forEach(function(ids, key) {
+                var got = actual.get(key);
+                if (!got || got.size !== ids.size || Array.from(ids).some(function(id) { return !got.has(id); })) {
+                    warnings.push(label + ' index mismatch for ' + key);
+                }
+            });
         }
+        compareMapSets('crime perpetrator', _state.crimes.byPerpetrator, expectedCrimes.byPerpetrator);
+        compareMapSets('crime victim', _state.crimes.byVictim, expectedCrimes.byVictim);
+        compareMapSets('crime type', _state.crimes.byType, expectedCrimes.byType);
+        compareMapSets('crime location', _state.crimes.byLocation, expectedCrimes.byLocation);
+        if (_state.crimes.unsolved.size !== expectedCrimes.unsolved.size || Array.from(expectedCrimes.unsolved).some(function(id) { return !_state.crimes.unsolved.has(id); })) warnings.push('crime unsolved index mismatch');
+        compareMapSets('vendetta household', _state.vendettas.byHousehold, expectedVendettas.byHousehold);
+        compareMapSets('vendetta character', _state.vendettas.byCharacter, expectedVendettas.byCharacter);
 
-        if (typeof console !== 'undefined' && console.warn && warnings.length > 0) {
-            console.warn('crime-state.js: integrity warnings', warnings);
-        }
+        if (typeof console !== 'undefined' && console.warn && warnings.length > 0) console.warn('crime-state.js: integrity warnings', warnings);
         return warnings;
     }
 
