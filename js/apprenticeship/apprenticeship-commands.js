@@ -1360,33 +1360,92 @@
     // =========================================================================
 
     function removeAllReferencesTo(characterId) {
-        if (typeof characterId !== 'string' || characterId.length === 0) {
+        if (typeof characterId !== 'string' || characterId.trim() === '') {
             return fail('MISSING_ID', 'characterId is required');
         }
 
-        var asMaster = _queries().getApprenticeshipsByMaster(characterId);
-        var asApprentice = _queries().getApprenticeshipsByApprentice(characterId);
-
-        var ids = {};
-        for (var i = 0; i < asMaster.length; i++) ids[asMaster[i].id] = true;
-        for (var j = 0; j < asApprentice.length; j++) ids[asApprentice[j].id] = true;
-
-        var removed = 0;
-        for (var id in ids) {
-            if (!Object.prototype.hasOwnProperty.call(ids, id)) continue;
-            var result = _professionalCommands().removeEdge(id);
-            if (result && result.success) removed++;
+        var asMaster;
+        var asApprentice;
+        try {
+            asMaster = _queries().getApprenticeshipsByMaster(characterId);
+            asApprentice = _queries().getApprenticeshipsByApprentice(characterId);
+        } catch (queryError) {
+            return fail('REFERENCE_LOOKUP_FAILED',
+                queryError && queryError.message ? queryError.message :
+                    'Could not read apprenticeship references.');
+        }
+        if (!Array.isArray(asMaster) || !Array.isArray(asApprentice)) {
+            return fail('REFERENCE_LOOKUP_FAILED',
+                'Apprenticeship reference queries returned invalid results.');
         }
 
-        if (removed > 0) {
+        var ids = Object.create(null);
+        var expected = [];
+        for (var i = 0; i < asMaster.length; i++) {
+            if (asMaster[i] && typeof asMaster[i].id === 'string' && asMaster[i].id) {
+                ids[asMaster[i].id] = true;
+            }
+        }
+        for (var j = 0; j < asApprentice.length; j++) {
+            if (asApprentice[j] && typeof asApprentice[j].id === 'string' && asApprentice[j].id) {
+                ids[asApprentice[j].id] = true;
+            }
+        }
+        expected = Object.keys(ids);
+
+        var removed = [];
+        var failed = [];
+        for (var k = 0; k < expected.length; k++) {
+            var id = expected[k];
+            var result;
+            try {
+                result = _professionalCommands().removeEdge(id);
+            } catch (removeError) {
+                result = {
+                    success: false,
+                    reason: removeError && removeError.message
+                        ? removeError.message : 'Removing relationship threw.'
+                };
+            }
+            if (result && result.success === true) {
+                removed.push(id);
+            } else {
+                failed.push({
+                    apprenticeshipId: id,
+                    reason: result && result.reason
+                        ? result.reason : 'Relationship removal failed.'
+                });
+            }
+        }
+
+        if (removed.length > 0) {
             _commitAndNotify({
                 action: 'removeAllReferencesTo',
                 characterId: characterId,
-                removed: removed
+                removed: removed.length,
+                failed: failed.length
             });
         }
 
-        return ok({ removed: removed });
+        if (failed.length > 0) {
+            return {
+                success: false,
+                code: 'PARTIAL_REFERENCE_CLEANUP',
+                reason: failed.length + ' apprenticeship reference(s) could not be removed.',
+                data: {
+                    characterId: characterId,
+                    expected: expected.length,
+                    removed: removed.length,
+                    failed: failed
+                }
+            };
+        }
+        return ok({
+            characterId: characterId,
+            expected: expected.length,
+            removed: removed.length,
+            failed: []
+        });
     }
 
     // =========================================================================
