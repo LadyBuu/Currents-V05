@@ -87,6 +87,100 @@
         return null;
     }
 
+    function _validateAllowedRankReferences(rankIds) {
+        if (rankIds == null) return null;
+        if (!Array.isArray(rankIds)) return 'Allowed ranks must be an array';
+        var rankQueries = window.RankQueries;
+        if (!rankQueries || typeof rankQueries.getRank !== 'function') {
+            return 'Rank queries are unavailable; cannot validate allowed ranks';
+        }
+        var seen = new Set();
+        for (var i = 0; i < rankIds.length; i++) {
+            var rankId = rankIds[i];
+            if (typeof rankId !== 'string' || rankId.length === 0) {
+                return 'Allowed rank IDs must be non-empty strings';
+            }
+            if (seen.has(rankId)) {
+                return 'Allowed ranks contains duplicate rank ID "' + rankId + '"';
+            }
+            seen.add(rankId);
+            try {
+                if (!rankQueries.getRank(rankId)) {
+                    return 'Allowed rank "' + rankId + '" does not exist';
+                }
+            } catch (e) {
+                return 'Allowed rank "' + rankId + '" could not be verified';
+            }
+        }
+        return null;
+    }
+
+    // Empty allowedRankIds means unrestricted leadership. A non-empty list
+    // is an exact allowlist of the active Character Rank, not a minimum rank.
+    function _validateLeaderRankForGovernmentType(placeId, governmentType) {
+        if (!governmentType ||
+            !Array.isArray(governmentType.allowedRankIds) ||
+            governmentType.allowedRankIds.length === 0) return null;
+
+        if (typeof _LocationQueries.getCurrentLeader !== 'function' ||
+            typeof _CharacterQueries.getCharacterFacts !== 'function') {
+            return 'Cannot verify the current leader against this government type';
+        }
+        var leader;
+        try {
+            leader = _LocationQueries.getCurrentLeader(placeId);
+        } catch (e) {
+            return 'Cannot verify the current leader against this government type';
+        }
+        if (!leader) return null;
+
+        var facts;
+        try {
+            facts = _CharacterQueries.getCharacterFacts(leader.characterId);
+        } catch (e) {
+            return 'Cannot verify the current leader rank';
+        }
+        if (!facts) return 'Cannot verify the current leader rank';
+        if (governmentType.allowedRankIds.indexOf(facts.activeRankId) === -1) {
+            return 'Current leader does not hold a rank allowed by government type "' +
+                governmentType.name + '"';
+        }
+        return null;
+    }
+
+    function _validateLeaderCandidateForPlace(placeId, characterId) {
+        if (typeof _LocationQueries.getPlaceSummary !== 'function') {
+            return 'Cannot verify the location government type';
+        }
+        var place;
+        try {
+            place = _LocationQueries.getPlaceSummary(placeId);
+        } catch (e) {
+            return 'Cannot verify the location government type';
+        }
+        if (!place) return 'Location not found';
+        if (!place.governmentTypeId) return null;
+
+        var governmentType = State._getGovernmentTypeCanonical(place.governmentTypeId);
+        if (!governmentType) {
+            return 'The location references a missing government type';
+        }
+        if (!Array.isArray(governmentType.allowedRankIds) ||
+            governmentType.allowedRankIds.length === 0) return null;
+
+        var facts;
+        try {
+            facts = _CharacterQueries.getCharacterFacts(characterId);
+        } catch (e) {
+            return 'Cannot verify the candidate leader rank';
+        }
+        if (!facts) return 'Cannot verify the candidate leader rank';
+        if (governmentType.allowedRankIds.indexOf(facts.activeRankId) === -1) {
+            return 'This government type does not allow the candidate leader rank';
+        }
+        return null;
+    }
+
     // ---- Commit tail ---------------------------------------------------------
     // State is always the source of truth for indexes after a mutation.
     // markDataDirty is idempotent; primitives already called it.
@@ -772,6 +866,9 @@
         var v = Rules.validateGovernmentType(data, false);
         if (!v.valid) return _fail(v.reason, C.CODES.VALIDATION);
 
+        var rankError = _validateAllowedRankReferences(data.allowedRankIds || []);
+        if (rankError) return _fail(rankError, C.CODES.VALIDATION);
+
         var type = {
             id: window.generateId('govtype'),
             name: data.name.trim(),
@@ -796,6 +893,45 @@
 
         var v = Rules.validateGovernmentType(updates, true);
         if (!v.valid) return _fail(v.reason, C.CODES.VALIDATION);
+
+        if (Object.prototype.hasOwnProperty.call(updates, 'allowedRankIds')) {
+            var rankError = _validateAllowedRankReferences(updates.allowedRankIds || []);
+            if (rankError) return _fail(rankError, C.CODES.VALIDATION);
+
+            var placesUsingType;
+            if (typeof _LocationQueries.getPlacesUsingGovernmentType !== 'function') {
+                return _fail(
+                    'Cannot verify current leaders: LocationQueries.getPlacesUsingGovernmentType unavailable',
+                    C.CODES.VALIDATION
+                );
+            }
+            try {
+                placesUsingType = _LocationQueries.getPlacesUsingGovernmentType(typeId);
+            } catch (e) {
+                return _fail('Cannot verify current leaders for this government type', C.CODES.VALIDATION);
+            }
+            if (!Array.isArray(placesUsingType)) {
+                return _fail('Cannot verify current leaders for this government type', C.CODES.VALIDATION);
+            }
+            var proposedType = {
+                id: type.id,
+                name: updates.name !== undefined ? updates.name : type.name,
+                allowedRankIds: updates.allowedRankIds || []
+            };
+            for (var p = 0; p < placesUsingType.length; p++) {
+                var leaderError = _validateLeaderRankForGovernmentType(
+                    placesUsingType[p].id,
+                    proposedType
+                );
+                if (leaderError) {
+                    return _fail(
+                        'Cannot update allowed ranks: ' + leaderError +
+                        ' (location ' + placesUsingType[p].id + ')',
+                        C.CODES.VALIDATION
+                    );
+                }
+            }
+        }
 
         State._updateGovernmentType(typeId, updates, C.ALLOWED_GOVERNMENT_TYPE_FIELDS);
         _commit(C.EVENTS.TYPE_UPDATED, { governmentTypeId: typeId });
@@ -831,6 +967,9 @@
     // ---- Leader / place government (delegated to Location) -------------------
 
     function assignLeader(placeId, characterId, startYear, title) {
+        var rankError = _validateLeaderCandidateForPlace(placeId, characterId);
+        if (rankError) return _fail(rankError, C.CODES.VALIDATION);
+
         var result = _LocationCommands.assignLeader(placeId, characterId, startYear, title);
         var wrapped = _wrapLocationResult(result);
 
@@ -878,8 +1017,15 @@
         if (!_LocationQueries.getPlaceSummary(placeId)) {
             return _fail('Location not found', C.CODES.NOT_FOUND);
         }
-        if (govTypeId && !State._getGovernmentTypeCanonical(govTypeId)) {
+        var nextGovernmentType = govTypeId
+            ? State._getGovernmentTypeCanonical(govTypeId)
+            : null;
+        if (govTypeId && !nextGovernmentType) {
             return _fail('Government type not found', C.CODES.NOT_FOUND);
+        }
+        if (nextGovernmentType) {
+            var leaderError = _validateLeaderRankForGovernmentType(placeId, nextGovernmentType);
+            if (leaderError) return _fail(leaderError, C.CODES.VALIDATION);
         }
         var result = _LocationCommands.assignGovernment(placeId, govTypeId, govStyle);
         var wrapped = _wrapLocationResult(result);
