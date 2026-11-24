@@ -329,6 +329,8 @@
         var failures = [];
         var skipped = 0;
         var attempted = 0;
+        var rollbackSnapshots = [];
+        var notificationQueue = [];
 
         for (var i = 0; i < list.length; i++) {
             if (!_isEligibleForProcessing(list[i])) {
@@ -337,13 +339,57 @@
 
             attempted++;
 
-            var result = processAnnualEnterprise(list[i].id, { persist: false });
+            // Capture exact pre-entry records so a failed final batch save
+            // can restore every successful Enterprise + Household pair.
+            var enterpriseSnapshot = null;
+            var householdSnapshot = null;
+            var enterpriseState = window.IndustryState;
+            var householdId = list[i].ownerType === 'household'
+                ? list[i].ownerId : null;
+            var householdInternal = window.HouseholdState &&
+                window.HouseholdState._internal;
+
+            try {
+                if (!enterpriseState ||
+                    typeof enterpriseState._transactionSnapshotEnterprise !== 'function') {
+                    throw new Error('Industry transaction snapshot support is unavailable.');
+                }
+                enterpriseSnapshot = enterpriseState._transactionSnapshotEnterprise(list[i].id);
+                if (!enterpriseSnapshot) throw new Error('Could not snapshot enterprise: ' + list[i].id);
+                if (householdId) {
+                    if (!householdInternal ||
+                        typeof householdInternal.transactionSnapshotHousehold !== 'function') {
+                        throw new Error('Household transaction snapshot support is unavailable.');
+                    }
+                    householdSnapshot = householdInternal.transactionSnapshotHousehold(householdId);
+                    if (!householdSnapshot) throw new Error('Could not snapshot household: ' + householdId);
+                }
+            } catch (snapshotError) {
+                failures.push({
+                    enterpriseId: list[i].id,
+                    enterpriseName: list[i].name,
+                    code: 'TRANSACTION_SNAPSHOT_FAILED',
+                    reason: snapshotError && snapshotError.message
+                        ? snapshotError.message : 'Could not capture batch rollback snapshot.',
+                    transaction: null
+                });
+                continue;
+            }
+
+            var result = processAnnualEnterprise(list[i].id, {
+                persist: false,
+                notificationQueue: notificationQueue
+            });
 
             if (result.success === true) {
                 if (result.skipped === true) {
                     skipped++;
                 } else {
                     results.push(result);
+                    rollbackSnapshots.push({
+                        enterprise: enterpriseSnapshot,
+                        household: householdSnapshot
+                    });
                 }
             } else {
                 // A persist failure inside a single-enterprise call with
@@ -366,21 +412,87 @@
         if (shouldPersist && results.length > 0) {
             persistResult = IC.persist();
             if (!persistResult || persistResult.success !== true) {
+                var rollbackErrors = [];
+                for (var rollbackIndex = rollbackSnapshots.length - 1;
+                    rollbackIndex >= 0; rollbackIndex--) {
+                    var snapshotPair = rollbackSnapshots[rollbackIndex];
+                    try {
+                        if (snapshotPair.household) {
+                            var restoredHousehold = householdInternal.transactionRestoreHousehold(
+                                snapshotPair.household
+                            );
+                            if (restoredHousehold === false) {
+                                throw new Error('Household restoration was rejected.');
+                            }
+                        }
+                    } catch (householdRollbackError) {
+                        rollbackErrors.push({
+                            domain: 'household',
+                            reason: householdRollbackError && householdRollbackError.message
+                                ? householdRollbackError.message : 'Household rollback failed.'
+                        });
+                    }
+                    try {
+                        var restoredEnterprise = enterpriseState._transactionRestoreEnterprise(
+                            snapshotPair.enterprise
+                        );
+                        if (restoredEnterprise === false ||
+                            (restoredEnterprise && restoredEnterprise.success === false)) {
+                            throw new Error(restoredEnterprise.reason || 'Enterprise restoration was rejected.');
+                        }
+                    } catch (enterpriseRollbackError) {
+                        rollbackErrors.push({
+                            domain: 'industry',
+                            reason: enterpriseRollbackError && enterpriseRollbackError.message
+                                ? enterpriseRollbackError.message : 'Enterprise rollback failed.'
+                        });
+                    }
+                }
+
+                // Best-effort durable compensation after restoring memory.
+                var compensation = IC.persist();
+                if (!compensation || compensation.success !== true) {
+                    rollbackErrors.push({
+                        domain: 'persistence',
+                        reason: compensation && compensation.reason
+                            ? compensation.reason : 'Could not persist restored batch state.'
+                    });
+                }
+
                 return {
                     success: false,
+                    code: rollbackErrors.length ? 'ROLLBACK_FAILED' : 'BATCH_PERSIST_FAILED',
+                    rolledBack: rollbackErrors.length === 0,
                     attempted: attempted,
                     processed: results.length,
                     skipped: skipped,
                     failed: failures.length,
-                    results: results,
+                    results: [],
                     failures: failures,
+                    rollbackErrors: rollbackErrors,
                     persist: {
                         success: false,
                         reason: persistResult && persistResult.reason
                             ? persistResult.reason
-                            : 'persist failed'
+                            : 'persist failed',
+                        compensation: compensation
                     }
                 };
+            }
+        }
+
+        // Notifications are deliberately withheld until the shared batch save
+        // succeeds. A subscriber must never observe state that is then rolled back.
+        var notificationErrors = [];
+        for (var notificationIndex = 0;
+            notificationIndex < notificationQueue.length; notificationIndex++) {
+            try {
+                notificationQueue[notificationIndex]();
+            } catch (notificationError) {
+                notificationErrors.push({
+                    reason: notificationError && notificationError.message
+                        ? notificationError.message : 'Post-commit notification failed.'
+                });
             }
         }
 
@@ -392,7 +504,8 @@
             failed: failures.length,
             results: results,
             failures: failures,
-            persist: persistResult
+            persist: persistResult,
+            notificationErrors: notificationErrors
         };
     }
 
