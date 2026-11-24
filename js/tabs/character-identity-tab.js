@@ -892,7 +892,10 @@
             );
 
             html += _field('Death Cause',
-                _deathCauseControlHtml(death.cause)
+                _deathCauseControlHtml(
+                    death.cause,
+                    death.isMurder === true || death.isExecution === true
+                )
             );
 
             html += _field('Death Cause Detail',
@@ -988,13 +991,15 @@
         return html + '</select>';
     }
 
-    function _deathCauseControlHtml(cause) {
+    function _deathCauseControlHtml(cause, locked) {
         if (typeof window.MortalityRules === 'undefined'
             || !window.MortalityRules
             || !window.MortalityRules.DEATH_CAUSE) {
             return '<input type="text" data-field="deathCause" ' +
                 'value="' + _esc(cause || '') + '" ' +
-                'class="character-tab-input" autocomplete="off">';
+                'class="character-tab-input" autocomplete="off"' +
+                (locked === true ? ' disabled title="Cause is constrained by the recorded murder or execution."' : '') +
+                '>';
         }
 
         var CAUSE = window.MortalityRules.DEATH_CAUSE;
@@ -1008,7 +1013,9 @@
             { id: CAUSE.UNKNOWN, label: 'Unknown' }
         ];
 
-        var html = '<select data-field="deathCause" class="character-tab-input">';
+        var html = '<select data-field="deathCause" class="character-tab-input"' +
+            (locked === true ? ' disabled title="Cause is constrained by the recorded murder or execution."' : '') +
+            '>';
         html += '<option value=""' + (_hasId(cause) ? '' : ' selected') +
             '>— Select —</option>';
         for (var i = 0; i < causes.length; i++) {
