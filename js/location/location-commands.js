@@ -1030,6 +1030,7 @@
             settlementsRemoved: settlementCleanup.removedLocationIds.length,
             governmentDepartmentsRemoved: governmentCleanup.removedDepartmentIds.length,
             religionAssociationsRemoved: religionCleanup.removedAssociations,
+            cultureAssociationsRemoved: cultureCleanup.removedAssociations,
             charactersReconciled: characterCleanup.reconciled,
             charactersFailed: characterCleanup.failed,
             charactersFailedIds: characterCleanup.failedIds,
