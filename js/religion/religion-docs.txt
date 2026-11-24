@@ -1898,3 +1898,18 @@ event only after the combined state mutation succeeds. This prevents a failure
 partway through a location deletion from leaving only some Religion records
 reconciled. If restoration hydration also fails, the returned failure includes
 the rollback error and the original canonical arrays are still restored.
+
+
+PART 35 — READ-ONLY LOCATION RECONCILIATION PLAN
+
+ReligionState._reconcileDeletedLocations(locationIds, { dryRun: true })
+builds the same Religion and worship-place candidate collections as the real
+operation and returns the planned Religion IDs, removed association count and
+worship-place unassignment count. It does not replace canonical collections,
+hydrate indexes, mark data dirty, or publish events. ReligionCommands exposes
+this through reconcileDeletedLocations(locationIds, { dryRun: true }).
+
+The normal call without dryRun retains the existing combined mutation and
+rollback behaviour. The plan is a preflight, not a transaction lock:
+concurrent changes or runtime failures can still invalidate the plan before
+the real operation executes.
