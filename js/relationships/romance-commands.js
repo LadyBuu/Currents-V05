@@ -631,7 +631,7 @@
         }
 
         return _ok({
-            relationship: oneNightProjection || endResult.relationship,
+            relationship: oneNightProjection || createResult.relationship,
             warnings: warnings
         });
     }
