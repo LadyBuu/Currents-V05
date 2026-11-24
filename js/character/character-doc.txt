@@ -1455,3 +1455,9 @@ The generic update API now rejects invalid values rather than relying on
 creation-time validation alone. Nested entry-level schemas for moves and
 history arrays, and full cross-record/cross-domain validation, remain
 separate audit work.
+
+BIRTH FAILURE HANDLING (UPDATED):
+- Religion inheritance is checked when the Religion domain is available. A failed assignment triggers child rollback and is surfaced to the caller.
+- Child rollback checks every parent-edge removal and the CharacterState soft-delete result. A failed compensation is returned as BIRTH_ROLLBACK_FAILED with the child id and per-step failures; callers must not treat that child as cleanly removed.
+- Multiple-birth processing no longer silently skips a failed fetus. It returns MULTIPLE_BIRTH_FAILED or PARTIAL_MULTIPLE_BIRTH with the already-recorded child ids and failed fetus index. Because each recordBirth call commits independently, earlier births remain recorded on a partial failure. Maternal death is not applied after a partial multiple-birth failure.
+- This is explicit partial-failure reporting and compensation, not a cross-domain atomic transaction.
