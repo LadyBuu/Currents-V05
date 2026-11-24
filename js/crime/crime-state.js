@@ -555,6 +555,9 @@
             if (crime.solved === false && crime.solvedAt != null) {
                 throw new Error('crime-state.js: unsolved crime ' + crime.id + ' cannot have solvedAt');
             }
+            if (crime.year != null && crime.solvedAt != null && crime.solvedAt < crime.year) {
+                throw new Error('crime-state.js: crime ' + crime.id + ' was solved before it was recorded');
+            }
             ['witnesses', 'evidence', 'violatedLaws'].forEach(function(key) {
                 if (crime[key] != null && !Array.isArray(crime[key])) {
                     throw new Error('crime-state.js: crime ' + crime.id + ' has invalid ' + key);
@@ -594,8 +597,11 @@
                     throw new Error('crime-state.js: vendetta ' + vendetta.id + ' has invalid death year');
                 }
             });
-            if (vendetta.status === C.VENDETTA_STATUS.RESOLVED && vendetta.resolvedAt == null) {
-                throw new Error('crime-state.js: resolved vendetta ' + vendetta.id + ' requires resolvedAt');
+            if (vendetta.status === C.VENDETTA_STATUS.RESOLVED && (typeof vendetta.resolvedAt !== 'number' || !isFinite(vendetta.resolvedAt))) {
+                throw new Error('crime-state.js: resolved vendetta ' + vendetta.id + ' requires a finite resolvedAt');
+            }
+            if (vendetta.status === C.VENDETTA_STATUS.ESCALATED && (typeof vendetta.escalatedAt !== 'number' || !isFinite(vendetta.escalatedAt))) {
+                throw new Error('crime-state.js: escalated vendetta ' + vendetta.id + ' requires a finite escalatedAt');
             }
             if (!_indexVendettaInto(nextVendettas, vendetta)) {
                 throw new Error('crime-state.js: duplicate vendetta id: ' + vendetta.id);
