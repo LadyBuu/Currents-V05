@@ -732,22 +732,33 @@
         }
     }
 
+    var _transactionChangeQueue = [];
+
     function _emitChange(action, characterIds, options) {
         options = options || {};
-        if (options.deferCommit === true) {
-            if (!window.CrossDomainTransaction || typeof window.CrossDomainTransaction.isActive !== 'function' || window.CrossDomainTransaction.isActive() !== true) throw new Error('Deferred Character notifications require an active CrossDomainTransaction.');
-            window.markDataDirty(); _invalidateAccessorCaches(); return;
+        var active = window.CrossDomainTransaction &&
+            typeof window.CrossDomainTransaction.isActive === 'function' &&
+            window.CrossDomainTransaction.isActive() === true;
+        if (options.deferCommit === true && !active) {
+            throw new Error('Deferred Character notifications require an active CrossDomainTransaction.');
         }
         window.markDataDirty();
         _invalidateAccessorCaches();
+        if (active || options.deferCommit === true) {
+            _transactionChangeQueue.push({
+                action: action,
+                characterIds: (characterIds || []).slice()
+            });
+            return;
+        }
+        _dispatchCharacterChange(action, characterIds);
+    }
 
+    function _dispatchCharacterChange(action, characterIds) {
         var dispatched = false;
         try {
             window.dispatchEvent(new CustomEvent('characterChanged', {
-                detail: {
-                    action: action,
-                    characterIds: characterIds || []
-                }
+                detail: { action: action, characterIds: characterIds || [] }
             }));
             dispatched = true;
         } catch (e) {
@@ -755,15 +766,32 @@
                 console.error('character-state.js: event dispatch failed:', e);
             }
         }
-
         if (!dispatched) {
             _handleCharacterChanged({
-                detail: {
-                    action: action,
-                    characterIds: characterIds || []
-                }
+                detail: { action: action, characterIds: characterIds || [] }
             });
         }
+    }
+
+    function _transactionFlushChanges() {
+        var pending = _transactionChangeQueue.slice();
+        _transactionChangeQueue = [];
+        if (!pending.length) return { success: true, count: 0 };
+        var ids = [];
+        var seen = Object.create(null);
+        pending.forEach(function (item) {
+            (item.characterIds || []).forEach(function (id) {
+                if (!seen[id]) { seen[id] = true; ids.push(id); }
+            });
+        });
+        _dispatchCharacterChange('bulk-updated', ids);
+        return { success: true, count: pending.length, characterIds: ids };
+    }
+
+    function _transactionDiscardChanges() {
+        var discarded = _transactionChangeQueue.length;
+        _transactionChangeQueue = [];
+        return { success: true, discarded: discarded };
     }
 
     // =========================================================================
@@ -1825,6 +1853,8 @@
     window.CharacterState = {
         _transactionSnapshotEducationFields: _transactionSnapshotEducationFields,
         _transactionRestoreEducationFields: _transactionRestoreEducationFields,
+        _transactionFlushChanges: _transactionFlushChanges,
+        _transactionDiscardChanges: _transactionDiscardChanges,
         _transactionSnapshotDeletedLocations: function () {
             var coll = _getCanonicalCollection();
             if (!coll.ok) throw new Error(coll.reason);
