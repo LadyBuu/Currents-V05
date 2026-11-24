@@ -830,6 +830,12 @@
 
         window.addEventListener('placeUpdated', refreshAfterLocationChange);
         window.addEventListener('placeDeleted', refreshAfterLocationChange);
+
+        // Current-leader rank eligibility is derived from live Character facts.
+        // Refresh the active Government view when a character's rank changes.
+        window.addEventListener('characterChanged', function () {
+            _renderActiveTab();
+        });
     }
 
     // =========================================================================
