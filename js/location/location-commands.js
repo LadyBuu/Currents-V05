@@ -1416,7 +1416,7 @@
         if (_hasBatchCharacterUpdate) {
             var batchResult;
             try {
-                batchResult = CC.updateCharacters(changes);
+                batchResult = CC.updateCharacters(changes, { deferCommit: options.deferCommit === true });
             } catch (e) {
                 batchResult = {
                     success: false,
