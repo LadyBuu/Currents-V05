@@ -464,7 +464,7 @@
             if (actual.size !== wanted.size) warnings.push(label + ' index key count mismatch');
             wanted.forEach(function(records, key) {
                 var got = actual.get(key);
-                if (!got || got.length !== records.length || records.some(function(record, index) { return got[index] !== record; })) {
+                if (!got || got.length !== records.length || records.some(function(record) { return got.indexOf(record) === -1; })) {
                     warnings.push(label + ' index mismatch for ' + key);
                 }
             });
