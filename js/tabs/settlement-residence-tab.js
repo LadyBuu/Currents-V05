@@ -187,7 +187,7 @@
         }
     }
 
-    function _writeFilterState(container.__stCurrentLocationId, state) {
+    function _writeFilterState(locationId, state) {
         if (!locationId) return;
         try {
             localStorage.setItem(
