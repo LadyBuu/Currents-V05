@@ -31,9 +31,10 @@
  *   style). This tab calls that command, then LocationCommands.persist().
  *
  *   place.leaderAssignments is also Location-owned. The tab reads it
- *   via getPlaceById (deep clone — safe to read) and writes only through
- *   LocationCommands.assignLeader / endLeaderTerm, then
- *   LocationCommands.persist() once per user action.
+ *   via getPlaceById (deep clone — safe to read). New appointments pass
+ *   through GovernmentCommands.assignLeader so Government rank policy is
+ *   enforced; term endings use LocationCommands.endLeaderTerm. Each action
+ *   persists once through the command layer that owns its policy boundary.
  *
  *   The tab never mutates the cloned place record. The tab never calls
  *   saveMasterData. Mutating the clone and calling saveMasterData was
@@ -127,13 +128,11 @@
     }
     if (!window.LocationCommands
         || typeof window.LocationCommands.assignGovernment !== 'function'
-        || typeof window.LocationCommands.assignLeader !== 'function'
         || typeof window.LocationCommands.endLeaderTerm !== 'function'
         || typeof window.LocationCommands.persist !== 'function') {
         throw new Error(
             'government-details-tab.js: location-commands.js must load first ' +
-            '(assignGovernment / assignLeader / endLeaderTerm / persist ' +
-            'must all be present).'
+            '(assignGovernment / endLeaderTerm / persist must be present).'
         );
     }
     if (typeof window.escapeHtml !== 'function') {
@@ -602,7 +601,7 @@
     }
 
     // =========================================================================
-    // 7. LEADER ACTIONS (through LocationCommands)
+    // 7. LEADER ACTIONS (GovernmentCommands for appointment, LocationCommands for term end)
     // =========================================================================
 
     function _assignLeaderToLocation(locationId) {
