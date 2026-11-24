@@ -2917,3 +2917,33 @@ PART 8 — KNOWN HAZARDS
 ================================================================================
 END OF DOCUMENT
 ================================================================================
+
+
+================================================================================
+PART 42: HOUSEHOLD LOCATION REFERENCES
+================================================================================
+
+Household location is an optional reference to a canonical Location place.
+The household command boundary validates this relationship on both creation
+and update.
+
+Rules:
+  - A missing, null, or empty locationId means the household is unassigned.
+    Both locationId and locationName are stored as null.
+  - A non-empty locationId must be a non-empty string and resolve through
+    LocationState.getPlaceById().
+  - A missing LocationState dependency, lookup exception, or unresolved ID
+    fails closed. The household is not created or changed.
+  - locationName is derived from the resolved place's displayName. A
+    caller-supplied locationName is never trusted as canonical data.
+  - Updating locationId to null/empty clears both fields.
+  - locationName without a locationId update does not independently change
+    the relationship; locationId owns the reference and its display name.
+
+No Location Type priority restriction is imposed on Household locations.
+The Household domain requires a real place reference, not a particular
+administrative or settlement level. This is separate from Settlement's
+own host-location eligibility rules.
+
+This validation is performed at command time. LocationState is resolved
+dynamically so script load order does not freeze dependency availability.
