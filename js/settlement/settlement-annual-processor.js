@@ -284,16 +284,15 @@
         var debtBefore = _isFiniteNumber(settlement.totalDebt) ? settlement.totalDebt : 0;
         var wealthBefore = _isFiniteNumber(settlement.wealth) ? settlement.wealth : 0;
 
-        var interest = 0;
-        if (debtBefore > 0) {
-            var rate = _getFinanceDefinitions().DEBT_INTEREST_RATE.annualFraction;
-            if (!_isFiniteNumber(rate)) {
-                throw new Error(
-                    'processSettlementAnnual: invalid debt interest rate ' +
-                    'definition (annualFraction is not a finite number).'
-                );
-            }
-            interest = Math.floor(debtBefore * rate);
+        var interest;
+        try {
+            interest = _getFinanceDefinitions().calculateAnnualInterest(debtBefore);
+        } catch (interestError) {
+            throw new Error(
+                'processSettlementAnnual: could not calculate annual interest: ' +
+                (interestError && interestError.message
+                    ? interestError.message : String(interestError))
+            );
         }
 
         var debtAfter = debtBefore + interest;
