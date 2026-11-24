@@ -1264,9 +1264,9 @@
                 typeof householdCommands.updateHousehold !== 'function' ||
                 typeof householdCommands.commitTransactionUpdate !== 'function' ||
                 !householdInternal ||
+                typeof householdInternal.getHouseholdRecord !== 'function' ||
                 typeof householdInternal.transactionSnapshotHousehold !== 'function' ||
-                typeof householdInternal.transactionRestoreHousehold !== 'function' ||
-                typeof window.getHouseholdById !== 'function') {
+                typeof householdInternal.transactionRestoreHousehold !== 'function') {
                 return _fail(
                     'Household transaction support is unavailable; annual processing was not applied.'
                 );
@@ -1275,7 +1275,7 @@
             participants.push({
                 name: 'household',
                 prepare: function () {
-                    var household = window.getHouseholdById(householdId);
+                    var household = householdInternal.getHouseholdRecord(householdId);
                     return household
                         ? { success: true }
                         : { success: false, reason: 'Household not found: ' + householdId };
@@ -1290,7 +1290,7 @@
                     return snapshot;
                 },
                 apply: function () {
-                    var household = window.getHouseholdById(householdId);
+                    var household = householdInternal.getHouseholdRecord(householdId);
                     if (!household) {
                         return { success: false, reason: 'Household disappeared before transfer.' };
                     }
