@@ -652,13 +652,12 @@ rules module.
       window.SettlementQueries,
       window.SettlementCommandCommit,
       window.SettlementFinanceDefinitions
-        (calculateAnnualInterest — applyInterest only).
+        (calculateAnnualInterest).
     Consumed by:
       [call] modals-settlement-economy.js (openRepayDebtModal,
              openBorrowModal),
-      [call] settlement-annual-processor.js (via
-             processSettlementAnnual — does NOT call applyInterest;
-             it does the interest math inline. See Notes below).
+      [call] settlement-annual-processor.js
+             (calculateAnnualInterest; combined annual commit).
     Notes:
       - processSettlementAnnual does NOT call
         SettlementDebtCommands.applyInterest because that command
@@ -730,7 +729,7 @@ rules module.
       window.SettlementQueries (getSettlementData,
         getAllSettlements),
       window.SettlementFinanceDefinitions
-        (DEBT_INTEREST_RATE.annualFraction),
+        (calculateAnnualInterest),
       window.SettlementCommandCommit.commit,
       window.getCurrentYear (when options.year is omitted),
       window.isValidYear (when options.year is supplied).
@@ -740,9 +739,10 @@ rules module.
       [call] Any caller that needs to advance settlement time
              directly (a settlement-bootstrap advance path).
     Notes:
-      - See settlement-debt-commands.js::applyInterest Notes for the
-        current duplication of the interest math between
-        processSettlementAnnual and applyInterest.
+      - Both annual and command-level interest use the shared
+        SettlementFinanceDefinitions.calculateAnnualInterest helper.
+        The annual processor combines interest, wealth, debt, and
+        annualHistory in one commit.
       - Per-settlement failure isolation: processAllSettlementsAnnual
         catches per-settlement throws and records them in
         result.failures; it does not abort the loop. This is
