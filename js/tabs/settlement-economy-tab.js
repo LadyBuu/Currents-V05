@@ -51,7 +51,7 @@
 
     function _getEconomyQueries()    { return window.SettlementEconomyQueries; }
     function _getEmploymentQueries() { return window.SettlementEmploymentQueries; }
-    function _getPlaceQueries()      { return window.PlaceQueries; }
+    function _getPlaceQueries() { return typeof window.getPlaceById === 'function' ? { getPlaceById: window.getPlaceById } : null; }
 
     function _placeName(locationId) {
         var pq = _getPlaceQueries();
