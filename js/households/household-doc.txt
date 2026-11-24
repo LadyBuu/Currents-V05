@@ -3073,5 +3073,38 @@ Historical householdHistory entries are deliberately not treated as
 current membership. Closed entries are valid history. This diagnostic
 checks only the active reverse-reference fields and Household.members[].
 
+
+================================================================================
+CROSS-DOMAIN TRANSACTION SUPPORT
+================================================================================
+
+HouseholdState._internal exposes transactionSnapshotHousehold(id) and
+transactionRestoreHousehold(snapshot) for coordinated synchronous
+cross-domain operations.
+
+The snapshot is a detached copy of the complete Household record because
+normal Household commands mutate canonical records in place. Restoration
+replaces that record, rebuilds HouseholdState indexes, marks data dirty,
+and invalidates accessor caches. It does not publish a domain event; the
+transaction coordinator owns notification timing.
+
+HouseholdCommands.updateHousehold(id, patch, { deferCommit: true }) performs
+the validated in-memory update without hydrating, marking dirty, invalidating
+caches or publishing events. This option is reserved for a coordinator that
+has already captured a complete snapshot and will either commit notifications
+or restore the snapshot.
+
+After a successful shared persistence operation,
+HouseholdCommands.commitTransactionUpdate(id, changedFields) performs the
+normal Household commit sequence and publishes one householdUpdated event.
+
+Current adopter:
+  Industry annual Enterprise + Household wealth transfer.
+
+Do not use these internal transaction hooks as ordinary UI command APIs.
+A caller that uses deferCommit without a coordinator can leave the Household
+record changed without normal dirty tracking or notification.
+
+
 No automatic repair is performed. Resolve each conflict explicitly through
 the relevant Household and Character commands after reviewing the record.
