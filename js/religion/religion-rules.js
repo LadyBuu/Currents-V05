@@ -309,10 +309,41 @@
             return _deny('Religion not found');
         }
 
-        var followers = _queries().getFollowerCount(religionId);
-        if (followers > 0) {
-            return _deny('Cannot delete religion with ' + followers +
-                         ' followers. Deprecate it instead.');
+        // getFollowerCount intentionally counts living followers only.
+        // Deletion must also preserve deceased followers and conversion
+        // history, otherwise historical character records become dangling.
+        var characters;
+        if (typeof window.getCharacters !== 'function') {
+            return _deny('Cannot verify character religion references: getCharacters unavailable');
+        }
+        characters = window.getCharacters();
+        if (!Array.isArray(characters)) {
+            return _deny('Cannot verify character religion references: character collection is invalid');
+        }
+        for (var characterIndex = 0; characterIndex < characters.length; characterIndex++) {
+            var character = characters[characterIndex];
+            if (!character) continue;
+            if (character.religionId === religionId) {
+                return _deny(
+                    'Cannot delete religion while character ' +
+                    (character.name || character.id || characterIndex) +
+                    ' still references it. Remove or change that affiliation first.'
+                );
+            }
+            var history = Array.isArray(character.religionHistory)
+                ? character.religionHistory : [];
+            for (var historyIndex = 0; historyIndex < history.length; historyIndex++) {
+                var historyEntry = history[historyIndex];
+                if (historyEntry &&
+                    (historyEntry.fromReligionId === religionId ||
+                     historyEntry.toReligionId === religionId)) {
+                    return _deny(
+                        'Cannot delete religion because character ' +
+                        (character.name || character.id || characterIndex) +
+                        ' has conversion history referencing it. Deprecate it instead.'
+                    );
+                }
+            }
         }
 
         var worshipPlaces = typeof _queries().getPlaceRecordsByReligion === 'function'
