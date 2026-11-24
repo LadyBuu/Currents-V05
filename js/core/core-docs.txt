@@ -1212,6 +1212,90 @@ PART 5 — KNOWN HAZARDS
     REQUIRED_MODULES list.
 
 
+
+================================================================================
+PART 6 — CROSS-DOMAIN TRANSACTIONS
+================================================================================
+
+cross-domain-transaction.js
+  Location: js/core/cross-domain-transaction.js
+  Scope: synchronous coordination of staged mutations across domain modules.
+  Exports: CrossDomainTransaction.execute(options), isActive().
+
+  Participant contract:
+    {
+      name: unique domain name,
+      prepare(context): optional read-only validation,
+      snapshot(context): exact pre-mutation snapshot,
+      apply(context): staged in-memory mutation; no event publication,
+      rollback(snapshot, context): restore canonical data, indexes and caches,
+      afterCommit(context): optional event publication / notifications
+    }
+
+  Transaction options:
+    {
+      id?: string,
+      context?: object,
+      participants: participant[],
+      persist?: function(context) -> true | { success: true }
+    }
+
+  Execution order:
+    1. Validate participant definitions.
+    2. Run every prepare hook before mutation.
+    3. Capture every participant snapshot before mutation.
+    4. Apply participants in declared order.
+    5. Run the persistence callback once after all applies.
+    6. Publish afterCommit hooks only after successful persistence.
+    7. On apply or persistence failure, rollback attempted participants in
+       reverse order. If persistence was attempted and failed, attempt one
+       compensating save of restored state.
+
+  Result codes:
+    COMMITTED
+    INVALID_TRANSACTION
+    TRANSACTION_IN_PROGRESS
+    PREPARATION_FAILED
+    TRANSACTION_SETUP_FAILED
+    TRANSACTION_ROLLED_BACK
+    ROLLBACK_FAILED
+
+  Contracts and limits:
+    - Synchronous only; nested/concurrent transactions are rejected.
+    - prepare and snapshot MUST NOT mutate.
+    - snapshot must capture every canonical record and derived index/cache
+      required for exact restoration.
+    - apply may partially mutate before throwing; its participant is still
+      rolled back.
+    - rollback runs in reverse apply order.
+    - afterCommit is notification-only. Its errors are returned separately
+      and do not undo a committed transaction.
+    - persistence is optional. The coordinator does not call markDataDirty;
+      domain participants must avoid triggering independent durable writes.
+    - A failed rollback returns ROLLBACK_FAILED. The caller must surface this
+      as an integrity incident, not as an ordinary rejected operation.
+    - This coordinator does not provide crash consistency, asynchronous
+      transactions, cross-tab locking, or rollback of external side effects.
+      Those require a durable journal or storage-layer transaction support.
+    - Do not migrate a domain operation to this service until its participant
+      can provide a complete snapshot and tested rollback implementation.
+
+
+  REQUIRED ADOPTION ORDER
+  -----------------------
+    1. Industry annual Enterprise + Household transfer.
+    2. Industry ownership changes and Household reverse-index updates.
+    3. Industry Location reconciliation.
+    4. Location deletion across Government, Religion, Culture, Character,
+       Household, Settlement, Industry and Location.
+    5. Other cross-domain operations as they are audited.
+
+  Until each participant has a tested rollback adapter, existing domain
+  command paths remain authoritative. The presence of this coordinator alone
+  does NOT make existing operations transactional.
+
+
+
 ================================================================================
 END OF DOCUMENTATION
 ================================================================================
