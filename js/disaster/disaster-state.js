@@ -376,8 +376,8 @@
             if (!record || typeof record !== 'object' || typeof record.id !== 'string' || !record.id.trim()) {
                 throw new Error('disaster-state.js: disaster record missing valid id at index ' + i);
             }
-            if (record.year != null && (typeof record.year !== 'number' || !isFinite(record.year))) {
-                throw new Error('disaster-state.js: disaster ' + record.id + ' has invalid year');
+            if (typeof record.year !== 'number' || !isFinite(record.year)) {
+                throw new Error('disaster-state.js: disaster ' + record.id + ' requires a finite numeric year');
             }
             if (!_indexInto(next, record)) {
                 throw new Error('disaster-state.js: duplicate disaster id: ' + record.id);
