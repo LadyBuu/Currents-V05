@@ -467,7 +467,12 @@
 
     var FIELD_VALIDATORS = {
         // Identity
-        'name': function (v) { return _validateOptionalString(v, 'name'); },
+        'name': function (v) {
+            if (typeof v !== 'string') {
+                return { ok: false, reason: 'name must be a non-empty string' };
+            }
+            return _validateName({ name: v });
+        },
         'surname': function (v) { return _validateOptionalString(v, 'surname'); },
         'surnameSource': function (v) {
             if (_isMissing(v)) return { ok: true, value: null };
