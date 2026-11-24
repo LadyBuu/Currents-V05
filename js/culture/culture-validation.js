@@ -170,14 +170,20 @@
             errors.push(field, field + ' must be an array of strings.');
             return;
         }
+        var seen = {};
         for (var i = 0; i < value.length; i++) {
-            if (typeof value[i] !== 'string' || value[i].length === 0) {
+            if (typeof value[i] !== 'string' || value[i].trim().length === 0) {
                 errors.push(
                     field,
                     field + ' must contain only non-empty strings (index ' + i + ').'
                 );
                 return;
             }
+            if (seen[value[i]]) {
+                errors.push(field, field + ' must not contain duplicate IDs ("' + value[i] + '").');
+                return;
+            }
+            seen[value[i]] = true;
         }
     }
 
