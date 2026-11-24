@@ -246,17 +246,31 @@
         options = options || {};
 
         var year = options.year !== undefined ? options.year : _getCurrentYear();
-        var maxConfrontations = (typeof options.maxConfrontations === 'number')
+        var requestedMax = (typeof options.maxConfrontations === 'number')
             ? options.maxConfrontations
+            : 50;
+        var maxConfrontations = isFinite(requestedMax)
+            ? Math.max(0, Math.floor(requestedMax))
             : 50;
 
         var rollFn = (typeof options.rollProvider === 'function')
             ? options.rollProvider
             : _roll;
 
-        var allChars = _getCharacters();
         var confrontations = [];
         var skipped = [];
+
+        if (maxConfrontations === 0) {
+            return _ok({
+                year: year,
+                confrontations: confrontations,
+                skipped: skipped,
+                confrontationCount: 0,
+                skippedCount: 0
+            });
+        }
+
+        var allChars = _getCharacters();
 
         for (var i = 0; i < allChars.length; i++) {
             var char = allChars[i];
