@@ -101,6 +101,17 @@
         return window.getCurrentYear();
     }
 
+    function _baseProsperity() {
+        var definitions = window.SettlementProsperityDefinitions;
+        if (!definitions || !_isFiniteNumber(definitions.BASE_PROSPERITY)) {
+            throw new Error(
+                'SettlementFactory: SettlementProsperityDefinitions.BASE_PROSPERITY ' +
+                'is unavailable or invalid.'
+            );
+        }
+        return definitions.BASE_PROSPERITY;
+    }
+
     // A Settlement is attached to an inhabited place, not an
     // administrative container. Location priorities 4 and 5 represent
     // towns/villages and localities/compounds respectively.
@@ -253,7 +264,7 @@
             // Neutral prosperity baseline input. MUST equal
             // SettlementProsperityDefinitions.BASE_PROSPERITY (currently
             // 50). See BASE PROSPERITY FIELD in the module header.
-            baseProsperity: 50,
+            baseProsperity: _baseProsperity(),
             disasterImpacts: [],
             crimeImpacts: [],
             civilLaws: [],
