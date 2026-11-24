@@ -224,10 +224,53 @@
      *   PERSIST CONTRACT.
      */
     function _markDirty() {
-        _syncToCanonical();
+        var masterData = window.masterData;
+        var hasCanonicalStore = !!(masterData && masterData.data);
+        var priorCrimes = hasCanonicalStore
+            ? _clone(Array.isArray(masterData.data.crimes) ? masterData.data.crimes : [])
+            : [];
+        var priorVendettas = hasCanonicalStore
+            ? _clone(Array.isArray(masterData.data.vendettas) ? masterData.data.vendettas : [])
+            : [];
 
-        if (typeof window.markDataDirty === 'function') {
-            try { window.markDataDirty(); } catch (e) { /* non-fatal */ }
+        try {
+            _syncToCanonical();
+
+            if (typeof window.markDataDirty !== 'function') {
+                throw new Error('crime-state.js requires markDataDirty');
+            }
+            window.markDataDirty();
+        } catch (error) {
+            // A failed commit tail must not leave the in-memory indexes ahead
+            // of canonical storage. Restore a detached snapshot and rebuild
+            // both indexes together before returning the failure to Commands.
+            if (hasCanonicalStore) {
+                masterData.data.crimes = priorCrimes;
+                masterData.data.vendettas = priorVendettas;
+
+                var restoredCrimes = _emptyCrimeIndexes();
+                var restoredVendettas = _emptyVendettaIndexes();
+                try {
+                    for (var i = 0; i < priorCrimes.length; i++) {
+                        _indexCrimeInto(restoredCrimes, priorCrimes[i]);
+                    }
+                    for (var j = 0; j < priorVendettas.length; j++) {
+                        _indexVendettaInto(restoredVendettas, priorVendettas[j]);
+                    }
+                    _state.crimes = restoredCrimes;
+                    _state.vendettas = restoredVendettas;
+                    _state.initialized = true;
+                } catch (restoreError) {
+                    _state.crimes = _emptyCrimeIndexes();
+                    _state.vendettas = _emptyVendettaIndexes();
+                    _state.initialized = false;
+                }
+            } else {
+                _state.crimes = _emptyCrimeIndexes();
+                _state.vendettas = _emptyVendettaIndexes();
+                _state.initialized = false;
+            }
+            throw error;
         }
     }
 
@@ -241,11 +284,17 @@
      * Not exported. Called only by _markDirty.
      */
     function _syncToCanonical() {
-        if (typeof window.masterData === 'undefined' || !window.masterData) {
-            return;
+        if (typeof window.masterData === 'undefined' || !window.masterData
+            || !window.masterData.data) {
+            throw new Error('crime-state.js cannot sync without masterData.data');
         }
-        if (!window.masterData.data) {
-            return;
+        if (!Array.isArray(window.masterData.data.crimes)
+            && window.masterData.data.crimes !== undefined) {
+            throw new Error('crime-state.js: masterData.data.crimes must be an array');
+        }
+        if (!Array.isArray(window.masterData.data.vendettas)
+            && window.masterData.data.vendettas !== undefined) {
+            throw new Error('crime-state.js: masterData.data.vendettas must be an array');
         }
 
         window.masterData.data.crimes = _state.crimes.all.slice();
