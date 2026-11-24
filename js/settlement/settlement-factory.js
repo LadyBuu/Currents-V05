@@ -225,6 +225,7 @@
             // 50). See BASE PROSPERITY FIELD in the module header.
             baseProsperity: 50,
             disasterImpacts: [],
+            crimeImpacts: [],
             civilLaws: [],
             demolitionHistory: []
         };
