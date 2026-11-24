@@ -466,6 +466,7 @@
     }
 
     function _wireActions(container, locationId) {
+        container.__stCurrentLocationId = locationId;
         if (container.__stOverviewWired) return;
         container.__stOverviewWired = true;
         container.addEventListener('click', function (event) {
@@ -473,7 +474,7 @@
             if (!btn || !container.contains(btn)) return;
             event.preventDefault();
             try {
-                _handleAction(btn.dataset.action, locationId);
+                _handleAction(btn.dataset.action, container.__stCurrentLocationId);
             } catch (err) {
                 if (typeof console !== 'undefined' && console.error) {
                     console.error(
