@@ -574,7 +574,6 @@
 
         var dispatches = [
             ['family', window.FamilyCommands, 'handleCharacterDeath', [characterId, year]],
-            ['relationships', window.RelationshipIntegrations, 'handleCharacterDeath', [characterId, { deathYear: year }]],
             ['ranks', window.RankIssues, 'handleCharacterDeath', [characterId, { deathYear: year }]]
         ];
         for (var i = 0; i < dispatches.length; i++) {
