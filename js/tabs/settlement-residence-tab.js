@@ -71,10 +71,6 @@
         if (typeof window.getPlaceById === 'function') {
             return window.getPlaceById(id);
         }
-        if (window.PlaceQueries
-            && typeof window.PlaceQueries.getPlaceById === 'function') {
-            return window.PlaceQueries.getPlaceById(id);
-        }
         return null;
     }
 
