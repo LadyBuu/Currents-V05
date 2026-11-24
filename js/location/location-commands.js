@@ -1328,6 +1328,7 @@
         // Collect the characters that need cleanup. Pure read pass —
         // no mutation, no commits, no invalidations.
         var changes = [];
+        try {
         for (var i = 0; i < allCharacters.length; i++) {
             var c = allCharacters[i];
             if (!c || !c.id) continue;
@@ -1372,6 +1373,17 @@
                     updates: updates
                 });
             }
+        }
+        } catch (planningError) {
+            return {
+                reconciled: 0,
+                failed: 1,
+                failedIds: [],
+                status: 'unavailable',
+                reason: planningError && planningError.message
+                    ? planningError.message
+                    : 'Character cleanup planning failed'
+            };
         }
 
         if (changes.length === 0) {
@@ -1430,15 +1442,6 @@
             return { reconciled: 0, failed: failed, failedIds: failedIds };
         }
 
-        return {
-            reconciled: 0,
-            failed: changes.length,
-            failedIds: failedIds,
-            status: 'failed',
-            reason: batchResult && batchResult.reason
-                ? batchResult.reason
-                : 'Character batch update failed'
-        };
     }
 
     /**
