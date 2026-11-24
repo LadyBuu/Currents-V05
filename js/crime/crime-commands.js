@@ -837,6 +837,7 @@
                 murderMethod: options.murderMethod || 'unknown'
             });
 
+            var partialFailures = [];
             var deathCascadeFailure = null;
             if (!killResult || killResult.success === false) {
                 if (killResult && killResult.deathRecorded === true) {
@@ -879,7 +880,6 @@
             }
 
             var vendettaResult = null;
-            var partialFailures = [];
             if (startVendetta) {
                 var victimHouseholdId = _getHouseholdIdForCharacter(victim);
                 var killerHouseholdId = _getHouseholdIdForCharacter(killer);
