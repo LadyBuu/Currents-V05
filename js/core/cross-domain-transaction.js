@@ -231,6 +231,12 @@
                     });
             }
 
+            // The transaction is fully committed once persistence succeeds.
+            // Close the active window before publishing notifications: listeners
+            // may synchronously rebuild state and re-render UI, and must observe
+            // the committed state as an ordinary post-transaction read.
+            _active = false;
+
             var notificationErrors = [];
             for (var n = 0; n < participants.length; n++) {
                 if (!participants[n].afterCommit) continue;
