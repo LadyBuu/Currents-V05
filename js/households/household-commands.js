@@ -649,7 +649,14 @@
         var live = window.CharacterState._getLiveCharacterForMutation(id);
         if (!live) return [];
         return Array.isArray(live.householdHistory)
-            ? live.householdHistory.slice()
+            ? live.householdHistory.map(function (entry) {
+                if (!entry || typeof entry !== 'object') return entry;
+                var copy = {};
+                Object.keys(entry).forEach(function (key) {
+                    copy[key] = entry[key];
+                });
+                return copy;
+            })
             : [];
     }
 
@@ -876,67 +883,141 @@
         var year = _resolveYear(options.year);
         if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
-        // Step 1: disassociate residence occupancy via ResidenceSystem.
-        //
-        // The residence cleanup requires ResidenceSystem. Resolved at
-        // CALL time via _residenceSystemAvailable(). Under the documented
-        // load order, ResidenceSystem is present by the time this runs.
-        // If it is genuinely absent, the household still gets deleted;
-        // the reverse index is left dangling and reported below.
+        // Preflight every cross-domain dependency before making any writes.
         var residenceId = household.residenceId || null;
         var unitNumber = household.residenceUnitNumber;
+        var rs = null;
         if (residenceId) {
             if (!_residenceSystemAvailable()) {
                 return _fail('RESIDENCE_SYSTEM_UNAVAILABLE',
-                    'Household occupies a residence but ResidenceSystem ' +
-                    'is not loaded');
+                    'Household occupies a residence but ResidenceSystem is not loaded');
             }
-            var rs = window.ResidenceSystem;
+            rs = window.ResidenceSystem;
+            if (unitNumber !== null && unitNumber !== undefined) {
+                if (typeof rs.markUnitVacant !== 'function') {
+                    return _fail('RESIDENCE_METHOD_UNAVAILABLE',
+                        'ResidenceSystem.markUnitVacant is required');
+                }
+            } else if (typeof rs.markResidenceVacant !== 'function') {
+                return _fail('RESIDENCE_METHOD_UNAVAILABLE',
+                    'ResidenceSystem.markResidenceVacant is required');
+            }
+        }
+
+        var memberSnapshots = [];
+        if (options.removeFromCharacters !== false
+            && Array.isArray(household.members)) {
+            for (var i = 0; i < household.members.length; i++) {
+                var memberId = household.members[i] && household.members[i].characterId;
+                if (!_hasId(memberId)) {
+                    return _fail('INVALID_MEMBER_REFERENCE',
+                        'Household contains a member without a characterId');
+                }
+                var liveCharacter = null;
+                try {
+                    liveCharacter = window.CharacterState
+                        && typeof window.CharacterState._getLiveCharacterForMutation === 'function'
+                        ? window.CharacterState._getLiveCharacterForMutation(memberId)
+                        : _getCharacterById(memberId);
+                } catch (e) { liveCharacter = null; }
+                if (!liveCharacter) {
+                    return _fail('CHARACTER_NOT_FOUND',
+                        'Cannot delete household: member Character ' + memberId + ' was not found');
+                }
+                var oldHistory = Array.isArray(liveCharacter.householdHistory)
+                    ? liveCharacter.householdHistory.map(function (entry) {
+                        if (!entry || typeof entry !== 'object') return entry;
+                        var copy = {};
+                        Object.keys(entry).forEach(function (key) { copy[key] = entry[key]; });
+                        return copy;
+                    })
+                    : [];
+                memberSnapshots.push({
+                    characterId: memberId,
+                    household: liveCharacter.household,
+                    householdId: liveCharacter.householdId,
+                    householdHistory: oldHistory
+                });
+            }
+        }
+
+        var clearedCharacters = [];
+        for (var c = 0; c < memberSnapshots.length; c++) {
+            var snapshot = memberSnapshots[c];
+            var clearResult = _clearCharacterMembership(
+                snapshot.characterId, householdId, year, 'Household deleted'
+            );
+            if (!clearResult.success) {
+                var rollbackFailures = [];
+                for (var rb = clearedCharacters.length - 1; rb >= 0; rb--) {
+                    var prior = clearedCharacters[rb];
+                    var restore = _cc.updateCharacterFields(prior.characterId, {
+                        household: prior.household,
+                        householdId: prior.householdId,
+                        householdHistory: prior.householdHistory
+                    });
+                    if (!restore || restore.success !== true) {
+                        rollbackFailures.push(prior.characterId);
+                    }
+                }
+                return _fail(
+                    rollbackFailures.length ? 'ROLLBACK_FAILED' : clearResult.code,
+                    rollbackFailures.length
+                        ? 'Character cleanup failed and some earlier Character references could not be restored'
+                        : clearResult.reason,
+                    { rollbackFailures: rollbackFailures }
+                );
+            }
+            clearedCharacters.push(snapshot);
+        }
+
+        // ResidenceSystem must report failure before changing occupancy if its
+        // Household reverse-index write cannot be completed.
+        if (residenceId) {
             var vacateResult = null;
             try {
-                if (unitNumber !== null && unitNumber !== undefined
-                    && typeof rs.markUnitVacant === 'function') {
+                if (unitNumber !== null && unitNumber !== undefined) {
                     vacateResult = rs.markUnitVacant(
                         residenceId, unitNumber, 'Household deleted', year
                     );
-                } else if (typeof rs.markResidenceVacant === 'function') {
+                } else {
                     vacateResult = rs.markResidenceVacant(
                         residenceId, 'Household deleted', year
                     );
                 }
-            } catch (e) { vacateResult = null; }
-            if (!vacateResult || vacateResult.success === false) {
-                if (typeof window.logEvent === 'function') {
-                    window.logEvent('household', 'Delete Residence Cleanup Failed',
-                        'Could not clear residence occupancy for ' +
-                        household.name + ' (' + residenceId + ')', []);
-                }
+            } catch (e) {
+                vacateResult = _fail('RESIDENCE_CLEANUP_FAILED',
+                    e && e.message ? e.message : 'Residence cleanup threw');
             }
-        }
-
-        // Step 2: clear character reverse index via CharacterCommands.
-        if (options.removeFromCharacters !== false
-            && Array.isArray(household.members)) {
-            for (var i = 0; i < household.members.length; i++) {
-                var memberId = household.members[i].characterId;
-                var clearResult = _clearCharacterMembership(
-                    memberId, householdId, year, 'Household deleted'
-                );
-                if (!clearResult.success) {
-                    if (typeof console !== 'undefined' && console.warn) {
-                        console.warn(
-                            'HouseholdCommands.deleteHousehold: could not ' +
-                            'clear reverse index for ' + memberId + ': ' +
-                            clearResult.reason
-                        );
+            if (!vacateResult || vacateResult.success !== true
+                || (vacateResult.data && vacateResult.data.reverseIndexFailed)) {
+                var characterRollbackFailures = [];
+                for (var cr = clearedCharacters.length - 1; cr >= 0; cr--) {
+                    var original = clearedCharacters[cr];
+                    var restored = _cc.updateCharacterFields(original.characterId, {
+                        household: original.household,
+                        householdId: original.householdId,
+                        householdHistory: original.householdHistory
+                    });
+                    if (!restored || restored.success !== true) {
+                        characterRollbackFailures.push(original.characterId);
                     }
                 }
+                return _fail(
+                    characterRollbackFailures.length ? 'ROLLBACK_FAILED' :
+                        (vacateResult && vacateResult.code
+                            ? vacateResult.code : 'RESIDENCE_CLEANUP_FAILED'),
+                    characterRollbackFailures.length
+                        ? 'Residence cleanup failed and some Character references could not be restored'
+                        : (vacateResult && vacateResult.reason
+                            ? vacateResult.reason
+                            : 'Could not clear residence occupancy'),
+                    { rollbackFailures: characterRollbackFailures }
+                );
             }
         }
 
-        // Step 3: remove the household record.
         _removeHouseholdRecord(householdId);
-
         _commit('householdDeleted', {
             householdId: householdId,
             name: household.name,
@@ -1492,8 +1573,10 @@
 
         var character = null;
         try {
-            character = window.getCharacterById
-                ? window.getCharacterById(characterId) : null;
+            character = window.CharacterState
+                && typeof window.CharacterState._getLiveCharacterForMutation === 'function'
+                ? window.CharacterState._getLiveCharacterForMutation(characterId)
+                : (window.getCharacterById ? window.getCharacterById(characterId) : null);
         } catch (e) { character = null; }
         if (!character) {
             return _fail('CHARACTER_NOT_FOUND', 'Character not found');
@@ -1503,16 +1586,18 @@
                 'Cannot transfer deceased character');
         }
 
-        // Find current household.
         var all = _internal.getAllHouseholdRecords({ includeDeprecated: true });
         var current = null;
         var currentIdx = -1;
         for (var i = 0; i < all.length; i++) {
             var idx = _findMember(all[i], characterId);
             if (idx !== -1) {
+                if (current) {
+                    return _fail('MULTIPLE_CURRENT_HOUSEHOLDS',
+                        'Character is listed in more than one household; repair membership before transferring');
+                }
                 current = all[i];
                 currentIdx = idx;
-                break;
             }
         }
 
@@ -1544,30 +1629,70 @@
             carriedRole = carriedType === 'family' ? 'Family Member' : 'Staff';
         }
 
-        var fromHouseholdId = null;
-        var oldHeadSuccessor = null;
+        function cloneMembers(householdRecord) {
+            return Array.isArray(householdRecord.members)
+                ? householdRecord.members.map(function (entry) {
+                    if (!entry || typeof entry !== 'object') return entry;
+                    var copy = {};
+                    Object.keys(entry).forEach(function (key) { copy[key] = entry[key]; });
+                    return copy;
+                })
+                : [];
+        }
+        var currentSnapshot = current ? {
+            members: cloneMembers(current),
+            updatedAt: current.updatedAt
+        } : null;
+        var targetSnapshot = {
+            members: cloneMembers(target),
+            updatedAt: target.updatedAt
+        };
+        var characterSnapshot = {
+            household: character.household,
+            householdId: character.householdId,
+            householdHistory: Array.isArray(character.householdHistory)
+                ? character.householdHistory.map(function (entry) {
+                    if (!entry || typeof entry !== 'object') return entry;
+                    var copy = {};
+                    Object.keys(entry).forEach(function (key) { copy[key] = entry[key]; });
+                    return copy;
+                })
+                : []
+        };
 
+        function restoreHouseholds() {
+            if (current) {
+                current.members = currentSnapshot.members;
+                current.updatedAt = currentSnapshot.updatedAt;
+            }
+            target.members = targetSnapshot.members;
+            target.updatedAt = targetSnapshot.updatedAt;
+        }
+        function restoreCharacter() {
+            var result = _cc.updateCharacterFields(characterId, {
+                household: characterSnapshot.household,
+                householdId: characterSnapshot.householdId,
+                householdHistory: characterSnapshot.householdHistory
+            });
+            return !!(result && result.success === true);
+        }
+
+        var fromHouseholdId = current ? current.id : null;
         if (current) {
-            fromHouseholdId = current.id;
             var wasHead = current.members[currentIdx].isHead === true;
             current.members.splice(currentIdx, 1);
             current.updatedAt = Date.now();
-
             if (wasHead) {
-                oldHeadSuccessor = _rules.pickSuccessor(
-                    current, _getCharacterById
-                );
-                if (oldHeadSuccessor) {
+                var successor = _rules.pickSuccessor(current, _getCharacterById);
+                if (successor) {
                     _rules.applyHeadChange(
-                        current, oldHeadSuccessor, year,
-                        'Succession after transfer'
+                        current, successor, year, 'Succession after transfer'
                     );
                 }
             }
         }
 
         if (carriedIsHead) _clearOtherHeads(target);
-
         if (!Array.isArray(target.members)) target.members = [];
         target.members.push({
             characterId: characterId,
@@ -1583,49 +1708,34 @@
         });
         target.updatedAt = Date.now();
 
-        // Write the character reverse index. If this fails, roll back both
-        // the removal from the source and the addition to the target.
-        var clearResult = _clearCharacterMembership(
-            characterId,
-            fromHouseholdId || '',
-            year,
-            reason
-        );
-        if (!clearResult.success) {
-            // Roll back.
-            if (current && fromHouseholdId) {
-                current.members.splice(currentIdx, 0, {
-                    characterId: characterId,
-                    characterName: (character.name || '') +
-                        (character.surname ? ' ' + character.surname : ''),
-                    type: carriedType,
-                    departmentId: carriedDepartmentId,
-                    role: carriedRole,
-                    isHead: false,
-                    joinedYear: year,
-                    headSince: null,
-                    notes: ''
-                });
+        if (current) {
+            var clearResult = _clearCharacterMembership(
+                characterId, fromHouseholdId, year, reason
+            );
+            if (!clearResult.success) {
+                restoreHouseholds();
+                return _fail(clearResult.code, clearResult.reason);
             }
-            var tIdx = _findMember(target, characterId);
-            if (tIdx !== -1) target.members.splice(tIdx, 1);
-            return _fail(clearResult.code, clearResult.reason);
         }
 
         var writeResult = _writeCharacterMembership(
-            characterId,
-            targetHouseholdId,
-            target.name,
-            year,
-            carriedRole,
-            carriedIsHead
+            characterId, targetHouseholdId, target.name, year,
+            carriedRole, carriedIsHead
         );
         if (!writeResult.success) {
-            return _fail(writeResult.code, writeResult.reason, {
-                partial: true,
-                fromHouseholdId: fromHouseholdId,
-                toHouseholdId: targetHouseholdId
-            });
+            restoreHouseholds();
+            var characterRestored = restoreCharacter();
+            return _fail(
+                characterRestored ? writeResult.code : 'ROLLBACK_FAILED',
+                characterRestored
+                    ? writeResult.reason
+                    : 'Character membership write failed and the original Character reference could not be restored',
+                {
+                    fromHouseholdId: fromHouseholdId,
+                    toHouseholdId: targetHouseholdId,
+                    rollbackFailed: !characterRestored
+                }
+            );
         }
 
         _commit('householdMemberTransferred', {
