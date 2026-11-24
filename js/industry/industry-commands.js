@@ -826,6 +826,7 @@
                 return true;
             },
             rollback: function() {
+                if (!IS.getEnterprise(candidate.id)) return true;
                 return IS._removeEnterprise(candidate.id, { silent: true });
             },
             afterCommit: function() {
@@ -1199,6 +1200,7 @@
                 return IS._removeEnterprise(enterpriseId, { silent: true });
             },
             rollback: function(snapshot) {
+                if (IS.getEnterprise(enterpriseId)) return true;
                 return IS._transactionRestoreDeletedEnterprise(snapshot);
             },
             afterCommit: function() {
