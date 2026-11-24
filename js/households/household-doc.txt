@@ -2923,6 +2923,55 @@ PART 8 — KNOWN HAZARDS
       cross-domain storage transaction.
 
 
+
+================================================================================
+PART 44: RESIDENCE / HOUSEHOLD OCCUPANCY INTEGRITY
+================================================================================
+
+HouseholdState._diagnostics.getIntegrityReport() now checks the full
+Household ↔ Residence association using the canonical
+masterData.data.households and masterData.data.residences arrays.
+
+The check is read-only. It does not repair conflicting records.
+
+Reported issues:
+  - householdsWithMissingResidence:
+      household.residenceId points to no Residence.
+  - householdsWithMissingResidenceUnit:
+      the Household has no matching active unit occupancy, or an active
+      unit points to the Household while its reverse Residence reference
+      is missing.
+  - householdsWithMismatchedResidenceUnit:
+      the Household's residenceUnitNumber does not match the active unit
+      that points back to it.
+  - householdsOccupyingMultipleUnits:
+      the same Household is referenced by more than one active unit,
+      including across different Residences.
+  - residencesWithOrphanHouseholdOccupancy:
+      an active unit points to a Household that does not exist.
+  - residenceUnitsWithStaleHouseholdReference:
+      a vacant or demolished unit still retains householdId.
+  - residenceUnitsWithMissingHousehold:
+      a unit explicitly marked occupied (isVacant === false) has no
+      householdId.
+  - residenceReverseIndexAvailable:
+      false unless both canonical collections were available.
+
+Vacant and demolished units are not treated as active occupancy. A
+householdId retained on either is reported separately as stale rather
+than counted as an occupied unit. A unit with isVacant omitted is not
+assumed to be vacant; only explicit isVacant === true ends occupancy.
+A unit explicitly marked occupied without householdId is reported.
+
+The check does not depend on ResidenceSystem being loaded. It reads the
+canonical arrays directly, so a missing query module cannot make an
+incomplete check appear successful. The overall Household integrity
+report remains not-ok if the Residence collections are unavailable.
+
+Resolve reported conflicts through the relevant Household and Residence
+commands after reviewing both records. Do not manually clear one side
+without checking occupancy and association history.
+
 ================================================================================
 END OF DOCUMENT
 ================================================================================
