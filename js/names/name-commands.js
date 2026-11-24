@@ -665,7 +665,27 @@
         if (!_hasId(cultureId)) {
             return { ok: false, reason: context + ': cultureId is required.' };
         }
-        return { ok: true };
+        var cq = window.CultureQueries;
+        if (!cq || typeof cq.getCultureById !== 'function') {
+            return {
+                ok: false,
+                reason: context + ': CultureQueries.getCultureById is required to validate the culture reference.'
+            };
+        }
+        var culture;
+        try {
+            culture = cq.getCultureById(cultureId);
+        } catch (e) {
+            return {
+                ok: false,
+                reason: context + ': could not verify culture "' + cultureId + '": ' +
+                    (e && e.message ? e.message : String(e))
+            };
+        }
+        if (!culture) {
+            return { ok: false, reason: context + ': culture not found: ' + cultureId };
+        }
+        return { ok: true, culture: culture };
     }
 
     function _requireNameType(type, context) {
