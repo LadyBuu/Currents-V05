@@ -825,26 +825,86 @@
             return warnings;
         }
 
-        var departments = d.governmentDepartments || [];
-        var deptIds = new Set();
+        if (d.governmentDepartments != null && !Array.isArray(d.governmentDepartments)) {
+            warnings.push('governmentDepartments is not an array');
+        }
+        if (d.governmentTypes != null && !Array.isArray(d.governmentTypes)) {
+            warnings.push('governmentTypes is not an array');
+        }
+        var departments = Array.isArray(d.governmentDepartments)
+            ? d.governmentDepartments : [];
+        var types = Array.isArray(d.governmentTypes) ? d.governmentTypes : [];
+        var deptById = new Map();
+        var positionByKey = new Map();
+        var positionIds = new Set();
+        var assignmentIds = new Set();
+        var locationQueries = window.LocationQueries;
+        var canCheckLocations = !!(locationQueries &&
+            typeof locationQueries.getPlaceSummary === 'function');
+        var characterQueries = window.CharacterQueries;
+        var canCheckCharacters = !!(characterQueries &&
+            typeof characterQueries.getCharacterById === 'function');
+
+        if (departments.length > 0 && !canCheckLocations) {
+            warnings.push('department location references could not be validated: LocationQueries.getPlaceSummary unavailable');
+        }
+
         for (var i = 0; i < departments.length; i++) {
             var dept = departments[i];
-            if (!dept.id) { warnings.push('department missing id at index ' + i); continue; }
-            if (deptIds.has(dept.id)) warnings.push('duplicate department id: ' + dept.id);
-            deptIds.add(dept.id);
-
-            if (!dept.locationId) warnings.push('department ' + dept.id + ' has no locationId');
-            if (dept.parentDepartmentId && !_state.departmentsById.has(dept.parentDepartmentId)) {
-                warnings.push('department ' + dept.id + ' references missing parent ' + dept.parentDepartmentId);
+            if (!dept || typeof dept !== 'object') {
+                warnings.push('malformed department record at index ' + i);
+                continue;
+            }
+            if (!dept.id) {
+                warnings.push('department missing id at index ' + i);
+                continue;
+            }
+            if (deptById.has(dept.id)) {
+                warnings.push('duplicate department id: ' + dept.id);
+            } else {
+                deptById.set(dept.id, dept);
             }
 
-            var positions = dept.positions || [];
-            var positionIds = new Set();
+            if (!dept.locationId) {
+                warnings.push('department ' + dept.id + ' has no locationId');
+            } else if (canCheckLocations) {
+                try {
+                    if (!locationQueries.getPlaceSummary(dept.locationId)) {
+                        warnings.push('department ' + dept.id + ' references missing location ' + dept.locationId);
+                    }
+                } catch (locationError) {
+                    warnings.push('department ' + dept.id + ' location reference could not be verified');
+                }
+            }
+
+            if (dept.parentDepartmentId && !deptById.has(dept.parentDepartmentId)) {
+                // Forward references are checked after the complete map is built.
+            }
+
+            if (dept.positions != null && !Array.isArray(dept.positions)) {
+                warnings.push('department ' + dept.id + ' positions is not an array');
+            }
+            var positions = Array.isArray(dept.positions) ? dept.positions : [];
             for (var p = 0; p < positions.length; p++) {
                 var pos = positions[p];
-                if (!pos.id) { warnings.push('position in dept ' + dept.id + ' missing id'); continue; }
-                if (positionIds.has(pos.id)) warnings.push('duplicate position id in dept ' + dept.id + ': ' + pos.id);
-                positionIds.add(pos.id);
+                if (!pos || typeof pos !== 'object') {
+                    warnings.push('malformed position in department ' + dept.id + ' at index ' + p);
+                    continue;
+                }
+                if (!pos.id) {
+                    warnings.push('position in department ' + dept.id + ' missing id');
+                    continue;
+                }
+                if (positionIds.has(pos.id)) {
+                    warnings.push('duplicate position id across Government: ' + pos.id);
+                } else {
+                    positionIds.add(pos.id);
+                }
+                positionByKey.set(dept.id + '::' + pos.id, {
+                    departmentId: dept.id,
+                    position: pos
+                });
+
                 if (pos.requiredRankId) {
                     var rankQueries = window.RankQueries;
                     if (!rankQueries || typeof rankQueries.getRank !== 'function') {
@@ -854,25 +914,44 @@
                             if (!rankQueries.getRank(pos.requiredRankId)) {
                                 warnings.push('position ' + pos.id + ' references missing requiredRankId ' + pos.requiredRankId);
                             }
-                        } catch (e) {
+                        } catch (rankError) {
                             warnings.push('position ' + pos.id + ' requiredRankId could not be validated: RankQueries failed');
                         }
                     }
                 }
-                if (pos.parentPositionId && !positionIds.has(pos.parentPositionId)) {
-                    // parent may be defined later; only flag dangling on final pass
-                }
             }
 
-            var assignments = dept.assignments || [];
-            var assignmentIds = new Set();
+            if (dept.assignments != null && !Array.isArray(dept.assignments)) {
+                warnings.push('department ' + dept.id + ' assignments is not an array');
+            }
+            var assignments = Array.isArray(dept.assignments) ? dept.assignments : [];
             for (var a = 0; a < assignments.length; a++) {
                 var asg = assignments[a];
-                if (!asg.id) { warnings.push('assignment in dept ' + dept.id + ' missing id'); continue; }
-                if (assignmentIds.has(asg.id)) warnings.push('duplicate assignment id in dept ' + dept.id + ': ' + asg.id);
+                if (!asg || typeof asg !== 'object') {
+                    warnings.push('malformed assignment in department ' + dept.id + ' at index ' + a);
+                    continue;
+                }
+                if (!asg.id) {
+                    warnings.push('assignment in department ' + dept.id + ' missing id');
+                    continue;
+                }
+                if (assignmentIds.has(asg.id)) {
+                    warnings.push('duplicate assignment id across Government: ' + asg.id);
+                }
                 assignmentIds.add(asg.id);
-                if (asg.positionId && !positionIds.has(asg.positionId)) {
+                if (asg.positionId && !positions.some(function(position) {
+                    return position && position.id === asg.positionId;
+                })) {
                     warnings.push('assignment ' + asg.id + ' references missing position ' + asg.positionId);
+                }
+                if (asg.characterId && canCheckCharacters) {
+                    try {
+                        if (!characterQueries.getCharacterById(asg.characterId)) {
+                            warnings.push('assignment ' + asg.id + ' references missing character ' + asg.characterId);
+                        }
+                    } catch (characterError) {
+                        warnings.push('assignment ' + asg.id + ' character reference could not be verified');
+                    }
                 }
                 if (asg.endYear != null && asg.startYear != null && asg.endYear < asg.startYear) {
                     warnings.push('assignment ' + asg.id + ' ends before it starts');
@@ -880,13 +959,61 @@
             }
         }
 
-        var types = d.governmentTypes || [];
+        // Validate department parent references and cycles using the
+        // canonical array, not a possibly stale derived index.
+        var departmentVisit = new Map();
+        function visitDepartment(id) {
+            var state = departmentVisit.get(id) || 0;
+            if (state === 1) {
+                warnings.push('department hierarchy contains a cycle at ' + id);
+                return;
+            }
+            if (state === 2) return;
+            departmentVisit.set(id, 1);
+            var record = deptById.get(id);
+            if (record && record.parentDepartmentId) {
+                if (!deptById.has(record.parentDepartmentId)) {
+                    warnings.push('department ' + id + ' references missing parent ' + record.parentDepartmentId);
+                } else {
+                    visitDepartment(record.parentDepartmentId);
+                }
+            }
+            departmentVisit.set(id, 2);
+        }
+        deptById.forEach(function(record, id) { visitDepartment(id); });
+
+        // Position parent links are scoped to their own department.
+        var positionVisit = new Map();
+        function visitPosition(key) {
+            var state = positionVisit.get(key) || 0;
+            if (state === 1) {
+                warnings.push('position hierarchy contains a cycle at ' + key);
+                return;
+            }
+            if (state === 2) return;
+            positionVisit.set(key, 1);
+            var entry = positionByKey.get(key);
+            var parentId = entry && entry.position.parentPositionId;
+            if (parentId) {
+                var parentKey = entry.departmentId + '::' + parentId;
+                if (!positionByKey.has(parentKey)) {
+                    warnings.push('position ' + entry.position.id +
+                        ' references missing parent position ' + parentId +
+                        ' in department ' + entry.departmentId);
+                } else {
+                    visitPosition(parentKey);
+                }
+            }
+            positionVisit.set(key, 2);
+        }
+        positionByKey.forEach(function(entry, key) { visitPosition(key); });
+
         var typeIds = new Set();
         var rankQueriesForTypes = window.RankQueries;
         for (var t = 0; t < types.length; t++) {
             var governmentType = types[t];
-            if (!governmentType.id) {
-                warnings.push('government type missing id at index ' + t);
+            if (!governmentType || typeof governmentType !== 'object' || !governmentType.id) {
+                warnings.push('government type missing or invalid id at index ' + t);
                 continue;
             }
             if (typeIds.has(governmentType.id)) {
@@ -895,9 +1022,8 @@
             typeIds.add(governmentType.id);
 
             var allowedRankIds = governmentType.allowedRankIds;
-            if (allowedRankIds == null) continue;
             if (!Array.isArray(allowedRankIds)) {
-                warnings.push('government type ' + governmentType.id + ' allowedRankIds is not an array');
+                warnings.push('government type ' + governmentType.id + ' allowedRankIds is missing or is not an array');
                 continue;
             }
             var allowedRankSeen = new Set();
@@ -912,19 +1038,41 @@
                     continue;
                 }
                 allowedRankSeen.add(allowedRankId);
-                if (!rankQueriesForTypes ||
-                    typeof rankQueriesForTypes.getRank !== 'function') {
+                if (!rankQueriesForTypes || typeof rankQueriesForTypes.getRank !== 'function') {
                     warnings.push('government type ' + governmentType.id + ' allowedRankIds could not be validated: RankQueries unavailable');
                 } else {
                     try {
                         if (!rankQueriesForTypes.getRank(allowedRankId)) {
                             warnings.push('government type ' + governmentType.id + ' references missing allowedRankId ' + allowedRankId);
                         }
-                    } catch (e) {
+                    } catch (rankError) {
                         warnings.push('government type ' + governmentType.id + ' allowedRankId could not be validated: RankQueries failed');
                     }
                 }
             }
+        }
+
+        // Location owns governmentTypeId. Diagnose dangling references here
+        // without rewriting Location records from the Government domain.
+        if (locationQueries && typeof locationQueries.getAllPlaces === 'function') {
+            try {
+                var places = locationQueries.getAllPlaces({ includeDeprecated: true });
+                if (!Array.isArray(places)) {
+                    warnings.push('LocationQueries.getAllPlaces returned an invalid result; government type references could not be checked');
+                } else {
+                    for (var placeIndex = 0; placeIndex < places.length; placeIndex++) {
+                        var place = places[placeIndex];
+                        if (place && place.governmentTypeId && !typeIds.has(place.governmentTypeId)) {
+                            warnings.push('location ' + (place.id || place.name || placeIndex) +
+                                ' references missing government type ' + place.governmentTypeId);
+                        }
+                    }
+                }
+            } catch (placesError) {
+                warnings.push('location government type references could not be verified');
+            }
+        } else {
+            warnings.push('location government type references could not be validated: LocationQueries.getAllPlaces unavailable');
         }
 
         if (typeof console !== 'undefined' && console.warn && warnings.length > 0) {
