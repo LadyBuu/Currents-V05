@@ -323,6 +323,13 @@
         var yearsEnrolled = currentYear - studentRecord.enrollmentYear;
         if (yearsEnrolled < 1) return result;
 
+        // A student receives at most one annual advancement per calendar year,
+        // even if the global or institution-specific pipeline is run repeatedly.
+        if (typeof studentRecord.lastAnnualProcessedYear === 'number' &&
+            studentRecord.lastAnnualProcessedYear >= currentYear) {
+            return result;
+        }
+
         var skillGainPerYear = institution.skillGainPerYear;
         if (typeof skillGainPerYear !== 'number' ||
             !isFinite(skillGainPerYear) ||
@@ -394,6 +401,26 @@
                 taughtRoles: (institution.taughtRoles || []).slice(),
                 stage: { id: tier.id, name: tier.name }
             };
+        }
+
+        // Persist the year marker only after all learning and readiness reads
+        // have completed. Both annual entry points use this same primitive.
+        var updatedStudents = (institution.students || []).map(function(record) {
+            if (record && record.studentId === student.id && !record.graduated) {
+                return Object.assign({}, record, {
+                    lastAnnualProcessedYear: currentYear
+                });
+            }
+            return record;
+        });
+        var markedInstitution = _state()._updateInstitution(institution.id, {
+            students: updatedStudents
+        });
+        if (!markedInstitution) {
+            result.error = 'annual_processing_marker_failed';
+            result.evaluated = false;
+            result.skillGains = [];
+            return result;
         }
 
         return result;
