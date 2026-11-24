@@ -2171,14 +2171,12 @@ PART 7 — KNOWN HAZARDS
     tab buttons, init() finds nothing and returns; do not
     silently render an empty tab pane.
 
-18. RoleQueries / IndustryQueries / ReligionQueries are not in
-    this batch.
-    [UNVERIFIED]: the settlement code's expectations are
-    documented in the returns it reads. Confirm the actual
-    modules exist and export the specific functions named above
-    before relying on settlement features that call them
-    (economy income, employment, religion breakdown, leader
-    traits, specialization picker).
+18. Cross-domain query providers.
+    Verified in the current repository: RoleQueries,
+    IndustryQueries, and ReligionQueries are loaded before the
+    Settlement UI and expose the methods used by the Settlement
+    integration. Keep those providers ahead of Settlement consumers
+    in the HTML script order.
 
 
 ================================================================================
@@ -2281,6 +2279,27 @@ deleted or migrated. They remain readable, but ensureSettlement reports
 them as ineligible and Location type changes cannot create additional
 invalid records. Change the Location Type to an eligible priority or remove the record
 through the normal Settlement lifecycle before relying on it as valid.
+
+================================================================================
+SETTLEMENT POPULATION AND SUBTREE AGGREGATION
+================================================================================
+
+Settlement population, role-skill statistics, and apprenticeship density
+are scoped to the selected location and its descendant locations. This is
+intentional: a settlement view describes the full inhabited area beneath
+its host node, not only characters whose current location is exactly the
+host node.
+
+Because both priority-4 and priority-5 locations may host Settlements, a
+parent Settlement and a child Settlement can overlap. Their reported
+subtree populations and other subtree aggregates are therefore not
+additive. Do not sum every Settlement record to calculate world
+population. Use the Location population query once at the intended
+non-overlapping scope for world totals.
+
+This is an aggregation rule, not duplicate character assignment: each
+character still has one resolved current location.
+
 
 ================================================================================
 END OF DOCUMENT
