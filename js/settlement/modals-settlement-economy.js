@@ -57,7 +57,7 @@
 
     function _getViewModels()       { return window.SettlementViewModels; }
     function _getSettlementQueries(){ return window.SettlementQueries; }
-    function _getPlaceQueries()     { return window.PlaceQueries; }
+    function _getPlaceQueries() { return typeof window.getPlaceById === 'function' ? { getPlaceById: window.getPlaceById } : null; }
     function _getFiscalCommands()   { return window.SettlementFiscalCommands; }
     function _getFiscalRules()      { return window.SettlementFiscalRules; }
     function _getGovernmentCommands(){ return window.SettlementGovernmentCommands; }
@@ -83,7 +83,8 @@
     }
 
     function _placeName(locationId) {
-        var place = _getPlaceQueries().getPlaceById(locationId);
+        var places = _getPlaceQueries();
+        var place = places ? places.getPlaceById(locationId) : null;
         return place ? place.displayName : null;
     }
 
