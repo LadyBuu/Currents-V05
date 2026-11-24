@@ -1725,6 +1725,123 @@
     // 14. DEMOLISH / REBUILD
     // =========================================================================
 
+    function _applyEnterpriseLifecycleTransaction(
+        enterpriseId, patch, householdId, householdAction, year
+    ) {
+        var transaction = window.CrossDomainTransaction;
+        if (!transaction || typeof transaction.execute !== 'function') {
+            return _fail('Cross-domain transaction support is unavailable.');
+        }
+        var householdOwned = _hasId(householdId);
+        var householdState = window.HouseholdState;
+        var householdInternal = householdState && householdState._internal;
+        var householdCommands = null;
+        if (householdOwned) {
+            try {
+                householdCommands = _requireHouseholdCommands();
+            } catch (e) {
+                return _fail(e && e.message ? e.message : 'Household commands unavailable.');
+            }
+            if (!householdInternal ||
+                typeof householdInternal.transactionSnapshotHousehold !== 'function' ||
+                typeof householdInternal.transactionRestoreHousehold !== 'function') {
+                return _fail('Household transaction support is unavailable.');
+            }
+        }
+
+        var participants = [];
+        if (householdOwned) {
+            participants.push({
+                name: 'household',
+                prepare: function() {
+                    var household = householdInternal.getHouseholdRecord(householdId);
+                    if (!household) {
+                        return { success: false, reason: 'Owner Household not found.' };
+                    }
+                    var refs = Array.isArray(household.enterprises)
+                        ? household.enterprises : [];
+                    var count = refs.filter(function(id) {
+                        return id === enterpriseId;
+                    }).length;
+                    if (householdAction === 'remove' && count !== 1) {
+                        return { success: false, reason: 'Household must contain exactly one Enterprise reference before removal.' };
+                    }
+                    if (householdAction === 'add' && count !== 0) {
+                        return { success: false, reason: 'Household already references this Enterprise before rebuilding.' };
+                    }
+                    return true;
+                },
+                snapshot: function() {
+                    return householdInternal.transactionSnapshotHousehold(householdId);
+                },
+                apply: function() {
+                    var method = householdAction === 'add'
+                        ? householdCommands.addEnterpriseToHousehold
+                        : householdCommands.removeEnterpriseFromHousehold;
+                    var result = method.call(
+                        householdCommands, householdId, enterpriseId,
+                        { year: year, deferCommit: true }
+                    );
+                    return result && result.success === true
+                        ? true
+                        : { success: false, reason: result && result.reason || 'Household ownership update failed.' };
+                },
+                rollback: function(snapshot) {
+                    return householdInternal.transactionRestoreHousehold(snapshot);
+                },
+                afterCommit: function() {
+                    var result = householdCommands.commitTransactionEnterpriseOwnership([{
+                        householdId: householdId,
+                        enterpriseId: enterpriseId,
+                        action: householdAction === 'add' ? 'added' : 'removed',
+                        year: year
+                    }]);
+                    if (!result || result.success !== true) {
+                        throw new Error(result && result.reason || 'Household ownership notification failed.');
+                    }
+                }
+            });
+        }
+
+        participants.push({
+            name: 'industry',
+            prepare: function() {
+                return IS.getEnterprise(enterpriseId)
+                    ? true
+                    : { success: false, reason: 'Enterprise no longer exists.' };
+            },
+            snapshot: function() {
+                return IS._transactionSnapshotEnterprise(enterpriseId);
+            },
+            apply: function() {
+                var updated = IS._updateEnterprise(enterpriseId, patch, { silent: true });
+                return updated
+                    ? true
+                    : { success: false, reason: 'IndustryState refused the lifecycle update.' };
+            },
+            rollback: function(snapshot) {
+                return IS._transactionRestoreEnterprise(snapshot);
+            },
+            afterCommit: function() {
+                IS._notifyTransactionEnterpriseUpdated(enterpriseId);
+            }
+        });
+
+        var result = transaction.execute({ participants: participants });
+        if (!result || result.success !== true) {
+            return {
+                success: false,
+                code: result && result.code || 'TRANSACTION_FAILED',
+                reason: result && result.reason || 'Enterprise lifecycle transaction failed.',
+                rollbackErrors: result && result.rollbackErrors || []
+            };
+        }
+        return _ok({
+            transactionId: result.transactionId || null,
+            notificationErrors: result.notificationErrors || []
+        });
+    }
+
     function demolishEnterprise(enterpriseId, reason, year, options) {
         if (!_hasId(enterpriseId)) return _fail('Enterprise id is required.');
 
@@ -1788,25 +1905,12 @@
             updatedAt: Date.now()
         };
 
-        if (enterprise.ownerType === C.OWNER_TYPE.HOUSEHOLD && enterprise.ownerId) {
-            try {
-                _unregisterFromHousehold(
-                    enterprise.ownerId, enterprise.id, demolishYear
-                );
-            } catch (e) {
-                return _fail(e && e.message
-                    ? e.message
-                    : 'Household unregistration failed.');
-            }
-        }
-
-        try {
-            IS._updateEnterprise(enterpriseId, patch);
-        } catch (e) {
-            return _fail(e && e.message
-                ? e.message
-                : 'IndustryState refused the write.');
-        }
+        var householdId = enterprise.ownerType === C.OWNER_TYPE.HOUSEHOLD
+            ? enterprise.ownerId : null;
+        var txResult = _applyEnterpriseLifecycleTransaction(
+            enterpriseId, patch, householdId, 'remove', demolishYear
+        );
+        if (!txResult.success) return txResult;
 
         _commit(C.EVENT.ENTERPRISE_DEMOLISHED, {
             enterpriseId: enterpriseId,
@@ -1879,23 +1983,12 @@
             updatedAt: Date.now()
         };
 
-        if (record.ownerType === C.OWNER_TYPE.HOUSEHOLD && record.ownerId) {
-            try {
-                _registerWithHousehold(record.ownerId, enterpriseId, rebuildYearValue);
-            } catch (e) {
-                return _fail(e && e.message
-                    ? e.message
-                    : 'Household registration failed.');
-            }
-        }
-
-        try {
-            IS._updateEnterprise(enterpriseId, patch);
-        } catch (e) {
-            return _fail(e && e.message
-                ? e.message
-                : 'IndustryState refused the write.');
-        }
+        var householdId = record.ownerType === C.OWNER_TYPE.HOUSEHOLD
+            ? record.ownerId : null;
+        var txResult = _applyEnterpriseLifecycleTransaction(
+            enterpriseId, patch, householdId, 'add', rebuildYearValue
+        );
+        if (!txResult.success) return txResult;
 
         _commit(C.EVENT.ENTERPRISE_REBUILT, {
             enterpriseId: enterpriseId,
