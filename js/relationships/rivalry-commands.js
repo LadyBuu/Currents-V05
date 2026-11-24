@@ -341,6 +341,10 @@
 
         var year = options.year !== undefined ? options.year : _getCurrentYear();
 
+        if (RQ.areEnemies(idA, idB)) {
+            return _fail('ALREADY_ENEMIES', 'an active enmity already exists');
+        }
+
         // Create the replacement first so a validation failure cannot
         // destroy the existing rivalry. If ending the old record fails,
         // compensate by removing the staged enmity.
@@ -387,6 +391,10 @@
         }
 
         var year = options.year !== undefined ? options.year : _getCurrentYear();
+
+        if (RQ.areRivals(idA, idB)) {
+            return _fail('ALREADY_RIVALS', 'an active rivalry already exists');
+        }
 
         // Create the replacement first so a validation failure cannot
         // destroy the existing enmity. If ending the old record fails,
