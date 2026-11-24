@@ -1051,6 +1051,8 @@
 
         var students = (inst.students || []).slice();
         var teachers = (inst.teachers || []).slice();
+        var originalHeadmasterId = inst.headmaster && inst.headmaster.characterId
+            ? inst.headmaster.characterId : null;
         if (!Array.isArray(inst.students) || !Array.isArray(inst.teachers)) {
             return _fail('Cannot delete institution: student and teacher rosters must be valid arrays.');
         }
@@ -1131,7 +1133,7 @@
         var sweepAttempted = 0;
         var sweepSucceeded = 0;
         var idsToSweep = studentIds.concat(teacherIds);
-        if (inst.headmaster && inst.headmaster.characterId) idsToSweep.push(inst.headmaster.characterId);
+        if (originalHeadmasterId) idsToSweep.push(originalHeadmasterId);
         idsToSweep = idsToSweep.filter(function (id, index, all) {
             return all.indexOf(id) === index;
         });
