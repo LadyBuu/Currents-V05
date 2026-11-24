@@ -538,6 +538,7 @@
     // cleanly and makes "what does this tab do?" scannable.
 
     function _wireActions(container, religion) {
+        container.__rtDetailsReligion = religion;
         if (container.__rtDetailsWired) return;
         container.__rtDetailsWired = true;
 
@@ -555,28 +556,28 @@
 
             switch (action) {
                 case 'edit':
-                    _actionEdit(religion, container);
+                    _actionEdit(container.__rtDetailsReligion, container);
                     break;
                 case 'deprecate':
-                    _actionDeprecate(religion, container);
+                    _actionDeprecate(container.__rtDetailsReligion, container);
                     break;
                 case 'reactivate':
-                    _actionReactivate(religion, container);
+                    _actionReactivate(container.__rtDetailsReligion, container);
                     break;
                 case 'delete':
-                    if (!btn.disabled) _actionDelete(religion, container);
+                    if (!btn.disabled) _actionDelete(container.__rtDetailsReligion, container);
                     break;
                 case 'set-leader':
-                    _actionSetLeader(religion, container);
+                    _actionSetLeader(container.__rtDetailsReligion, container);
                     break;
                 case 'end-leader-term':
-                    _actionEndLeaderTerm(religion, container);
+                    _actionEndLeaderTerm(container.__rtDetailsReligion, container);
                     break;
                 case 'add-location':
-                    _actionAddLocation(religion, container);
+                    _actionAddLocation(container.__rtDetailsReligion, container);
                     break;
                 case 'remove-location':
-                    _actionRemoveLocation(religion, container, btn);
+                    _actionRemoveLocation(container.__rtDetailsReligion, container, btn);
                     break;
                 // Unknown action: no-op. A future revision adds a case
                 // here and a data-action="..." to the button. Silent
