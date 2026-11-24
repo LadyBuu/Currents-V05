@@ -399,7 +399,7 @@
         container.innerHTML = html;
 
         _attachEvents(container, culture);
-        _syncToWorkingCulture(container, culture);
+        _syncToWorkingCulture(container, container.__ctMythologyCulture);
     }
 
     function _renderOverview(mythology) {
@@ -499,6 +499,9 @@
     // =========================================================================
 
     function _attachEvents(container, culture) {
+        container.__ctMythologyCulture = culture;
+        if (container.__ctMythologyEventsAttached) return;
+        container.__ctMythologyEventsAttached = true;
         // Delegated input listener: text edits + live re-sync into the
         // working culture. List inputs also route through this (harmless;
         // the input listener only updates the culture's text fields via
@@ -519,7 +522,7 @@
             if (e.key !== 'Enter') return;
             e.preventDefault();
             var sectionKey = target.getAttribute('data-section');
-            if (sectionKey) _handleAddTag(container, culture, sectionKey);
+            if (sectionKey) _handleAddTag(container, container.__ctMythologyCulture, sectionKey);
         });
 
         // Delegated click: add button / remove button.
@@ -539,7 +542,7 @@
             if (removeBtn) {
                 e.preventDefault();
                 var tag = removeBtn.closest('.ct-mythology-tag');
-                if (tag) _handleRemoveTag(container, culture, tag);
+                if (tag) _handleRemoveTag(container, container.__ctMythologyCulture, tag);
                 return;
             }
         });
