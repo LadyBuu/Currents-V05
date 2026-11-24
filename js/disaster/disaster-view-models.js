@@ -272,6 +272,9 @@
                     };
                 })
                 : [],
+            structuralDamageSkippedSystems: Array.isArray(disaster.structuralDamageSkippedSystems)
+                ? disaster.structuralDamageSkippedSystems.map(function(system) { return String(system); })
+                : [],
             structuralDamage: structuralDamage
                 ? toStructuralDamageViewModel(structuralDamage)
                 : null
