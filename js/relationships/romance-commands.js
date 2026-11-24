@@ -111,12 +111,9 @@
  *   Every command in this file commits exactly once:
  *
  *   startCasualDating                one commit (RC.create)
- *   startOneNightStand               two commits (RC.create then RC.end;
- *                                    the record is created then
- *                                    immediately ended in the same
- *                                    logical operation, since a
- *                                    one-night stand is historical
- *                                    from the start)
+ *   startOneNightStand               one commit (RC.create as ended;
+ *                                    startYear and endYear are equal,
+ *                                    and endReason is stored at insert)
  *   startCommittedRelationship       one commit (RC.create)
  *   addCommittedAttribute            one commit (RC.addAttribute, which
  *                                    delegates to RC.update)
@@ -129,12 +126,9 @@
  *                                    atomic across records — see
  *                                    header of that function)
  *
- *   The startOneNightStand double-commit is disclosed above because
- *   the two writes target the same record and the intermediate state
- *   is a valid ongoing record. A crash between them leaves a valid
- *   ongoing one-night-stand record, which is indistinguishable from
- *   the record being created directly via startCasualDating with a
- *   different archetype.
+ *   One-night stands are inserted directly in their terminal state,
+ *   so they cannot be stranded as active relationships by a failed
+ *   follow-up write.
  *
  * RESULT ENVELOPE
  *
