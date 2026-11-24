@@ -805,7 +805,11 @@
                 return fail('MISSING_PROFESSION',
                     'Apprentice profession record is missing or has an invalid skill level');
             }
-            var requestedStage = _rules().getStageForSkill(updates.skillLevel).id;
+            var effectiveRequestedSkill = Math.max(
+                previousProfession.skillLevel,
+                updates.skillLevel
+            );
+            var requestedStage = _rules().getStageForSkill(effectiveRequestedSkill).id;
             if (meta.stage !== requestedStage) {
                 meta.stage = requestedStage;
                 metaChanged = true;
