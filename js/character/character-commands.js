@@ -1245,6 +1245,115 @@
         });
     }
 
+    /**
+     * Corrects editable details on an existing death record.
+     *
+     * This is deliberately separate from updateCharacterFields: death
+     * details are governed by MortalityRules and must remain internally
+     * consistent. It cannot change life state or murder/execution identity.
+     */
+    function updateDeathRecord(characterId, patch) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_isPlainObject(patch)) return _fail('Death record patch must be a plain object.');
+
+        var allowed = {
+            deathYear: true,
+            deathCause: true,
+            deathCauseDetail: true,
+            deathNotes: true
+        };
+        var keys = Object.keys(patch);
+        if (keys.length === 0) return _ok({ unchanged: true });
+        for (var i = 0; i < keys.length; i++) {
+            if (allowed[keys[i]] !== true) {
+                return _fail('Death record field is not editable here: ' + keys[i]);
+            }
+        }
+
+        var character = CS.getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+        if (character.isDeceased !== true) {
+            return _fail('Character is not deceased.');
+        }
+
+        var deps = _requireMortalityRules();
+        if (!deps.ok) return _fail(deps.reason);
+        if (typeof window.MortalityRules.validateDeathRecord !== 'function') {
+            return _fail('MortalityRules.validateDeathRecord is required.');
+        }
+
+        var next = {
+            characterId: characterId,
+            deathYear: character.deathYear,
+            deathCause: character.deathCause,
+            isMurder: character.isMurder === true,
+            killerId: character.killerId || null,
+            isExecution: character.isExecution === true,
+            executionReason: character.executionReason || null
+        };
+
+        if (Object.prototype.hasOwnProperty.call(patch, 'deathYear')) {
+            if (!_isValidYearOrMissing(patch.deathYear) || _isMissing(patch.deathYear)) {
+                return _fail('deathYear must be a valid world year.');
+            }
+            next.deathYear = patch.deathYear;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'deathCause')) {
+            if (typeof patch.deathCause !== 'string') {
+                return _fail('deathCause must be a string.');
+            }
+            next.deathCause = patch.deathCause;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'deathCauseDetail')
+            && typeof patch.deathCauseDetail !== 'string') {
+            return _fail('deathCauseDetail must be a string.');
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'deathNotes')
+            && typeof patch.deathNotes !== 'string') {
+            return _fail('deathNotes must be a string.');
+        }
+
+        var recordValidation = window.MortalityRules.validateDeathRecord(next);
+        if (!recordValidation || recordValidation.valid !== true) {
+            return _fail(recordValidation && Array.isArray(recordValidation.errors)
+                ? recordValidation.errors.join('; ')
+                : 'Death record validation failed.');
+        }
+
+        var currentYear = window.getCurrentYear();
+        if (typeof character.birthYear === 'number'
+            && typeof window.MortalityRules.validateDeathYear === 'function') {
+            var yearValidation = window.MortalityRules.validateDeathYear({
+                birthYear: character.birthYear,
+                deathYear: next.deathYear,
+                currentYear: currentYear
+            });
+            if (!yearValidation || yearValidation.valid !== true) {
+                return _fail(yearValidation && Array.isArray(yearValidation.errors)
+                    ? yearValidation.errors.join('; ')
+                    : 'Death year validation failed.');
+            }
+        } else if (window.isValidYear(currentYear) === true
+            && next.deathYear > currentYear) {
+            return _fail('death_after_current_year');
+        }
+
+        var update = {};
+        for (var j = 0; j < keys.length; j++) update[keys[j]] = patch[keys[j]];
+        update.updatedAt = Date.now();
+
+        var result = CS.updateCharacter(characterId, update);
+        if (!result || result.success !== true) {
+            return _fail(result && result.reason
+                ? result.reason
+                : 'CharacterState refused the death record correction.');
+        }
+        return _ok({ characterId: characterId, deathYear: next.deathYear, deathCause: next.deathCause });
+    }
+
     // =========================================================================
     // 10. PROFESSION NORMALISATION
     // =========================================================================
@@ -3347,6 +3456,7 @@
         updateCharacter: updateCharacter,
 
         markDeceased: markDeceased,
+        updateDeathRecord: updateDeathRecord,
 
         setReligion: setReligion,
         updateReligionHistoryEntry: updateReligionHistoryEntry,
