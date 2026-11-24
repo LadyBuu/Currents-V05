@@ -227,35 +227,69 @@
         }
     }
 
-    // Identity writes are user-initiated saves. Flush the storage debounce
-    // synchronously so a successful command is not mistaken for a durable save.
-    function _persistIdentityChanges() {
-        if (typeof window.saveMasterData !== 'function') {
-            return { success: false, reason: 'Storage saveMasterData() is not available.' };
+    // Execute a single Identity command as a durable transaction. This keeps
+    // rank mutations from re-rendering the tab before persistence completes.
+    function _runIdentityMutation(characterId, mutate) {
+        var CS = window.CharacterState;
+        var TX = window.CrossDomainTransaction;
+        if (!CS || !TX || typeof TX.execute !== 'function' ||
+            typeof CS._transactionSnapshotCharacter !== 'function' ||
+            typeof CS._transactionRestoreCharacter !== 'function' ||
+            typeof CS._transactionFlushChanges !== 'function' ||
+            typeof CS._transactionDiscardChanges !== 'function') {
+            return { success: false, reason: 'Character transaction support is not loaded.' };
         }
-        var saved = false;
-        try { saved = window.saveMasterData() === true; }
-        catch (e) {
-            return { success: false, reason: e && e.message ? e.message : String(e) };
-        }
-        if (saved) return { success: true };
-        var lastError = null;
-        try {
-            lastError = typeof window.getLastSaveError === 'function'
-                ? window.getLastSaveError()
-                : null;
-        } catch (e) { lastError = e; }
-        // A failed immediate flush cancels the pending debounce in storage.js.
-        // Re-arm it so a transient storage failure can still recover.
-        if (typeof window.scheduleSave === 'function') {
-            try { window.scheduleSave(); } catch (e) { /* retain failure below */ }
-        }
-        return {
-            success: false,
-            reason: lastError && lastError.message
-                ? lastError.message
-                : 'The browser could not write the changes to local storage.'
-        };
+        var transaction = TX.execute({
+            id: 'character-identity-mutation-' + characterId,
+            context: { characterId: characterId },
+            participants: [{
+                name: 'character-identity',
+                snapshot: function () {
+                    return CS._transactionSnapshotCharacter(characterId);
+                },
+                apply: function () {
+                    var result = mutate();
+                    if (!result || result.success !== true) {
+                        return {
+                            success: false,
+                            reason: result && result.reason ? result.reason : 'The Character command failed.'
+                        };
+                    }
+                    return { success: true };
+                },
+                rollback: function (snapshot) {
+                    var restored = CS._transactionRestoreCharacter(snapshot);
+                    CS._transactionDiscardChanges();
+                    return restored;
+                },
+                afterCommit: function () {
+                    CS._transactionFlushChanges();
+                }
+            }],
+            persist: function () {
+                if (typeof window.saveMasterData !== 'function') {
+                    return { success: false, reason: 'Storage saveMasterData() is not available.' };
+                }
+                if (window.saveMasterData() === true) return { success: true };
+                var lastError = typeof window.getLastSaveError === 'function'
+                    ? window.getLastSaveError()
+                    : null;
+                return {
+                    success: false,
+                    reason: lastError && lastError.message
+                        ? lastError.message
+                        : 'The browser could not write the changes to local storage.'
+                };
+            }
+        });
+        return transaction && transaction.success === true
+            ? { success: true }
+            : {
+                success: false,
+                reason: transaction && transaction.reason
+                    ? transaction.reason
+                    : 'The transaction could not be committed.'
+            };
     }
 
     function _year(v) {
@@ -2199,22 +2233,18 @@
                         : { rawNumber: num, display: numberStr };
                 }
 
-                var r = CC.addRankAssignment(characterId, {
-                    rankId: rankId,
-                    customTitle: title || null,
-                    address: address || null,
-                    number: numberObj,
-                    order: Number.isFinite(order) ? order : 10,
-                    notes: notes || ''
+                var r = _runIdentityMutation(characterId, function () {
+                    return CC.addRankAssignment(characterId, {
+                        rankId: rankId,
+                        customTitle: title || null,
+                        address: address || null,
+                        number: numberObj,
+                        order: Number.isFinite(order) ? order : 10,
+                        notes: notes || ''
+                    });
                 });
                 if (!r || r.success !== true) {
                     _toast('Failed: ' + (r && r.reason ? r.reason : 'unknown'), 'error');
-                    return false;
-                }
-                var persisted = _persistIdentityChanges();
-                if (!persisted.success) {
-                    _toast('Rank was added in memory but could not be saved: ' +
-                        persisted.reason, 'error');
                     return false;
                 }
                 _toast('Rank added.', 'success');
@@ -2307,15 +2337,11 @@
                     notes: notes || ''
                 };
 
-                var r = CC.updateRankAssignment(characterId, rankId, patch);
+                var r = _runIdentityMutation(characterId, function () {
+                    return CC.updateRankAssignment(characterId, rankId, patch);
+                });
                 if (!r || r.success !== true) {
                     _toast('Failed: ' + (r && r.reason ? r.reason : 'unknown'), 'error');
-                    return false;
-                }
-                var persisted = _persistIdentityChanges();
-                if (!persisted.success) {
-                    _toast('Rank was updated in memory but could not be saved: ' +
-                        persisted.reason, 'error');
                     return false;
                 }
                 _toast('Rank updated.', 'success');
@@ -2329,15 +2355,11 @@
         if (!CC) { _toast('Command layer is not loaded.', 'error'); return; }
         var rankId = btn.getAttribute('data-rank-id');
         if (!_hasId(rankId)) return;
-        var r = CC.setActiveRank(characterId, rankId);
+        var r = _runIdentityMutation(characterId, function () {
+            return CC.setActiveRank(characterId, rankId);
+        });
         if (!r || r.success !== true) {
             _toast('Failed: ' + (r && r.reason ? r.reason : 'unknown'), 'error');
-            return;
-        }
-        var persisted = _persistIdentityChanges();
-        if (!persisted.success) {
-            _toast('Active rank changed in memory but could not be saved: ' +
-                persisted.reason, 'error');
             return;
         }
         _toast('Active rank set.', 'success');
@@ -2350,15 +2372,11 @@
         var rankId = btn.getAttribute('data-rank-id');
         if (!_hasId(rankId)) return;
         if (!window.confirm('Deprecate this rank? It will move to Former.')) return;
-        var r = CC.deprecateRankAssignment(characterId, rankId);
+        var r = _runIdentityMutation(characterId, function () {
+            return CC.deprecateRankAssignment(characterId, rankId);
+        });
         if (!r || r.success !== true) {
             _toast('Failed: ' + (r && r.reason ? r.reason : 'unknown'), 'error');
-            return;
-        }
-        var persisted = _persistIdentityChanges();
-        if (!persisted.success) {
-            _toast('Rank was deprecated in memory but could not be saved: ' +
-                persisted.reason, 'error');
             return;
         }
         _toast('Rank deprecated.', 'success');
@@ -2371,15 +2389,11 @@
         var rankId = btn.getAttribute('data-rank-id');
         if (!_hasId(rankId)) return;
         if (!window.confirm('Remove this rank from the character?')) return;
-        var r = CC.removeRankAssignment(characterId, rankId);
+        var r = _runIdentityMutation(characterId, function () {
+            return CC.removeRankAssignment(characterId, rankId);
+        });
         if (!r || r.success !== true) {
             _toast('Failed: ' + (r && r.reason ? r.reason : 'unknown'), 'error');
-            return;
-        }
-        var persisted = _persistIdentityChanges();
-        if (!persisted.success) {
-            _toast('Rank was removed in memory but could not be saved: ' +
-                persisted.reason, 'error');
             return;
         }
         _toast('Rank removed.', 'success');
