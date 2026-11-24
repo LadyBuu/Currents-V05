@@ -1478,7 +1478,7 @@
         return result;
     }
 
-    function _checkCacheIntegrity() {
+    function _checkCacheIntegrity(canonicalHouseholds) {
         var result = {
             ok: true,
             staleById: [],
@@ -1494,7 +1494,7 @@
             if (!map.has(key)) map.set(key, []);
             map.get(key).push(value);
         }
-        _state.households.forEach(function(household) {
+        (Array.isArray(canonicalHouseholds) ? canonicalHouseholds : _state.households).forEach(function(household) {
             if (!household || typeof household.id !== 'string') return;
             expectedId.set(household.id, household);
             add(expectedLocation, household.locationId || 'none', household.id);
@@ -1625,7 +1625,7 @@
 
             var residenceIndex = _checkResidenceReverseIndex();
             var enterpriseIndex = _checkEnterpriseReverseIndex();
-            var cacheIndex = _checkCacheIntegrity();
+            var cacheIndex = _checkCacheIntegrity(households);
             var memberIndex = _checkHouseholdMemberReverseIndex(
                 Array.isArray(master.data.households) ? master.data.households : null,
                 Array.isArray(master.data.characters) ? master.data.characters : null
