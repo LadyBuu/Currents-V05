@@ -919,6 +919,21 @@
                         }
                     }
                 }
+
+                if (pos.requiredRoleId) {
+                    var roleQueries = window.RoleQueries;
+                    if (!roleQueries || typeof roleQueries.getRoleSummary !== 'function') {
+                        warnings.push('position ' + pos.id + ' requiredRoleId could not be validated: RoleQueries unavailable');
+                    } else {
+                        try {
+                            if (!roleQueries.getRoleSummary(pos.requiredRoleId)) {
+                                warnings.push('position ' + pos.id + ' references missing requiredRoleId ' + pos.requiredRoleId);
+                            }
+                        } catch (roleError) {
+                            warnings.push('position ' + pos.id + ' requiredRoleId could not be validated: RoleQueries failed');
+                        }
+                    }
+                }
             }
 
             if (dept.assignments != null && !Array.isArray(dept.assignments)) {
@@ -1073,6 +1088,23 @@
             }
         } else {
             warnings.push('location government type references could not be validated: LocationQueries.getAllPlaces unavailable');
+        }
+
+        var governmentHistory = Array.isArray(d.governmentHistory) ? d.governmentHistory : [];
+        if (d.governmentHistory != null && !Array.isArray(d.governmentHistory)) {
+            warnings.push('governmentHistory is not an array');
+        }
+        for (var historyIndex = 0; historyIndex < governmentHistory.length; historyIndex++) {
+            var historyRecord = governmentHistory[historyIndex];
+            if (!historyRecord || typeof historyRecord !== 'object') {
+                warnings.push('malformed Government history record at index ' + historyIndex);
+                continue;
+            }
+            if (historyRecord.governmentTypeId &&
+                !typeIds.has(historyRecord.governmentTypeId)) {
+                warnings.push('Government history record ' + (historyRecord.id || historyIndex) +
+                    ' references missing government type ' + historyRecord.governmentTypeId);
+            }
         }
 
         if (typeof console !== 'undefined' && console.warn && warnings.length > 0) {
