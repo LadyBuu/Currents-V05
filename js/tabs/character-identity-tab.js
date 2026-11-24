@@ -788,7 +788,8 @@
             var fromName = e.fromReligionName || e.fromReligionId || '—';
             var toName = e.toReligionName || e.toReligionId || '—';
             html += '<div class="character-tab-history__row" ' +
-                        'data-history-kind="religion" data-history-index="' + i + '">' +
+                        'data-history-kind="religion" data-history-index="' +
+                    (Number.isInteger(e.sourceIndex) ? e.sourceIndex : i) + '">' +
                 '<div class="character-tab-history__main">' +
                     '<span class="character-tab-history__year">' +
                         _esc(_year(e.year)) +
@@ -1208,30 +1209,43 @@
     // =========================================================================
 
     function _wire(container, model, characterId, summary) {
-        // Collapsible headers.
+        // The tab pane is reused by TabManager. Keep one delegated listener
+        // on that persistent node and replace its current render context.
+        container.__characterIdentityState = {
+            model: model,
+            characterId: characterId,
+            summary: summary
+        };
+
+        // Collapsible headers belong to the newly-rendered child nodes, so
+        // their listeners naturally disappear when the pane is re-rendered.
         var headers = container.querySelectorAll('.character-tab-section__header');
         for (var i = 0; i < headers.length; i++) {
             headers[i].addEventListener('click', _onToggleSection);
         }
 
-        // Delegated click handler for actions.
-        container.addEventListener('click', function (e) {
-            var btn = e.target.closest('[data-action]');
-            if (!btn || !container.contains(btn)) return;
-            var action = btn.getAttribute('data-action');
-            if (!action) return;
+        if (container.__characterIdentityClickBound !== true) {
+            container.__characterIdentityClickBound = true;
+            container.addEventListener('click', function (e) {
+                var target = e.target;
+                var btn = target && typeof target.closest === 'function'
+                    ? target.closest('[data-action]')
+                    : null;
+                if (!btn || !container.contains(btn)) return;
+                var action = btn.getAttribute('data-action');
+                if (!action || action === 'toggle-section' || btn.disabled) return;
 
-            if (action === 'toggle-section') return; // handled above
-            if (btn.disabled) return;
-            e.preventDefault();
+                var state = container.__characterIdentityState;
+                if (!state) return;
+                e.preventDefault();
+                _dispatchAction(
+                    action, btn, container,
+                    state.model, state.characterId, state.summary
+                );
+            });
+        }
 
-            _dispatchAction(action, btn, container, model, characterId, summary);
-        });
-
-        // Dirty tracking.
         _wireDirtyTracking(container, model);
-
-        // Full-name preview update.
         _wireFullNamePreview(container);
     }
 
@@ -1259,24 +1273,23 @@
     }
 
     function _wireDirtyTracking(container, model) {
-        var saveBtn = container.querySelector('[data-action="save-all"]');
-        var resetBtn = container.querySelector('[data-action="reset-form"]');
-        var note = container.querySelector('[data-dirty-note]');
+        // Refresh the baseline on every render, but never stack listeners
+        // on TabManager's persistent pane element.
+        container.__characterTabInitial = _captureFormValues(container);
 
-        function setDirty(dirty) {
+        if (container.__characterIdentityDirtyBound === true) return;
+        container.__characterIdentityDirtyBound = true;
+
+        function check() {
+            var initial = container.__characterTabInitial || {};
+            var now = _captureFormValues(container);
+            var dirty = _formValuesChanged(initial, now);
+            var saveBtn = container.querySelector('[data-action="save-all"]');
+            var resetBtn = container.querySelector('[data-action="reset-form"]');
+            var note = container.querySelector('[data-dirty-note]');
             if (saveBtn) saveBtn.disabled = !dirty;
             if (resetBtn) resetBtn.disabled = !dirty;
             if (note) note.textContent = dirty ? 'Unsaved changes' : '';
-        }
-
-        // Snapshot the values.
-        var initial = _captureFormValues(container);
-        container.__characterTabInitial = initial;
-
-        function check() {
-            var now = _captureFormValues(container);
-            var changed = _formValuesChanged(initial, now);
-            setDirty(changed);
         }
 
         container.addEventListener('input', check);
@@ -1960,7 +1973,18 @@
         var idx = parseInt(btn.getAttribute('data-history-index'), 10);
         if (!Number.isInteger(idx)) return;
 
-        var entry = model.religionHistory && model.religionHistory.entries[idx];
+        var entries = model.religionHistory && model.religionHistory.entries;
+        var entry = null;
+        if (Array.isArray(entries)) {
+            for (var i = 0; i < entries.length; i++) {
+                var sourceIndex = Number.isInteger(entries[i].sourceIndex)
+                    ? entries[i].sourceIndex : i;
+                if (sourceIndex === idx) {
+                    entry = entries[i];
+                    break;
+                }
+            }
+        }
         if (!entry) { _toast('Entry not found.', 'error'); return; }
 
         var content = '' +
