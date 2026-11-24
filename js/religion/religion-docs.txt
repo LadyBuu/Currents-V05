@@ -171,9 +171,10 @@ Cross-domain references are labeled:
     Notes:
       - All accessors are pure. Enum in, string out.
       - Trait/inheritance/worship/conversion label tables come from
-        ReligionConstants. Law label tables (LAW_TYPE_NAMES etc.)
-        are local copies inside this module, not sourced from
-        SettlementLawDefinitions. See HAZARDS §15.
+        ReligionConstants. Law labels resolve from the canonical
+        SettlementLawDefinitions / CrimeConstants enums at call time;
+        local label maps are fallbacks for reduced harnesses and older
+        saves.
 
 --------------------------------------------------------------------------------
 2.3 VALIDATION
@@ -1712,13 +1713,12 @@ PART 7 — KNOWN HAZARDS
      harness case.
 
   11. Government-law formatter duplication.
-     js/systems/government/settlement-law-formatters.js has its own
-     law label tables (LAW_TYPE_NAMES, LAW_DOMAIN_NAMES,
-     LAW_SEVERITY_NAMES). ReligionFormat has its own copies
-     (LAW_TYPE_NAMES, LAW_CATEGORY_NAMES, LAW_DOMAIN_NAMES,
-     LAW_SEVERITY_NAMES). The canonical source for the enums is
-     SettlementLawDefinitions. A future cleanup should derive both
-     label tables from there.
+     js/systems/government/settlement-law-formatters.js still has its
+     own law label tables (LAW_TYPE_NAMES, LAW_DOMAIN_NAMES,
+     LAW_SEVERITY_NAMES). ReligionFormat now resolves law types,
+     domains and severities from SettlementLawDefinitions, and
+     categories from CrimeConstants, with local maps retained only
+     as fallbacks. The Government formatter remains a separate cleanup.
 
   12. Modal navigation setTimeout(100).
      modals-religion.js uses setTimeout(100) between close and
@@ -1927,3 +1927,35 @@ behavior is unchanged.
 LOCATION DELETION TRANSACTION ADAPTER
 
 ReligionState now exposes internal snapshot/restore adapters for Location deletion. The snapshot retains both canonical Religion and worship-place arrays; restoration reinstalls both and rebuilds Religion indexes, including derived follower indexes. This is transaction infrastructure only and does not itself coordinate Location deletion.
+
+PART 37 — ATOMIC RELIGION INDEX HYDRATION
+
+ReligionState.hydrateFromMasterData now builds all derived indexes in
+temporary Maps and publishes them only after the full build succeeds.
+Duplicate religion, worship-place, god or law IDs are rejected before the
+new index set replaces the previous valid one. A failed hydration therefore
+does not leave queries reading a partially rebuilt index. Follower-index
+rebuilds use the same build-then-swap pattern.
+
+PART 38 — WORSHIP-PLACE TITHE COLLECTION
+
+ReligionCommands.collectTithes is a ledger mutation, not a calculation-only
+preview. It validates the year and place status, calculates the current
+follower-based income, updates annualIncome and collectedThisYear for the
+selected year, adds the amount to cumulative wealth, records currentFollowers,
+and appends a tithe_collection history entry. Starting a different collection
+year resets the two annual counters while preserving cumulative wealth and
+history. The Places tab calls persist exactly once after a successful
+collection and reports a save failure instead of claiming the collection
+was saved.
+
+PART 39 — RELIGION DELETION AND CROSS-DOMAIN INTEGRITY
+
+Hard deletion is refused while any canonical character record still has the
+religion as its current religion or references it in either side of a
+conversion-history entry. This includes deceased and soft-deleted records;
+deprecation is the preservation path. ReligionState.validateIntegrity also
+reports missing religions referenced by conversion histories and by
+Settlement stateReligionId fields. These diagnostics are read-only and do
+not rewrite Character or Settlement data.
+
