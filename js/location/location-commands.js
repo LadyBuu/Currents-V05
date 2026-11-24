@@ -47,6 +47,8 @@
  * Cross-domain mutations go through the owning domain's commands:
  *   - Character movement → CharacterCommands (via LocationCommands orchestration)
  *   - Culture lookup     → CultureQueries (read only)
+ *   - Culture associations → CultureCommands.reconcileDeletedLocations
+ *     (removes deleted Location IDs from Culture-owned association lists)
  *   - Household cleanup  → HouseholdCommands.clearLocationReferences
  *
  * Persistence boundary:
