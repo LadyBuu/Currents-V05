@@ -1208,78 +1208,29 @@
      */
     function reconcileDeletedLocations(locationIds) {
         if (!Array.isArray(locationIds) || locationIds.length === 0) {
-            return { success: true, data: { updatedReligionIds: [], removedAssociations: 0 } };
+            return { success: true, data: { updatedReligionIds: [], removedAssociations: 0, worshipPlacesUnassigned: 0 } };
         }
 
-        var removed = Object.create(null);
-        for (var i = 0; i < locationIds.length; i++) {
-            if (locationIds[i]) removed[locationIds[i]] = true;
-        }
-
-        var religions = _getCanonicalReligionsArray();
-        var updatedIds = [];
-        var removedCount = 0;
-
-        for (var r = 0; r < religions.length; r++) {
-            var religion = religions[r];
-            if (!religion || !Array.isArray(religion.locations)) continue;
-
-            var nextLocations = [];
-            var changed = false;
-            for (var j = 0; j < religion.locations.length; j++) {
-                var locationId = religion.locations[j];
-                if (removed[locationId]) {
-                    changed = true;
-                    removedCount++;
-                } else if (nextLocations.indexOf(locationId) === -1) {
-                    nextLocations.push(locationId);
-                } else {
-                    changed = true;
-                }
-            }
-
-            if (!changed) continue;
-            var candidate = _clone(religion);
-            candidate.locations = nextLocations;
-            candidate.updatedAt = Date.now();
-            try {
-                _state()._updateReligion(religion.id, candidate);
-            } catch (e) {
-                return _deny('Religion location reconciliation failed for ' +
-                    religion.id + ': ' + (e && e.message ? e.message : String(e)));
-            }
-            updatedIds.push(religion.id);
-        }
-
-        var worshipPlacesUpdated = 0;
         try {
-            worshipPlacesUpdated = _state()._clearDeletedWorshipPlaceLocations(
-                Object.keys(removed)
-            );
-        } catch (placeError) {
-            return _deny(
-                'Worship-place location reconciliation failed: ' +
-                (placeError && placeError.message ? placeError.message : String(placeError))
-            );
-        }
-
-        if (updatedIds.length > 0 || worshipPlacesUpdated > 0) {
-            _commit('religionLocationsReconciled', {
-                locationIds: Object.keys(removed),
-                religionIds: updatedIds,
-                removedAssociations: removedCount,
-                worshipPlacesUnassigned: worshipPlacesUpdated
-            });
-        }
-
-        return {
-            success: true,
-            data: {
-                updatedReligionIds: updatedIds,
-                removedAssociations: removedCount,
-                worshipPlacesUnassigned: worshipPlacesUpdated
+            var result = _state()._reconcileDeletedLocations(locationIds);
+            if (result.updatedReligionIds.length > 0 || result.worshipPlacesUnassigned > 0) {
+                _commit('religionLocationsReconciled', {
+                    locationIds: locationIds.slice(),
+                    religionIds: result.updatedReligionIds,
+                    removedAssociations: result.removedAssociations,
+                    worshipPlacesUnassigned: result.worshipPlacesUnassigned
+                });
             }
-        };
+            return { success: true, data: result };
+        } catch (e) {
+            return _deny(
+                'Religion location reconciliation failed: ' +
+                (e && e.message ? e.message : String(e)) +
+                (e && e.rollbackError
+                    ? '; rollback also failed: ' + e.rollbackError.message
+                    : '')
+            );
+        }
     }
 
     function addReligionLocation(religionId, locationId) {
