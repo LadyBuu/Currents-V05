@@ -804,6 +804,44 @@
             toRemove[placeId] = true;
         }
 
+        // Education institutions are independent records, not disposable
+        // Location children. Require relocation or explicit institution deletion
+        // before removing a Location they reference.
+        var educationStore = window.masterData && window.masterData.data
+            ? window.masterData.data.educationalInstitutions
+            : [];
+        if (educationStore === undefined || educationStore === null) educationStore = [];
+        if (!Array.isArray(educationStore)) {
+            return _fail(
+                'deletePlace: cannot verify Education references because educationalInstitutions is malformed'
+            );
+        }
+        var educationBlockers = [];
+        for (var educationIndex = 0; educationIndex < educationStore.length; educationIndex++) {
+            var educationInstitution = educationStore[educationIndex];
+            if (!educationInstitution || typeof educationInstitution !== 'object') {
+                return _fail(
+                    'deletePlace: cannot verify Education references because an institution is malformed at index ' +
+                    educationIndex
+                );
+            }
+            if (educationInstitution.locationId &&
+                Object.prototype.hasOwnProperty.call(toRemove, educationInstitution.locationId)) {
+                educationBlockers.push({
+                    id: educationInstitution.id || null,
+                    name: educationInstitution.name || educationInstitution.id || 'Unnamed institution',
+                    locationId: educationInstitution.locationId
+                });
+            }
+        }
+        if (educationBlockers.length > 0) {
+            return _fail(
+                'deletePlace: Education institutions still reference this Location. Relocate or delete them first: ' +
+                educationBlockers.map(function (entry) { return entry.name; }).join(', '),
+                { educationInstitutions: educationBlockers }
+            );
+        }
+
         // Culture location associations are owned by Culture. Remove every
         // deleted Location ID through the Culture command boundary before
         // mutating the location graph. Refuse deletion if the data or command
