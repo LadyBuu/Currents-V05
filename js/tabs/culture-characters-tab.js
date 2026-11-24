@@ -581,6 +581,7 @@
         // tab container, not on the list, so a re-render (which replaces
         // the entire subtree via innerHTML) does not orphan it. See
         // playbook §6 Rule 2.
+        container.__ctCharactersCulture = culture;
         if (!container.__ctCharactersWired) {
             container.__ctCharactersWired = true;
             container.addEventListener('click', function (e) {
@@ -591,7 +592,7 @@
                 if (applyBtn) {
                     e.preventDefault();
                     var applyId = applyBtn.getAttribute('data-character-id');
-                    if (applyId) _handleApplyAppearance(container, culture, applyId);
+                    if (applyId) _handleApplyAppearance(container, container.__ctCharactersCulture, applyId);
                     return;
                 }
 
@@ -599,7 +600,7 @@
                 if (removeBtn) {
                     e.preventDefault();
                     var removeId = removeBtn.getAttribute('data-character-id');
-                    if (removeId) _handleRemoveCharacter(container, culture, removeId);
+                    if (removeId) _handleRemoveCharacter(container, container.__ctCharactersCulture, removeId);
                     return;
                 }
             });
