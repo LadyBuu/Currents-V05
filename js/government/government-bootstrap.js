@@ -55,12 +55,10 @@
         _require('CharacterCommands', function() { return window.CharacterCommands; });
         _require('LocationQueries',   function() { return window.LocationQueries; });
         _require('LocationCommands',  function() { return window.LocationCommands; });
-        _require('RoleQueries',       function() { return window.RoleQueries; });
         _require('RankQueries',       function() { return window.RankQueries; });
         _require('SettlementQueries', function() { return window.SettlementQueries; });
         _require('SettlementProsperityQueries', function() { return window.SettlementProsperityQueries; });
         _require('SettlementGovernmentCommands', function() { return window.SettlementGovernmentCommands; });
-        _require('IndustryQueries',   function() { return window.IndustryQueries; });
         _require('HouseholdQueries',  function() { return window.HouseholdQueries; });
         _require('HouseholdCommands', function() { return window.HouseholdCommands; });
 
@@ -74,9 +72,8 @@
         _requireMethod('LocationCommands',  window.LocationCommands,  'endLeaderTerm');
         _requireMethod('LocationCommands',  window.LocationCommands,  'assignGovernment');
 
-        // FIX: role-queries.js exports getRankSummary, not getRoleSummary.
-        // The original guard asked for a method that has never existed on
-        // RoleQueries, which caused every Government bootstrap to throw.
+        // Rank projections are required. Role-name and Industry projections
+        // are optional and are resolved by GovernmentQueries at call time.
         _requireMethod('RankQueries',       window.RankQueries,       'getRankSummary');
 
         _requireMethod('SettlementQueries', window.SettlementQueries, 'getIndustryTaxRate');
