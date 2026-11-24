@@ -652,7 +652,7 @@ rules module.
       window.SettlementQueries,
       window.SettlementCommandCommit,
       window.SettlementFinanceDefinitions
-        (DEBT_INTEREST_RATE.annualFraction — applyInterest only).
+        (calculateAnnualInterest — applyInterest only).
     Consumed by:
       [call] modals-settlement-economy.js (openRepayDebtModal,
              openBorrowModal),
@@ -661,17 +661,13 @@ rules module.
              it does the interest math inline. See Notes below).
     Notes:
       - processSettlementAnnual does NOT call
-        SettlementDebtCommands.applyInterest. It applies interest
-        inline using SettlementFinanceDefinitions.DEBT_INTEREST_RATE
-        and commits via SettlementCommandCommit. This duplicates the
-        interest math. settlement-docs.txt §12 states interest
-        calculation is centralized in applyInterest. The
-        annual-processor code diverges from that policy — it
-        produces the same number but is not the single-source-of-
-        truth path. Do not change processSettlementAnnual to call
-        applyInterest without also removing the inline math; doing
-        either alone would double-count interest. Fix as a follow-up
-        in the annual processor, not in the debt commands.
+        SettlementDebtCommands.applyInterest because that command
+        commits independently and would split annual history and the
+        financial transition across two persistence boundaries.
+      - Both applyInterest and processSettlementAnnual call the pure
+        SettlementFinanceDefinitions.calculateAnnualInterest helper.
+        The annual processor retains one combined commit for debt,
+        wealth, and annualHistory.
 
   js/settlement/settlement-rank-commands.js
     Owns window.SettlementRankCommands
@@ -2049,20 +2045,14 @@ PART 7 — KNOWN HAZARDS
     (which exports getPlaceById); if PlaceQueries is a separate
     facade, ensure it loads before settlement-factory.js.
 
- 2. Interest math duplication.
-    processSettlementAnnual computes interest inline.
-    SettlementDebtCommands.applyInterest also computes interest.
-    Both read DEBT_INTEREST_RATE.annualFraction; both produce the
-    same number. The two paths are not chained. Changing one without
-    the other silently changes which settlements accumulate interest
-    differently depending on which path runs.
-    Fix as a follow-up: have processSettlementAnnual call
-    applyInterest (which commits on its own), or remove the
-    duplication by making applyInterest's math the shared helper.
-    settlement-docs.txt §12 says interest calculation is centralized
-    in applyInterest; the annual processor code diverges from that
-    policy. Do not "fix" by adding a fallback; the fix is to
-    consolidate.
+ 2. Annual interest formula.
+    Resolved: SettlementFinanceDefinitions.calculateAnnualInterest
+    owns the formula, rate validation, and rounding rule. Both
+    SettlementDebtCommands.applyInterest and
+    SettlementAnnualProcessor.processSettlementAnnual call it.
+    The annual processor keeps debt, wealth, and annualHistory in
+    one commit; do not replace that with applyInterest's independent
+    commit.
 
  3. LEADER TRAITS and character projection.
     settlement-prosperity-queries.js resolves the leader's traits
@@ -2123,14 +2113,13 @@ PART 7 — KNOWN HAZARDS
     break).
 
 10. candidate-write ordering.
-    On persist failure, SettlementCommandCommit leaves the
-    candidate in the in-memory canonical store but does not
-    notify subscribers. The caller is responsible for one of:
-    reload, retry persist, or re-commit the previous candidate.
-    A caller that catches the throw and moves on without doing
-    one of those leaves the tab with in-memory state ahead of
-    storage until the next successful save. See
-    settlement-command-commit.js CANDIDATE-WRITE ORDERING.
+    Resolved: SettlementCommandCommit restores the previous canonical
+    record (or removes a newly inserted key) and rebuilds indexes when
+    index rebuilding or persistence fails. It does not notify
+    subscribers on failure. The caller receives the original error;
+    no caller-side compensating write is required for an ordinary
+    single-record commit. Coordinated Location deletion has its own
+    transaction and rollback contract.
 
 11. Modals are UI-only.
     The settlement modals (settlement-core, settlement-economy,
