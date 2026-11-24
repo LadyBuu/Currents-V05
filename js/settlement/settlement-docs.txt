@@ -704,7 +704,7 @@ rules module.
         createSettlement's uniqueness check),
       window.SettlementRankRules (getAllRanks, getRankById),
       window.SettlementCommandCommit,
-      window.getPlaceById (getPlaceById),
+      window.LocationQueries (getPlace, getLocationTypePriority),
       window.getCurrentYear (via _currentYear).
     Consumed by:
       [call] settlement-annual-processor.js? No — the processor
@@ -1604,9 +1604,8 @@ GROUP S5 — SETTLEMENT FACTORY
     ← AFTER: js/settlement/settlement-rank-rules.js
     ← AFTER: js/settlement/settlement-command-commit.js
     ← AFTER: js/core/time.js
-    ← after: js/location/location-queries.js (getPlaceById via
-             core place accessor — the accessor surface; ensure
-             window.getPlaceById is installed)
+    ← AFTER: js/location/location-queries.js
+             (getPlace, getLocationTypePriority)
 
   Notes:
     - The factory is not required for settlement UI to display
