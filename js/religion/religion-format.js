@@ -147,8 +147,10 @@
     }
 
     function getLawCategoryName(categoryId) {
+        if (categoryId === undefined || categoryId === null || categoryId === '') return '';
         var constants = window.CrimeConstants;
-        return _lawName(categoryId, constants && constants.LAW_CATEGORIES, LAW_CATEGORY_NAMES);
+        return LAW_CATEGORY_NAMES[categoryId] ||
+            _lawName(categoryId, constants && constants.LAW_CATEGORIES, LAW_CATEGORY_NAMES);
     }
 
     function getLawDomainName(domainId) {
