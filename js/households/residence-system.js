@@ -1317,6 +1317,14 @@
             return _fail('HOUSEHOLD_ALREADY_ASSIGNED',
                 'Household is already associated with another residence; vacate it before reassignment');
         }
+        var oldHouseholdResidence = {
+            residenceId: householdRecord.residenceId,
+            residenceName: householdRecord.residenceName,
+            residenceType: householdRecord.residenceType,
+            associatedYear: householdRecord.associatedYear,
+            residenceUnitNumber: householdRecord.residenceUnitNumber,
+            residenceNotes: householdRecord.residenceNotes
+        };
 
         var y = _resolveYear(year);
         if (y === null) return _fail('INVALID_YEAR', 'Invalid assignment year');
@@ -1429,9 +1437,16 @@
             timestamp: Date.now()
         });
 
-        var reverseIndexResult = _associateHouseholdReverseIndex(
-            householdId, r, unitNumber, y, options.notes || ''
-        );
+        var reverseIndexResult = null;
+        try {
+            reverseIndexResult = _associateHouseholdReverseIndex(
+                householdId, r, unitNumber, y, options.notes || ''
+            );
+        } catch (associationError) {
+            reverseIndexResult = _fail('HOUSEHOLD_ASSOCIATION_FAILED',
+                associationError && associationError.message
+                    ? associationError.message : 'Household association threw');
+        }
         if (!reverseIndexResult || reverseIndexResult.success !== true) {
             for (var restoreIndex = 0; restoreIndex < unitSnapshots.length; restoreIndex++) {
                 var savedUnit = unitSnapshots[restoreIndex];
@@ -1444,6 +1459,31 @@
                 savedUnit.unit.associationHistory = savedUnit.associationHistory;
             }
             r.associationHistory = residenceAssociationSnapshot;
+            var householdRollback = null;
+            try {
+                if (oldHouseholdResidence.residenceId) {
+                    householdRollback = window.HouseholdCommands.associateWithResidence(
+                        householdId, oldHouseholdResidence.residenceId, {
+                            residenceName: oldHouseholdResidence.residenceName,
+                            residenceType: oldHouseholdResidence.residenceType,
+                            year: oldHouseholdResidence.associatedYear,
+                            unitNumber: oldHouseholdResidence.residenceUnitNumber,
+                            notes: oldHouseholdResidence.residenceNotes || ''
+                        }
+                    );
+                } else {
+                    householdRollback = window.HouseholdCommands.disassociateFromResidence(
+                        householdId, residenceId, 'Assignment rolled back', y
+                    );
+                }
+            } catch (rollbackError) {
+                householdRollback = null;
+            }
+            if (!householdRollback || householdRollback.success !== true) {
+                return _fail('ROLLBACK_FAILED',
+                    'Residence assignment failed and the original Household residence reference could not be restored',
+                    { householdId: householdId, residenceId: residenceId });
+            }
             return _fail(
                 reverseIndexResult && reverseIndexResult.code
                     ? reverseIndexResult.code : 'HOUSEHOLD_ASSOCIATION_FAILED',
