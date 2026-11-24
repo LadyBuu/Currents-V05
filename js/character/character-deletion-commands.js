@@ -74,18 +74,18 @@
  *     skipped  — domains where the module or method was absent
  *     failed   — domains whose cleanup returned failure or threw
  *
- *   The report is informational. Deletion succeeds regardless of cleanup
- *   outcome. A failing cleanup means the domain's own data still
- *   references a now-deleted character id; that is a bug in the domain,
- *   not a reason to refuse the delete.
+ *   Hard deletion is irreversible once CharacterState removes the record.
+ *   The command therefore reports deletionComplete separately from cleanup
+ *   success. Missing handlers, malformed results, returned failures, and
+ *   thrown errors all make cleanup incomplete. The record remains deleted,
+ *   but callers receive cleanupFailed/partial and must not report a clean
+ *   deletion. There is no cross-domain rollback in this command.
  *
  * DELETE HANDLER HOOK (Phase 3.13b):
- *   The named cleanup table above only reaches the domains whose
- *   modules load before this file. Under the documented load order,
- *   that means FamilyCommands, ChildrenCommands, RankIssues, and
- *   HouseholdCommands — but NOT RelationshipIntegrations and NOT
- *   ApprenticeshipCommands (both of which load after
- *   character-deletion-commands.js).
+ *   The named cleanup table handles FamilyCommands, ChildrenCommands,
+ *   HouseholdCommands, RankIssues, and ApprenticeshipCommands when present.
+ *   RelationshipIntegrations is reached only through the registration hook,
+ *   avoiding duplicate invocation.
  *
  *   To close that gap, this module exposes registerDeleteHandler(fn).
  *   Any module that loads after this file may register a handler.
@@ -97,18 +97,12 @@
  *   relationship-integrations.js's REGISTRATION HOOKS section).
  *
  *   Handler contract:
- *     fn(characterId) -> any
- *   The return value is ignored. Exceptions are caught and logged. A
- *   throwing handler does not prevent subsequent handlers from
- *   running, and does not propagate out of the deletion.
+ *     fn(characterId) -> { success: true, ... } | { success: false, reason }
+ *   Missing or malformed results and exceptions are recorded as failures.
+ *   A failing handler does not prevent subsequent handlers from running.
  *
- *   The handler registration is additive with the named cleanup
- *   table: a domain that registers via the hook AND is present in the
- *   named table will be called twice on the same delete. That is safe
- *   because the command layer is idempotent per character id —
- *   removeAllReferencesTo refuses nothing (it silently skips records
- *   that no longer reference the character) and the second call is a
- *   no-op.
+ *   RelationshipIntegrations is intentionally omitted from the named
+ *   cleanup table because it registers through this hook.
  *
  *   Registration returns an unregister function. Callers who need to
  *   tear down (test harnesses, hot reload) should call it. In a
@@ -165,7 +159,15 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 3.13b):
+ *   Current revision (Phase 4 hard-delete audit):
+ *     - Cleanup handlers must return an explicit { success: true } result.
+ *       Missing, malformed, failed, and throwing handlers are recorded.
+ *     - Hard delete distinguishes deletionComplete from cleanup success;
+ *       a removed character can have incomplete cross-domain cleanup.
+ *     - Purge and bulk delete aggregate per-character cleanup failures.
+ *     - RelationshipIntegrations is no longer dispatched twice (named
+ *       target plus registered handler).
+ *   Previous revision (Phase 3.13b):
  *     - Added registerDeleteHandler(fn). A module that loads after this
  *       file can register a delete handler; every hard delete invokes
  *       every registered handler, after the death of the record and
