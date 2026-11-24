@@ -1063,7 +1063,8 @@
         return normalised;
     }
 
-    function _updateEnterprise(enterpriseId, patch) {
+    function _updateEnterprise(enterpriseId, patch, options) {
+        options = options || {};
         _assertHydrated();
 
         if (!_hasId(enterpriseId)) {
@@ -1098,8 +1099,46 @@
 
         _indexesRebuild();
         _syncToMasterData();
-        _notify('enterpriseUpdated', _cloneRecord(normalised));
+        if (options.silent !== true) {
+            _notify('enterpriseUpdated', _cloneRecord(normalised));
+        }
         return normalised;
+    }
+
+    function _transactionSnapshotEnterprise(enterpriseId) {
+        _assertHydrated();
+        var record = _cache.byId.get(enterpriseId);
+        if (!record) return null;
+        return {
+            enterpriseId: enterpriseId,
+            index: _enterprises.indexOf(record),
+            record: record
+        };
+    }
+
+    function _transactionRestoreEnterprise(snapshot) {
+        _assertHydrated();
+        if (!snapshot || typeof snapshot.enterpriseId !== 'string' ||
+            !snapshot.record || snapshot.record.id !== snapshot.enterpriseId ||
+            !Number.isInteger(snapshot.index) || snapshot.index < 0) {
+            throw new Error('IndustryState transaction snapshot is invalid.');
+        }
+        var matches = [];
+        for (var i = 0; i < _enterprises.length; i++) {
+            if (_enterprises[i] && _enterprises[i].id === snapshot.enterpriseId) {
+                matches.push(i);
+            }
+        }
+        if (matches.length !== 1 || matches[0] !== snapshot.index) {
+            throw new Error('Enterprise structure changed during transaction: ' +
+                snapshot.enterpriseId);
+        }
+        _enterprises[snapshot.index] = snapshot.record;
+        _indexesRebuild();
+        _requireMasterData();
+        window.masterData.data.enterprises = _enterprises.slice();
+        _markDataDirty();
+        return true;
     }
 
     function _removeEnterprise(enterpriseId) {
@@ -1271,6 +1310,8 @@
         _getAllEnterpriseTypesCanonical: _getAllEnterpriseTypesCanonical,
         _addEnterprise: _addEnterprise,
         _updateEnterprise: _updateEnterprise,
+        _transactionSnapshotEnterprise: _transactionSnapshotEnterprise,
+        _transactionRestoreEnterprise: _transactionRestoreEnterprise,
         _removeEnterprise: _removeEnterprise,
         _addEnterpriseType: _addEnterpriseType,
         _updateEnterpriseType: _updateEnterpriseType,
