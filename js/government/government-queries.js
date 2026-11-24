@@ -7,7 +7,8 @@
  *   - Never returns a live canonical record.
  *   - Never mutates anything.
  *   - Never calls saveMasterData / markDataDirty.
- *   - Missing cross-domain modules throw at load, not at call time.
+ *   - Required cross-domain modules throw at load; optional projections
+ *     are resolved at call time and return null when unavailable.
  *   - No fabricated fallbacks. No inline numbers that belong to
  *     GovernmentConstants.
  */
@@ -19,7 +20,6 @@
     var Rules = window.GovernmentRules;
     var _CharacterQueries = window.CharacterQueries;
     var _LocationQueries = window.LocationQueries;
-    var _RoleQueries = window.RoleQueries;
     var _RankQueries = window.RankQueries;
     var _SettlementQueries = window.SettlementQueries;
     var _SettlementProsperity = window.SettlementProsperityQueries;
