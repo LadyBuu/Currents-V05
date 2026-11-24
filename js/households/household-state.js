@@ -1645,6 +1645,18 @@
     // =========================================================================
 
     var HouseholdState = {
+        _transactionSnapshotDeletedLocations: function () {
+            var master = _getMasterData();
+            if (!Array.isArray(master.data.households) || !Array.isArray(master.data.householdPositions) || !Array.isArray(master.data.householdAssignments)) throw new Error('Household canonical stores unavailable.');
+            return { households: master.data.households, positions: master.data.householdPositions, assignments: master.data.householdAssignments };
+        },
+        _transactionRestoreDeletedLocations: function (snapshot) {
+            if (!snapshot || !Array.isArray(snapshot.households) || !Array.isArray(snapshot.positions) || !Array.isArray(snapshot.assignments)) return { success: false, reason: 'Invalid Household transaction snapshot.' };
+            var master = _getMasterData();
+            master.data.households = snapshot.households; master.data.householdPositions = snapshot.positions; master.data.householdAssignments = snapshot.assignments;
+            try { hydrateFromMasterData(); invalidateCache(); return { success: true }; } catch (error) { return { success: false, reason: error.message || String(error) }; }
+        },
+
         // Namespace ownership marker — see collision guard at top.
         __owner: 'households/household-state.js',
 
