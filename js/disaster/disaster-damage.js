@@ -573,23 +573,28 @@
     // damage coordinator is called on an in-flight record before
     // DisasterCommands records it.
 
-    function _reserveDamageRecord(disasterId) {
-        if (!disasterId) return { success: true, skipped: true };
+    function _reserveDamageRecord(disasterId, options) {
+        if (!disasterId) return { success: true, skipped: true, retrySystems: null, existing: null };
         var existing = State.getDisaster(disasterId);
         if (!existing) return { success: false, reason: 'Disaster record not found' };
         var damage = existing.structuralDamage || {};
         var lists = damage.destructionList || {};
         var hasPriorDamage = ['features', 'schools', 'enterprises', 'residences', 'households']
             .some(function(key) { return Array.isArray(lists[key]) && lists[key].length > 0; });
-        if (existing.structuralDamageStatus
-            || hasPriorDamage
+        var retrySystems = null;
+        if (existing.structuralDamageStatus === 'partial'
+            && options && options.retrySkippedOnly === true
+            && Array.isArray(existing.structuralDamageSkippedSystems)
+            && existing.structuralDamageSkippedSystems.length > 0) {
+            retrySystems = existing.structuralDamageSkippedSystems.slice();
+        } else if (existing.structuralDamageStatus || hasPriorDamage
             || ['featuresDestroyed', 'schoolsDestroyed', 'enterprisesDestroyed',
                 'residencesDemolished', 'householdsDestroyed'].some(function(key) {
                 return typeof damage[key] === 'number' && damage[key] > 0;
             })) {
             return {
                 success: false,
-                reason: 'Structural damage has already been attempted for this disaster; refusing to apply it again'
+                reason: 'Structural damage has already been attempted. Only previously skipped systems may be retried, using retrySkippedOnly: true.'
             };
         }
         var result = State.updateDisaster(disasterId, {
@@ -599,7 +604,7 @@
         if (!result || result.success !== true) {
             return { success: false, reason: (result && result.reason) || 'Could not reserve structural damage application' };
         }
-        return { success: true };
+        return { success: true, retrySystems: retrySystems, existing: existing };
     }
 
     function _saveDamageRecord(disasterId, report) {
@@ -670,50 +675,62 @@
             ? options.destructionChance
             : _calculateDestructionChance(severity);
 
-        var reservation = _reserveDamageRecord(disaster.id || null);
+        var reservation = _reserveDamageRecord(disaster.id || null, options);
         if (!reservation.success) {
             return _fail(reservation.reason, C.CODES.VALIDATION);
         }
 
+        var priorLists = reservation.existing && reservation.existing.structuralDamage
+            ? reservation.existing.structuralDamage.destructionList || {} : {};
         var report = {
             locationId: locationId,
             disasterId: disaster.id || null,
             year: disaster.year || null,
-            featuresDestroyed:    [],
-            schoolsDestroyed:     [],
-            enterprisesDestroyed: [],
-            residencesDemolished: [],
-            householdsDestroyed:  [],
+            featuresDestroyed:    (priorLists.features || []).slice(),
+            schoolsDestroyed:     (priorLists.schools || []).slice(),
+            enterprisesDestroyed: (priorLists.enterprises || []).slice(),
+            residencesDemolished: (priorLists.residences || []).slice(),
+            householdsDestroyed:  (priorLists.households || []).slice(),
             totalLoss: 0,
             errors: [],
             skippedSystems: []
         };
+        var retrySystems = reservation.retrySystems;
+        function shouldRun(system) { return !retrySystems || retrySystems.indexOf(system) !== -1; }
+        function appendUnique(target, incoming) {
+            (incoming || []).forEach(function(item) {
+                if (!target.some(function(existing) { return existing.id === item.id; })) target.push(item);
+            });
+        }
 
         var r;
-
-        r = _destroySettlementFeatures(locationId, baseChance, disaster);
-        report.featuresDestroyed = r.destroyed;
-        report.errors = report.errors.concat(r.errors);
-        if (r.skipped) report.skippedSystems.push('settlement-features');
-
-        r = _destroySchools(locationId, baseChance, disaster);
-        report.schoolsDestroyed = r.destroyed;
-        report.errors = report.errors.concat(r.errors);
-        if (r.skipped) report.skippedSystems.push('education');
-
-        r = _destroyEnterprises(locationId, baseChance, disaster);
-        report.enterprisesDestroyed = r.destroyed;
-        report.errors = report.errors.concat(r.errors);
-        if (r.skipped) report.skippedSystems.push('industry');
-
-        r = _demolishResidences(locationId, baseChance, disaster);
-        report.residencesDemolished = r.demolished;
-        report.errors = report.errors.concat(r.errors);
-        if (r.skipped) report.skippedSystems.push('residences');
-
-        if (options.demolishHouseholds !== false) {
+        if (shouldRun('settlement-features')) {
+            r = _destroySettlementFeatures(locationId, baseChance, disaster);
+            appendUnique(report.featuresDestroyed, r.destroyed);
+            report.errors = report.errors.concat(r.errors);
+            if (r.skipped) report.skippedSystems.push('settlement-features');
+        }
+        if (shouldRun('education')) {
+            r = _destroySchools(locationId, baseChance, disaster);
+            appendUnique(report.schoolsDestroyed, r.destroyed);
+            report.errors = report.errors.concat(r.errors);
+            if (r.skipped) report.skippedSystems.push('education');
+        }
+        if (shouldRun('industry')) {
+            r = _destroyEnterprises(locationId, baseChance, disaster);
+            appendUnique(report.enterprisesDestroyed, r.destroyed);
+            report.errors = report.errors.concat(r.errors);
+            if (r.skipped) report.skippedSystems.push('industry');
+        }
+        if (shouldRun('residences')) {
+            r = _demolishResidences(locationId, baseChance, disaster);
+            appendUnique(report.residencesDemolished, r.demolished);
+            report.errors = report.errors.concat(r.errors);
+            if (r.skipped) report.skippedSystems.push('residences');
+        }
+        if (options.demolishHouseholds !== false && shouldRun('households')) {
             r = _destroyHouseholds(locationId, baseChance, disaster);
-            report.householdsDestroyed = r.destroyed;
+            appendUnique(report.householdsDestroyed, r.destroyed);
             report.errors = report.errors.concat(r.errors);
             if (r.skipped) report.skippedSystems.push('households');
         }
