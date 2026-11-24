@@ -30,11 +30,9 @@
     if (!Rules) throw new Error('government-queries.js requires GovernmentRules');
     if (!_CharacterQueries) throw new Error('government-queries.js requires CharacterQueries');
     if (!_LocationQueries) throw new Error('government-queries.js requires LocationQueries');
-    if (!_RoleQueries) throw new Error('government-queries.js requires RoleQueries');
     if (!_RankQueries) throw new Error('government-queries.js requires RankQueries');
     if (!_SettlementQueries) throw new Error('government-queries.js requires SettlementQueries');
     if (!_SettlementProsperity) throw new Error('government-queries.js requires SettlementProsperityQueries');
-    if (!_IndustryQueries) throw new Error('government-queries.js requires IndustryQueries');
 
     // ---- Helpers -------------------------------------------------------------
 
@@ -53,7 +51,9 @@
 
     function _roleSummary(roleId) {
         if (!roleId) return null;
-        return _RoleQueries.getRoleSummary ? _RoleQueries.getRoleSummary(roleId) : null;
+        var roleQueries = window.RoleQueries;
+        if (!roleQueries || typeof roleQueries.getRoleSummary !== 'function') return null;
+        return roleQueries.getRoleSummary(roleId);
     }
 
     function _rankSummary(rankId) {
@@ -1079,13 +1079,15 @@
     }
 
     function getIndustryTaxRevenue(locationId) {
-        if (typeof _IndustryQueries.getIndustryTaxRevenue !== 'function') return null;
-        return _IndustryQueries.getIndustryTaxRevenue(locationId);
+        var industryQueries = window.IndustryQueries;
+        if (!industryQueries || typeof industryQueries.getIndustryTaxRevenue !== 'function') return null;
+        return industryQueries.getIndustryTaxRevenue(locationId);
     }
 
     function getIndustryEnterpriseStats(locationId) {
-        if (!_IndustryQueries.getIndustryEnterpriseStats) return null;
-        return _IndustryQueries.getIndustryEnterpriseStats(locationId);
+        var industryQueries = window.IndustryQueries;
+        if (!industryQueries || typeof industryQueries.getIndustryEnterpriseStats !== 'function') return null;
+        return industryQueries.getIndustryEnterpriseStats(locationId);
     }
 
     function getGovernmentIndustrySummary(locationId) {
