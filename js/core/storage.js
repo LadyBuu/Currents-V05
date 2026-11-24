@@ -810,6 +810,13 @@
         }
 
         _invalidateAccessorCaches();
+        try {
+            window.dispatchEvent(new CustomEvent('masterDataUpdated', {
+                detail: { source: 'import' }
+            }));
+        } catch (eventError) {
+            console.warn('storage.js: imported data installed, but update notification failed:', eventError);
+        }
 
         var charCount = Array.isArray(envelope.data.characters)
             ? envelope.data.characters.length
@@ -848,6 +855,13 @@
             }
 
             _invalidateAccessorCaches();
+            try {
+                window.dispatchEvent(new CustomEvent('masterDataUpdated', {
+                    detail: { source: 'reset' }
+                }));
+            } catch (eventError) {
+                console.warn('storage.js: reset completed, but update notification failed:', eventError);
+            }
 
             return { ok: true };
         } catch (e) {
