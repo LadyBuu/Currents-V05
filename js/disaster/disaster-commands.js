@@ -513,24 +513,29 @@
             ? disaster.prosperityLoss
             : 0;
 
+        var effectResult;
         try {
-            window.modifySettlementProsperity(
-                locationId,
-                -prosperityLoss,
-                disaster.disasterType
+            effectResult = window.modifySettlementProsperity(
+                locationId, -prosperityLoss, disaster.disasterType
             );
         } catch (e) {
-            if (typeof console !== 'undefined' && console.error) {
-                console.error('disaster-commands.js: modifySettlementProsperity threw', e);
-            }
+            return { value: 0, failure: {
+                system: 'settlement-prosperity',
+                reason: e && e.message ? e.message : String(e)
+            }};
         }
-
+        if (effectResult === false || (effectResult && effectResult.success === false)) {
+            return { value: 0, failure: {
+                system: 'settlement-prosperity',
+                reason: (effectResult && (effectResult.reason || effectResult.error)) ||
+                    'Prosperity command reported failure.'
+            }};
+        }
         _log('disaster', 'Settlement Impact',
             disaster.locationName + ' prosperity decreased by ' + prosperityLoss +
             ' due to ' + disaster.disasterType,
             [], disaster.locationName);
-
-        return prosperityLoss;
+        return { value: prosperityLoss, failure: null };
     }
 
     function applyDisasterCrimeEffect(locationId, disaster) {
@@ -538,24 +543,29 @@
             ? disaster.crimeIncrease
             : 0;
 
+        var effectResult;
         try {
-            window.modifySettlementCrimeRate(
-                locationId,
-                crimeIncrease,
-                disaster.disasterType + ' aftermath'
+            effectResult = window.modifySettlementCrimeRate(
+                locationId, crimeIncrease, disaster.disasterType + ' aftermath'
             );
         } catch (e) {
-            if (typeof console !== 'undefined' && console.error) {
-                console.error('disaster-commands.js: modifySettlementCrimeRate threw', e);
-            }
+            return { value: 0, failure: {
+                system: 'settlement-crime',
+                reason: e && e.message ? e.message : String(e)
+            }};
         }
-
+        if (effectResult === false || (effectResult && effectResult.success === false)) {
+            return { value: 0, failure: {
+                system: 'settlement-crime',
+                reason: (effectResult && (effectResult.reason || effectResult.error)) ||
+                    'Crime-rate command reported failure.'
+            }};
+        }
         _log('disaster', 'Crime Impact',
             'Crime rate in ' + disaster.locationName + ' increased by ' +
             Math.round(crimeIncrease * 100) + '% after ' + disaster.disasterType,
             [], disaster.locationName);
-
-        return crimeIncrease;
+        return { value: crimeIncrease, failure: null };
     }
 
     // =========================================================================
@@ -578,12 +588,18 @@
             victimsKilled: 0,
             victimDeathFailures: [],
             deathCascadeFailures: [],
-            structuralDamage: null
+            structuralDamage: null,
+            failures: []
         };
 
-        // 1. Settlement prosperity + crime.
-        results.prosperityLoss = applyDisasterSettlementEffects(locationId, disaster);
-        results.crimeIncrease = applyDisasterCrimeEffect(locationId, disaster);
+        // 1. Settlement prosperity + crime. Independent effects continue
+        // even if another subsystem reports a failure.
+        var prosperityResult = applyDisasterSettlementEffects(locationId, disaster);
+        results.prosperityLoss = prosperityResult.value;
+        if (prosperityResult.failure) results.failures.push(prosperityResult.failure);
+        var crimeResult = applyDisasterCrimeEffect(locationId, disaster);
+        results.crimeIncrease = crimeResult.value;
+        if (crimeResult.failure) results.failures.push(crimeResult.failure);
 
         // 2. Character deaths.
         try {
@@ -592,6 +608,21 @@
             results.victimsKilled = killResult.killed;
             results.victimDeathFailures = killResult.failures;
             results.deathCascadeFailures = killResult.cascadeFailures;
+            for (var vf = 0; vf < killResult.failures.length; vf++) {
+                results.failures.push({
+                    system: 'character-death',
+                    characterId: killResult.failures[vf].characterId,
+                    reason: killResult.failures[vf].reason
+                });
+            }
+            for (var cf = 0; cf < killResult.cascadeFailures.length; cf++) {
+                results.failures.push({
+                    system: 'character-death-cascade',
+                    characterId: killResult.cascadeFailures[cf].characterId,
+                    reason: killResult.cascadeFailures[cf].reason,
+                    code: killResult.cascadeFailures[cf].code
+                });
+            }
             if (killResult.killed > 0) {
                 _log('disaster', 'Death Impact',
                     killResult.killed + ' character(s) died in ' +
@@ -599,6 +630,10 @@
                     killResult.subjects, disaster.locationName);
             }
         } catch (e) {
+            results.failures.push({
+                system: 'character-death',
+                reason: e && e.message ? e.message : String(e)
+            });
             if (typeof console !== 'undefined' && console.error) {
                 console.error('disaster-commands.js: victim collection threw', e);
             }
@@ -619,6 +654,18 @@
                     // its report is nested under data, not on the wrapper.
                     var damageReport = damageResult.data;
                     results.structuralDamage = damageReport;
+                    if (Array.isArray(damageReport.errors)) {
+                        for (var de = 0; de < damageReport.errors.length; de++) {
+                            var damageError = damageReport.errors[de];
+                            results.failures.push({
+                                system: damageError.system || 'structural-damage',
+                                reason: damageError.reason || 'Structural damage operation failed.',
+                                subject: damageError.feature || damageError.school ||
+                                    damageError.enterprise || damageError.residence ||
+                                    damageError.household || null
+                            });
+                        }
+                    }
 
                     var updates = {
                         structuralDamage: {
@@ -652,12 +699,30 @@
                     results.structuralDamage = damageResult || null;
                 }
             } catch (e) {
+                results.failures.push({
+                    system: 'structural-damage',
+                    reason: e && e.message ? e.message : String(e)
+                });
                 if (typeof console !== 'undefined' && console.error) {
                     console.error('disaster-commands.js: applyStructuralDamage threw', e);
                 }
             }
+        } else {
+            results.failures.push({
+                system: 'structural-damage',
+                reason: 'DisasterDamage.applyStructuralDamage is unavailable.'
+            });
         }
 
+        results.success = results.failures.length === 0;
+        if (!results.success) {
+            return {
+                success: false,
+                reason: 'Disaster effects were only partially applied.',
+                code: C.CODES.DAMAGE_FAILED,
+                data: results
+            };
+        }
         return _ok(results);
     }
 
