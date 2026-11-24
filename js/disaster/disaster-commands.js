@@ -507,75 +507,46 @@
     // =========================================================================
 
     function applyDisasterSettlementEffects(locationId, disaster) {
-        var prosperityLoss = (typeof disaster.prosperityLoss === 'number')
-            ? disaster.prosperityLoss
-            : 0;
-
-        if (typeof window.modifySettlementProsperity !== 'function') {
-            return { value: 0, failure: {
-                system: 'settlement-prosperity',
-                reason: 'No supported Settlement prosperity mutation command is available.'
+        var prosperityLoss = (typeof disaster.prosperityLoss === 'number') ? disaster.prosperityLoss : 0;
+        var crimeIncrease = (typeof disaster.crimeIncrease === 'number') ? disaster.crimeIncrease : 0;
+        var commands = window.SettlementGovernmentCommands;
+        if (!commands || typeof commands.recordDisasterImpact !== 'function') {
+            return { prosperityLoss: 0, crimeIncrease: 0, failure: {
+                system: 'settlement-disaster-impact',
+                reason: 'SettlementGovernmentCommands.recordDisasterImpact is unavailable.'
             }};
         }
-        var effectResult;
+
+        var result;
         try {
-            effectResult = window.modifySettlementProsperity(
-                locationId, -prosperityLoss, disaster.disasterType
-            );
+            result = commands.recordDisasterImpact(locationId, {
+                disasterId: disaster.id,
+                year: disaster.year,
+                disasterType: disaster.disasterType,
+                prosperityLoss: prosperityLoss,
+                crimeIncrease: crimeIncrease
+            });
         } catch (e) {
-            return { value: 0, failure: {
-                system: 'settlement-prosperity',
+            return { prosperityLoss: 0, crimeIncrease: 0, failure: {
+                system: 'settlement-disaster-impact',
                 reason: e && e.message ? e.message : String(e)
             }};
         }
-        if (effectResult === false || (effectResult && effectResult.success === false)) {
-            return { value: 0, failure: {
-                system: 'settlement-prosperity',
-                reason: (effectResult && (effectResult.reason || effectResult.error)) ||
-                    'Prosperity command reported failure.'
+        if (!result || result.success !== true) {
+            return { prosperityLoss: 0, crimeIncrease: 0, failure: {
+                system: 'settlement-disaster-impact',
+                reason: (result && (result.reason || result.details && result.details.reason)) ||
+                    'Settlement rejected the disaster impact.',
+                code: result && result.code || null
             }};
         }
+
         _log('disaster', 'Settlement Impact',
             disaster.locationName + ' prosperity decreased by ' + prosperityLoss +
-            ' due to ' + disaster.disasterType,
+            ' and crime increased by ' + Math.round(crimeIncrease * 100) +
+            '% due to ' + disaster.disasterType,
             [], disaster.locationName);
-        return { value: prosperityLoss, failure: null };
-    }
-
-    function applyDisasterCrimeEffect(locationId, disaster) {
-        var crimeIncrease = (typeof disaster.crimeIncrease === 'number')
-            ? disaster.crimeIncrease
-            : 0;
-
-        if (typeof window.modifySettlementCrimeRate !== 'function') {
-            return { value: 0, failure: {
-                system: 'settlement-crime',
-                reason: 'No supported Settlement crime-rate mutation command is available.'
-            }};
-        }
-        var effectResult;
-        try {
-            effectResult = window.modifySettlementCrimeRate(
-                locationId, crimeIncrease, disaster.disasterType + ' aftermath'
-            );
-        } catch (e) {
-            return { value: 0, failure: {
-                system: 'settlement-crime',
-                reason: e && e.message ? e.message : String(e)
-            }};
-        }
-        if (effectResult === false || (effectResult && effectResult.success === false)) {
-            return { value: 0, failure: {
-                system: 'settlement-crime',
-                reason: (effectResult && (effectResult.reason || effectResult.error)) ||
-                    'Crime-rate command reported failure.'
-            }};
-        }
-        _log('disaster', 'Crime Impact',
-            'Crime rate in ' + disaster.locationName + ' increased by ' +
-            Math.round(crimeIncrease * 100) + '% after ' + disaster.disasterType,
-            [], disaster.locationName);
-        return { value: crimeIncrease, failure: null };
+        return { prosperityLoss: prosperityLoss, crimeIncrease: crimeIncrease, failure: null };
     }
 
     // =========================================================================
@@ -604,12 +575,10 @@
 
         // 1. Settlement prosperity + crime. Independent effects continue
         // even if another subsystem reports a failure.
-        var prosperityResult = applyDisasterSettlementEffects(locationId, disaster);
-        results.prosperityLoss = prosperityResult.value;
-        if (prosperityResult.failure) results.failures.push(prosperityResult.failure);
-        var crimeResult = applyDisasterCrimeEffect(locationId, disaster);
-        results.crimeIncrease = crimeResult.value;
-        if (crimeResult.failure) results.failures.push(crimeResult.failure);
+        var settlementImpact = applyDisasterSettlementEffects(locationId, disaster);
+        results.prosperityLoss = settlementImpact.prosperityLoss;
+        results.crimeIncrease = settlementImpact.crimeIncrease;
+        if (settlementImpact.failure) results.failures.push(settlementImpact.failure);
 
         // 2. Character deaths.
         try {
