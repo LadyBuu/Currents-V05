@@ -263,6 +263,7 @@
         html += '</div>';
         container.innerHTML = html;
 
+        container.__locationDetailContext = context;
         if (!container.__locationDetailWired) {
             container.__locationDetailWired = true;
             container.addEventListener('click', function (e) {
@@ -272,11 +273,11 @@
                 if (action === 'edit') {
                     var fn = _resolveModal('openEditPlaceModal');
                     if (!fn) return;
-                    fn(context.locationId, function () { _refresh(); });
+                    fn(container.__locationDetailContext.locationId, function () { _refresh(); });
                 } else if (action === 'delete') {
                     var dfn = _resolveModal('openDeletePlaceModal');
                     if (!dfn) return;
-                    dfn(context.locationId, function () {
+                    dfn(container.__locationDetailContext.locationId, function () {
                         // After a delete, ask TabManager for a re-render; the
                         // sidebar reselects the initial place via the manager
                         // topbar callback in location-manager-bootstrap.js.
