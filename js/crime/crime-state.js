@@ -1289,10 +1289,10 @@
     function reload() {
         if (_mutatingState) return false;
 
-        _state.crimes = _emptyCrimeIndexes();
-        _state.vendettas = _emptyVendettaIndexes();
-        _state.initialized = false;
-
+        // hydrateFromMasterData builds replacement indexes off to the side
+        // and swaps them only after the complete canonical dataset validates.
+        // Do not clear the live cache first: a malformed reload must leave the
+        // last known-good indexes available to readers.
         try {
             hydrateFromMasterData(true);
             _publish(C.STATE_EVENTS.CACHE_RELOADED, null);
