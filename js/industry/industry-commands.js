@@ -443,19 +443,19 @@
                             reason: 'Household not found: ' + householdId
                         };
                     }
-                    if (!Array.isArray(household.enterprises)) {
-                        if (wasHouseholdOwned && householdId === current.ownerId) {
-                            return {
-                                success: false,
-                                reason: 'Source Household has no valid enterprises reverse index: ' +
-                                    householdId
-                            };
-                        }
-                        household.enterprises = [];
+                    if (!Array.isArray(household.enterprises) &&
+                        wasHouseholdOwned && householdId === current.ownerId) {
+                        return {
+                            success: false,
+                            reason: 'Source Household has no valid enterprises reverse index: ' +
+                                householdId
+                        };
                     }
-                    var count = household.enterprises.filter(function(id) {
-                        return id === enterpriseId;
-                    }).length;
+                    var count = Array.isArray(household.enterprises)
+                        ? household.enterprises.filter(function(id) {
+                            return id === enterpriseId;
+                        }).length
+                        : 0;
                     if (wasHouseholdOwned && householdId === current.ownerId && count !== 1) {
                         return {
                             success: false,
