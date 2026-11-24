@@ -1291,15 +1291,25 @@
         }
 
         var household = null;
+        var householdRecord = null;
         try {
             household = window.HouseholdQueries.getHousehold(householdId);
+            var householdState = window.HouseholdState;
+            if (householdState && householdState._internal
+                && typeof householdState._internal.getHouseholdRecord === 'function') {
+                householdRecord = householdState._internal.getHouseholdRecord(householdId);
+            }
         } catch (e) {
             return _fail('HOUSEHOLD_LOOKUP_FAILED',
                 e && e.message ? e.message : 'Household lookup failed');
         }
-        if (!household) return _fail('HOUSEHOLD_NOT_FOUND', 'Household not found');
+        if (!household || !householdRecord) {
+            return _fail('HOUSEHOLD_NOT_FOUND',
+                'Household record could not be resolved from canonical state');
+        }
 
-        if (household.residenceId && household.residenceId !== residenceId) {
+        if (householdRecord.residenceId
+            && householdRecord.residenceId !== residenceId) {
             return _fail('HOUSEHOLD_ALREADY_ASSIGNED',
                 'Household is already associated with another residence; vacate it before reassignment');
         }
@@ -1614,32 +1624,125 @@
         if (y === null) return _fail('INVALID_YEAR', 'Invalid year');
         var reasonText = reason || 'Marked vacant';
 
-        var affectedHouseholds = [];
-        var reverseIndexFailures = [];
+        if (!_householdCommandsAvailable()
+            || typeof window.HouseholdCommands.disassociateFromResidence !== 'function'
+            || typeof window.HouseholdCommands.associateWithResidence !== 'function') {
+            return _fail('HOUSEHOLD_COMMANDS_UNAVAILABLE',
+                'HouseholdCommands residence association methods are required');
+        }
+        if (!window.HouseholdState || !window.HouseholdState._internal
+            || typeof window.HouseholdState._internal.getHouseholdRecord !== 'function') {
+            return _fail('HOUSEHOLD_STATE_UNAVAILABLE',
+                'HouseholdState canonical records are required');
+        }
 
+        var affectedHouseholds = [];
+        var snapshots = [];
+        var seenHouseholds = Object.create(null);
         for (var i = 0; i < r.units.length; i++) {
-            var unit = r.units[i];
-            if (!unit.isDemolished && !unit.isVacant && unit.householdId) {
-                affectedHouseholds.push({
-                    householdId: unit.householdId,
-                    householdName: unit.householdName,
-                    unitNumber: unit.unitNumber
-                });
-                var dis = _disassociateHouseholdFromUnit(r, unit, y, reasonText);
-                if (!dis.success) {
-                    reverseIndexFailures.push({
-                        householdId: unit.householdId,
-                        unitNumber: unit.unitNumber,
-                        reason: dis.reason
-                    });
+            var candidate = r.units[i];
+            if (candidate.isDemolished || candidate.isVacant || !candidate.householdId) {
+                continue;
+            }
+            var householdId = candidate.householdId;
+            if (seenHouseholds[householdId]) {
+                return _fail('DUPLICATE_HOUSEHOLD_OCCUPANCY',
+                    'Household ' + householdId + ' occupies multiple units; repair occupancy before vacating');
+            }
+            seenHouseholds[householdId] = true;
+
+            var householdRecord = window.HouseholdState._internal.getHouseholdRecord(householdId);
+            if (!householdRecord || householdRecord.residenceId !== residenceId
+                || (householdRecord.residenceUnitNumber !== null
+                    && householdRecord.residenceUnitNumber !== undefined
+                    && householdRecord.residenceUnitNumber !== candidate.unitNumber)) {
+                return _fail('HOUSEHOLD_REFERENCE_MISMATCH',
+                    'Household ' + householdId + ' does not point back to this Residence unit');
+            }
+
+            affectedHouseholds.push({
+                householdId: householdId,
+                householdName: candidate.householdName,
+                unitNumber: candidate.unitNumber
+            });
+            snapshots.push({
+                unit: candidate,
+                unitState: {
+                    householdId: candidate.householdId,
+                    householdName: candidate.householdName,
+                    isVacant: candidate.isVacant,
+                    assignedYear: candidate.assignedYear,
+                    vacantYear: candidate.vacantYear,
+                    associationHistory: Array.isArray(candidate.associationHistory)
+                        ? candidate.associationHistory.map(function (entry) {
+                            if (!entry || typeof entry !== 'object') return entry;
+                            var copy = {};
+                            Object.keys(entry).forEach(function (key) { copy[key] = entry[key]; });
+                            return copy;
+                        }) : []
+                },
+                householdState: {
+                    residenceId: householdRecord.residenceId,
+                    residenceName: householdRecord.residenceName,
+                    residenceType: householdRecord.residenceType,
+                    associatedYear: householdRecord.associatedYear,
+                    residenceUnitNumber: householdRecord.residenceUnitNumber,
+                    residenceNotes: householdRecord.residenceNotes
                 }
+            });
+        }
+
+        var residenceAssociationHistory = Array.isArray(r.associationHistory)
+            ? r.associationHistory.map(function (entry) {
+                if (!entry || typeof entry !== 'object') return entry;
+                var copy = {};
+                Object.keys(entry).forEach(function (key) { copy[key] = entry[key]; });
+                return copy;
+            }) : [];
+
+        for (var d = 0; d < snapshots.length; d++) {
+            var snapshot = snapshots[d];
+            var dis = _disassociateHouseholdFromUnit(
+                r, snapshot.unit, y, reasonText
+            );
+            if (!dis || dis.success !== true) {
+                var rollbackFailures = [];
+                for (var rb = d - 1; rb >= 0; rb--) {
+                    var previous = snapshots[rb];
+                    var old = previous.householdState;
+                    var restore = _associateHouseholdReverseIndex(
+                        previous.unit.householdId || previous.unitState.householdId,
+                        r,
+                        previous.unitState.householdId
+                            ? previous.unit.unitNumber : previous.unit.unitNumber,
+                        old.associatedYear !== null && old.associatedYear !== undefined
+                            ? old.associatedYear : y,
+                        old.residenceNotes || ''
+                    );
+                    if (!restore || restore.success !== true) {
+                        rollbackFailures.push(previous.unitState.householdId);
+                    }
+                    previous.unit.householdId = previous.unitState.householdId;
+                    previous.unit.householdName = previous.unitState.householdName;
+                    previous.unit.isVacant = previous.unitState.isVacant;
+                    previous.unit.assignedYear = previous.unitState.assignedYear;
+                    previous.unit.vacantYear = previous.unitState.vacantYear;
+                    previous.unit.associationHistory = previous.unitState.associationHistory;
+                }
+                r.associationHistory = residenceAssociationHistory;
+                return _fail(
+                    rollbackFailures.length ? 'ROLLBACK_FAILED' :
+                        (dis && dis.code ? dis.code : 'HOUSEHOLD_DISASSOCIATION_FAILED'),
+                    rollbackFailures.length
+                        ? 'Residence vacancy failed and some Household reverse references could not be restored'
+                        : (dis && dis.reason ? dis.reason : 'Could not disassociate every Household'),
+                    { rollbackFailures: rollbackFailures }
+                );
             }
         }
 
         _pushVacancyHistory(r, y, reasonText, affectedHouseholds);
-
         r.lastUpdated = y;
-
         _pushHistory(r, 'marked_vacant',
             'Marked vacant: ' + reasonText +
             ' (' + affectedHouseholds.length + ' households affected)',
@@ -1654,15 +1757,15 @@
             residenceId: residenceId,
             year: y,
             affectedHouseholds: affectedHouseholds,
-            reverseIndexFailed: reverseIndexFailures.length > 0
+            reverseIndexFailed: false
         });
 
         return _ok({
             residenceId: residenceId,
             year: y,
             affectedHouseholds: affectedHouseholds,
-            reverseIndexFailed: reverseIndexFailures.length > 0,
-            reverseIndexFailures: reverseIndexFailures
+            reverseIndexFailed: false,
+            reverseIndexFailures: []
         });
     }
 
