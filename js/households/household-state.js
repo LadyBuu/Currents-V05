@@ -801,6 +801,77 @@
         return true;
     }
 
+    // Full Household reverse-index snapshot used only by the coordinated
+    // Industry ownership repair. The repair changes no other Household fields.
+    function _transactionSnapshotEnterpriseIndexes() {
+        return _state.households.map(function(record) {
+            return _cloneTransactionValue(record);
+        });
+    }
+
+    function _transactionRebuildEnterpriseIndexes(expectedByHousehold) {
+        if (!expectedByHousehold || typeof expectedByHousehold !== 'object' ||
+            Array.isArray(expectedByHousehold)) {
+            throw new Error('Expected Household Enterprise index map is invalid.');
+        }
+        var seen = Object.create(null);
+        var next = _state.households.map(function(record) {
+            if (!record || typeof record.id !== 'string' || record.id === '' ||
+                seen[record.id]) {
+                throw new Error('Household collection contains an invalid or duplicate id.');
+            }
+            seen[record.id] = true;
+            if (!Object.prototype.hasOwnProperty.call(expectedByHousehold, record.id) ||
+                !Array.isArray(expectedByHousehold[record.id])) {
+                throw new Error('Expected Enterprise index is missing for Household: ' + record.id);
+            }
+            var copy = _cloneTransactionValue(record);
+            copy.enterprises = expectedByHousehold[record.id].slice();
+            return copy;
+        });
+        Object.keys(expectedByHousehold).forEach(function(id) {
+            if (!seen[id]) throw new Error('Expected index references unknown Household: ' + id);
+        });
+        _state.households = next;
+        _getMasterData().data.households = next;
+        _rebuildCaches();
+        markDirty();
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            window.invalidateAccessorCaches();
+        }
+        return true;
+    }
+
+    function _transactionRestoreEnterpriseIndexes(snapshot) {
+        if (!Array.isArray(snapshot)) {
+            throw new Error('Household Enterprise index snapshot is invalid.');
+        }
+        var currentIds = _state.households.map(function(record) {
+            return record && record.id;
+        }).sort();
+        var snapshotIds = snapshot.map(function(record) {
+            return record && record.id;
+        }).sort();
+        if (currentIds.length !== snapshotIds.length) {
+            throw new Error('Household collection changed during ownership repair.');
+        }
+        for (var i = 0; i < currentIds.length; i++) {
+            if (currentIds[i] !== snapshotIds[i]) {
+                throw new Error('Household collection changed during ownership repair.');
+            }
+        }
+        _state.households = snapshot.map(function(record) {
+            return _cloneTransactionValue(record);
+        });
+        _getMasterData().data.households = _state.households;
+        _rebuildCaches();
+        markDirty();
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            window.invalidateAccessorCaches();
+        }
+        return true;
+    }
+
     function _getAllHouseholdRecords(options) {
         options = options || {};
         var households = _state.households;
@@ -1612,6 +1683,9 @@
             getHouseholdRecord: _getHouseholdRecord,
             transactionSnapshotHousehold: _transactionSnapshotHousehold,
             transactionRestoreHousehold: _transactionRestoreHousehold,
+            transactionSnapshotEnterpriseIndexes: _transactionSnapshotEnterpriseIndexes,
+            transactionRebuildEnterpriseIndexes: _transactionRebuildEnterpriseIndexes,
+            transactionRestoreEnterpriseIndexes: _transactionRestoreEnterpriseIndexes,
             getAllHouseholdRecords: _getAllHouseholdRecords,
             getPositionRecord: _getPositionRecord,
             getAllPositionRecords: _getAllPositionRecords,
