@@ -53,6 +53,11 @@
  *       family-state.js. The previous behavior was inconsistent with
  *       the rest of the codebase; a single broken subscriber could
  *       break every relationship mutation.
+ *     - replaceAll stages and validates a complete replacement before swapping
+ *       indexes, so a corrupt record cannot partially erase the live state.
+ *     - Metadata is deeply cloned as plain JSON data on insertion, update,
+ *       reload, and snapshot. Batch updates validate every patch before
+ *       committing any of them.
  *     - _reloadFromMasterData now wraps replaceAll in a try/catch.
  *       replaceAll throws on structurally invalid records; before
  *       this change a single corrupt persisted record crashed the
@@ -121,22 +126,101 @@
     }
 
     // -------------------------------------------------------------------------
-    // STRUCTURAL VALIDATION
+    // STRUCTURAL VALIDATION AND DEFENSIVE CLONING
     // -------------------------------------------------------------------------
 
+    // Metadata is persisted as JSON data. Restrict it to finite JSON
+    // primitives, arrays, and plain objects so snapshots cannot leak
+    // references or silently change meaning during persistence.
+    function _cloneData(value, seen) {
+        if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+            return value;
+        }
+        if (typeof value === 'number') {
+            if (!isFinite(value)) throw new Error('non_finite_number');
+            return value;
+        }
+        if (typeof value !== 'object') throw new Error('unsupported_metadata_value');
+        if (seen.indexOf(value) !== -1) throw new Error('cyclic_metadata');
+        seen.push(value);
+
+        var out;
+        if (Array.isArray(value)) {
+            out = [];
+            for (var i = 0; i < value.length; i++) {
+                if (!Object.prototype.hasOwnProperty.call(value, i)) {
+                    throw new Error('sparse_metadata_array');
+                }
+                out.push(_cloneData(value[i], seen));
+            }
+        } else {
+            var proto = Object.getPrototypeOf(value);
+            if (proto !== Object.prototype && proto !== null) {
+                throw new Error('non_plain_metadata_object');
+            }
+            out = {};
+            var keys = Object.keys(value);
+            for (var k = 0; k < keys.length; k++) {
+                out[keys[k]] = _cloneData(value[keys[k]], seen);
+            }
+        }
+        seen.pop();
+        return out;
+    }
+
+    function _isFiniteOrNull(value) {
+        return value === null || (typeof value === 'number' && isFinite(value));
+    }
+
+    function _isPlainObject(value) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+        var proto = Object.getPrototypeOf(value);
+        return proto === Object.prototype || proto === null;
+    }
+
     function _isStructurallyValid(record) {
-        if (!record || typeof record !== 'object') return false;
+        if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
         if (typeof record.id !== 'string' || record.id.length === 0) return false;
         if (typeof record.type !== 'string' || record.type.length === 0) return false;
         if (typeof record.status !== 'string' || record.status.length === 0) return false;
         if (typeof record.participantA !== 'string' || record.participantA.length === 0) return false;
         if (typeof record.participantB !== 'string' || record.participantB.length === 0) return false;
         if (record.participantA === record.participantB) return false;
-        if (record.startYear !== null && typeof record.startYear !== 'number') return false;
-        if (record.endYear !== null && typeof record.endYear !== 'number') return false;
+        if (record.startYear !== null && record.startYear !== undefined &&
+            (typeof record.startYear !== 'number' || !isFinite(record.startYear))) return false;
+        if (record.endYear !== null && record.endYear !== undefined &&
+            (typeof record.endYear !== 'number' || !isFinite(record.endYear))) return false;
+        if (record.startYear != null && record.endYear != null &&
+            record.endYear < record.startYear) return false;
         if (!Array.isArray(record.attributes)) return false;
-        if (!record.metadata || typeof record.metadata !== 'object') return false;
+        for (var a = 0; a < record.attributes.length; a++) {
+            if (typeof record.attributes[a] !== 'string' || record.attributes[a].length === 0) return false;
+        }
+        if (!_isPlainObject(record.metadata)) return false;
+        if (typeof record.createdAt !== 'number' || !isFinite(record.createdAt)) return false;
+        if (typeof record.updatedAt !== 'number' || !isFinite(record.updatedAt)) return false;
+        try {
+            _cloneData(record.metadata, []);
+        } catch (e) {
+            return false;
+        }
         return true;
+    }
+
+    function _cloneRecord(record) {
+        return {
+            id: record.id,
+            type: record.type,
+            status: record.status,
+            participantA: record.participantA,
+            participantB: record.participantB,
+            startYear: record.startYear === undefined ? null : record.startYear,
+            endYear: record.endYear === undefined ? null : record.endYear,
+            attributes: record.attributes.slice(),
+            metadata: _cloneData(record.metadata, []),
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt
+        };
     }
 
     // -------------------------------------------------------------------------
@@ -236,7 +320,7 @@
             startYear: record.startYear,
             endYear: record.endYear,
             attributes: record.attributes.slice(),
-            metadata: Object.assign({}, record.metadata),
+            metadata: _cloneData(record.metadata, []),
             createdAt: record.createdAt,
             updatedAt: record.updatedAt
         };
@@ -254,19 +338,12 @@
         if (!_isStructurallyValid(record)) return null;
         if (_byId.has(record.id)) return null;
 
-        var stored = {
-            id: record.id,
-            type: record.type,
-            status: record.status,
-            participantA: record.participantA,
-            participantB: record.participantB,
-            startYear: record.startYear === undefined ? null : record.startYear,
-            endYear: record.endYear === undefined ? null : record.endYear,
-            attributes: record.attributes.slice(),
-            metadata: Object.assign({}, record.metadata),
-            createdAt: record.createdAt,
-            updatedAt: record.updatedAt
-        };
+        var stored;
+        try {
+            stored = _cloneRecord(record);
+        } catch (e) {
+            return null;
+        }
 
         _byId.set(stored.id, stored);
         _indexRecord(stored);
@@ -277,16 +354,24 @@
         var rec = _byId.get(id);
         if (!rec) return null;
 
-        if (patch.status !== undefined) rec.status = patch.status;
-        if (patch.startYear !== undefined) rec.startYear = patch.startYear;
-        if (patch.endYear !== undefined) rec.endYear = patch.endYear;
-        if (patch.attributes !== undefined) rec.attributes = patch.attributes.slice();
+        var next = _cloneRecord(rec);
+        if (patch.status !== undefined) next.status = patch.status;
+        if (patch.startYear !== undefined) next.startYear = patch.startYear;
+        if (patch.endYear !== undefined) next.endYear = patch.endYear;
+        if (patch.attributes !== undefined) next.attributes = patch.attributes.slice();
         if (patch.metadata !== undefined) {
-            rec.metadata = Object.assign({}, rec.metadata, patch.metadata);
+            var merged = _cloneData(next.metadata, []);
+            var patchMetadata = _cloneData(patch.metadata, []);
+            Object.keys(patchMetadata).forEach(function(key) {
+                merged[key] = patchMetadata[key];
+            });
+            next.metadata = merged;
         }
-        rec.updatedAt = patch.updatedAt !== undefined ? patch.updatedAt : Date.now();
+        next.updatedAt = patch.updatedAt !== undefined ? patch.updatedAt : Date.now();
+        if (!_isStructurallyValid(next)) return null;
 
-        return rec;
+        _byId.set(id, next);
+        return next;
     }
 
     function _remove(id) {
@@ -334,26 +419,64 @@
             return { success: true, updated: [] };
         }
 
+        var staged = [];
+        var seen = {};
         for (var v = 0; v < updates.length; v++) {
-            var u = updates[v];
-            if (!u || typeof u.id !== 'string') {
+            var update = updates[v];
+            if (!update || typeof update.id !== 'string' || !update.id.length) {
                 return { success: false, reason: 'malformed_update_at_index:' + v };
             }
-            if (!_byId.has(u.id)) {
-                return { success: false, reason: 'unknown_id:' + u.id };
+            if (seen[update.id]) {
+                return { success: false, reason: 'duplicate_update_id:' + update.id };
             }
+            seen[update.id] = true;
+            var current = _byId.get(update.id);
+            if (!current) {
+                return { success: false, reason: 'unknown_id:' + update.id };
+            }
+            var patch = update.patch;
+            if (!_isPlainObject(patch)) {
+                return { success: false, reason: 'invalid_patch_at_index:' + v };
+            }
+            var allowed = ['status', 'startYear', 'endYear', 'attributes', 'metadata', 'updatedAt'];
+            var patchKeys = Object.keys(patch);
+            for (var p = 0; p < patchKeys.length; p++) {
+                if (allowed.indexOf(patchKeys[p]) === -1) {
+                    return { success: false, reason: 'unknown_patch_field:' + patchKeys[p] };
+                }
+            }
+            var next;
+            try {
+                next = _cloneRecord(current);
+                if (patch.status !== undefined) next.status = patch.status;
+                if (patch.startYear !== undefined) next.startYear = patch.startYear;
+                if (patch.endYear !== undefined) next.endYear = patch.endYear;
+                if (patch.attributes !== undefined) {
+                    if (!Array.isArray(patch.attributes)) throw new Error('attributes_not_array');
+                    next.attributes = patch.attributes.slice();
+                }
+                if (patch.metadata !== undefined) {
+                    if (!_isPlainObject(patch.metadata)) throw new Error('metadata_not_plain_object');
+                    var merged = _cloneData(next.metadata, []);
+                    var patchMetadata = _cloneData(patch.metadata, []);
+                    Object.keys(patchMetadata).forEach(function(key) {
+                        merged[key] = patchMetadata[key];
+                    });
+                    next.metadata = merged;
+                }
+                next.updatedAt = patch.updatedAt !== undefined ? patch.updatedAt : Date.now();
+                if (!_isStructurallyValid(next)) throw new Error('invalid_resulting_record');
+            } catch (e) {
+                return { success: false, reason: 'invalid_patch_at_index:' + v + ':' + e.message };
+            }
+            staged.push(next);
         }
 
-        var updated = [];
-        for (var i = 0; i < updates.length; i++) {
-            var u2 = updates[i];
-            var rec = _update(u2.id, u2.patch || {});
-            if (!rec) {
-                return { success: false, reason: 'update_failed_at_index:' + i };
-            }
-            updated.push(rec.id);
+        // All patches are validated and cloned before canonical state changes.
+        for (var i = 0; i < staged.length; i++) {
+            _byId.set(staged[i].id, staged[i]);
         }
-
+        var updated = staged.map(function(record) { return record.id; });
         _markDirty();
         _notify('update', updated);
         return { success: true, updated: updated };
@@ -396,21 +519,41 @@
     }
 
     function replaceAll(records) {
-        _byId.clear();
-        _byChar.clear();
-        _byType.clear();
-        _byPair.clear();
-
+        if (records !== undefined && records !== null && !Array.isArray(records)) {
+            throw new Error('relationship-state.js: replaceAll requires an array');
+        }
         var list = records || [];
+        var nextById = new Map();
+        var nextByChar = new Map();
+        var nextByType = new Map();
+        var nextByPair = new Map();
+
         for (var i = 0; i < list.length; i++) {
-            if (!_isStructurallyValid(list[i])) {
+            var record = list[i];
+            if (!_isStructurallyValid(record)) {
                 throw new Error('relationship-state.js: replaceAll received structurally invalid record at index ' + i);
             }
-            var stored = _insert(list[i]);
-            if (!stored) {
-                throw new Error('relationship-state.js: replaceAll failed to insert record at index ' + i);
+            if (nextById.has(record.id)) {
+                throw new Error('relationship-state.js: replaceAll received duplicate id at index ' + i + ': ' + record.id);
             }
+            var stored;
+            try {
+                stored = _cloneRecord(record);
+            } catch (e) {
+                throw new Error('relationship-state.js: replaceAll could not clone record at index ' + i + ': ' + e.message);
+            }
+            nextById.set(stored.id, stored);
+            _addToIndex(nextByChar, stored.participantA, stored.id);
+            _addToIndex(nextByChar, stored.participantB, stored.id);
+            _addToIndex(nextByType, stored.type, stored.id);
+            _addToIndex(nextByPair, UTILS.pairKey(stored.participantA, stored.participantB), stored.id);
         }
+
+        // Swap only after every record and every index has been staged.
+        _byId = nextById;
+        _byChar = nextByChar;
+        _byType = nextByType;
+        _byPair = nextByPair;
         _initialized = true;
     }
 
