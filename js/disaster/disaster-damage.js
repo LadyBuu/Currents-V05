@@ -576,6 +576,9 @@
     function _saveDamageRecord(disasterId, report) {
         if (!disasterId) return { success: true, skipped: true };
         var result = State.updateDisaster(disasterId, {
+            structuralDamageSkippedSystems: Array.isArray(report.skippedSystems)
+                ? report.skippedSystems.slice()
+                : [],
             structuralDamage: {
                 featuresDestroyed:    (report.featuresDestroyed    || []).length,
                 schoolsDestroyed:     (report.schoolsDestroyed     || []).length,
