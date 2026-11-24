@@ -344,8 +344,15 @@
         var locationId = data.locationId !== undefined
             ? data.locationId
             : existingDepartment && existingDepartment.locationId;
-        if (!locationId || !_LocationQueries.getPlaceSummary(locationId)) {
-            return { valid: false, reason: 'Department location does not exist' };
+        if (!locationId || typeof _LocationQueries.getPlaceSummary !== 'function') {
+            return { valid: false, reason: 'Department location cannot be verified: LocationQueries.getPlaceSummary unavailable' };
+        }
+        try {
+            if (!_LocationQueries.getPlaceSummary(locationId)) {
+                return { valid: false, reason: 'Department location does not exist' };
+            }
+        } catch (locationError) {
+            return { valid: false, reason: 'Department location could not be verified' };
         }
 
         var parentId = data.parentDepartmentId !== undefined
