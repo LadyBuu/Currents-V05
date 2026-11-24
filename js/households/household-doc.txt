@@ -3135,3 +3135,26 @@ If the transaction fails, HouseholdState restores the complete Household
 snapshots, rebuilds its indexes and invalidates accessor caches. A failed
 restore is surfaced as ROLLBACK_FAILED by CrossDomainTransaction.
 
+
+
+================================================================================
+HOUSEHOLD ENTERPRISE REVERSE-INDEX REPAIR ADAPTER
+================================================================================
+
+HouseholdState exposes internal transaction-only support to snapshot,
+rebuild and restore all Household Enterprise reverse-index arrays. The
+rebuild replaces only each Household's enterprises array; all other fields
+are preserved. It also rebuilds Household caches, marks data dirty and
+invalidates accessor caches without publishing an event.
+
+HouseholdCommands.commitTransactionEnterpriseIndexRepair is the matching
+post-commit notification adapter. It requires an active
+CrossDomainTransaction and publishes householdEnterpriseIndexesRebuilt only
+after the Industry command's single persistence boundary succeeds.
+
+The adopter is IndustryCommands.reconcileHouseholdEnterpriseIndexes. Do not
+call these internal state or notification adapters directly from UI code.
+Canonical Enterprise owner fields are authoritative. The repair refuses to
+run when Household identity or Enterprise owner references are ambiguous.
+
+================================================================================
