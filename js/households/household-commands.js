@@ -578,6 +578,14 @@
     // transaction. The transaction coordinator calls this only after the
     // shared persistence operation succeeds.
     function commitTransactionUpdate(householdId, changed) {
+        if (!window.CrossDomainTransaction ||
+            typeof window.CrossDomainTransaction.isActive !== 'function' ||
+            window.CrossDomainTransaction.isActive() !== true) {
+            return _fail(
+                'TRANSACTION_REQUIRED',
+                'Transaction notifications must run inside CrossDomainTransaction.'
+            );
+        }
         if (typeof householdId !== 'string' || householdId === '') {
             return _fail('INVALID_ID', 'Household id is required');
         }
@@ -1163,6 +1171,15 @@
      */
     function updateHousehold(householdId, updates, options) {
         options = options || {};
+        if (options.deferCommit === true &&
+            (!window.CrossDomainTransaction ||
+                typeof window.CrossDomainTransaction.isActive !== 'function' ||
+                window.CrossDomainTransaction.isActive() !== true)) {
+            return _fail(
+                'TRANSACTION_REQUIRED',
+                'Deferred Household commits are only valid inside CrossDomainTransaction.'
+            );
+        }
         var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
 
