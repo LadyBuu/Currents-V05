@@ -674,6 +674,7 @@
     // idempotency marker suffices.
 
     function _wireRowActions(container, religion) {
+        container.__rtPlacesReligion = religion;
         if (container.__rtPlacesRowWired) return;
         container.__rtPlacesRowWired = true;
 
@@ -690,7 +691,7 @@
             switch (action) {
                 case 'add-place':
                     e.preventDefault();
-                    _actionAddPlace(religion, container);
+                    _actionAddPlace(container.__rtPlacesReligion, container);
                     break;
 
                 case 'collect-tithes': {
@@ -714,20 +715,20 @@
                         break;
                     }
                     var eid = btn.getAttribute('data-place-id');
-                    if (eid) _actionEditPlace(religion, container, eid);
+                    if (eid) _actionEditPlace(container.__rtPlacesReligion, container, eid);
                     break;
                 }
 
                 case 'delete-place': {
                     e.preventDefault();
                     var did = btn.getAttribute('data-place-id');
-                    if (did) _actionDeletePlace(religion, container, did);
+                    if (did) _actionDeletePlace(container.__rtPlacesReligion, container, did);
                     break;
                 }
 
                 case 'clear-filters':
                     e.preventDefault();
-                    _actionClearFilters(religion, container);
+                    _actionClearFilters(container.__rtPlacesReligion, container);
                     break;
 
                 // Unknown action: no-op.
