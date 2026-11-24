@@ -378,73 +378,220 @@
      * @param {number} year
      * @returns {{success: boolean, reason?: string}}
      */
-    function _reconcileHouseholdOwnership(current, nextOwnerType, nextOwnerId, year) {
-        var currentOwnerType = current.ownerType;
-        var currentOwnerId = current.ownerId;
-
+    function _runHouseholdOwnershipTransaction(
+        enterpriseId, current, patch, nextOwnerType, nextOwnerId, year, changedFields
+    ) {
         var wasHouseholdOwned =
-            currentOwnerType === C.OWNER_TYPE.HOUSEHOLD
-            && _hasId(currentOwnerId);
+            current.ownerType === C.OWNER_TYPE.HOUSEHOLD && _hasId(current.ownerId);
         var isHouseholdOwned =
-            nextOwnerType === C.OWNER_TYPE.HOUSEHOLD
-            && _hasId(nextOwnerId);
+            nextOwnerType === C.OWNER_TYPE.HOUSEHOLD && _hasId(nextOwnerId);
+        var householdChanges = [];
 
-        var sameOwner =
-            currentOwnerType === nextOwnerType
-            && currentOwnerId === nextOwnerId;
-
-        if (sameOwner) {
-            return { success: true };
-        }
-
-        // Step 1: remove from previous household if it was household-owned
-        // and is being moved (to another household, a character, a place,
-        // or to none).
         if (wasHouseholdOwned) {
-            try {
-                _unregisterFromHousehold(currentOwnerId, current.id, year);
-            } catch (e) {
-                return {
-                    success: false,
-                    reason: e && e.message
-                        ? e.message
-                        : 'Failed to unregister from prior household.'
-                };
-            }
+            householdChanges.push({
+                householdId: current.ownerId,
+                enterpriseId: enterpriseId,
+                action: 'removed',
+                year: year
+            });
+        }
+        if (isHouseholdOwned) {
+            householdChanges.push({
+                householdId: nextOwnerId,
+                enterpriseId: enterpriseId,
+                action: 'added',
+                year: year
+            });
         }
 
-        // Step 2: add to the new household if it is now household-owned.
-        if (isHouseholdOwned) {
-            try {
-                _registerWithHousehold(nextOwnerId, current.id, year);
-            } catch (e) {
-                // Best-effort rollback of step 1 (the source-side removal).
-                // If step 1 didn't run (not wasHouseholdOwned), there is
-                // nothing to roll back here.
-                if (wasHouseholdOwned) {
-                    try {
-                        _registerWithHousehold(currentOwnerId, current.id, year);
-                    } catch (rollbackErr) {
-                        if (typeof console !== 'undefined' && console.error) {
-                            console.error(
-                                'industry-commands.js: ' +
-                                '_reconcileHouseholdOwnership rollback ' +
-                                '(re-register with prior household) failed:',
-                                rollbackErr
-                            );
+        var householdCommands = _requireHouseholdCommands();
+        var householdState = window.HouseholdState;
+        var householdInternal = householdState && householdState._internal;
+        if (!householdInternal ||
+            typeof householdInternal.getHouseholdRecord !== 'function' ||
+            typeof householdInternal.transactionSnapshotHousehold !== 'function' ||
+            typeof householdInternal.transactionRestoreHousehold !== 'function' ||
+            typeof householdCommands.commitTransactionEnterpriseOwnership !== 'function' ||
+            typeof IS._transactionSnapshotEnterprise !== 'function' ||
+            typeof IS._transactionRestoreEnterprise !== 'function' ||
+            typeof IS._notifyTransactionEnterpriseUpdated !== 'function' ||
+            !window.CrossDomainTransaction ||
+            typeof window.CrossDomainTransaction.execute !== 'function') {
+            return {
+                success: false,
+                code: 'TRANSACTION_UNAVAILABLE',
+                reason: 'Required cross-domain ownership transaction support is unavailable.'
+            };
+        }
+
+        var uniqueHouseholdIds = [];
+        householdChanges.forEach(function(change) {
+            if (uniqueHouseholdIds.indexOf(change.householdId) === -1) {
+                uniqueHouseholdIds.push(change.householdId);
+            }
+        });
+
+        var participants = [{
+            name: 'households',
+            prepare: function() {
+                for (var i = 0; i < uniqueHouseholdIds.length; i++) {
+                    var householdId = uniqueHouseholdIds[i];
+                    var household = householdInternal.getHouseholdRecord(householdId);
+                    if (!household) {
+                        return {
+                            success: false,
+                            reason: 'Household not found: ' + householdId
+                        };
+                    }
+                    if (!Array.isArray(household.enterprises)) {
+                        if (wasHouseholdOwned && householdId === current.ownerId) {
+                            return {
+                                success: false,
+                                reason: 'Source Household has no valid enterprises reverse index: ' +
+                                    householdId
+                            };
                         }
+                        household.enterprises = [];
+                    }
+                    var count = household.enterprises.filter(function(id) {
+                        return id === enterpriseId;
+                    }).length;
+                    if (wasHouseholdOwned && householdId === current.ownerId && count !== 1) {
+                        return {
+                            success: false,
+                            reason: 'Source Household must contain exactly one reference to Enterprise ' +
+                                enterpriseId + '.'
+                        };
+                    }
+                    if (isHouseholdOwned && householdId === nextOwnerId &&
+                        householdId !== current.ownerId && count !== 0) {
+                        return {
+                            success: false,
+                            reason: 'Target Household already contains Enterprise ' +
+                                enterpriseId + ' or has duplicate references.'
+                        };
                     }
                 }
-                return {
-                    success: false,
-                    reason: e && e.message
-                        ? e.message
-                        : 'Failed to register with new household.'
-                };
+                return { success: true };
+            },
+            snapshot: function() {
+                return uniqueHouseholdIds.map(function(householdId) {
+                    var snapshot = householdInternal.transactionSnapshotHousehold(
+                        householdId
+                    );
+                    if (!snapshot) {
+                        throw new Error('Could not snapshot Household: ' + householdId);
+                    }
+                    return snapshot;
+                });
+            },
+            apply: function() {
+                for (var i = 0; i < householdChanges.length; i++) {
+                    var change = householdChanges[i];
+                    var result = change.action === 'removed'
+                        ? householdCommands.removeEnterpriseFromHousehold(
+                            change.householdId,
+                            enterpriseId,
+                            { year: year, deferCommit: true }
+                        )
+                        : householdCommands.addEnterpriseToHousehold(
+                            change.householdId,
+                            enterpriseId,
+                            { year: year, deferCommit: true }
+                        );
+                    if (!result || result.success !== true) {
+                        return {
+                            success: false,
+                            reason: result && result.reason
+                                ? result.reason
+                                : 'Household reverse-index update failed.'
+                        };
+                    }
+                }
+                return { success: true };
+            },
+            rollback: function(snapshots) {
+                for (var i = snapshots.length - 1; i >= 0; i--) {
+                    householdInternal.transactionRestoreHousehold(snapshots[i]);
+                }
+                return true;
+            },
+            afterCommit: function() {
+                var committed = householdCommands.commitTransactionEnterpriseOwnership(
+                    householdChanges
+                );
+                if (!committed || committed.success !== true) {
+                    throw new Error(
+                        committed && committed.reason
+                            ? committed.reason
+                            : 'Household ownership notifications failed.'
+                    );
+                }
             }
+        }];
+
+        participants.push({
+            name: 'industry',
+            prepare: function() {
+                return IS.getEnterprise(enterpriseId)
+                    ? { success: true }
+                    : { success: false, reason: 'Enterprise disappeared before ownership update.' };
+            },
+            snapshot: function() {
+                var snapshot = IS._transactionSnapshotEnterprise(enterpriseId);
+                if (!snapshot) {
+                    throw new Error('Could not snapshot Enterprise: ' + enterpriseId);
+                }
+                return snapshot;
+            },
+            apply: function() {
+                var updated = IS._updateEnterprise(enterpriseId, patch, {
+                    silent: true
+                });
+                return updated
+                    ? { success: true }
+                    : { success: false, reason: 'IndustryState refused the ownership update.' };
+            },
+            rollback: function(snapshot) {
+                return IS._transactionRestoreEnterprise(snapshot);
+            },
+            afterCommit: function() {
+                IS._notifyTransactionEnterpriseUpdated(enterpriseId);
+                _commit(C.EVENT.ENTERPRISE_UPDATED, {
+                    enterpriseId: enterpriseId,
+                    changedFields: changedFields.slice(),
+                    transaction: true
+                });
+            }
+        });
+
+        var transaction = window.CrossDomainTransaction.execute({
+            id: 'industry-ownership-' + enterpriseId + '-' + year,
+            context: {
+                enterpriseId: enterpriseId,
+                sourceHouseholdId: wasHouseholdOwned ? current.ownerId : null,
+                targetHouseholdId: isHouseholdOwned ? nextOwnerId : null,
+                year: year
+            },
+            participants: participants
+        });
+
+        if (!transaction || transaction.success !== true) {
+            return {
+                success: false,
+                code: transaction && transaction.code
+                    ? transaction.code : 'TRANSACTION_FAILED',
+                reason: transaction && transaction.reason
+                    ? transaction.reason : 'Enterprise ownership transaction failed.',
+                transaction: transaction || null
+            };
         }
 
-        return { success: true };
+        return {
+            success: true,
+            transactionId: transaction.transactionId,
+            notificationErrors: transaction.notificationErrors || []
+        };
     }
 
     // =========================================================================
@@ -853,6 +1000,37 @@
             return _failWith(validation.errors);
         }
 
+        var changedFields = Object.keys(updates);
+        var householdOwnershipChanged = ownerChanged &&
+            (current.ownerType === C.OWNER_TYPE.HOUSEHOLD ||
+                nextOwnerType === C.OWNER_TYPE.HOUSEHOLD);
+
+        if (householdOwnershipChanged) {
+            var transactionResult = _runHouseholdOwnershipTransaction(
+                enterpriseId,
+                current,
+                patch,
+                nextOwnerType,
+                nextOwnerId,
+                currentYear,
+                changedFields
+            );
+            if (!transactionResult.success) {
+                return {
+                    success: false,
+                    code: transactionResult.code || 'TRANSACTION_FAILED',
+                    reason: transactionResult.reason ||
+                        'Household ownership transaction failed.',
+                    transaction: transactionResult.transaction || null
+                };
+            }
+            return _ok({
+                enterprise: IS.getEnterprise(enterpriseId),
+                transactionId: transactionResult.transactionId,
+                notificationErrors: transactionResult.notificationErrors || []
+            });
+        }
+
         try {
             IS._updateEnterprise(enterpriseId, patch);
         } catch (e) {
@@ -861,46 +1039,9 @@
                 : 'IndustryState refused the write.');
         }
 
-        // --- Reverse-index reconciliation (C2) ---
-        //
-        // If ownership changed, reconcile the household reverse index
-        // AFTER the industry record is updated and BEFORE the commit.
-        // On reconciliation failure, roll back the industry record to its
-        // prior shape and return a structured failure.
-        //
-        // Same-owner no-ops inside _reconcileHouseholdOwnership mean this
-        // is free for updates that don't touch ownership.
-        if (ownerChanged || (nextOwnerType !== current.ownerType)
-            || (nextOwnerId !== current.ownerId)) {
-            var reconcile = _reconcileHouseholdOwnership(
-                current, nextOwnerType, nextOwnerId, currentYear
-            );
-            if (!reconcile.success) {
-                // Roll back the industry record.
-                var rollbackPatch = {
-                    ownerType: current.ownerType,
-                    ownerId: current.ownerId,
-                    updatedAt: Date.now()
-                };
-                try {
-                    IS._updateEnterprise(enterpriseId, rollbackPatch);
-                } catch (rollbackErr) {
-                    if (typeof console !== 'undefined' && console.error) {
-                        console.error(
-                            'industry-commands.js: updateEnterprise rollback ' +
-                            '(owner fields) failed after a reverse-index ' +
-                            'reconciliation failure:', rollbackErr
-                        );
-                    }
-                }
-                return _fail(reconcile.reason ||
-                    'Household reverse-index reconciliation failed.');
-            }
-        }
-
         _commit(C.EVENT.ENTERPRISE_UPDATED, {
             enterpriseId: enterpriseId,
-            changedFields: Object.keys(updates)
+            changedFields: changedFields
         });
 
         return _ok({ enterprise: IS.getEnterprise(enterpriseId) });
