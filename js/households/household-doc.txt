@@ -554,7 +554,8 @@ Cross-domain references:
                    deleteAssignment, bulkAssign
       Repair: repairMemberships
       Cross-domain cleanup: removeCharacterReferences,
-                            clearLocationReferences
+                            clearLocationReferences,
+                            clearLocationReferencesMany
 
     Load-time dependencies:
       window.HouseholdState               — HARD (full _internal surface)
