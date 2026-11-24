@@ -805,7 +805,14 @@
     if (typeof window.registerDeathHandler === 'function') {
         try {
             window.registerDeathHandler(function (characterId, options) {
-                return handleCharacterDeath(characterId, options);
+                try {
+                    return handleCharacterDeath(characterId, options);
+                } catch (e) {
+                    return _fail(
+                        'RELATIONSHIP_DEATH_HANDLER_THROWN',
+                        e && e.message ? e.message : String(e)
+                    );
+                }
             });
         } catch (e) {
             if (typeof console !== 'undefined' && console.warn) {
@@ -828,7 +835,14 @@
     if (typeof window.registerDeleteHandler === 'function') {
         try {
             window.registerDeleteHandler(function (characterId) {
-                return removeAllReferencesTo(characterId);
+                try {
+                    return removeAllReferencesTo(characterId);
+                } catch (e) {
+                    return _fail(
+                        'RELATIONSHIP_DELETE_HANDLER_THROWN',
+                        e && e.message ? e.message : String(e)
+                    );
+                }
             });
         } catch (e) {
             if (typeof console !== 'undefined' && console.warn) {
