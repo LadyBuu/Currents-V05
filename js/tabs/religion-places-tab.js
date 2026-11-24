@@ -808,6 +808,7 @@
                     (saveResult && saveResult.reason ? saveResult.reason : 'unknown'),
                     'error'
                 );
+                _rerender(container, religion);
                 return;
             }
             var amount = result.data && typeof result.data.amount === 'number'
