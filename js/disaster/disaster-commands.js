@@ -414,24 +414,83 @@
     function _killVictims(victims, disaster) {
         var killed = 0;
         var subjects = [];
+        var failures = [];
+        var cascadeFailures = [];
+
         for (var i = 0; i < victims.length; i++) {
             var char = victims[i];
             if (!char || char.isDeceased) continue;
-            var result = window.killCharacter(char, disaster.year, disaster.disasterType, {
-                disasterId: disaster.id || null,
-                disasterType: disaster.disasterType
-            });
-            if (result && result.success !== false) {
+
+            // CharacterLifecycle.killCharacter accepts (characterId, deathData).
+            // Its cause vocabulary is closed: plague/famine are disease;
+            // other disasters are accidental deaths with the disaster named
+            // in the free-text detail.
+            var deathCause = (disaster.disasterId === 'plague' ||
+                disaster.disasterId === 'famine') ? 'disease' : 'accident';
+            var detail = String(disaster.disasterType || 'Disaster');
+            var deathData = {
+                deathYear: disaster.year,
+                deathCause: deathCause,
+                deathCauseDetail: detail,
+                deathNotes: 'Disaster ID: ' + (disaster.id || 'unrecorded') +
+                    '; disaster type: ' + detail
+            };
+
+            var result;
+            try {
+                result = window.killCharacter(char.id, deathData);
+            } catch (e) {
+                failures.push({
+                    characterId: char.id || null,
+                    reason: e && e.message ? e.message : String(e)
+                });
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'disaster-commands.js: killCharacter threw for ' +
+                        (char.id || '?') + ': ' +
+                        (e && e.message ? e.message : String(e))
+                    );
+                }
+                continue;
+            }
+
+            // A failed death cascade does not undo the death record.
+            // Count the victim as dead when CharacterLifecycle explicitly
+            // confirms deathRecorded, while preserving the cleanup failure.
+            if (result && result.success === true) {
                 killed++;
                 subjects.push(char);
-            } else if (typeof console !== 'undefined' && console.error) {
-                console.error(
-                    'disaster-commands.js: killCharacter failed for ' + (char.id || '?') +
-                    ': ' + ((result && (result.reason || result.error)) || 'unknown')
-                );
+            } else if (result && result.deathRecorded === true) {
+                killed++;
+                subjects.push(char);
+                cascadeFailures.push({
+                    characterId: char.id || null,
+                    code: result.code || 'DEATH_CASCADE_PARTIAL_FAILURE',
+                    reason: result.reason || 'Death was recorded but cleanup was incomplete.',
+                    cascade: result.cascade || null
+                });
+            } else {
+                failures.push({
+                    characterId: char.id || null,
+                    code: result && result.code ? result.code : null,
+                    reason: (result && (result.reason || result.error)) ||
+                        'Character death was not recorded.'
+                });
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'disaster-commands.js: killCharacter failed for ' +
+                        (char.id || '?') + ': ' +
+                        ((result && (result.reason || result.error)) || 'unknown')
+                    );
+                }
             }
         }
-        return { killed: killed, subjects: subjects };
+        return {
+            killed: killed,
+            subjects: subjects,
+            failures: failures,
+            cascadeFailures: cascadeFailures
+        };
     }
 
     // =========================================================================
@@ -506,6 +565,8 @@
             prosperityLoss: 0,
             crimeIncrease: 0,
             victimsKilled: 0,
+            victimDeathFailures: [],
+            deathCascadeFailures: [],
             structuralDamage: null
         };
 
@@ -518,6 +579,8 @@
             var victims = _getCharactersAtLocation(locationId);
             var killResult = _killVictims(victims, disaster);
             results.victimsKilled = killResult.killed;
+            results.victimDeathFailures = killResult.failures;
+            results.deathCascadeFailures = killResult.cascadeFailures;
             if (killResult.killed > 0) {
                 _log('disaster', 'Death Impact',
                     killResult.killed + ' character(s) died in ' +
