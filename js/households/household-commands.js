@@ -574,6 +574,22 @@
         }
     }
 
+    // Publishes the Household side of a successfully committed cross-domain
+    // transaction. The transaction coordinator calls this only after the
+    // shared persistence operation succeeds.
+    function commitTransactionUpdate(householdId, changed) {
+        if (typeof householdId !== 'string' || householdId === '') {
+            return _fail('INVALID_ID', 'Household id is required');
+        }
+        _commit('householdUpdated', {
+            householdId: householdId,
+            changed: Array.isArray(changed) ? changed.slice() : [],
+            year: _getCurrentYear(),
+            transaction: true
+        });
+        return _ok(null);
+    }
+
     // =========================================================================
     // 6. MUTATION PRIMITIVES
     // =========================================================================
@@ -1207,14 +1223,21 @@
 
         household.updatedAt = Date.now();
 
-        // ALWAYS commit, even when changed is empty.
-        _commit('householdUpdated', {
+        // Cross-domain transactions defer publication until every
+        // participant and the shared persistence boundary have succeeded.
+        if (options.deferCommit !== true) {
+            _commit('householdUpdated', {
+                householdId: householdId,
+                changed: changed,
+                year: year
+            });
+        }
+
+        return _ok({
             householdId: householdId,
             changed: changed,
-            year: year
+            deferredCommit: options.deferCommit === true
         });
-
-        return _ok({ householdId: householdId, changed: changed });
     }
 
     /**
@@ -3282,6 +3305,7 @@
 
         // Household fields
         updateHousehold: updateHousehold,
+        commitTransactionUpdate: commitTransactionUpdate,
         updateHouseholdNameSilent: updateHouseholdNameSilent,
         setStatus: setStatus,
         recordEvent: recordEvent,
