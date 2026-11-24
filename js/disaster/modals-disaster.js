@@ -198,25 +198,37 @@
             applyEffects: applyEffects
         });
 
-        if (!result.success) {
+        var partialFailure = !result.success &&
+            result.data && result.data.disaster && result.data.effectsApplied === true;
+
+        if (!result.success && !partialFailure) {
             _toast('Failed to generate disaster: ' + result.reason, 'error');
             return false;
         }
 
         _commitAndPersist();
 
-        var disaster = result.data && result.data.disaster;
-        var summary = 'Disaster generated';
+        var data = result.data || {};
+        var disaster = data.disaster;
+        var summary = partialFailure
+            ? 'Disaster recorded with partial effects'
+            : 'Disaster generated';
         if (disaster) {
             summary += ': ' + disaster.disasterType;
-            if (result.data.victimsKilled > 0) {
-                summary += ' (' + result.data.victimsKilled + ' death(s))';
+            if (data.victimsKilled > 0) {
+                summary += ' (' + data.victimsKilled + ' death(s))';
             }
         }
 
-        _toast(summary, 'success');
+        if (partialFailure) {
+            var failureCount = Array.isArray(data.failures) ? data.failures.length : 0;
+            summary += '. ' + failureCount + ' effect failure(s). Check disaster details and console.';
+            _toast(summary, 'warning');
+        } else {
+            _toast(summary, 'success');
+        }
         _close();
-        if (typeof options.onComplete === 'function') options.onComplete(result.data);
+        if (typeof options.onComplete === 'function') options.onComplete(data);
         return true;
     }
 
