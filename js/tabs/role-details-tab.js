@@ -661,31 +661,17 @@
     // =========================================================================
 
     function _bindHandlers(container, role, callbacks) {
-        // Bind once. A re-render replaces container.innerHTML, so
-        // __roleDetailsBound is lost on re-render too — the marker
-        // therefore lives on the container only to catch double-calls
-        // in the same tick (not across renders). The cross-render
-        // dedupe is done by checking the marker on the CURRENT child
-        // root, not on the container itself.
-        //
-        // Simpler: since we replace innerHTML each time, there is
-        // exactly one delegated listener per render. That is fine:
-        // the innerHTML replacement drops the old nodes (and thus
-        // their listeners). No marker needed.
-        //
-        // The marker below guards against the ONLY other case: two
-        // renders with no innerHTML change (shouldn't happen, but
-        // defends against a caller that calls us twice). Re-rendering
-        // the same role twice is a no-op for the user but would
-        // double-attach. Skip the second attach.
-        if (container.__roleDetailsLastRoleId === role.id
-            && container.__roleDetailsBound === true) {
-            return;
-        }
-        container.__roleDetailsLastRoleId = role.id;
+        // The pane survives innerHTML replacement. Keep one listener and
+        // refresh its role/callback context on every render.
+        container.__roleDetailsCurrent = { role: role, callbacks: callbacks };
+        if (container.__roleDetailsBound === true) return;
         container.__roleDetailsBound = true;
 
         container.addEventListener('click', function (e) {
+            var current = container.__roleDetailsCurrent;
+            if (!current || !current.role || !current.callbacks) return;
+            var currentRole = current.role;
+            var currentCallbacks = current.callbacks;
             var btn = e.target && e.target.closest
                 ? e.target.closest('[data-action]')
                 : null;
@@ -698,27 +684,27 @@
             e.preventDefault();
 
             if (action === 'edit-role') {
-                _openEditModal(role.id, callbacks.onRerender);
+                _openEditModal(currentRole.id, currentCallbacks.onRerender);
                 return;
             }
 
             if (action === 'delete-role') {
-                _openDeleteModal(role.id, callbacks.onDelete, callbacks.onRerender);
+                _openDeleteModal(currentRole.id, currentCallbacks.onDelete, currentCallbacks.onRerender);
                 return;
             }
 
             if (action === 'view-characters') {
-                _openViewCharactersModal(role.id);
+                _openViewCharactersModal(currentRole.id);
                 return;
             }
 
             if (action === 'assign-role') {
-                _openAssignModal(role.id, callbacks.onRerender);
+                _openAssignModal(currentRole.id, currentCallbacks.onRerender);
                 return;
             }
 
             if (action === 'bulk-assign-role') {
-                _openBulkAssignModal(role.id, callbacks.onRerender);
+                _openBulkAssignModal(currentRole.id, currentCallbacks.onRerender);
                 return;
             }
 
@@ -731,8 +717,8 @@
             }
 
             if (action === 'view-category') {
-                if (typeof callbacks.onViewCategory === 'function') {
-                    callbacks.onViewCategory(role.category);
+                if (typeof currentCallbacks.onViewCategory === 'function') {
+                    currentCallbacks.onViewCategory(currentRole.category);
                 }
                 return;
             }
