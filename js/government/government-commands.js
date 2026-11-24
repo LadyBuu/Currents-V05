@@ -118,9 +118,11 @@
     // Empty allowedRankIds means unrestricted leadership. A non-empty list
     // is an exact allowlist of the active Character Rank, not a minimum rank.
     function _validateLeaderRankForGovernmentType(placeId, governmentType) {
-        if (!governmentType ||
-            !Array.isArray(governmentType.allowedRankIds) ||
-            governmentType.allowedRankIds.length === 0) return null;
+        if (!governmentType) return 'Government type could not be verified';
+        if (!Array.isArray(governmentType.allowedRankIds)) {
+            return 'Cannot verify the current leader because the government type rank allowlist is missing or malformed';
+        }
+        if (governmentType.allowedRankIds.length === 0) return null;
 
         if (typeof _LocationQueries.getCurrentLeader !== 'function' ||
             typeof _CharacterQueries.getCharacterFacts !== 'function') {
@@ -165,8 +167,10 @@
         if (!governmentType) {
             return 'The location references a missing government type';
         }
-        if (!Array.isArray(governmentType.allowedRankIds) ||
-            governmentType.allowedRankIds.length === 0) return null;
+        if (!Array.isArray(governmentType.allowedRankIds)) {
+            return 'The assigned government type has a missing or malformed rank allowlist; leader eligibility cannot be verified';
+        }
+        if (governmentType.allowedRankIds.length === 0) return null;
 
         var facts;
         try {
@@ -965,10 +969,40 @@
                 C.CODES.VALIDATION
             );
         }
-        var usage = _LocationQueries.getPlacesUsingGovernmentType(typeId);
-        if (usage && usage.length > 0) {
+        var usage;
+        try {
+            usage = _LocationQueries.getPlacesUsingGovernmentType(typeId);
+        } catch (usageError) {
+            return _fail('Cannot verify whether this government type is in use', C.CODES.VALIDATION);
+        }
+        if (!Array.isArray(usage)) {
+            return _fail('Cannot verify whether this government type is in use', C.CODES.VALIDATION);
+        }
+        if (usage.length > 0) {
             return _fail('Cannot delete: used by ' + usage.length +
                 ' location(s)', C.CODES.IN_USE);
+        }
+
+        // Historical assignments retain governmentTypeId. Do not orphan
+        // those records when removing an otherwise-unused type.
+        var history;
+        try {
+            history = State.getGovernmentHistory();
+        } catch (historyError) {
+            return _fail('Cannot verify Government history references', C.CODES.VALIDATION);
+        }
+        if (!Array.isArray(history)) {
+            return _fail('Cannot verify Government history references', C.CODES.VALIDATION);
+        }
+        var historicalReferences = history.filter(function(record) {
+            return record && record.governmentTypeId === typeId;
+        });
+        if (historicalReferences.length > 0) {
+            return _fail(
+                'Cannot delete: referenced by ' + historicalReferences.length +
+                ' Government history record(s). Keep the type for historical integrity.',
+                C.CODES.IN_USE
+            );
         }
 
         var name = type.name;
