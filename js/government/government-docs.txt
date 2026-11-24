@@ -288,9 +288,9 @@ Cross-domain references are labeled with their subsystem:
                                             getGovernmentSalaryBudget)
       window.SettlementProsperityQueries   ([settlement]
                                             getProsperityValue)
-      window.IndustryQueries               ([industry]
+      window.IndustryQueries               ([industry], OPTIONAL)
                                             getIndustryTaxRevenue,
-                                            getIndustryEnterpriseStats)
+                                            getIndustryEnterpriseStats
     Required call-time dependencies:
       The required modules above, plus C.SUCCESSION_CANDIDATE_LIMIT read
       inside getSuccessionPlan.
@@ -1310,17 +1310,16 @@ GROUP G5 — CHARACTER, LOCATION, SELECTOR, SETTLEMENT SUBSETS
     - HOUSEHOLD: household-queries.js and household-commands.js
       are load-time dependencies of government-commands.js and
       government-bootstrap.js.
-    - INDUSTRY: industry-queries.js is a load-time dependency
-      of government-queries.js. [UNVERIFIED] — the module is
-      not in the supplied batch.
-    - ROLES: role-queries.js is a load-time dependency of
-      government-queries.js, government-commands.js (indirectly
-      via Queries), government-economy.js? No — Economy reads
-      Queries which reads RoleQueries. The direct load-time
-      dependency is government-queries.js. Modals also read
-      RoleQueries directly (modals-government.js,
-      modals-government-positions.js). [UNVERIFIED] — the module
-      is not in the supplied batch.
+    - INDUSTRY: industry-queries.js is an optional call-time
+      projection for Government industry summaries. Its absence
+      returns null for industry revenue/statistics and does not
+      block GovernmentQueries or GovernmentBootstrap.
+    - ROLES: role-queries.js is an optional call-time projection
+      for Government position/assignment role labels. Its absence
+      returns null role summaries and does not block
+      GovernmentQueries or GovernmentBootstrap. The Government
+      modals still require RoleQueries when those modal scripts
+      are loaded, because they populate role/rank selectors.
 
 --------------------------------------------------------------------------------
 GROUP S1 — GOVERNMENT CONSTANTS
@@ -1461,11 +1460,11 @@ GROUP S7 — GOVERNMENT BOOTSTRAP
     ← AFTER: js/character/character-commands.js
     ← AFTER: js/location/location-queries.js
     ← AFTER: js/location/location-commands.js
-    ← AFTER: js/roles/role-queries.js         [UNVERIFIED]
+    ← OPTIONAL: js/roles/role-queries.js (role-name projections)
     ← AFTER: js/settlement/settlement-queries.js
     ← AFTER: js/settlement/settlement-prosperity-queries.js
     ← AFTER: js/settlement/settlement-government-commands.js
-    ← AFTER: js/industry/industry-queries.js   [UNVERIFIED]
+    ← OPTIONAL: js/industry/industry-queries.js (industry projections)
     ← AFTER: js/households/household-queries.js
     ← AFTER: js/households/household-commands.js
     ← AFTER: initializeStorage()
