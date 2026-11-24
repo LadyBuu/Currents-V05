@@ -23,11 +23,13 @@
  *   - toast, render, or touch the DOM
  *
  * PERSISTENCE:
- *   Commands do not save. Every command mutates in-memory state and returns.
- *   The caller calls IndustryCommands.persist() once per batch, after every
- *   command in the batch has succeeded. IndustryState.markDataDirty has
- *   already been called by the mutation primitives. persist() forces a
- *   synchronous flush.
+ *   Ordinary commands do not save. The caller calls IndustryCommands.persist()
+ *   once per batch after the commands succeed.
+ *
+ *   Annual processing is the exception: applyAnnualProcessing coordinates
+ *   Enterprise + optional Household mutations through CrossDomainTransaction
+ *   and persists once by default. Batch processors pass { persist: false } to
+ *   each annual transaction and perform one save after the batch.
  *
  * CONTRACT:
  *   Every public command returns { success: true, ... } or
@@ -1210,8 +1212,10 @@
      * Commits the result of IndustryEconomics.calculateAnnualTransition.
      *
      * The result must pass validateAnnualTransitionResult. Household
-     * transfer (when present) is applied before the enterprise record is
-     * updated. If the household write fails, the enterprise is untouched.
+     * wealth and the Enterprise annual result are coordinated as separate
+     * transaction participants. Both are snapshotted before mutation,
+     * notifications are deferred until persistence succeeds, and either
+     * participant is restored if an apply or persistence step fails.
      */
     function applyAnnualProcessing(enterpriseId, result, options) {
         options = options || {};
