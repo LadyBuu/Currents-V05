@@ -1217,7 +1217,8 @@
             if (options.dryRun === true) {
                 return { success: true, data: result, dryRun: true };
             }
-            if (result.updatedReligionIds.length > 0 || result.worshipPlacesUnassigned > 0) {
+            if (options.deferCommit !== true &&
+                (result.updatedReligionIds.length > 0 || result.worshipPlacesUnassigned > 0)) {
                 _commit('religionLocationsReconciled', {
                     locationIds: locationIds.slice(),
                     religionIds: result.updatedReligionIds,
