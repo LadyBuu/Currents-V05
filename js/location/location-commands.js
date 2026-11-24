@@ -49,7 +49,7 @@
  *   - Culture lookup     → CultureQueries (read only)
  *   - Culture associations → CultureCommands.reconcileDeletedLocations
  *     (removes deleted Location IDs from Culture-owned association lists)
- *   - Household cleanup  → HouseholdCommands.clearLocationReferences
+ *   - Household cleanup  → HouseholdCommands.clearLocationReferencesMany
  *
  * Persistence boundary:
  *   Commands do NOT call saveMasterData except inside persist(). Every command
