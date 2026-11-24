@@ -2518,7 +2518,7 @@
             if (!change || !_hasId(change.householdId) ||
                 !_hasId(change.enterpriseId) ||
                 (change.action !== 'added' && change.action !== 'removed') ||
-                !_isValidYear(change.year)) {
+                (typeof change.year !== 'number' || !isFinite(change.year))) {
                 return _fail('INVALID_INPUT',
                     'Ownership transaction change at index ' + i + ' is invalid.');
             }
