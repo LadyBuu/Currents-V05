@@ -3275,7 +3275,8 @@
      * rejects the staged collection, the original canonical array is restored
      * and the index rebuild is retried before the failure is returned.
      */
-    function clearLocationReferencesMany(locationIds) {
+    function clearLocationReferencesMany(locationIds, options) {
+        options = options || {};
         if (!Array.isArray(locationIds) || locationIds.length === 0) {
             return _fail('INVALID_INPUT', 'locationIds must be a non-empty array');
         }
@@ -3336,12 +3337,12 @@
 
         try {
             _internal.replaceHouseholds(next);
-            _commit('householdsLocationCleared', {
-                locationIds: Object.keys(removeSet),
-                clearedCount: clearedCount,
-                households: affectedHouseholds,
-                year: year
-            });
+            if (options.deferCommit === true) {
+                if (!window.CrossDomainTransaction || typeof window.CrossDomainTransaction.isActive !== 'function' || window.CrossDomainTransaction.isActive() !== true) throw new Error('Deferred Household notifications require an active CrossDomainTransaction.');
+                _hydrateState(); _markDirty(); _invalidateAccessorCaches();
+            } else {
+                _commit('householdsLocationCleared', { locationIds: Object.keys(removeSet), clearedCount: clearedCount, households: affectedHouseholds, year: year });
+            }
         } catch (error) {
             var rollbackError = null;
             try {
@@ -3361,10 +3362,7 @@
             );
         }
 
-        return _ok({
-            clearedCount: clearedCount,
-            households: affectedHouseholds
-        });
+        return _ok({ clearedCount: clearedCount, households: affectedHouseholds, deferred: options.deferCommit === true });
     }
 
     // =========================================================================
@@ -3453,7 +3451,13 @@
         // Cross-domain reference cleanup
         removeCharacterReferences: removeCharacterReferences,
         clearLocationReferences: clearLocationReferences,
-        clearLocationReferencesMany: clearLocationReferencesMany
+        clearLocationReferencesMany: clearLocationReferencesMany,
+        commitTransactionLocationCleanup: function (locationIds, data) {
+            if (!window.CrossDomainTransaction || typeof window.CrossDomainTransaction.isActive !== 'function' || window.CrossDomainTransaction.isActive() !== true) return _fail('TRANSACTION_REQUIRED', 'Location cleanup notifications require an active CrossDomainTransaction.');
+            data = data || {};
+            _commit('householdsLocationCleared', { locationIds: Array.isArray(locationIds) ? locationIds.slice() : [], clearedCount: Number(data.clearedCount) || 0, households: Array.isArray(data.households) ? data.households : [], year: _getCurrentYear(), transaction: true });
+            return _ok(null);
+        }
     };
 
     if (typeof module !== 'undefined' && module.exports) {
