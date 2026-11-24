@@ -1315,95 +1315,59 @@
      */
     function _cleanupHouseholdsAtPlaces(removeSet) {
         var HC = _householdCommands();
-        var perPlace = [];
-
-        if (!HC || typeof HC.clearLocationReferences !== 'function') {
-            return {
-                status: 'unavailable',
-                clearedCount: 0,
-                households: [],
-                reason: 'HouseholdCommands.clearLocationReferences is not available',
-                perPlace: perPlace
-            };
-        }
-
         var removedIds = Object.keys(removeSet);
+
         if (removedIds.length === 0) {
             return {
                 status: 'skipped',
                 clearedCount: 0,
                 households: [],
-                perPlace: perPlace
+                perPlace: []
             };
         }
 
-        var totalCleared = 0;
-        var allHouseholds = [];
-        var anyFailed = false;
-        var firstFailureReason = null;
-
-        for (var i = 0; i < removedIds.length; i++) {
-            var placeId = removedIds[i];
-            var result = null;
-            try {
-                result = HC.clearLocationReferences(placeId);
-            } catch (e) {
-                result = {
-                    success: false,
-                    reason: e && e.message ? e.message : 'clearLocationReferences threw'
-                };
-            }
-
-            if (!result || result.success !== true) {
-                anyFailed = true;
-                if (!firstFailureReason) {
-                    firstFailureReason = (result && result.reason)
-                        ? result.reason
-                        : 'clearLocationReferences returned failure';
-                }
-                perPlace.push({
-                    placeId: placeId,
-                    status: 'failed',
-                    clearedCount: 0,
-                    reason: (result && result.reason) ? result.reason : null
-                });
-                continue;
-            }
-
-            var data = result.data || {};
-            var cleared = typeof data.clearedCount === 'number'
-                ? data.clearedCount
-                : 0;
-            var households = Array.isArray(data.households)
-                ? data.households
-                : [];
-
-            totalCleared += cleared;
-            for (var h = 0; h < households.length; h++) {
-                allHouseholds.push(households[h]);
-            }
-            perPlace.push({
-                placeId: placeId,
-                status: 'applied',
-                clearedCount: cleared
-            });
+        if (!HC || typeof HC.clearLocationReferencesMany !== 'function') {
+            return {
+                status: 'unavailable',
+                clearedCount: 0,
+                households: [],
+                reason: 'HouseholdCommands.clearLocationReferencesMany is not available',
+                perPlace: []
+            };
         }
 
-        if (anyFailed) {
+        var result;
+        try {
+            result = HC.clearLocationReferencesMany(removedIds);
+        } catch (e) {
+            result = {
+                success: false,
+                reason: e && e.message ? e.message : 'clearLocationReferencesMany threw'
+            };
+        }
+
+        if (!result || result.success !== true) {
             return {
                 status: 'failed',
-                clearedCount: totalCleared,
-                households: allHouseholds,
-                reason: firstFailureReason,
-                perPlace: perPlace
+                clearedCount: 0,
+                households: [],
+                reason: result && result.reason
+                    ? result.reason
+                    : 'clearLocationReferencesMany returned failure',
+                perPlace: removedIds.map(function(placeId) {
+                    return { placeId: placeId, status: 'not-applied' };
+                })
             };
         }
 
+        var data = result.data || {};
         return {
             status: 'applied',
-            clearedCount: totalCleared,
-            households: allHouseholds,
-            perPlace: perPlace
+            clearedCount: typeof data.clearedCount === 'number' ? data.clearedCount : 0,
+            households: Array.isArray(data.households) ? data.households : [],
+            perPlace: removedIds.map(function(placeId) {
+                return { placeId: placeId, status: 'included-in-batch' };
+            })
         };
     }
 
