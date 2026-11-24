@@ -616,6 +616,9 @@
             structuralDamageSkippedSystems: Array.isArray(report.skippedSystems)
                 ? report.skippedSystems.slice()
                 : [],
+            structuralDamageFailures: Array.isArray(report.errors)
+                ? report.errors.slice()
+                : [],
             structuralDamage: {
                 featuresDestroyed:    (report.featuresDestroyed    || []).length,
                 schoolsDestroyed:     (report.schoolsDestroyed     || []).length,
@@ -692,7 +695,8 @@
             residencesDemolished: (priorLists.residences || []).slice(),
             householdsDestroyed:  (priorLists.households || []).slice(),
             totalLoss: 0,
-            errors: [],
+            errors: reservation.existing && Array.isArray(reservation.existing.structuralDamageFailures)
+                ? reservation.existing.structuralDamageFailures.slice() : [],
             skippedSystems: []
         };
         var retrySystems = reservation.retrySystems;
@@ -733,6 +737,8 @@
             appendUnique(report.householdsDestroyed, r.destroyed);
             report.errors = report.errors.concat(r.errors);
             if (r.skipped) report.skippedSystems.push('households');
+        } else if (retrySystems && retrySystems.indexOf('households') !== -1) {
+            report.skippedSystems.push('households');
         }
 
         report.totalLoss = _calculateTotalLoss(report);
