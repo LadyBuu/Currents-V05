@@ -613,22 +613,29 @@
         var endYear = _resolveYear(year);
 
         var touched = 0;
+        var failures = [];
         var affectedCharacters = {};
 
         var asParent = FQ.getEdgesForParent(characterId, { status: 'ongoing' });
         for (var i = 0; i < asParent.length; i++) {
             var e = asParent[i];
-            FS._update(e.id, { status: 'ended', endYear: endYear });
-            touched++;
-            affectedCharacters[e.childId] = true;
+            if (FS._update(e.id, { status: 'ended', endYear: endYear }) === true) {
+                touched++;
+                affectedCharacters[e.childId] = true;
+            } else {
+                failures.push({ edgeId: e.id, reason: 'Could not end parent edge.' });
+            }
         }
 
         var asChild = FQ.getEdgesForChild(characterId, { status: 'ongoing' });
         for (var j = 0; j < asChild.length; j++) {
             var c = asChild[j];
-            FS._update(c.id, { status: 'ended', endYear: endYear });
-            touched++;
-            affectedCharacters[c.parentId] = true;
+            if (FS._update(c.id, { status: 'ended', endYear: endYear }) === true) {
+                touched++;
+                affectedCharacters[c.parentId] = true;
+            } else {
+                failures.push({ edgeId: c.id, reason: 'Could not end child edge.' });
+            }
         }
 
         if (touched > 0) {
@@ -637,7 +644,16 @@
             _commitAndNotify('handleCharacterDeath', ids);
         }
 
-        return { success: true, endedCount: touched };
+        return {
+            success: failures.length === 0,
+            endedCount: touched,
+            failedCount: failures.length,
+            failures: failures,
+            code: failures.length ? 'PARTIAL_FAMILY_DEATH_CLEANUP' : undefined,
+            reason: failures.length
+                ? failures.length + ' family edge(s) could not be ended.'
+                : undefined
+        };
     }
 
     // =========================================================================
