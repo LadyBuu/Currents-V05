@@ -1898,8 +1898,8 @@ Settlement subsystem (Location loads first):
   - deletePlace rebuilds Location indexes and runs read-only Government,
     Religion, Culture, and Character preflights before mutation.
   - The mutation phase is executed by CrossDomainTransaction as one
-    synchronous in-memory transaction spanning Government, Religion, Culture,
-    Character, Household, Settlement, and Location. All seven snapshots are
+    synchronous in-memory transaction spanning Government, Religion, Character,
+    Household, Settlement, and Location, plus Culture when its subsystem is loaded. All seven snapshots are
     captured before the first write. Owning commands defer notifications;
     domain events are published only after every apply step succeeds.
   - If an apply step fails, the transaction restores snapshots in reverse
