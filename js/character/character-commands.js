@@ -582,7 +582,11 @@
     function updateCharactersFields(changes, options) {
         if (!Array.isArray(changes)) return _fail('changes must be an array.');
         if (changes.length === 0) return _ok();
+        if (typeof window.validateCharacterFieldUpdates !== 'function') {
+            return _fail('CharacterFactory.validateCharacterFieldUpdates is required.');
+        }
 
+        var validatedChanges = [];
         for (var i = 0; i < changes.length; i++) {
             var change = changes[i];
             if (!change || typeof change !== 'object') {
@@ -604,9 +608,6 @@
                     offenders.join(', ')
                 );
             }
-            if (typeof window.validateCharacterFieldUpdates !== 'function') {
-                return _fail('CharacterFactory.validateCharacterFieldUpdates is required.');
-            }
             var validation = window.validateCharacterFieldUpdates(change.updates);
             if (!validation || validation.success !== true) {
                 return _fail(
@@ -616,11 +617,11 @@
                         : 'Character field validation failed.')
                 );
             }
-            change.updates = validation.updates;
+            validatedChanges.push({ id: change.id, updates: validation.updates });
         }
 
         options = options || {};
-        var result = CS.updateCharacters(changes, options);
+        var result = CS.updateCharacters(validatedChanges, options);
         if (!result || result.success !== true) {
             return _fail(result && result.reason
                 ? result.reason
