@@ -332,6 +332,13 @@
      ================================================================ -->
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
+<script>
+    (function () {
+        try {
+            if (typeof window.initializeStorage === 'function') window.initializeStorage();
+        } catch (e) { console.error('[boot] initializeStorage failed:', e); }
+    })();
+</script>
 <script src="js/core/accessors.js"></script>
 
 <!-- ================================================================
