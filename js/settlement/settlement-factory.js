@@ -183,8 +183,31 @@
         }
 
         var specializationRoleId = null;
-        if (overrides.specializationRoleId !== undefined && overrides.specializationRoleId !== null) {
-            specializationRoleId = overrides.specializationRoleId;
+        if (overrides.specializationRoleId !== undefined &&
+            overrides.specializationRoleId !== null) {
+            if (typeof overrides.specializationRoleId !== 'string' ||
+                overrides.specializationRoleId.trim().length === 0) {
+                throw new Error(
+                    'SettlementFactory: specializationRoleId must be a non-empty role id.'
+                );
+            }
+            var roleQueries = window.RoleQueries;
+            if (!roleQueries || typeof roleQueries.getRoleById !== 'function') {
+                throw new Error(
+                    'SettlementFactory: RoleQueries.getRoleById is unavailable; ' +
+                    'cannot validate specializationRoleId.'
+                );
+            }
+            var specializationRole = roleQueries.getRoleById(
+                overrides.specializationRoleId
+            );
+            if (!specializationRole) {
+                throw new Error(
+                    'SettlementFactory: unknown specializationRoleId "' +
+                    overrides.specializationRoleId + '"'
+                );
+            }
+            specializationRoleId = specializationRole.id;
         }
 
         var foundedYear = currentYear;
