@@ -602,29 +602,43 @@
                     disaster,
                     { demolishHouseholds: true }
                 );
-                results.structuralDamage = damageResult;
+                if (damageResult && damageResult.success === true &&
+                    damageResult.data && typeof damageResult.data === 'object') {
+                    // DisasterDamage follows the standard command contract:
+                    // its report is nested under data, not on the wrapper.
+                    var damageReport = damageResult.data;
+                    results.structuralDamage = damageReport;
 
-                if (damageResult && damageResult.success) {
                     var updates = {
                         structuralDamage: {
-                            featuresDestroyed:    (damageResult.featuresDestroyed    || []).length,
-                            schoolsDestroyed:     (damageResult.schoolsDestroyed     || []).length,
-                            enterprisesDestroyed: (damageResult.enterprisesDestroyed || []).length,
-                            residencesDemolished: (damageResult.residencesDemolished || []).length,
-                            householdsDestroyed:  (damageResult.householdsDestroyed  || []).length,
-                            totalLoss: (damageResult.totalLoss || 0),
+                            featuresDestroyed:    (damageReport.featuresDestroyed    || []).length,
+                            schoolsDestroyed:     (damageReport.schoolsDestroyed     || []).length,
+                            enterprisesDestroyed: (damageReport.enterprisesDestroyed || []).length,
+                            residencesDemolished: (damageReport.residencesDemolished || []).length,
+                            householdsDestroyed:  (damageReport.householdsDestroyed  || []).length,
+                            totalLoss: (damageReport.totalLoss || 0),
                             destructionList: {
-                                features:    damageResult.featuresDestroyed    || [],
-                                schools:     damageResult.schoolsDestroyed     || [],
-                                enterprises: damageResult.enterprisesDestroyed || [],
-                                residences:  damageResult.residencesDemolished || [],
-                                households:  damageResult.householdsDestroyed  || []
+                                features:    damageReport.featuresDestroyed    || [],
+                                schools:     damageReport.schoolsDestroyed     || [],
+                                enterprises: damageReport.enterprisesDestroyed || [],
+                                residences:  damageReport.residencesDemolished || [],
+                                households:  damageReport.householdsDestroyed  || []
                             }
                         }
                     };
                     if (disaster.id) {
-                        State.updateDisaster(disaster.id, updates);
+                        var updateResult = State.updateDisaster(disaster.id, updates);
+                        if (!updateResult || updateResult.success !== true) {
+                            throw new Error(
+                                'Failed to update disaster structural-damage summary: ' +
+                                ((updateResult && updateResult.reason) || 'unknown')
+                            );
+                        }
                     }
+                } else if (damageResult && damageResult.success === true) {
+                    throw new Error('Structural-damage command returned success without a report.');
+                } else {
+                    results.structuralDamage = damageResult || null;
                 }
             } catch (e) {
                 if (typeof console !== 'undefined' && console.error) {
