@@ -114,6 +114,7 @@
         var rollbackErrors = [];
         var failure = null;
         var persisted = false;
+        var persistAttempted = false;
 
         try {
             // Validate every participant before taking snapshots or mutating.
@@ -156,6 +157,7 @@
             }
 
             if (!failure && options.persist) {
+                persistAttempted = true;
                 var saveResult = options.persist(context);
                 if (saveResult !== true &&
                     !(saveResult && saveResult.success === true)) {
@@ -196,7 +198,7 @@
 
                 // If a durable save was attempted and failed, persist the
                 // restored in-memory state as a best-effort compensation.
-                if (options.persist && !persisted) {
+                if (persistAttempted && !persisted) {
                     try {
                         var compensation = options.persist(context);
                         if (compensation !== true &&
@@ -280,6 +282,30 @@
                     rollbackErrors.push({
                         participant: participants[rollbackIndex].name,
                         reason: _errorMessage(rollbackException, 'Rollback threw.')
+                    });
+                }
+            }
+
+            if (persistAttempted && !persisted) {
+                try {
+                    var exceptionCompensation = options.persist(context);
+                    if (exceptionCompensation !== true &&
+                        !(exceptionCompensation &&
+                            exceptionCompensation.success === true)) {
+                        rollbackErrors.push({
+                            participant: 'persistence',
+                            reason: exceptionCompensation && exceptionCompensation.reason
+                                ? exceptionCompensation.reason
+                                : 'Could not persist restored state.'
+                        });
+                    }
+                } catch (exceptionCompensationError) {
+                    rollbackErrors.push({
+                        participant: 'persistence',
+                        reason: _errorMessage(
+                            exceptionCompensationError,
+                            'Could not persist restored state.'
+                        )
                     });
                 }
             }
