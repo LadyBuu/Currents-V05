@@ -388,6 +388,7 @@
      *   success: boolean,
      *   year: number,
      *   processed: number,
+     *   skipped: number,
      *   failed: number,
      *   results: Array<Object>,
      *   failures: Array<{ locationId: string, code: string, message: string }>
@@ -400,6 +401,8 @@
 
         var results = [];
         var failures = [];
+        var processed = 0;
+        var skipped = 0;
 
         for (var i = 0; i < settlements.length; i++) {
             var entry = settlements[i];
@@ -408,6 +411,11 @@
             try {
                 var result = processSettlementAnnual(locationId, { year: year });
                 results.push(result);
+                if (result.alreadyProcessed === true) {
+                    skipped++;
+                } else {
+                    processed++;
+                }
             } catch (err) {
                 failures.push({
                     locationId: locationId,
@@ -420,7 +428,8 @@
         return {
             success: failures.length === 0,
             year: year,
-            processed: results.length,
+            processed: processed,
+            skipped: skipped,
             failed: failures.length,
             results: results,
             failures: failures
