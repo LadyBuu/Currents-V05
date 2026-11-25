@@ -523,6 +523,9 @@
 
     function markDirty() {
         _state._dirty = true;
+        if (window.CrossDomainTransaction &&
+            typeof window.CrossDomainTransaction.isActive === 'function' &&
+            window.CrossDomainTransaction.isActive()) return true;
         if (typeof window.markDataDirty === 'function') {
             try {
                 window.markDataDirty();
