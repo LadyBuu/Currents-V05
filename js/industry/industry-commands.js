@@ -3,7 +3,7 @@
  * STILL WATERS - INDUSTRY COMMANDS (industry-commands.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/industry-commands.js
+ * LOCATION: js/industry/industry-commands.js
  *
  * The single write boundary for the enterprise domain.
  *
