@@ -277,7 +277,17 @@
                     });
                 } else {
                     report.applied++;
+                    continue;
                 }
+                // A failed handler may have partially mutated its domain.
+                // Do not run later handlers and expand the partial cleanup.
+                for (var j = i + 1; j < snapshot.length; j++) {
+                    report.failed.push({
+                        handlerIndex: j,
+                        reason: 'blocked because an earlier delete handler failed'
+                    });
+                }
+                break;
             } catch (e) {
                 report.failed.push({
                     handlerIndex: i,
@@ -286,6 +296,13 @@
                 if (typeof console !== 'undefined' && console.error) {
                     console.error('character-deletion-commands.js: delete handler threw:', e);
                 }
+                for (var k = i + 1; k < snapshot.length; k++) {
+                    report.failed.push({
+                        handlerIndex: k,
+                        reason: 'blocked because an earlier delete handler threw'
+                    });
+                }
+                break;
             }
         }
         report.success = report.failed.length === 0;
