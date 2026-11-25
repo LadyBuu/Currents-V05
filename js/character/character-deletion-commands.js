@@ -75,10 +75,12 @@
  *
  *   CharacterState removes the record only after cleanup succeeds. A cleanup
  *   failure retains the character record and reports incomplete deletion,
- *   allowing retry. However, earlier cleanup handlers may already have
- *   mutated other domains before a later handler fails; those mutations are
- *   not rolled back. Retry safety therefore depends on cleanup handlers being
- *   idempotent.
+ *   allowing retry. This flow is NOT atomic across domains: earlier handlers
+ *   may already have mutated state when a later handler fails, and those
+ *   mutations are not rolled back. Retry safety therefore depends on cleanup
+ *   handlers being idempotent. Do not describe this as a coordinated
+ *   transaction until every participating domain has exact snapshot/restore
+ *   support and notifications are deferred until commit.
  *
  * DELETE HANDLER HOOK (Phase 3.13b):
  *   The named cleanup table handles FamilyCommands, ChildrenCommands,
