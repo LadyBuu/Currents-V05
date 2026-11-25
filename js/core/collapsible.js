@@ -3,7 +3,7 @@
  * STILL WATERS - COLLAPSIBLE UI COMPONENTS (collapsible.js)
  * =============================================================================
  *
- * LOCATION: js/core/ui/collapsible.js
+ * LOCATION: js/core/collapsible.js
  *
  * SINGLE SOURCE OF TRUTH for all collapsible UI behavior.
  *
