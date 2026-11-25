@@ -200,7 +200,8 @@
             var schools = queries.getSchools(locationId);
             if (!Array.isArray(schools)) return null;
             for (var i = 0; i < schools.length; i++) {
-                if (schools[i] && schools[i].featureId === 'school') {
+                if (schools[i] && schools[i].featureId === 'school' &&
+                    schools[i].locationId === locationId) {
                     return schools[i].institutions || [];
                 }
             }
