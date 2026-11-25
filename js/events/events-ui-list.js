@@ -422,15 +422,6 @@
         if (input.emptyState) {
             html += renderEmptyState(input.emptyState, input.emptyStateOptions);
         } else {
-            if (input.recentEvents && input.recentEvents.available === true
-                && Array.isArray(input.recentEvents.rows)
-                && input.recentEvents.rows.length > 0) {
-                html += '<div class="events-tab-body__recent">' +
-                    '<div class="events-tab-body__recent-header">Recent Activity</div>' +
-                    renderRecentEvents(input.recentEvents) +
-                    '</div>';
-            }
-
             if (Array.isArray(input.rows) && input.rows.length > 0) {
                 html += renderCharacterList(input.rows);
             } else {
