@@ -228,11 +228,10 @@
         return [locationId];
     }
 
+    // A school building is a Settlement feature. Libraries and other
+    // education-adjacent features may affect literacy, but are not schools.
     function _isEducationFeature(feature) {
-        if (!feature) return false;
-        if (typeof feature.educationBonus === 'number' && feature.educationBonus > 1.0) return true;
-        if (typeof feature.literacyBonus === 'number' && feature.literacyBonus > 0) return true;
-        return false;
+        return !!feature && feature.id === 'school';
     }
 
     /**
@@ -260,26 +259,19 @@
     function _deriveEducationLevelId(character) {
         if (!character) return null;
 
-        if (character.isLiterate !== true) {
-            return 'illiterate';
-        }
+        var literacyProgress = character.subjectProgress &&
+            character.subjectProgress.literacy;
+        var bestLevel = literacyProgress &&
+            typeof literacyProgress.level === 'number' &&
+            Number.isFinite(literacyProgress.level)
+            ? literacyProgress.level : 0;
 
-        var progress = character.subjectProgress;
-        if (!progress || typeof progress !== 'object') {
+        // Education's literacy subject is the academic source of truth.
+        // Trade/profession proficiency must never promote someone to Scholar.
+        if (bestLevel <= 0 && character.isLiterate === true) {
             return 'literate';
         }
-
-        var bestLevel = 0;
-        var keys = Object.keys(progress);
-        for (var i = 0; i < keys.length; i++) {
-            var entry = progress[keys[i]];
-            if (!entry || typeof entry !== 'object') continue;
-            if (typeof entry.level === 'number'
-                && Number.isFinite(entry.level)
-                && entry.level > bestLevel) {
-                bestLevel = entry.level;
-            }
-        }
+        if (bestLevel <= 0) return 'illiterate';
 
         var thresholds = _getEducationLevelThresholds();
 
@@ -336,26 +328,49 @@
     // 3. BASIC SCHOOL QUERIES
     // =========================================================================
 
-    function getSchoolCount(locationId) {
-        var features = _getFeatureQueries().getSettlementFeatures(locationId);
-        if (features === null) return null;
-        var count = 0;
-        for (var i = 0; i < features.length; i++) {
-            if (_isEducationFeature(features[i])) count++;
-        }
-        return count;
-    }
-
     function getSchools(locationId) {
-        var features = _getFeatureQueries().getSettlementFeatures(locationId);
-        if (features === null) return null;
+        var locationIds = _getLocationIdsForSettlement(locationId);
+        var allInstitutions = window.EducationQueries &&
+            typeof window.EducationQueries.getInstitutionsInRegion === 'function'
+            ? window.EducationQueries.getInstitutionsInRegion(locationId, true)
+            : null;
+        if (!Array.isArray(allInstitutions)) return null;
+
+        var institutionsByLocation = Object.create(null);
+        for (var i = 0; i < allInstitutions.length; i++) {
+            var institution = allInstitutions[i];
+            if (!institution || !institution.locationId) continue;
+            if (!institutionsByLocation[institution.locationId]) {
+                institutionsByLocation[institution.locationId] = [];
+            }
+            institutionsByLocation[institution.locationId].push(institution);
+        }
+
         var result = [];
-        for (var i = 0; i < features.length; i++) {
-            if (_isEducationFeature(features[i])) {
-                result.push(features[i]);
+        for (var l = 0; l < locationIds.length; l++) {
+            var currentLocationId = locationIds[l];
+            var features = _getFeatureQueries().getSettlementFeatures(currentLocationId);
+            if (features === null) continue;
+            for (var f = 0; f < features.length; f++) {
+                if (!_isEducationFeature(features[f])) continue;
+                result.push({
+                    id: features[f].id,
+                    featureId: features[f].id,
+                    feature: features[f],
+                    locationId: currentLocationId,
+                    institutions: (institutionsByLocation[currentLocationId] || []).slice(),
+                    institutionIds: (institutionsByLocation[currentLocationId] || []).map(function (inst) {
+                        return inst.id;
+                    })
+                });
             }
         }
         return result;
+    }
+
+    function getSchoolCount(locationId) {
+        var schools = getSchools(locationId);
+        return schools === null ? null : schools.length;
     }
 
     function hasSchools(locationId) {
@@ -433,42 +448,32 @@
         var schools = getSchools(locationId);
         if (schools === null) return null;
 
-        var result = {
-            schoolCount: schools.length,
-            totalCapacity: 0,
-            totalStudents: 0,
-            totalTeachers: 0,
-            studentTeacherRatio: null,
-            capacityUsed: 0,
-            needsMoreSchools: false,
-            capacityGap: 0
-        };
-
         var educationQueries = window.EducationQueries;
-        if (educationQueries && typeof educationQueries.getSchoolCapacity === 'function') {
-            for (var i = 0; i < schools.length; i++) {
-                var capacity = educationQueries.getSchoolCapacity(locationId, schools[i].id);
-                if (!capacity) continue;
-                result.totalCapacity += capacity.capacity || 0;
-                result.totalStudents += capacity.students || 0;
-                result.totalTeachers += capacity.teachers || 0;
-            }
-
-            if (result.totalTeachers > 0) {
-                result.studentTeacherRatio = Math.round(result.totalStudents / result.totalTeachers);
-            }
-
-            if (result.totalCapacity > 0) {
-                result.capacityUsed = Math.round((result.totalStudents / result.totalCapacity) * 100);
-            }
-
-            result.capacityGap = Math.max(0, result.totalStudents - result.totalCapacity);
-            result.needsMoreSchools = result.capacityGap > 0;
-        } else {
-            result.needsMoreSchools = false;
+        if (!educationQueries ||
+            typeof educationQueries.getLocationEducationSummary !== 'function') {
+            return null;
         }
+        var summary = educationQueries.getLocationEducationSummary(locationId, true);
+        if (!summary) return null;
 
-        return result;
+        var totalCapacity = Number(summary.totalCapacity) || 0;
+        var totalStudents = Number(summary.currentStudents) || 0;
+        var totalTeachers = Number(summary.totalTeachers) || 0;
+        var capacityGap = Math.max(0, totalStudents - totalCapacity);
+
+        return {
+            schoolCount: schools.length,
+            institutionCount: Number(summary.institutionCount) || 0,
+            totalCapacity: totalCapacity,
+            totalStudents: totalStudents,
+            totalTeachers: totalTeachers,
+            studentTeacherRatio: totalTeachers > 0
+                ? Math.round(totalStudents / totalTeachers) : null,
+            capacityUsed: totalCapacity > 0
+                ? Math.round((totalStudents / totalCapacity) * 100) : 0,
+            needsMoreSchools: capacityGap > 0,
+            capacityGap: capacityGap
+        };
     }
 
     // =========================================================================
