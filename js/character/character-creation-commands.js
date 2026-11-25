@@ -477,7 +477,16 @@
                         var restored = window.FamilyState.replaceAll(snapshot);
                         if (!restored) return { success: false, reason: 'Family edges could not be restored.' };
                         window.masterData.data.parentChildEdges = window.FamilyState.snapshot();
+                        if (window.FamilyState._transactionDiscardNotifications) window.FamilyState._transactionDiscardNotifications();
+                        if (window.FamilyCommands && window.FamilyCommands._transactionDiscardSideEffects) window.FamilyCommands._transactionDiscardSideEffects();
+                        if (window.ReligionCommands && window.ReligionCommands._transactionDiscardEvents) window.ReligionCommands._transactionDiscardEvents();
+                        if (window.ReligionState && window.ReligionState.invalidateFollowerIndex) window.ReligionState.invalidateFollowerIndex();
                         return { success: true };
+                    },
+                    afterCommit: function () {
+                        if (window.FamilyState && window.FamilyState._transactionFlushNotifications) window.FamilyState._transactionFlushNotifications();
+                        if (window.FamilyCommands && window.FamilyCommands._transactionFlushSideEffects) window.FamilyCommands._transactionFlushSideEffects();
+                        if (window.ReligionCommands && window.ReligionCommands._transactionFlushEvents) window.ReligionCommands._transactionFlushEvents();
                     }
                 }
             ]
@@ -666,7 +675,16 @@
                         if (!window.FamilyState || typeof window.FamilyState.replaceAll !== 'function') return { success: false, reason: 'FamilyState.replaceAll unavailable.' };
                         if (!window.FamilyState.replaceAll(snapshot)) return { success: false, reason: 'Family edges could not be restored.' };
                         window.masterData.data.parentChildEdges = window.FamilyState.snapshot();
+                        if (window.FamilyState._transactionDiscardNotifications) window.FamilyState._transactionDiscardNotifications();
+                        if (window.FamilyCommands && window.FamilyCommands._transactionDiscardSideEffects) window.FamilyCommands._transactionDiscardSideEffects();
+                        if (window.ReligionCommands && window.ReligionCommands._transactionDiscardEvents) window.ReligionCommands._transactionDiscardEvents();
+                        if (window.ReligionState && window.ReligionState.invalidateFollowerIndex) window.ReligionState.invalidateFollowerIndex();
                         return { success: true };
+                    },
+                    afterCommit: function () {
+                        if (window.FamilyState && window.FamilyState._transactionFlushNotifications) window.FamilyState._transactionFlushNotifications();
+                        if (window.FamilyCommands && window.FamilyCommands._transactionFlushSideEffects) window.FamilyCommands._transactionFlushSideEffects();
+                        if (window.ReligionCommands && window.ReligionCommands._transactionFlushEvents) window.ReligionCommands._transactionFlushEvents();
                     }
                 }
             ]
