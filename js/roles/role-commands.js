@@ -549,6 +549,32 @@
             return _fail('Role not found.');
         }
 
+        // Settlement specialization is a direct role foreign key. Removing
+        // a role from characters must not silently invalidate settlements.
+        var settlementState = window.SettlementState;
+        if (!settlementState ||
+            typeof settlementState.getLocationIdsBySpecialization !== 'function') {
+            var settlementStore = window.masterData && window.masterData.data &&
+                window.masterData.data.settlementData;
+            if (settlementStore && Object.keys(settlementStore).length > 0) {
+                return _fail('Settlement specialization references cannot be checked; deletion is blocked.');
+            }
+        } else {
+            var settlementReferences;
+            try {
+                settlementReferences = settlementState.getLocationIdsBySpecialization(roleId);
+            } catch (settlementReferenceError) {
+                return _fail('Settlement specialization references could not be read; deletion is blocked.');
+            }
+            if (!Array.isArray(settlementReferences)) {
+                return _fail('Settlement specialization references could not be read; deletion is blocked.');
+            }
+            if (settlementReferences.length > 0) {
+                return _fail('Cannot delete role while ' + settlementReferences.length +
+                    ' settlement(s) use it as their specialization. Change those settlements first.');
+            }
+        }
+
         var reassignedCount = 0;
         if (removeFromCharacters) {
             var result = CC.removeProfessionFromAll(roleId);
