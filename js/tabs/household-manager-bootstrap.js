@@ -67,6 +67,23 @@
     // 1. DEPENDENCY HELPERS
     // =========================================================================
 
+    function _requireHouseholdDomain() {
+        var bootstrap = window.HouseholdBootstrap;
+        if (!bootstrap || typeof bootstrap.init !== 'function') {
+            throw new Error(
+                'household-manager-bootstrap: HouseholdBootstrap is missing. ' +
+                'Load js/households/household-bootstrap.js after the household modules.'
+            );
+        }
+        var result = bootstrap.init();
+        if (!result || result.success !== true || !window.Household) {
+            throw new Error(
+                'household-manager-bootstrap: the household domain did not finish bootstrapping.'
+            );
+        }
+        return window.Household;
+    }
+
     function _requireTabManager() {
         var TM = window.TabManager;
         if (!TM
@@ -612,6 +629,7 @@
 
         var TabManager, HS, Q, runtime;
         try {
+            _requireHouseholdDomain();
             TabManager = _requireTabManager();
             HS = _requireState();
             Q = _requireQueries();
