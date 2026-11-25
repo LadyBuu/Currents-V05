@@ -3,7 +3,7 @@
  * STILL WATERS - SIMULATION GENERATORS (simulation-generators.js)
  * =============================================================================
  *
- * LOCATION: js/modules/simulation/simulation-generators.js
+ * LOCATION: js/core/simulation-generators.js
  *
  * SCOPE:
  *   Simulation-specific random value generation. These apply domain rules
