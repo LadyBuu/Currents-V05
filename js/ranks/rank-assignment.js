@@ -377,6 +377,9 @@
             if (!_hasId(sourceCharacterId)) return [];
             return holders.filter(function (entry) {
                 var partnerIds = _getCommittedPartnerIds(entry.character.id);
+                if (!Array.isArray(partnerIds)) {
+                    throw new Error('RomanceQueries.getActiveCommittedPartners is required to number spouse-group ranks safely.');
+                }
                 for (var i = 0; i < partnerIds.length; i++) {
                     if (partnerIds[i] === sourceCharacterId) return true;
                 }
@@ -414,15 +417,18 @@
 
     function _getCommittedPartnerIds(characterId) {
         var romance = _readRomanceQueries();
-        if (!romance) return [];
+        if (!romance) return null;
 
         var partners;
         try {
             partners = romance.getActiveCommittedPartners(characterId);
         } catch (e) {
-            return [];
+            throw new Error('Could not read committed partners for spouse-group rank numbering: ' +
+                (e && e.message ? e.message : 'unknown error'));
         }
-        if (!Array.isArray(partners)) return [];
+        if (!Array.isArray(partners)) {
+            throw new Error('RomanceQueries returned an invalid committed-partner list.');
+        }
 
         var ids = [];
         for (var i = 0; i < partners.length; i++) {
