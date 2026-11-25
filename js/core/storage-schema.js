@@ -163,6 +163,8 @@
 
                 residences: [],
                 disasters: [],
+                crimes: [],
+                vendettas: [],
                 eventLog: [],
                 educationalInstitutions: [],
                 parentChildEdges: [],
@@ -222,7 +224,7 @@
             'cultureLocationAssociations',
             'governmentDepartments', 'governmentHistory',
             'enterprises', 'enterpriseTypes',
-            'residences', 'disasters', 'eventLog',
+            'residences', 'disasters', 'crimes', 'vendettas', 'eventLog',
             'educationalInstitutions', 'parentChildEdges',
             // FIX: relationships was never in the arrayKeys whitelist.
             // normalizeMasterData therefore dropped data.relationships
