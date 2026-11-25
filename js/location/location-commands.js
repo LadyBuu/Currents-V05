@@ -1761,6 +1761,18 @@
         var year = (options.year === undefined || options.year === null)
             ? window.getCurrentYear()
             : options.year;
+        if (typeof window.isValidYear !== 'function' ||
+            window.isValidYear(year) !== true) {
+            return _fail('year must be a valid world year');
+        }
+        if (options.note !== undefined && options.note !== null &&
+            typeof options.note !== 'string') {
+            return _fail('note must be a string or null');
+        }
+        if (options.fromLocationId !== undefined && options.fromLocationId !== null &&
+            options.fromLocationId !== '' && !_validId(options.fromLocationId)) {
+            return _fail('fromLocationId must be a non-empty string or null');
+        }
 
         var moveData = {
             year: year,
@@ -2121,7 +2133,18 @@
         var year = (startYear === undefined || startYear === null)
             ? window.getCurrentYear()
             : startYear;
-
+        if (typeof window.isValidYear !== 'function' ||
+            window.isValidYear(year) !== true) {
+            return _fail('assignLeader: startYear must be a valid world year');
+        }
+        for (var validationIndex = 0; validationIndex < place.leaderAssignments.length; validationIndex++) {
+            var existingLeader = place.leaderAssignments[validationIndex];
+            if (existingLeader && existingLeader.isActive === true &&
+                (existingLeader.endYear === null || existingLeader.endYear === undefined) &&
+                year <= existingLeader.startYear) {
+                return _fail('assignLeader: new leader term must start after the current term begins');
+            }
+        }
         for (var i = 0; i < place.leaderAssignments.length; i++) {
             var a = place.leaderAssignments[i];
             if (a.isActive &&
@@ -2175,17 +2198,29 @@
         var year = (endYear === undefined || endYear === null)
             ? window.getCurrentYear()
             : endYear;
+        if (typeof window.isValidYear !== 'function' ||
+            window.isValidYear(year) !== true) {
+            return _fail('endLeaderTerm: endYear must be a valid world year');
+        }
 
         var found = false;
+        var activeAssignment = null;
         for (var i = 0; i < place.leaderAssignments.length; i++) {
             var a = place.leaderAssignments[i];
             if (a.characterId === characterId && a.isActive &&
                 (a.endYear === null || a.endYear === undefined)) {
-                a.isActive = false;
-                a.endYear = year;
+                if (year <= a.startYear) {
+                    return _fail('endLeaderTerm: endYear must be after the term start year');
+                }
+                activeAssignment = a;
                 found = true;
                 break;
             }
+        }
+        if (found) {
+            activeAssignment.isActive = false;
+            activeAssignment.endYear = year;
+            if (place.leaderId === characterId) place.leaderId = null;
         }
         if (!found) {
             return _fail('endLeaderTerm: active assignment not found');
@@ -2222,9 +2257,13 @@
             return _fail('handleCharacterDeath: characterId is required.');
         }
 
-        var endYear = (typeof year === 'number' && Number.isFinite(year))
-            ? year
-            : window.getCurrentYear();
+        var endYear = (year === undefined || year === null)
+            ? window.getCurrentYear()
+            : year;
+        if (typeof window.isValidYear !== 'function' ||
+            window.isValidYear(endYear) !== true) {
+            return _fail('handleCharacterDeath: year must be a valid world year.');
+        }
 
         var placeIds = LS.getAllPlaceIds();
         var affectedPlaceIds = [];
