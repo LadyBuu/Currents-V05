@@ -575,6 +575,7 @@
         var charFacts = _CharacterQueries.getCharacterFacts(characterId);
         if (!charFacts) return _fail('Character not found', C.CODES.NOT_FOUND);
         if (charFacts.isDeceased) return _fail('Character is deceased', C.CODES.DECEASED);
+        if (charFacts.isDeleted === true) return _fail('Character is soft-deleted', C.CODES.VALIDATION);
 
         var existing = State._getAssignmentsForPositionCanonical(departmentId, positionId, true);
         for (var i = 0; i < existing.length; i++) {
@@ -582,6 +583,16 @@
                 return _fail('Character already assigned to this position', C.CODES.ALREADY_ASSIGNED);
             }
         }
+
+        var effectiveStartYear = options.startYear != null ? options.startYear : _now();
+        if (typeof window.isValidYear !== 'function' || window.isValidYear(effectiveStartYear) !== true) {
+            return _fail('Start year must be a valid world year', C.CODES.VALIDATION);
+        }
+        if (options.endYear != null && (window.isValidYear(options.endYear) !== true || options.endYear <= effectiveStartYear)) {
+            return _fail('End year must be a valid world year after the start year', C.CODES.VALIDATION);
+        }
+        if (options.title != null && typeof options.title !== 'string') return _fail('Assignment title must be a string', C.CODES.VALIDATION);
+        if (options.notes != null && typeof options.notes !== 'string') return _fail('Assignment notes must be a string', C.CODES.VALIDATION);
 
         var plan = Rules.planAssignment({
             position: {
@@ -593,7 +604,7 @@
             },
             character: charFacts,
             options: {
-                startYear: options.startYear != null ? options.startYear : _now(),
+                startYear: effectiveStartYear,
                 defaultSkillLevel: options.defaultSkillLevel != null
                     ? options.defaultSkillLevel
                     : C.DEFAULT_SKILL_LEVEL,
@@ -840,6 +851,7 @@
         var charFacts = _CharacterQueries.getCharacterFacts(characterId);
         if (!charFacts) return _fail('Character not found', C.CODES.NOT_FOUND);
         if (charFacts.isDeceased) return _fail('Character is deceased', C.CODES.DECEASED);
+        if (charFacts.isDeleted === true) return _fail('Character is soft-deleted', C.CODES.VALIDATION);
 
         var existing = State._getAssignmentsForPositionCanonical(departmentId, positionId, true);
         for (var i = 0; i < existing.length; i++) {
@@ -847,6 +859,16 @@
                 return _fail('Already assigned', C.CODES.ALREADY_ASSIGNED);
             }
         }
+
+        var effectiveStartYear = options.startYear != null ? options.startYear : _now();
+        if (typeof window.isValidYear !== 'function' || window.isValidYear(effectiveStartYear) !== true) {
+            return _fail('Start year must be a valid world year', C.CODES.VALIDATION);
+        }
+        if (options.endYear != null && (window.isValidYear(options.endYear) !== true || options.endYear <= effectiveStartYear)) {
+            return _fail('End year must be a valid world year after the start year', C.CODES.VALIDATION);
+        }
+        if (options.title != null && typeof options.title !== 'string') return _fail('Assignment title must be a string', C.CODES.VALIDATION);
+        if (options.notes != null && typeof options.notes !== 'string') return _fail('Assignment notes must be a string', C.CODES.VALIDATION);
 
         var plan = Rules.planAssignment({
             position: {
