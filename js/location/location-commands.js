@@ -646,7 +646,29 @@
             return _fail('createPlace: ' + hierarchyCheck.reason);
         }
 
+        if (input.parentId !== undefined && input.parentId !== null &&
+            input.parentId !== '' && !_validId(input.parentId)) {
+            return _fail('createPlace: parentId must be a non-empty string or null');
+        }
+        if (input.variableKey !== undefined && input.variableKey !== null &&
+            typeof input.variableKey !== 'string') {
+            return _fail('createPlace: variableKey must be a string or null');
+        }
+        if (input.status !== undefined && input.status !== null &&
+            typeof input.status !== 'string') {
+            return _fail('createPlace: status must be a string or null');
+        }
+        if (input.isCapital !== undefined && typeof input.isCapital !== 'boolean') {
+            return _fail('createPlace: isCapital must be a boolean');
+        }
+        if (input.notes !== undefined && input.notes !== null &&
+            typeof input.notes !== 'string') {
+            return _fail('createPlace: notes must be a string or null');
+        }
         if (input.cultureId) {
+            if (!_validId(input.cultureId)) {
+                return _fail('createPlace: cultureId must be a non-empty string');
+            }
             if (!window.CultureQueries ||
                 typeof window.CultureQueries.getCultureById !== 'function') {
                 return _fail(
@@ -747,10 +769,27 @@
                 return _fail('updatePlace: ' + structureCheck.reason);
             }
         }
-        if (updates.displayName !== undefined) {
-            if (!_validString(updates.displayName)) {
-                return _fail('updatePlace: displayName cannot be empty');
-            }
+        if (updates.displayName !== undefined && !_validString(updates.displayName)) {
+            return _fail('updatePlace: displayName cannot be empty');
+        }
+        if (updates.parentId !== undefined && updates.parentId !== null &&
+            updates.parentId !== '' && !_validId(updates.parentId)) {
+            return _fail('updatePlace: parentId must be a non-empty string or null');
+        }
+        if (updates.variableKey !== undefined && updates.variableKey !== null &&
+            typeof updates.variableKey !== 'string') {
+            return _fail('updatePlace: variableKey must be a string or null');
+        }
+        if (updates.status !== undefined && updates.status !== null &&
+            typeof updates.status !== 'string') {
+            return _fail('updatePlace: status must be a string or null');
+        }
+        if (updates.isCapital !== undefined && typeof updates.isCapital !== 'boolean') {
+            return _fail('updatePlace: isCapital must be a boolean');
+        }
+        if (updates.notes !== undefined && updates.notes !== null &&
+            typeof updates.notes !== 'string') {
+            return _fail('updatePlace: notes must be a string or null');
         }
 
         for (var key in updates) {
@@ -1585,8 +1624,18 @@
         }
         if (input.priority === undefined || input.priority === null ||
             typeof input.priority !== 'number' ||
+            !Number.isInteger(input.priority) ||
             input.priority < 1 || input.priority > 5) {
             return _fail('createLocationType: priority must be 1..5');
+        }
+
+        if (input.icon !== undefined && input.icon !== null &&
+            typeof input.icon !== 'string') {
+            return _fail('createLocationType: icon must be a string or null');
+        }
+        if (input.description !== undefined && input.description !== null &&
+            typeof input.description !== 'string') {
+            return _fail('createLocationType: description must be a string or null');
         }
 
         var type = {
@@ -1628,6 +1677,7 @@
 
         if (updates.priority !== undefined) {
             if (typeof updates.priority !== 'number' ||
+                !Number.isInteger(updates.priority) ||
                 updates.priority < 1 || updates.priority > 5) {
                 return _fail('updateLocationType: priority must be 1..5');
             }
@@ -1661,12 +1711,16 @@
                 }
             }
         }
-        if (updates.displayName !== undefined) {
-            if (!_validString(updates.displayName)) {
-                return _fail(
-                    'updateLocationType: displayName cannot be empty'
-                );
-            }
+        if (updates.displayName !== undefined && !_validString(updates.displayName)) {
+            return _fail('updateLocationType: displayName cannot be empty');
+        }
+        if (updates.icon !== undefined && updates.icon !== null &&
+            typeof updates.icon !== 'string') {
+            return _fail('updateLocationType: icon must be a string or null');
+        }
+        if (updates.description !== undefined && updates.description !== null &&
+            typeof updates.description !== 'string') {
+            return _fail('updateLocationType: description must be a string or null');
         }
 
         for (var key in updates) {
