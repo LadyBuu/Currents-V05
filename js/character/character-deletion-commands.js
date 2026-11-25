@@ -529,16 +529,34 @@
             };
         }
 
-        var removed = CS.removeCharacter(characterId);
-        if (!removed.success) {
+        var removed;
+        try {
+            removed = CS.removeCharacter(characterId);
+        } catch (removeError) {
             return {
                 success: false,
-                reason: removed.reason || 'CharacterState refused removal after references were cleaned.',
+                reason: removeError && removeError.message
+                    ? 'CharacterState removal threw after cross-domain cleanup: ' + removeError.message
+                    : 'CharacterState removal threw after cross-domain cleanup.',
                 deletedId: characterId,
                 deletionComplete: false,
                 partial: true,
                 cleanup: cleanup,
-                cleanupFailed: false
+                cleanupFailed: false,
+                characterRetained: !!_getLive(characterId)
+            };
+        }
+        if (!removed || removed.success !== true) {
+            return {
+                success: false,
+                reason: removed && removed.reason
+                    ? removed.reason : 'CharacterState refused removal after references were cleaned.',
+                deletedId: characterId,
+                deletionComplete: false,
+                partial: true,
+                cleanup: cleanup,
+                cleanupFailed: false,
+                characterRetained: !!_getLive(characterId)
             };
         }
 
@@ -703,9 +721,22 @@
                 partial: true, deletionComplete: false, cleanupFailed: true,
                 count: 0, purgedIds: [], cleanup: cleanupReports };
         }
-        var removed = CS.removeCharacters(toPurge);
-        if (!removed.success) {
-            return { success: false, reason: removed.reason || 'CharacterState refused batch removal after cleanup.',
+        var removed;
+        try {
+            removed = CS.removeCharacters(toPurge);
+        } catch (removeError) {
+            return {
+                success: false,
+                reason: removeError && removeError.message
+                    ? 'CharacterState batch removal threw after cleanup: ' + removeError.message
+                    : 'CharacterState batch removal threw after cleanup.',
+                partial: true, deletionComplete: false, cleanupFailed: true,
+                count: 0, purgedIds: [], cleanup: cleanupReports
+            };
+        }
+        if (!removed || removed.success !== true) {
+            return { success: false, reason: removed && removed.reason
+                ? removed.reason : 'CharacterState refused batch removal after cleanup.',
                 partial: true, deletionComplete: false, count: 0, purgedIds: [], cleanup: cleanupReports };
         }
         return { success: true, partial: false, deletionComplete: true, cleanupFailed: false,
@@ -865,9 +896,22 @@
                 partial: true, deletionComplete: false, cleanupFailed: true,
                 count: 0, deletedIds: [], errors: errors, cleanup: cleanupReports };
         }
-        var removed = CS.removeCharacters(existingIds);
-        if (!removed.success) {
-            return { success: false, reason: removed.reason || 'CharacterState refused batch removal after cleanup.',
+        var removed;
+        try {
+            removed = CS.removeCharacters(existingIds);
+        } catch (removeError) {
+            return {
+                success: false,
+                reason: removeError && removeError.message
+                    ? 'CharacterState batch removal threw after cleanup: ' + removeError.message
+                    : 'CharacterState batch removal threw after cleanup.',
+                partial: true, deletionComplete: false, count: 0, deletedIds: [],
+                errors: errors, cleanup: cleanupReports
+            };
+        }
+        if (!removed || removed.success !== true) {
+            return { success: false, reason: removed && removed.reason
+                ? removed.reason : 'CharacterState refused batch removal after cleanup.',
                 partial: true, deletionComplete: false, count: 0, deletedIds: [], errors: errors,
                 cleanup: cleanupReports };
         }
