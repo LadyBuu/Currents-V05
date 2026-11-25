@@ -40,66 +40,21 @@
  *   settlement economy / employment / religion / prosperity queries.
  *
  * EDUCATION LEVEL DERIVATION:
- *   The character record carries per-subject proficiency in
- *   `character.subjectProgress`. The shape (per character-state.js's
- *   projection) is:
+ *   EducationLearning.getEducationLevel(characterId) is the canonical
+ *   classifier. It reads only the character's literacy subject progress
+ *   and delegates thresholds to EducationRules. Trade/profession skill
+ *   levels cannot promote a character to an academic education tier.
  *
- *     subjectProgress: {
- *       [subjectOrRoleId]: {
- *         level: number,          // 0-100, higher = more proficient
- *         lastStudied: number|null,
- *         source: string|null,
- *         type: 'subject' | 'role',
- *         roleId: string|null
- *       },
- *       ...
- *     }
+ *   Settlement uses the returned education-level id to populate its
+ *   distribution. The physical school count is separate: only the
+ *   Settlement feature with id "school" counts as a school. Each school
+ *   feature is joined to Education institutions at the same location;
+ *   institution records remain the authority for enrollment, capacity,
+ *   teachers and curriculum.
  *
- *   Note that the OUTER KEYS are subject ids or role ids, NOT
- *   education-level ids. A character with a high 'blacksmith' level
- *   and a high 'mathematics' level does NOT have subjectProgress keys
- *   named 'scholar' or 'educated'.
- *
- *   The education-level catalog (from SettlementEducationDefinitions)
- *   is a coarse classification: 'illiterate' | 'basic' | 'literate'
- *   | 'educated' | 'scholar'. This module PROJECTS a character's
- *   subject proficiency onto that catalog using fixed thresholds.
- *   See EDUCATION LEVEL THRESHOLDS below.
- *
- *   Prior revisions read `character.isLiterate` and then looked for
- *   subjectProgress keys literally named 'educated' and 'scholar'.
- *   That check never matched any real character, so every literate
- *   character was classified as 'literate' and the 'educated' and
- *   'scholar' distributions were always zero. Fixed by reading
- *   entry.level.
- *
- * EDUCATION LEVEL THRESHOLDS:
- *   Settlement policy for mapping subject-proficiency levels (0-100)
- *   onto the education-level catalog. The character domain owns the
- *   numeric proficiency scale; the settlement domain owns this mapping.
- *
- *   The thresholds are read from
- *   SettlementEducationDefinitions.EDUCATION_LEVEL_THRESHOLDS if that
- *   object is present. When it is absent (an older definitions module,
- *   a bare test harness), the module falls back to the thresholds
- *   below. The fallbacks are canonical settlement policy — do not
- *   change them here without changing
- *   SettlementEducationDefinitions.EDUCATION_LEVEL_THRESHOLDS in the
- *   same revision.
- *
- *     scholar   >= 90
- *     educated  >= 70
- *     literate  >= 30
- *     basic     >  0
- *     literate  == 0  (baseline for any literate character)
- *
- *   The value 0 maps to 'literate' — not 'basic' — because
- *   isLiterate === true already establishes literate status. 'basic'
- *   is a tier BETWEEN illiterate and literate that the settlement
- *   hierarchy does not currently produce from CharacterCommands (all
- *   literate characters start with isLiterate=true and progress via
- *   subject levels); it is defined for future use if subject-level
- *   gating is ever introduced at the character-domain write boundary.
+ * LOCATION SCOPE:
+ *   A settlement includes itself and every descendant location. The
+ *   selected location is always included even when it has children.
  *
  * DEPENDENCIES (REQUIRED at load):
  *   - SettlementQueries
@@ -107,43 +62,21 @@
  *   - SettlementEducationDefinitions
  *   - LocationQueries
  *   - CharacterQueries
+ *   - EducationLearning
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - _deriveEducationLevelId now reads entry.level from each
- *       subjectProgress entry and maps the highest level through the
- *       education-level thresholds (see EDUCATION LEVEL THRESHOLDS
- *       above). Prior revisions read the subjectProgress KEY name
- *       and checked `key === 'educated'` / `key === 'scholar'`.
- *       Since subjectProgress is keyed by subject/role id, not by
- *       education-level id, that check never matched. Every literate
- *       character was classified as 'literate'; 'educated' and
- *       'scholar' distributions were always zero.
- *     - _tierOrderForKey deleted (dead after rewrite).
- *     - Header EDUCATION LEVEL THRESHOLDS section added.
- *     - Header EDUCATION LEVEL DERIVATION rewritten to document the
- *       actual subjectProgress shape (from character-state.js's
- *       projection).
- *     - No public signature change, no public return-shape change.
- *       getLiteracyStats returns the same shape; only the distribution
- *       values change (correctly).
- *   Previous revisions:
- *     - Character enumeration switched from
- *       CharacterQueries.getCharactersInLocations (raw-field filter)
- *       to a fresh filter over
- *       CharacterQueries.getAllCharacters using
- *       LocationQueries.getCurrentLocationId. This matches the fix
- *       already applied in
- *       location-view-models.js::buildBulkMoveModel and in
- *       settlement-prosperity-queries.js. Under-counts literacy
- *       (and downstream prosperity) are fixed.
- *     - Education level resolution switched from
- *       CharacterQueries.getEducationLevelId (not present on the
- *       character-queries.js surface) to a local derivation from
- *       character.isLiterate and character.subjectProgress.
- *     - Corrected from LocationState.getAllSubLocationIds to
- *       LocationQueries.getAllSubLocationIds.
+ *     - School counts now include only the physical "school" feature;
+ *       libraries remain education-adjacent features, not schools.
+ *     - School feature records are joined to institution summaries by
+ *       location. Capacity and enrollment are read from EducationQueries.
+ *     - Literacy tiers now come from EducationLearning, the canonical
+ *       Education-domain classifier, rather than settlement-local skill
+ *       thresholds or the cached isLiterate flag.
+ *     - Settlement subtree enumeration always includes the selected
+ *       location as well as descendants.
+ * =============================================================================
  * =============================================================================
  */
 
@@ -177,34 +110,6 @@
     // =========================================================================
     // 2. HELPERS
     // =========================================================================
-
-    var DEFAULT_EDUCATION_LEVEL_THRESHOLDS = {
-        scholar: 90,
-        educated: 70,
-        literate: 30,
-        basic: 1
-    };
-
-    function _getEducationLevelThresholds() {
-        // Prefer the canonical threshold object from the definitions
-        // module when it exists. Fall back to the settlement policy
-        // constants below. See EDUCATION LEVEL THRESHOLDS in the
-        // module header.
-        var definitions = _getEducationDefinitions();
-        if (definitions
-            && definitions.EDUCATION_LEVEL_THRESHOLDS
-            && typeof definitions.EDUCATION_LEVEL_THRESHOLDS === 'object') {
-            var t = definitions.EDUCATION_LEVEL_THRESHOLDS;
-            // Individual fields may be missing; fall back per-field.
-            return {
-                scholar: typeof t.scholar === 'number' ? t.scholar : DEFAULT_EDUCATION_LEVEL_THRESHOLDS.scholar,
-                educated: typeof t.educated === 'number' ? t.educated : DEFAULT_EDUCATION_LEVEL_THRESHOLDS.educated,
-                literate: typeof t.literate === 'number' ? t.literate : DEFAULT_EDUCATION_LEVEL_THRESHOLDS.literate,
-                basic: typeof t.basic === 'number' ? t.basic : DEFAULT_EDUCATION_LEVEL_THRESHOLDS.basic
-            };
-        }
-        return DEFAULT_EDUCATION_LEVEL_THRESHOLDS;
-    }
 
     function _getEducationLevelsInOrder() {
         var levels = _getEducationDefinitions().EDUCATION_LEVELS;
