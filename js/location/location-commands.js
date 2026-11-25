@@ -1433,20 +1433,28 @@
 
             var updates = null;
 
-            // Pass 1: resolved current location.
+            // Clear both live residence and birthplace references before
+            // deleting the Location records. Birthplace is a character-owned
+            // foreign key just like currentLocationId.
             var locId = _resolveCurrentLocationId(c);
             if (locId && removeSet[locId]) {
                 updates = updates || {};
                 updates.currentLocationId = null;
             }
+            if (c.birthplaceId && removeSet[c.birthplaceId]) {
+                updates = updates || {};
+                updates.birthplaceId = null;
+            }
 
-            // Pass 2: moves pointing at any removed place.
+            // Drop moves whose destination is deleted. If only the origin is
+            // deleted, preserve the historical move and its captured name,
+            // but remove the now-dangling origin ID.
             var moves = Array.isArray(c.moves) ? c.moves : [];
             var hasStaleMoves = false;
             for (var m = 0; m < moves.length; m++) {
-                if (!moves[m]) continue;
-                if (!_validId(moves[m].locationId)) continue;
-                if (removeSet[moves[m].locationId]) {
+                if (!moves[m] || typeof moves[m] !== 'object') continue;
+                if ((_validId(moves[m].locationId) && removeSet[moves[m].locationId]) ||
+                    (_validId(moves[m].fromLocationId) && removeSet[moves[m].fromLocationId])) {
                     hasStaleMoves = true;
                     break;
                 }
@@ -1454,12 +1462,17 @@
             if (hasStaleMoves) {
                 var cleanedMoves = [];
                 for (var n = 0; n < moves.length; n++) {
-                    if (!moves[n]) continue;
-                    if (_validId(moves[n].locationId)
-                        && removeSet[moves[n].locationId]) {
-                        continue;   // drop stale move
+                    if (!moves[n] || typeof moves[n] !== 'object') continue;
+                    if (_validId(moves[n].locationId) && removeSet[moves[n].locationId]) {
+                        continue;
                     }
-                    cleanedMoves.push(moves[n]);
+                    if (_validId(moves[n].fromLocationId) && removeSet[moves[n].fromLocationId]) {
+                        var preservedMove = Object.assign({}, moves[n]);
+                        preservedMove.fromLocationId = null;
+                        cleanedMoves.push(preservedMove);
+                    } else {
+                        cleanedMoves.push(moves[n]);
+                    }
                 }
                 updates = updates || {};
                 updates.moves = cleanedMoves;
