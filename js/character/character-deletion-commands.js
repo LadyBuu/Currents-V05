@@ -420,6 +420,7 @@
                 continue;
             }
 
+            var cleanupFailed = false;
             try {
                 var result = mod[target.methodName](characterId);
                 if (!result || result.success !== true) {
@@ -429,6 +430,7 @@
                             ? result.reason
                             : 'cleanup returned an invalid result'
                     });
+                    cleanupFailed = true;
                 } else {
                     report.applied.push({ domain: target.label });
                 }
@@ -437,6 +439,19 @@
                     domain: target.label,
                     reason: err && err.message ? err.message : 'cleanup threw'
                 });
+                cleanupFailed = true;
+            }
+
+            // Cleanup domains can mutate before returning failure. Stop here:
+            // invoking later domains would expand a known partial cleanup.
+            if (cleanupFailed) {
+                for (var j = i + 1; j < _CLEANUP_TARGETS.length; j++) {
+                    report.skipped.push({
+                        domain: _CLEANUP_TARGETS[j].label,
+                        reason: 'blocked because an earlier cleanup domain failed'
+                    });
+                }
+                break;
             }
         }
 
