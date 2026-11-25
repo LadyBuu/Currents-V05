@@ -17,8 +17,8 @@
  *
  * OUT OF SCOPE:
  *   - Schema shape and default data -> storage-schema.js
- *   - Schema migration -> no migration module currently exists; older
- *     numbered schemas are rejected rather than silently relabelled
+ *   - Schema migration -> explicit versioned migrations are applied here;
+ *     unsupported numbered schemas are rejected rather than relabelled
  *   - Export/download -> exportUtils.js
  *   - Cache invalidation orchestration -> mutation boundaries (but
  *     storage.js performs the invalidation at the cross-tab boundary)
