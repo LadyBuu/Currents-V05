@@ -402,7 +402,26 @@
             }
 
             try {
-                window.saveMasterData();
+                var saveSucceeded = window.saveMasterData() === true;
+                if (!saveSucceeded) {
+                    var saveError = typeof window.getLastSaveError === 'function'
+                        ? window.getLastSaveError()
+                        : null;
+                    var saveMessage = saveError && saveError.message
+                        ? saveError.message
+                        : 'saveMasterData returned false';
+                    return {
+                        ok: false,
+                        migrated: migrated,
+                        changed: changed,
+                        errors: errors.concat([{
+                            index: -1,
+                            id: '(storage)',
+                            name: '(storage)',
+                            errors: ['Migration changes are in memory but could not be saved: ' + saveMessage]
+                        }])
+                    };
+                }
             } catch (e) {
                 if (typeof console !== 'undefined' && console.error) {
                     console.error(
