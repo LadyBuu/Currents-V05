@@ -477,112 +477,113 @@
     }
 
     // =========================================================================
+    // 4. COORDINATED HARD-DELETE TRANSACTION
+    // =========================================================================
+    function _captureHardDeleteSnapshot() {
+        var checks = [
+            [CS, '_transactionSnapshotDeletedLocations'], [CS, '_transactionRestoreDeletedLocations'],
+            [window.FamilyState, 'snapshot'], [window.FamilyState, 'replaceAll'],
+            [window.ChildrenState, 'snapshotPregnancies'], [window.ChildrenState, 'snapshotSurrogacy'],
+            [window.ChildrenState, 'snapshotAdoptions'], [window.ChildrenState, 'replaceAllPregnancies'],
+            [window.ChildrenState, 'replaceAllSurrogacy'], [window.ChildrenState, 'replaceAllAdoptions'],
+            [window.HouseholdState, '_transactionSnapshotDeletedLocations'],
+            [window.HouseholdState, '_transactionRestoreDeletedLocations'],
+            [window.RelationshipState, 'snapshot'], [window.RelationshipState, 'replaceAll']
+        ];
+        checks.forEach(function (entry) {
+            if (!entry[0] || typeof entry[0][entry[1]] !== 'function') throw new Error('Missing transaction dependency: ' + entry[1]);
+        });
+        return {
+            characters: CS._transactionSnapshotDeletedLocations(),
+            family: window.FamilyState.snapshot(),
+            pregnancies: window.ChildrenState.snapshotPregnancies(),
+            surrogacy: window.ChildrenState.snapshotSurrogacy(),
+            adoptions: window.ChildrenState.snapshotAdoptions(),
+            households: window.HouseholdState._transactionSnapshotDeletedLocations(),
+            relationships: window.RelationshipState.snapshot()
+        };
+    }
+
+    function _restoreHardDeleteSnapshot(s) {
+        var errors = [];
+        function restore(name, fn) {
+            try { var r = fn(); if (r === false || (r && r.success === false)) errors.push(name + ': ' + (r.reason || 'restore rejected')); }
+            catch (e) { errors.push(name + ': ' + (e.message || String(e))); }
+        }
+        restore('characters', function () { return CS._transactionRestoreDeletedLocations(s.characters); });
+        restore('family', function () {
+            if (window.FamilyState.replaceAll(s.family) !== true) throw new Error('FamilyState rejected snapshot');
+            window.masterData.data.parentChildEdges = window.FamilyState.snapshot(); return true;
+        });
+        restore('children', function () {
+            var st = window.ChildrenState;
+            if (st.replaceAllPregnancies(s.pregnancies) !== true || st.replaceAllSurrogacy(s.surrogacy) !== true || st.replaceAllAdoptions(s.adoptions) !== true) throw new Error('ChildrenState rejected snapshot');
+            window.masterData.data.pregnancyRecords = st.snapshotPregnancies();
+            window.masterData.data.surrogacyArrangements = st.snapshotSurrogacy();
+            window.masterData.data.adoptionRecords = st.snapshotAdoptions(); return true;
+        });
+        restore('households', function () { return window.HouseholdState._transactionRestoreDeletedLocations(s.households); });
+        restore('relationships', function () { return window.RelationshipState.replaceAll(s.relationships); });
+        if (CS._transactionDiscardChanges) CS._transactionDiscardChanges();
+        if (window.FamilyCommands && window.FamilyCommands._transactionDiscardSideEffects) window.FamilyCommands._transactionDiscardSideEffects();
+        if (window.ChildrenCommands && window.ChildrenCommands._transactionDiscardSideEffects) window.ChildrenCommands._transactionDiscardSideEffects();
+        return errors.length ? { success: false, reason: errors.join('; '), errors: errors } : { success: true };
+    }
+
+    function _executeHardDeleteBatch(ids) {
+        var preflight = CS.validateCharacterRemoval(ids);
+        if (!preflight || preflight.success !== true) return { success: false, code: 'PREPARATION_FAILED', reason: preflight && preflight.reason || 'Character removal preflight failed.', rolledBack: true, cleanup: [] };
+        var readiness = _validateCleanupReady();
+        if (!readiness.success) return { success: false, code: 'PREPARATION_FAILED', reason: 'Cross-domain cleanup is not fully available.', cleanupReadiness: readiness, rolledBack: true, cleanup: [] };
+        if (!window.CrossDomainTransaction || typeof window.CrossDomainTransaction.execute !== 'function') return { success: false, code: 'TRANSACTION_UNAVAILABLE', reason: 'CrossDomainTransaction is required.', rolledBack: true, cleanup: [] };
+
+        var reports = [];
+        var tx = window.CrossDomainTransaction.execute({
+            id: 'hard-delete-' + ids.join(','),
+            context: { ids: ids.slice(), reports: reports },
+            participants: [{
+                name: 'hard-delete-all-domains',
+                snapshot: _captureHardDeleteSnapshot,
+                apply: function (ctx) {
+                    for (var i = 0; i < ctx.ids.length; i++) {
+                        var id = ctx.ids[i], report = _dispatchCleanup(id);
+                        report.handlers = report.failed.length === 0 && report.skipped.length === 0
+                            ? _invokeDeleteHandlers(id)
+                            : { applied: 0, failed: [{ handler: 'registry', reason: 'Named cleanup failed.' }], success: false, skipped: true };
+                        report.success = report.failed.length === 0 && report.skipped.length === 0 && report.handlers.success;
+                        report.partial = !report.success;
+                        ctx.reports.push({ characterId: id, report: report });
+                        if (!report.success) return { success: false, reason: 'Cross-domain cleanup failed for ' + id };
+                    }
+                    var removed = CS.removeCharacters(ctx.ids);
+                    if (!removed || removed.success !== true) return { success: false, reason: removed && removed.reason || 'CharacterState refused batch removal.' };
+                    return { success: true };
+                },
+                rollback: _restoreHardDeleteSnapshot,
+                afterCommit: function () {
+                    if (CS._transactionFlushChanges) CS._transactionFlushChanges();
+                    if (window.FamilyCommands && window.FamilyCommands._transactionFlushSideEffects) window.FamilyCommands._transactionFlushSideEffects();
+                    if (window.ChildrenCommands && window.ChildrenCommands._transactionFlushSideEffects) window.ChildrenCommands._transactionFlushSideEffects();
+                }
+            }]
+        });
+        return { success: tx.success === true, code: tx.code, reason: tx.reason || null,
+            rolledBack: tx.rolledBack === true, rollbackErrors: tx.rollbackErrors || [],
+            deletedIds: tx.success ? ids.slice() : [], cleanup: reports, transaction: tx };
+    }
+
+    // =========================================================================
     // 4. INTERNAL DELETION PRIMITIVE
     // =========================================================================
 
     function _hardDeleteInternal(characterId) {
-        var removalCheck = CS.validateCharacterRemoval([characterId]);
-        if (!removalCheck || removalCheck.success !== true) {
-            return {
-                success: false,
-                reason: removalCheck && removalCheck.reason
-                    ? removalCheck.reason : 'Character removal preflight failed.',
-                deletionComplete: false,
-                partial: false,
-                cleanupFailed: false,
-                removalPreflight: removalCheck || null
-            };
-        }
-
-        var readiness = _validateCleanupReady();
-        if (!readiness.success) {
-            return {
-                success: false,
-                reason: 'Hard deletion blocked because cross-domain cleanup is not fully available.',
-                cleanupReadiness: readiness
-            };
-        }
-
-        // Clean references before removing the canonical character. Cleanup
-        // handlers are idempotent, so a partial failure can be retried while
-        // the character record remains available. This is not a full rollback:
-        // earlier domains may already have removed references.
-        var cleanup = _dispatchCleanup(characterId);
-
-        // Do not invoke later handlers after a named cleanup has failed.
-        // They may mutate additional domains, making a failed attempt harder
-        // to retry or diagnose.
-        var handlers;
-        if (cleanup.failed.length === 0 && cleanup.skipped.length === 0) {
-            handlers = _invokeDeleteHandlers(characterId);
-        } else {
-            handlers = {
-                applied: 0,
-                failed: [{
-                    handler: 'registry',
-                    reason: 'Not invoked because named cleanup was incomplete.'
-                }],
-                success: false,
-                skipped: true
-            };
-        }
-        cleanup.handlers = handlers;
-        cleanup.success = cleanup.failed.length === 0 &&
-            cleanup.skipped.length === 0 && handlers.success;
-        cleanup.partial = !cleanup.success;
-
-        if (!cleanup.success) {
-            return {
-                success: false,
-                reason: 'Character was retained, but cross-domain cleanup was incomplete; retry cleanup before deleting.',
-                deletedId: characterId,
-                deletionComplete: false,
-                partial: true,
-                cleanup: cleanup,
-                cleanupFailed: true
-            };
-        }
-
-        var removed;
-        try {
-            removed = CS.removeCharacter(characterId);
-        } catch (removeError) {
-            return {
-                success: false,
-                reason: removeError && removeError.message
-                    ? 'CharacterState removal threw after cross-domain cleanup: ' + removeError.message
-                    : 'CharacterState removal threw after cross-domain cleanup.',
-                deletedId: characterId,
-                deletionComplete: false,
-                partial: true,
-                cleanup: cleanup,
-                cleanupFailed: false,
-                characterRetained: !!_getLive(characterId)
-            };
-        }
-        if (!removed || removed.success !== true) {
-            return {
-                success: false,
-                reason: removed && removed.reason
-                    ? removed.reason : 'CharacterState refused removal after references were cleaned.',
-                deletedId: characterId,
-                deletionComplete: false,
-                partial: true,
-                cleanup: cleanup,
-                cleanupFailed: false,
-                characterRetained: !!_getLive(characterId)
-            };
-        }
-
-        return {
-            success: true,
-            deletedId: characterId,
-            deletedCharacter: removed.character,
-            deletionComplete: true,
-            partial: false,
-            cleanup: cleanup,
-            cleanupFailed: false
-        };
+        var result = _executeHardDeleteBatch([characterId]);
+        if (!result.success) return { success: false, reason: result.reason || 'Hard-delete transaction failed.',
+            code: result.code, deletedId: characterId, deletionComplete: false,
+            partial: result.rolledBack !== true, cleanupFailed: true, cleanup: result.cleanup,
+            transaction: result.transaction, rollbackErrors: result.rollbackErrors };
+        return { success: true, deletedId: characterId, deletionComplete: true, partial: false,
+            cleanupFailed: false, cleanup: result.cleanup, transaction: result.transaction };
     }
 
     function _softDeleteInternal(characterId) {
@@ -678,96 +679,14 @@
             };
         }
 
-        var removalCheck = CS.validateCharacterRemoval(toPurge);
-        if (!removalCheck || removalCheck.success !== true) {
-            return {
-                success: false,
-                reason: removalCheck && removalCheck.reason
-                    ? removalCheck.reason : 'Purge removal preflight failed.',
-                removalPreflight: removalCheck || null,
-                count: 0,
-                purgedIds: [],
-                cleanup: []
-            };
-        }
-
-        var readiness = _validateCleanupReady();
-        if (!readiness.success) {
-            return {
-                success: false,
-                reason: 'Purge blocked because cross-domain cleanup is not fully available.',
-                cleanupReadiness: readiness,
-                count: 0,
-                purgedIds: [],
-                cleanup: []
-            };
-        }
-
-        var cleanupReports = [];
-        for (var j = 0; j < toPurge.length; j++) {
-            var purgeReport = _dispatchCleanup(toPurge[j]);
-            purgeReport.handlers =
-                purgeReport.failed.length === 0 && purgeReport.skipped.length === 0
-                    ? _invokeDeleteHandlers(toPurge[j])
-                    : {
-                        applied: 0,
-                        failed: [{
-                            handler: 'registry',
-                            reason: 'Not invoked because named cleanup was incomplete.'
-                        }],
-                        success: false,
-                        skipped: true
-                    };
-            purgeReport.success = purgeReport.failed.length === 0 &&
-                purgeReport.skipped.length === 0 && purgeReport.handlers.success;
-            purgeReport.partial = !purgeReport.success;
-            cleanupReports.push({ characterId: toPurge[j], report: purgeReport });
-            if (!purgeReport.success) {
-                for (var blockedPurge = j + 1; blockedPurge < toPurge.length; blockedPurge++) {
-                    cleanupReports.push({
-                        characterId: toPurge[blockedPurge],
-                        report: {
-                            applied: [],
-                            skipped: [{ domain: 'all', reason: 'blocked because an earlier character cleanup failed' }],
-                            failed: [],
-                            handlers: { applied: 0, failed: [], success: false, skipped: true },
-                            success: false,
-                            partial: false,
-                            blocked: true
-                        }
-                    });
-                }
-                break;
-            }
-        }
-        var cleanupFailed = cleanupReports.some(function (entry) {
-            return !entry.report.success;
-        });
-        if (cleanupFailed) {
-            return { success: false, reason: 'Purge cleanup incomplete; soft-deleted records were retained for retry.',
-                partial: true, deletionComplete: false, cleanupFailed: true,
-                count: 0, purgedIds: [], cleanup: cleanupReports };
-        }
-        var removed;
-        try {
-            removed = CS.removeCharacters(toPurge);
-        } catch (removeError) {
-            return {
-                success: false,
-                reason: removeError && removeError.message
-                    ? 'CharacterState batch removal threw after cleanup: ' + removeError.message
-                    : 'CharacterState batch removal threw after cleanup.',
-                partial: true, deletionComplete: false, cleanupFailed: true,
-                count: 0, purgedIds: [], cleanup: cleanupReports
-            };
-        }
-        if (!removed || removed.success !== true) {
-            return { success: false, reason: removed && removed.reason
-                ? removed.reason : 'CharacterState refused batch removal after cleanup.',
-                partial: true, deletionComplete: false, count: 0, purgedIds: [], cleanup: cleanupReports };
-        }
+        var result = _executeHardDeleteBatch(toPurge);
+        if (!result.success) return { success: false, reason: result.reason || 'Purge transaction failed.',
+            code: result.code, partial: result.rolledBack !== true, deletionComplete: false,
+            cleanupFailed: true, count: 0, purgedIds: [], cleanup: result.cleanup,
+            rollbackErrors: result.rollbackErrors, transaction: result.transaction };
         return { success: true, partial: false, deletionComplete: true, cleanupFailed: false,
-            count: toPurge.length, purgedIds: toPurge, cleanup: cleanupReports };
+            count: result.deletedIds.length, purgedIds: result.deletedIds,
+            cleanup: result.cleanup, transaction: result.transaction };
     }
 
     // =========================================================================
@@ -846,118 +765,17 @@
     }
 
     function _bulkHardDelete(ids) {
-        var readiness = _validateCleanupReady();
-        if (!readiness.success) {
-            return {
-                success: false,
-                reason: 'Bulk hard deletion blocked because cross-domain cleanup is not fully available.',
-                cleanupReadiness: readiness,
-                count: 0,
-                deletedIds: [],
-                errors: []
-            };
-        }
-
-        var existingIds = [];
-        var errors = [];
-        for (var i = 0; i < ids.length; i++) {
-            var id = ids[i];
-            if (_getLive(id)) {
-                existingIds.push(id);
-            } else {
-                errors.push({ id: id, reason: 'Character not found.' });
-            }
-        }
-
-        if (existingIds.length === 0) {
-            return {
-                success: errors.length === 0,
-                count: 0,
-                deletedIds: [],
-                errors: errors
-            };
-        }
-
-        var removalCheck = CS.validateCharacterRemoval(existingIds);
-        if (!removalCheck || removalCheck.success !== true) {
-            return {
-                success: false,
-                reason: removalCheck && removalCheck.reason
-                    ? removalCheck.reason : 'Bulk removal preflight failed.',
-                removalPreflight: removalCheck || null,
-                count: 0,
-                deletedIds: [],
-                errors: errors
-            };
-        }
-
-        var cleanupReports = [];
-        for (var j = 0; j < existingIds.length; j++) {
-            var bulkReport = _dispatchCleanup(existingIds[j]);
-            bulkReport.handlers =
-                bulkReport.failed.length === 0 && bulkReport.skipped.length === 0
-                    ? _invokeDeleteHandlers(existingIds[j])
-                    : {
-                        applied: 0,
-                        failed: [{
-                            handler: 'registry',
-                            reason: 'Not invoked because named cleanup was incomplete.'
-                        }],
-                        success: false,
-                        skipped: true
-                    };
-            bulkReport.success = bulkReport.failed.length === 0 &&
-                bulkReport.skipped.length === 0 && bulkReport.handlers.success;
-            bulkReport.partial = !bulkReport.success;
-            cleanupReports.push({ characterId: existingIds[j], report: bulkReport });
-            if (!bulkReport.success) {
-                for (var blockedBulk = j + 1; blockedBulk < existingIds.length; blockedBulk++) {
-                    cleanupReports.push({
-                        characterId: existingIds[blockedBulk],
-                        report: {
-                            applied: [],
-                            skipped: [{ domain: 'all', reason: 'blocked because an earlier character cleanup failed' }],
-                            failed: [],
-                            handlers: { applied: 0, failed: [], success: false, skipped: true },
-                            success: false,
-                            partial: false,
-                            blocked: true
-                        }
-                    });
-                }
-                break;
-            }
-        }
-        var cleanupFailed = cleanupReports.some(function (entry) {
-            return !entry.report.success;
-        });
-        if (cleanupFailed) {
-            return { success: false, reason: 'Bulk cleanup incomplete; character records were retained for retry.',
-                partial: true, deletionComplete: false, cleanupFailed: true,
-                count: 0, deletedIds: [], errors: errors, cleanup: cleanupReports };
-        }
-        var removed;
-        try {
-            removed = CS.removeCharacters(existingIds);
-        } catch (removeError) {
-            return {
-                success: false,
-                reason: removeError && removeError.message
-                    ? 'CharacterState batch removal threw after cleanup: ' + removeError.message
-                    : 'CharacterState batch removal threw after cleanup.',
-                partial: true, deletionComplete: false, count: 0, deletedIds: [],
-                errors: errors, cleanup: cleanupReports
-            };
-        }
-        if (!removed || removed.success !== true) {
-            return { success: false, reason: removed && removed.reason
-                ? removed.reason : 'CharacterState refused batch removal after cleanup.',
-                partial: true, deletionComplete: false, count: 0, deletedIds: [], errors: errors,
-                cleanup: cleanupReports };
-        }
+        var existing = [], errors = [];
+        ids.forEach(function (id) { if (_getLive(id)) existing.push(id); else errors.push({ id: id, reason: 'Character not found.' }); });
+        if (!existing.length) return { success: errors.length === 0, partial: false, count: 0, deletedIds: [], errors: errors, cleanup: [] };
+        var result = _executeHardDeleteBatch(existing);
+        if (!result.success) return { success: false, reason: result.reason || 'Bulk hard-delete transaction failed.',
+            code: result.code, partial: result.rolledBack !== true, deletionComplete: false,
+            cleanupFailed: true, count: 0, deletedIds: [], errors: errors, cleanup: result.cleanup,
+            rollbackErrors: result.rollbackErrors, transaction: result.transaction };
         return { success: errors.length === 0, partial: errors.length > 0, deletionComplete: true,
-            cleanupFailed: false, count: existingIds.length, deletedIds: existingIds,
-            errors: errors, cleanup: cleanupReports };
+            cleanupFailed: false, count: result.deletedIds.length, deletedIds: result.deletedIds,
+            errors: errors, cleanup: result.cleanup, transaction: result.transaction };
     }
 
     // =========================================================================
