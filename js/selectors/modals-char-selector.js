@@ -311,6 +311,7 @@
 
         this.targetId = options.targetId || null;
         this.excludeIds = options.excludeIds || [];
+        this.allowedIds = Array.isArray(options.allowedIds) ? options.allowedIds : null;
         this.preset = options.preset || null;
 
         var defaultFilters = {
@@ -382,6 +383,10 @@
         if (!Array.isArray(allChars)) return [];
 
         var excludeSet = Object.create(null);
+        var allowedSet = this.allowedIds ? Object.create(null) : null;
+        if (allowedSet) {
+            for (var ai = 0; ai < this.allowedIds.length; ai++) allowedSet[this.allowedIds[ai]] = true;
+        }
         for (var i = 0; i < this.excludeIds.length; i++) {
             excludeSet[this.excludeIds[i]] = true;
         }
@@ -392,6 +397,7 @@
             var c = allChars[j];
             if (!c || !c.id) continue;
             if (excludeSet[c.id]) continue;
+            if (allowedSet && !allowedSet[c.id]) continue;
             available.push(c);
         }
         return available;
