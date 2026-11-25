@@ -178,6 +178,13 @@
  *   Unsupported older/newer versions are rejected. Envelope-less legacy
  *   blobs remain a separately marked compatibility path.
  *
+ * STORAGE COMPRESSION:
+ *   JSON is UTF-8 encoded and LZW-compressed before localStorage writes when
+ *   the resulting base64 payload is smaller than the raw JSON. The SWLZW1:
+ *   prefix identifies compressed entries. Reads transparently decode these
+ *   entries; existing plain-JSON saves remain readable and are converted
+ *   to the compact format on their next successful save.
+ *
  * DEPENDENCIES (REQUIRED):
  *   - time.js:          TIME_CONSTANTS (for schema defaults via storage-schema)
  *   - storage-schema.js: createDefaultMasterDataOverride, normalizeMasterData,
