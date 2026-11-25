@@ -371,10 +371,7 @@
             }
         }
 
-        // NOTE: reads character.traits, which is not currently part of
-        // the canonical character schema. If/when traits are added to
-        // the character record, this branch activates. Until then it is
-        // inert. See the deferred traits work item.
+        // CharacterState owns and projects the canonical traits array.
         if (Array.isArray(character.traits) &&
             character.traits.indexOf('polygamous') !== -1) {
             facts.allowsMultipleByTrait = true;
@@ -446,6 +443,15 @@
             metadata.consequencesTriggered = false;
             metadata.consequences = [];
             metadata.publicBehavior = false;
+            if (options.affairMetadata && typeof options.affairMetadata === 'object') {
+                var affairKeys = ['affairType', 'publicBehavior'];
+                for (var i = 0; i < affairKeys.length; i++) {
+                    var key = affairKeys[i];
+                    if (Object.prototype.hasOwnProperty.call(options.affairMetadata, key)) {
+                        metadata[key] = options.affairMetadata[key];
+                    }
+                }
+            }
         }
 
         return metadata;
