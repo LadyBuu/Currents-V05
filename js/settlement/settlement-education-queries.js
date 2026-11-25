@@ -148,26 +148,12 @@
     }
 
     /**
-     * Resolves the education level id for a character, based on the
-     * fields present on the character projection.
+     * Resolves the canonical Education-domain level id for a character.
+     * EducationLearning reads literacy subject progress through its own
+     * command-backed read path and applies EducationRules thresholds.
      *
-     * Derivation (see EDUCATION LEVEL DERIVATION and EDUCATION LEVEL
-     * THRESHOLDS in the module header):
-     *
-     *   - isLiterate !== true           → 'illiterate'
-     *   - isLiterate === true, but no
-     *     subjectProgress data          → 'literate' (baseline)
-     *   - isLiterate === true with
-     *     subjectProgress entries       → highest tier reached by the
-     *                                     maximum entry.level, mapped
-     *                                     through the thresholds
-     *
-     * The subjectProgress entries are read by their `level` field,
-     * NOT by their key name. Keys are subject/role ids (e.g.
-     * 'blacksmith', 'mathematics'), not education-level ids.
-     *
-     * @param {Object} character - character projection
-     * @returns {string|null} level id or null if the character is missing
+     * @param {Object} character - character projection with an id
+     * @returns {string|null} education level id
      */
     function _deriveEducationLevelId(character) {
         if (!character || !character.id) return null;
