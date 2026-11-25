@@ -890,8 +890,24 @@
         var child = record.child || null;
         var adopter = record.adopter || null;
 
+        var ageGap = child && adopter && typeof child.age === 'number' && typeof adopter.age === 'number' ? adopter.age - child.age : null;
+        var kinship = null;
+        var FQ = window.FamilyQueries;
+        if (FQ && typeof FQ.classifyKinship === 'function' && record.childId && record.adopterId) {
+            try { kinship = FQ.classifyKinship(record.childId, record.adopterId); } catch (e) {}
+        }
+        var kinshipLabel = '';
+        if (kinship && kinship.type && kinship.type !== 'unrelated') {
+            kinshipLabel = String(kinship.type).replace(/_/g, ' ');
+            if (kinship.type === 'cousin' && typeof kinship.degree === 'number') kinshipLabel = kinship.degree + ' degree cousin';
+            if (typeof kinship.removed === 'number' && kinship.removed > 0) kinshipLabel += ', ' + kinship.removed + ' removed';
+        }
         return {
             id: record.id,
+            ageGap: ageGap,
+            ageWarning: ageGap !== null && ageGap < 0 ? 'Adoptee is older than adopter' : (ageGap !== null && ageGap < 13 ? 'Adopter is less than 13 years older' : ''),
+            kinshipLabel: kinshipLabel,
+            sameLocation: !!(child && adopter && child.locationId && child.locationId === adopter.locationId),
 
             childId: record.childId,
             childDisplayName: _adoptionDisplayName(child) || '(unknown child)',
