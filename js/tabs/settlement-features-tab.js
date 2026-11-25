@@ -176,16 +176,41 @@
     }
 
     function _getSchoolInstitutions(locationId) {
-        var queries = window.SettlementEducationQueries;
-        if (!queries || typeof queries.getSchools !== 'function') return null;
-        var schools = queries.getSchools(locationId);
-        if (!Array.isArray(schools)) return null;
-        for (var i = 0; i < schools.length; i++) {
-            if (schools[i] && schools[i].featureId === 'school') {
-                return schools[i].institutions || [];
+        var state = window.EducationState;
+        if (state && typeof state.isHydrated === 'function' &&
+            !state.isHydrated() &&
+            typeof state.hydrateFromMasterData === 'function') {
+            var master = window.masterData && window.masterData.data;
+            if (!master) return null;
+            var institutions = Array.isArray(master.educationalInstitutions)
+                ? master.educationalInstitutions : [];
+            try {
+                state.hydrateFromMasterData(institutions, { syncToMasterData: false });
+            } catch (hydrateError) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('settlement-features-tab: EducationState hydration failed:', hydrateError);
+                }
+                return null;
             }
         }
-        return [];
+
+        var queries = window.SettlementEducationQueries;
+        if (!queries || typeof queries.getSchools !== 'function') return null;
+        try {
+            var schools = queries.getSchools(locationId);
+            if (!Array.isArray(schools)) return null;
+            for (var i = 0; i < schools.length; i++) {
+                if (schools[i] && schools[i].featureId === 'school') {
+                    return schools[i].institutions || [];
+                }
+            }
+            return [];
+        } catch (queryError) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('settlement-features-tab: school institution lookup failed:', queryError);
+            }
+            return null;
+        }
     }
 
     function _openSchoolInstitution(institutionId, locationId) {
@@ -380,7 +405,9 @@
         var schoolActions = '';
         if (feature.id === 'school') {
             schoolInstitutions = _getSchoolInstitutions(locationId);
-            if (schoolInstitutions && schoolInstitutions.length > 0) {
+            if (schoolInstitutions === null) {
+                schoolActions = '<span class="st-muted">Institution manager unavailable</span>';
+            } else if (schoolInstitutions.length > 0) {
                 schoolActions = schoolInstitutions.map(function (institution) {
                     return '<button type="button" class="st-btn st-btn--small st-btn--accent" ' +
                         'data-action="manage-school" data-institution-id="' +
@@ -394,7 +421,7 @@
         }
 
         var featureActions = feature.id === 'school' &&
-            schoolInstitutions && schoolInstitutions.length > 0
+            (schoolInstitutions === null || schoolInstitutions.length > 0)
             ? ''
             : '<button type="button" class="st-btn st-btn--small" ' +
                 'data-action="remove" data-feature-id="' + esc(feature.id) + '" ' +
