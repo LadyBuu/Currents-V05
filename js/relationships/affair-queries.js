@@ -3,7 +3,7 @@
  * STILL WATERS - AFFAIR QUERIES (affair-queries.js)
  * =============================================================================
  *
- * LOCATION: js/social/affair-queries.js
+ * LOCATION: js/relationships/affair-queries.js
  *
  * Semantic reads for affairs.
  *
