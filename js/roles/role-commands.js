@@ -549,6 +549,41 @@
             return _fail('Role not found.');
         }
 
+        // Government positions store requiredRoleId as a foreign key. Role
+        // Manager does not load GovernmentQueries, so inspect the canonical
+        // department records and fail closed on malformed data.
+        var governmentDepartments = window.masterData && window.masterData.data
+            ? window.masterData.data.governmentDepartments
+            : [];
+        if (governmentDepartments != null && !Array.isArray(governmentDepartments)) {
+            return _fail('Government role references cannot be checked; deletion is blocked.');
+        }
+        var governmentReferences = [];
+        for (var gd = 0; gd < (governmentDepartments || []).length; gd++) {
+            var department = governmentDepartments[gd];
+            if (!department || typeof department !== 'object' ||
+                (department.positions != null && !Array.isArray(department.positions))) {
+                return _fail('Government role references cannot be checked because a department is malformed; deletion is blocked.');
+            }
+            var positions = Array.isArray(department.positions) ? department.positions : [];
+            for (var gp = 0; gp < positions.length; gp++) {
+                var position = positions[gp];
+                if (!position || typeof position !== 'object') {
+                    return _fail('Government role references cannot be checked because a position is malformed; deletion is blocked.');
+                }
+                if (position.requiredRoleId === roleId) {
+                    governmentReferences.push(
+                        (department.name || department.id || 'Unnamed department') +
+                        ' / ' + (position.name || position.id || 'Unnamed position')
+                    );
+                }
+            }
+        }
+        if (governmentReferences.length > 0) {
+            return _fail('Cannot delete role while Government positions require it: ' +
+                governmentReferences.join(', ') + '. Update those positions first.');
+        }
+
         // Settlement specialization is a direct role foreign key. Removing
         // a role from characters must not silently invalidate settlements.
         var settlementState = window.SettlementState;
