@@ -3,7 +3,7 @@
  * STILL WATERS - INDUSTRY TYPES (industry-types.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/industry-types.js
+ * LOCATION: js/industry/industry-types.js
  *
  * Read-only facade over the enterprise type registry.
  *
