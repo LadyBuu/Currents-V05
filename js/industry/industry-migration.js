@@ -3,7 +3,7 @@
  * STILL WATERS - INDUSTRY MIGRATION (industry-migration.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/industry-migration.js
+ * LOCATION: js/industry/industry-migration.js
  *
  * One-time migration of enterprise records to the canonical Phase-3 shape.
  *
