@@ -1768,6 +1768,32 @@
             );
         }
 
+        // Ranks may restrict eligibility to a Location Type. Removing the
+        // type while a rank references it would silently invalidate rank policy.
+        var rankStore = window.masterData && window.masterData.data
+            ? window.masterData.data.ranks
+            : [];
+        if (rankStore != null && !Array.isArray(rankStore)) {
+            return _fail('deleteLocationType: cannot verify Rank references because the rank store is malformed');
+        }
+        var rankReferences = [];
+        for (var rankIndex = 0; rankIndex < (rankStore || []).length; rankIndex++) {
+            var rankRecord = rankStore[rankIndex];
+            if (!rankRecord || typeof rankRecord !== 'object') {
+                return _fail('deleteLocationType: cannot verify Rank references because a rank record is malformed at index ' + rankIndex);
+            }
+            if (rankRecord.locationTypeId === typeId) {
+                rankReferences.push(rankRecord.id || ('index ' + rankIndex));
+            }
+        }
+        if (rankReferences.length > 0) {
+            return _fail(
+                'deleteLocationType: ' + rankReferences.length +
+                ' rank(s) still restrict eligibility to this type: ' +
+                rankReferences.join(', ')
+            );
+        }
+
         LS._removeLocationType(typeId);
         _commit('locationTypeDeleted', { typeId: typeId });
 
