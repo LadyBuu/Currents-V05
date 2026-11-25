@@ -488,14 +488,17 @@
     }
 
     /**
-     * Selects the oldest living biological descendant, preferring the
-     * nearest generation. If every child is deceased, searches the next
-     * generation, continuing through grandchildren and later descendants.
+     * Selects the oldest living descendant, preferring the nearest
+     * generation. If every child is deceased, searches the next generation,
+     * continuing through grandchildren and later descendants.
      */
     function _findKnowledgeHeir(dyingId) {
         var family = window.FamilyQueries;
-        if (!family || typeof family.getBiologicalChildIds !== 'function') {
-            throw new Error('FamilyQueries.getBiologicalChildIds is required for knowledge inheritance.');
+        var getChildIds = family &&
+            (typeof family.getChildIds === 'function'
+                ? family.getChildIds : family.getBiologicalChildIds);
+        if (typeof getChildIds !== 'function') {
+            throw new Error('FamilyQueries child lookup is required for knowledge inheritance.');
         }
 
         var generation = [dyingId];
@@ -506,7 +509,7 @@
             var nextGeneration = [];
             var candidates = [];
             for (var i = 0; i < generation.length; i++) {
-                var childIds = family.getBiologicalChildIds(generation[i]) || [];
+                var childIds = getChildIds(generation[i]) || [];
                 for (var c = 0; c < childIds.length; c++) {
                     var childId = childIds[c];
                     if (!childId || visited[childId]) continue;
@@ -533,7 +536,7 @@
     function _handleCharacterDeathKnowledgeInheritance(characterId, context) {
         var heirId = _findKnowledgeHeir(characterId);
         if (!heirId) {
-            return { success: true, skipped: true, reason: 'No living biological descendants.' };
+            return { success: true, skipped: true, reason: 'No living descendants.' };
         }
         var result = preserveKnowledgeOnDeath(
             characterId,
