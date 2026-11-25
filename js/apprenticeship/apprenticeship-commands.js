@@ -1543,6 +1543,26 @@
                 continue;
             }
 
+            // The annual runner may be retried after a later system fails.
+            // A recorded advance for this year is the durable idempotency key.
+            var existingEdge = _queries().getApprenticeshipById(projected.id);
+            if (!existingEdge) {
+                failed.push({
+                    apprenticeshipId: projected.id,
+                    code: 'APPRENTICESHIP_NOT_FOUND',
+                    reason: 'Active apprenticeship record could not be found.'
+                });
+                continue;
+            }
+            var existingHistory = existingEdge.metadata &&
+                Array.isArray(existingEdge.metadata.teachingHistory)
+                ? existingEdge.metadata.teachingHistory : [];
+            var alreadyAdvanced = existingHistory.some(function (entry) {
+                return entry && entry.type === 'annual_advance' &&
+                    Number(entry.year) === Number(year);
+            });
+            if (alreadyAdvanced) continue;
+
             var masterSkill = _getSkill(projected.masterId, projected.roleId);
             if (masterSkill === null) masterSkill = 0;
 
