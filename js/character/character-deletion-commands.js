@@ -576,6 +576,10 @@
                         ctx.reports.push({ characterId: id, report: report });
                         if (!report.success) return { success: false, reason: 'Cross-domain cleanup failed for ' + id };
                     }
+                    // RelationshipState owns cloned indexed records. Mirror its committed
+                    // snapshot into the serialised masterData store before the one save.
+                    window.masterData.data.relationships = window.RelationshipState.snapshot();
+
                     var removed = CS.removeCharacters(ctx.ids);
                     if (!removed || removed.success !== true) return { success: false, reason: removed && removed.reason || 'CharacterState refused batch removal.' };
                     return { success: true };
