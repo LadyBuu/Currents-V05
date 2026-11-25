@@ -251,8 +251,8 @@
 
     /**
      * Invokes every registered delete handler with (characterId).
-     * Handler exceptions are caught and logged. A throwing handler
-     * does not prevent subsequent handlers from running.
+     * Handler exceptions are caught and logged. A failed or throwing
+     * handler blocks all later handlers to limit partial cleanup.
      *
      * @private
      */
