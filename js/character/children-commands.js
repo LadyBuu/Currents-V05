@@ -1517,6 +1517,9 @@
             return _fail('characterId is required.');
         }
 
+        var pregnanciesBeforeCleanup = ChS.snapshotPregnancies();
+        var surrogacyBeforeCleanup = ChS.snapshotSurrogacy();
+        var adoptionsBeforeCleanup = ChS.snapshotAdoptions();
         var pregnancyIds = Object.create(null);
         var surrogacyIds = Object.create(null);
         var adoptionIds = Object.create(null);
@@ -1581,7 +1584,18 @@
         removeRecords(adoptionIds, ChS._removeAdoption, 'adoption');
 
         if (removed > 0) {
-            _commitAndNotify('removeAllReferences', [characterId]);
+            if (!_commit()) {
+                ChS.replaceAllPregnancies(pregnanciesBeforeCleanup);
+                ChS.replaceAllSurrogacy(surrogacyBeforeCleanup);
+                ChS.replaceAllAdoptions(adoptionsBeforeCleanup);
+                return {
+                    success: false,
+                    partial: false,
+                    removedCount: 0,
+                    failures: [{ reason: 'Could not persist children reference cleanup.' }]
+                };
+            }
+            _notify('removeAllReferences', [characterId]);
         }
 
         return {
