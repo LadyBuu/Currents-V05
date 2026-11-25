@@ -588,7 +588,6 @@
 
     function init() {
         if (_initialized) return;
-        _initialized = true;
 
         // -- Dependency check. Every failure here is visible. -----------
         var TM, uiState;
@@ -615,6 +614,10 @@
             }
             return;
         }
+
+        // Dependencies are now available. Latch only after this point so a
+        // failed early boot can be retried after its missing scripts load.
+        _initialized = true;
 
         // -- Declare the known tab ids. The strip and panes are static
         //    in the shell; this is a bookkeeping call so state reflects
