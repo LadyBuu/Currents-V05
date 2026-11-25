@@ -3,7 +3,7 @@
  * STILL WATERS - INDUSTRY TYPE INIT (industry-type-init.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/industry-type-init.js
+ * LOCATION: js/industry/industry-type-init.js
  *
  * Seeds the enterprise type registry from IndustryTypeDefaults when the
  * registry is empty.
