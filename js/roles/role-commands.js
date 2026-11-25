@@ -613,15 +613,9 @@
         // Settlement specialization is a direct role foreign key. Removing
         // a role from characters must not silently invalidate settlements.
         var settlementState = window.SettlementState;
-        if (!settlementState ||
-            typeof settlementState.getLocationIdsBySpecialization !== 'function') {
-            var settlementStore = window.masterData && window.masterData.data &&
-                window.masterData.data.settlementData;
-            if (settlementStore && Object.keys(settlementStore).length > 0) {
-                return _fail('Settlement specialization references cannot be checked; deletion is blocked.');
-            }
-        } else {
-            var settlementReferences;
+        var settlementReferences;
+        if (settlementState &&
+            typeof settlementState.getLocationIdsBySpecialization === 'function') {
             try {
                 settlementReferences = settlementState.getLocationIdsBySpecialization(roleId);
             } catch (settlementReferenceError) {
@@ -630,10 +624,32 @@
             if (!Array.isArray(settlementReferences)) {
                 return _fail('Settlement specialization references could not be read; deletion is blocked.');
             }
-            if (settlementReferences.length > 0) {
-                return _fail('Cannot delete role while ' + settlementReferences.length +
-                    ' settlement(s) use it as their specialization. Change those settlements first.');
+        } else {
+            // Role Manager intentionally does not load the full Settlement
+            // runtime. Inspect its canonical records rather than blocking all
+            // role deletion merely because settlements exist.
+            var settlementStore = window.masterData && window.masterData.data
+                ? window.masterData.data.settlementData
+                : {};
+            if (settlementStore == null) settlementStore = {};
+            if (typeof settlementStore !== 'object' || Array.isArray(settlementStore)) {
+                return _fail('Settlement specialization references cannot be checked; deletion is blocked.');
             }
+            settlementReferences = [];
+            var settlementIds = Object.keys(settlementStore);
+            for (var si = 0; si < settlementIds.length; si++) {
+                var settlement = settlementStore[settlementIds[si]];
+                if (!settlement || typeof settlement !== 'object' || Array.isArray(settlement)) {
+                    return _fail('Settlement specialization references cannot be checked because a settlement record is malformed; deletion is blocked.');
+                }
+                if (settlement.specializationRoleId === roleId) {
+                    settlementReferences.push(settlementIds[si]);
+                }
+            }
+        }
+        if (settlementReferences.length > 0) {
+            return _fail('Cannot delete role while ' + settlementReferences.length +
+                ' settlement(s) use it as their specialization. Change those settlements first.');
         }
 
         var reassignedCount = 0;
