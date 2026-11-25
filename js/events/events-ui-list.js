@@ -734,6 +734,11 @@
             '</span>' +
             '<div class="events-adoption-row__child">' + childHtml + '</div>' +
             '<div class="events-adoption-row__adopter">' + adopterHtml + '</div>' +
+            '<div class="events-adoption-row__indicators">' +
+            (vm.sameLocation ? '<span title="Child and adopter share a location">' + _icon('HOME') + '</span>' : '') +
+            (vm.kinshipLabel ? '<span title="Family relationship: ' + _esc(vm.kinshipLabel) + '">' + _icon('USERS') + ' ' + _esc(vm.kinshipLabel) + '</span>' : '') +
+            (vm.ageWarning ? '<span class="events-adoption-row__warning" title="' + _esc(vm.ageWarning) + '">' + _icon('WARNING') + ' ' + _esc(vm.ageWarning) + '</span>' : '') +
+            '</div>' +
             '<div class="events-adoption-row__status">' +
             '<span class="events-adoption-row__status-badge" style="' +
             _esc(statusStyle) + '">' +
