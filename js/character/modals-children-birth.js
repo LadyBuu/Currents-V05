@@ -819,11 +819,23 @@
                     commandOptions.maternalDeath = maternalDeathInput && maternalDeathInput.checked === true;
                 }
 
-                var result = ChC.recordPregnancyAttempt(motherId, father ? father.id : null, commandOptions);
-                if (!result || result.success !== true) {
-                    throw new Error(result && result.reason ? result.reason : 'Failed to record pregnancy attempt.');
+                var result = null;
+                var successionPending = false;
+                function recordAttempt() {
+                    result = ChC.recordPregnancyAttempt(motherId, father ? father.id : null, commandOptions);
+                    if (!result || result.success !== true) {
+                        throw new Error(result && result.reason ? result.reason : 'Failed to record pregnancy attempt.');
+                    }
+                    if (typeof onSuccess === 'function') onSuccess(result);
                 }
-                if (typeof onSuccess === 'function') onSuccess(result);
+                if (commandOptions.maternalDeath === true
+                    && typeof window.resolveEnterpriseSuccessionForCharacter === 'function') {
+                    successionPending = true;
+                    window.resolveEnterpriseSuccessionForCharacter(motherId, recordAttempt);
+                    if (result === null) return false;
+                } else {
+                    recordAttempt();
+                }
             }
         });
 
