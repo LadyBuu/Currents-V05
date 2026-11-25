@@ -545,6 +545,17 @@
                     totalAmount: 0,
                     details: []
                 },
+                education: {
+                    processedStudents: 0,
+                    skillGains: [],
+                    withdrawals: [],
+                    readyForGraduation: [],
+                    errors: []
+                },
+                apprenticeships: {
+                    advanced: [],
+                    failed: []
+                },
                 educationFinances: {
                     publicFunding: [],
                     privateProfits: [],
@@ -637,7 +648,84 @@
             }
 
             // =====================================================================
-            // 4. PROCESS EDUCATION FINANCES (NEW)
+            // 4. PROCESS EDUCATION LEARNING AND APPRENTICESHIP PROGRESSION
+            // =====================================================================
+            // EducationAnnual owns annual student learning, readiness and
+            // settlement education-budget allocation. Finances remain in the
+            // existing step below so tuition/funding are not processed twice.
+            if (!dryRun && options.processEducation !== false) {
+                try {
+                    if (window.EducationAnnual &&
+                        typeof window.EducationAnnual.processAnnualEducation === 'function') {
+                        var educationResults = window.EducationAnnual.processAnnualEducation(
+                            processYear,
+                            { processFinances: false, processBudgets: true, persist: false }
+                        );
+                        if (educationResults) {
+                            results.education.processedStudents =
+                                educationResults.processedStudentCount || 0;
+                            results.education.skillGains = educationResults.skillGains || [];
+                            results.education.withdrawals = educationResults.withdrawals || [];
+                            results.education.readyForGraduation =
+                                educationResults.readyForGraduation || [];
+                            results.education.errors = educationResults.errors || [];
+                            if (educationResults.errors && educationResults.errors.length) {
+                                results.errors = results.errors.concat(
+                                    educationResults.errors.map(function (e) {
+                                        return {
+                                            system: 'education_learning',
+                                            institutionId: e.institutionId || null,
+                                            studentId: e.studentId || null,
+                                            locationId: e.locationId || null,
+                                            error: e.error || e.reason || e.scope || 'Education processing failed.'
+                                        };
+                                    })
+                                );
+                            }
+                        }
+                    } else {
+                        results.errors.push({
+                            system: 'education_learning',
+                            error: 'EducationAnnual.processAnnualEducation is not available.'
+                        });
+                    }
+                } catch (educationError) {
+                    results.errors.push({
+                        system: 'education_learning',
+                        error: educationError.message || 'Annual education processing failed.'
+                    });
+                }
+            }
+
+            if (!dryRun && options.processApprenticeships !== false) {
+                try {
+                    if (window.ApprenticeshipCommands &&
+                        typeof window.ApprenticeshipCommands.advanceApprenticeshipSkills === 'function') {
+                        var apprenticeshipResults =
+                            window.ApprenticeshipCommands.advanceApprenticeshipSkills(processYear);
+                        var apprenticeshipData = apprenticeshipResults &&
+                            apprenticeshipResults.data ? apprenticeshipResults.data : {};
+                        results.apprenticeships.advanced = apprenticeshipData.advanced || [];
+                        results.apprenticeships.failed = apprenticeshipData.failed || [];
+                        if (!apprenticeshipResults || apprenticeshipResults.success !== true) {
+                            results.errors.push({
+                                system: 'apprenticeship_progression',
+                                error: apprenticeshipResults && apprenticeshipResults.reason
+                                    ? apprenticeshipResults.reason
+                                    : 'One or more apprenticeship progression updates failed.'
+                            });
+                        }
+                    }
+                } catch (apprenticeshipError) {
+                    results.errors.push({
+                        system: 'apprenticeship_progression',
+                        error: apprenticeshipError.message || 'Annual apprenticeship progression failed.'
+                    });
+                }
+            }
+
+            // =====================================================================
+            // 5. PROCESS EDUCATION FINANCES
             // =====================================================================
             if (options.processEducationFinances !== false) {
                 try {
@@ -664,7 +752,7 @@
             }
 
             // =====================================================================
-            // 5. PROCESS GOVERNMENT SALARIES
+            // 6. PROCESS GOVERNMENT SALARIES
             // =====================================================================
             if (options.processGovernmentSalaries !== false) {
                 try {
@@ -693,7 +781,7 @@
             }
 
             // =====================================================================
-            // 6. COLLECT HOUSEHOLD TAXES
+            // 7. COLLECT HOUSEHOLD TAXES
             // =====================================================================
             if (options.collectTaxes !== false) {
                 try {
@@ -721,7 +809,7 @@
             }
 
             // =====================================================================
-            // 7. PROCESS HOUSEHOLD ECONOMY
+            // 8. PROCESS HOUSEHOLD ECONOMY
             // =====================================================================
             if (options.processHouseholdEconomy !== false) {
                 try {
@@ -746,7 +834,7 @@
             }
 
             // =====================================================================
-            // 8. PROCESS RESIDENCE VACANCY
+            // 9. PROCESS RESIDENCE VACANCY
             // =====================================================================
             if (options.processResidences !== false) {
                 try {
@@ -775,7 +863,7 @@
             }
 
             // =====================================================================
-            // 9. SAVE AND FINALIZE
+            // 10. SAVE AND FINALIZE
             // =====================================================================
             if (!dryRun) {
                 var summaryMsg = 'Annual processing complete for year ' + processYear + ': ' +
