@@ -341,8 +341,7 @@
             if (features === null) continue;
             for (var f = 0; f < features.length; f++) {
                 if (!_isEducationFeature(features[f])) continue;
-                result.push({
-                    id: features[f].id,
+                result.push(Object.assign({}, features[f], {
                     featureId: features[f].id,
                     feature: features[f],
                     locationId: currentLocationId,
@@ -350,7 +349,7 @@
                     institutionIds: (institutionsByLocation[currentLocationId] || []).map(function (inst) {
                         return inst.id;
                     })
-                });
+                }));
             }
         }
         return result;
