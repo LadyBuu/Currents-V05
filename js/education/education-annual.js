@@ -221,6 +221,27 @@
         return window.EducationState;
     }
 
+    function _ensureEducationStateHydrated() {
+        var state = _state();
+        if (typeof state.isHydrated === 'function' && state.isHydrated()) {
+            return state;
+        }
+        if (typeof state.hydrateFromMasterData !== 'function') {
+            throw new Error('EducationState cannot hydrate from masterData.');
+        }
+        var master = window.masterData && window.masterData.data;
+        if (!master) {
+            throw new Error('Education annual processing requires loaded masterData.');
+        }
+        var institutions = Array.isArray(master.educationalInstitutions)
+            ? master.educationalInstitutions : [];
+        state.hydrateFromMasterData(institutions, { syncToMasterData: false });
+        if (typeof state.isHydrated === 'function' && !state.isHydrated()) {
+            throw new Error('EducationState hydration did not complete.');
+        }
+        return state;
+    }
+
     function _rules() {
         if (typeof window.EducationRules === 'undefined') {
             throw new Error('education-annual.js requires EducationRules');
@@ -705,6 +726,7 @@
         options = options || {};
 
         var currentYear = (year !== undefined) ? year : _getCurrentYear();
+        _ensureEducationStateHydrated();
         var autoGraduate = options.autoGraduate === true;
         var processFinances = options.processFinances !== false;
         var processBudgets = options.processBudgets !== false;
@@ -820,6 +842,7 @@
     function processAnnualInstitution(institutionId, year, options) {
         options = options || {};
         var currentYear = (year !== undefined) ? year : _getCurrentYear();
+        _ensureEducationStateHydrated();
         var processFinance = options.processFinance !== false;
 
         var inst = _state()._getInstitutionCanonical(institutionId);
