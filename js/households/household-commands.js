@@ -1010,6 +1010,35 @@
             }
         }
 
+        // Enterprise.ownerType / ownerId is the canonical ownership record.
+        // Household.enterprises[] is only a reverse index, so checking that
+        // array alone could miss an orphaned owner reference. Refuse deletion
+        // until every Enterprise owned by this Household has been reassigned.
+        var enterpriseData = window.masterData && window.masterData.data;
+        var enterpriseRecords = enterpriseData ? enterpriseData.enterprises : [];
+        if (enterpriseRecords === undefined || enterpriseRecords === null) {
+            enterpriseRecords = [];
+        }
+        if (!Array.isArray(enterpriseRecords)) {
+            return _fail('INDUSTRY_REFERENCE_CHECK_FAILED',
+                'Cannot verify Enterprise ownership because the enterprises collection is malformed');
+        }
+        for (var entIndex = 0; entIndex < enterpriseRecords.length; entIndex++) {
+            var enterprise = enterpriseRecords[entIndex];
+            if (!enterprise || typeof enterprise !== 'object') {
+                return _fail('INDUSTRY_REFERENCE_CHECK_FAILED',
+                    'Cannot verify Enterprise ownership: malformed record at index ' + entIndex);
+            }
+            if (enterprise.ownerType === 'household'
+                && enterprise.ownerId === householdId) {
+                return _fail('INDUSTRY_OWNER_REFERENCE',
+                    'Household owns Enterprise "' +
+                    (enterprise.name || enterprise.id || entIndex) +
+                    '". Reassign ownership before deleting this Household.',
+                    { enterpriseId: enterprise.id || null });
+            }
+        }
+
         // Preflight every cross-domain dependency before making any writes.
         var residenceId = household.residenceId || null;
         var unitNumber = household.residenceUnitNumber;
