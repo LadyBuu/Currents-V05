@@ -941,14 +941,24 @@
     function bootstrap() {
         if (isInitialized) return;
 
-        if (typeof window.loadMasterData !== 'function') {
-            console.error('[role-manager] loadMasterData is unavailable.');
-            return;
-        }
+        var storageResult;
         try {
-            window.loadMasterData();
+            if (typeof window.initializeStorage === 'function') {
+                storageResult = window.initializeStorage();
+            } else if (typeof window.loadMasterData === 'function') {
+                storageResult = window.loadMasterData();
+            } else {
+                console.error('[role-manager] Storage initialization is unavailable.');
+                return;
+            }
+            if (storageResult === false ||
+                (storageResult && storageResult.ok === false) ||
+                (storageResult && storageResult.success === false)) {
+                console.error('[role-manager] Storage initialization failed:', storageResult);
+                return;
+            }
         } catch (e) {
-            console.error('[role-manager] loadMasterData failed:', e);
+            console.error('[role-manager] Storage initialization failed:', e);
             return;
         }
         if (!window.masterData || !window.masterData.data) {
