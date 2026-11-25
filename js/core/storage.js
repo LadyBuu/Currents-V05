@@ -511,19 +511,26 @@
 
             var warnings = _collectLoadWarnings(envelope);
             if (migration.migrated) {
-                // localStorage.setItem is atomic: if this write fails, the
-                // original v3 value remains intact and the app can still use
-                // the successfully normalised in-memory data. Keep it dirty
-                // and retry through the normal debounced persistence path.
-                _isDirty = true;
-                if (saveMasterData()) {
+                // Write this migrated envelope directly rather than calling
+                // saveMasterData(): the latter pulls closure-backed domain
+                // state, which may still belong to the previous envelope
+                // during a cross-tab reload. localStorage.setItem is atomic,
+                // so a failed write leaves the original v3 value intact.
+                try {
+                    window.masterData.savedAt = new Date().toISOString();
+                    localStorage.setItem(
+                        STORAGE_CONFIG.STORAGE_KEY,
+                        _serializeWithoutMarkers(window.masterData)
+                    );
+                    _isDirty = false;
                     warnings.push(
                         'Save data was migrated from schema v' +
                         migration.fromVersion + ' to v' +
                         window.STORAGE_SCHEMA_VERSION + '.'
                     );
-                } else {
+                } catch (migrationSaveError) {
                     _isDirty = true;
+                    _lastSaveError = migrationSaveError;
                     scheduleSave();
                     warnings.push(
                         'Save data was migrated in memory, but the updated save could not be written. ' +
@@ -798,20 +805,25 @@
         var incomingVersion = (parsed && Number.isInteger(parsed.schemaVersion))
             ? parsed.schemaVersion
             : null;
-        if (incomingVersion !== null && incomingVersion !== window.STORAGE_SCHEMA_VERSION) {
-            return {
-                ok: false,
-                error: 'version',
-                message: 'Import schema version ' + incomingVersion +
-                    ' does not match this build (' + window.STORAGE_SCHEMA_VERSION + ').'
-            };
-        }
-
         var envelope = {
-            schemaVersion: window.STORAGE_SCHEMA_VERSION,
+            schemaVersion: incomingVersion === null
+                ? window.STORAGE_SCHEMA_VERSION
+                : incomingVersion,
             savedAt: new Date().toISOString(),
             data: sourceData
         };
+
+        try {
+            envelope = _migrateEnvelope(envelope).envelope;
+        } catch (migrationError) {
+            return {
+                ok: false,
+                error: 'version',
+                message: migrationError && migrationError.message
+                    ? migrationError.message
+                    : String(migrationError)
+            };
+        }
 
         if (typeof window.validateImportData === 'function') {
             var validation;
