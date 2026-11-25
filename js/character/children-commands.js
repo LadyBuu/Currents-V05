@@ -318,7 +318,13 @@
         return true;
     }
 
+    var _transactionSideEffects = [];
+
     function _notify(action, characterIds) {
+        if (window.CrossDomainTransaction && window.CrossDomainTransaction.isActive()) {
+            _transactionSideEffects.push({ action: action, characterIds: (characterIds || []).slice() });
+            return;
+        }
         try {
             window.dispatchEvent(new CustomEvent('childrenChanged', {
                 detail: {
@@ -1689,6 +1695,17 @@
         updateAdoptionMetadata: updateAdoptionMetadata,
         endAdoptionMetadata: endAdoptionMetadata,
 
+        _transactionFlushSideEffects: function () {
+            var pending = _transactionSideEffects.slice();
+            _transactionSideEffects.length = 0;
+            pending.forEach(function (event) { _notify(event.action, event.characterIds); });
+            return { success: true, count: pending.length };
+        },
+        _transactionDiscardSideEffects: function () {
+            var count = _transactionSideEffects.length;
+            _transactionSideEffects.length = 0;
+            return { success: true, discarded: count };
+        },
         removeAllReferencesTo: removeAllReferencesTo
     };
 
