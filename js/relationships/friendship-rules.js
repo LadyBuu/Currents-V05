@@ -3,7 +3,7 @@
  * STILL WATERS - FRIENDSHIP RULES (friendship-rules.js)
  * =============================================================================
  *
- * LOCATION: js/social/friendship-rules.js
+ * LOCATION: js/relationships/friendship-rules.js
  *
  * Pure policy for friendship relationships.
  *
