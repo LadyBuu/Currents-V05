@@ -419,45 +419,78 @@
         if (!built.success) return _fail(built.reason);
         var character = built.data;
 
-        var inserted = CS.addCharacter(character);
-        if (!inserted.success) {
-            return _fail(inserted.reason || 'CharacterState refused insertion.');
+        // Creation spans canonical character records and family edges. Snapshot
+        // both stores before any write so a failed edge/religion step restores
+        // the exact pre-creation state rather than compensating with more writes.
+        var transaction = window.CrossDomainTransaction;
+        if (!transaction || typeof transaction.execute !== 'function') {
+            return _fail('CrossDomainTransaction is required for atomic character creation.');
         }
-
-        var familyResult = _establishFamilyEdges(character.id, options, character.birthYear);
-        if (!familyResult.ok) {
-            var familyRollback = _rollbackCreatedCharacter(
-                character.id,
-                familyResult.createdEdgeIds
-            );
+        var characterSnapshot = function () {
+            if (!window.masterData || !window.masterData.data ||
+                !Array.isArray(window.masterData.data.characters)) {
+                throw new Error('Canonical character collection is unavailable.');
+            }
+            return JSON.parse(JSON.stringify(window.masterData.data.characters));
+        };
+        var familySnapshot = function () {
+            return window.FamilyState && typeof window.FamilyState.snapshot === 'function'
+                ? window.FamilyState.snapshot()
+                : [];
+        };
+        var result = transaction.execute({
+            context: { character: character, data: data, options: options },
+            participants: [
+                {
+                    name: 'characters',
+                    snapshot: characterSnapshot,
+                    apply: function (ctx) {
+                        var inserted = CS.addCharacter(ctx.character);
+                        return inserted && inserted.success
+                            ? { success: true }
+                            : { success: false, reason: inserted && inserted.reason || 'CharacterState refused insertion.' };
+                    },
+                    rollback: function (snapshot) {
+                        if (!window.masterData || !window.masterData.data) return { success: false, reason: 'Canonical character collection unavailable during rollback.' };
+                        window.masterData.data.characters = JSON.parse(JSON.stringify(snapshot));
+                        if (typeof CS.refresh === 'function') CS.refresh();
+                        if (typeof CS._transactionDiscardChanges === 'function') CS._transactionDiscardChanges();
+                        return { success: true };
+                    },
+                    afterCommit: function () {
+                        if (typeof CS._transactionFlushChanges === 'function') CS._transactionFlushChanges();
+                    }
+                },
+                {
+                    name: 'family',
+                    snapshot: familySnapshot,
+                    apply: function (ctx) {
+                        var familyResult = _establishFamilyEdges(ctx.character.id, ctx.options, ctx.character.birthYear);
+                        if (!familyResult.ok) return { success: false, reason: familyResult.reason };
+                        var religionResult = _establishReligionEdge(ctx.character.id, ctx.data);
+                        return religionResult.ok
+                            ? { success: true }
+                            : { success: false, reason: religionResult.reason };
+                    },
+                    rollback: function (snapshot) {
+                        if (!window.FamilyState || typeof window.FamilyState.replaceAll !== 'function') return { success: false, reason: 'FamilyState.replaceAll unavailable.' };
+                        var restored = window.FamilyState.replaceAll(snapshot);
+                        if (!restored) return { success: false, reason: 'Family edges could not be restored.' };
+                        window.masterData.data.parentChildEdges = window.FamilyState.snapshot();
+                        return { success: true };
+                    }
+                }
+            ]
+        });
+        if (!result.success) {
             return {
                 success: false,
-                code: familyRollback.success
-                    ? 'CHARACTER_CREATION_FAILED'
-                    : 'CHARACTER_CREATION_ROLLBACK_FAILED',
-                reason: familyResult.reason,
+                code: result.code || 'CHARACTER_CREATION_FAILED',
+                reason: result.reason || 'Character creation transaction failed.',
                 characterId: character.id,
-                rollback: familyRollback
+                rollback: { success: result.rolledBack === true, failures: result.rollbackErrors || [] }
             };
         }
-
-        var religionResult = _establishReligionEdge(character.id, data);
-        if (!religionResult.ok) {
-            var religionRollback = _rollbackCreatedCharacter(
-                character.id,
-                familyResult.createdEdgeIds
-            );
-            return {
-                success: false,
-                code: religionRollback.success
-                    ? 'CHARACTER_CREATION_FAILED'
-                    : 'CHARACTER_CREATION_ROLLBACK_FAILED',
-                reason: religionResult.reason,
-                characterId: character.id,
-                rollback: religionRollback
-            };
-        }
-
         return _ok({ data: character });
     }
 
