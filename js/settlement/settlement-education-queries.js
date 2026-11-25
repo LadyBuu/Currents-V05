@@ -218,7 +218,8 @@
         var institutionsByLocation = Object.create(null);
         for (var i = 0; i < allInstitutions.length; i++) {
             var institution = allInstitutions[i];
-            if (!institution || !institution.locationId) continue;
+            if (!institution || !institution.locationId ||
+                institution.status === 'demolished') continue;
             if (!institutionsByLocation[institution.locationId]) {
                 institutionsByLocation[institution.locationId] = [];
             }
@@ -326,32 +327,49 @@
         var schools = getSchools(locationId);
         if (schools === null) return null;
 
-        var educationQueries = window.EducationQueries;
-        if (!educationQueries ||
-            typeof educationQueries.getLocationEducationSummary !== 'function') {
-            return null;
-        }
-        var summary = educationQueries.getLocationEducationSummary(locationId, true);
-        if (!summary) return null;
-
-        var totalCapacity = Number(summary.totalCapacity) || 0;
-        var totalStudents = Number(summary.currentStudents) || 0;
-        var totalTeachers = Number(summary.totalTeachers) || 0;
-        var capacityGap = Math.max(0, totalStudents - totalCapacity);
-
-        return {
+        var result = {
             schoolCount: schools.length,
-            institutionCount: Number(summary.institutionCount) || 0,
-            totalCapacity: totalCapacity,
-            totalStudents: totalStudents,
-            totalTeachers: totalTeachers,
-            studentTeacherRatio: totalTeachers > 0
-                ? Math.round(totalStudents / totalTeachers) : null,
-            capacityUsed: totalCapacity > 0
-                ? Math.round((totalStudents / totalCapacity) * 100) : 0,
-            needsMoreSchools: capacityGap > 0,
-            capacityGap: capacityGap
+            institutionCount: 0,
+            totalCapacity: 0,
+            totalStudents: 0,
+            totalTeachers: 0,
+            studentTeacherRatio: null,
+            capacityUsed: 0,
+            needsMoreSchools: false,
+            capacityGap: 0
         };
+
+        // Capacity belongs to Education institutions, but only institutions
+        // attached to a built school feature count as local school capacity.
+        for (var i = 0; i < schools.length; i++) {
+            var institutions = schools[i].institutions || [];
+            for (var j = 0; j < institutions.length; j++) {
+                var institution = institutions[j];
+                result.institutionCount++;
+                result.totalCapacity += Number(institution.maxStudents) || 0;
+                result.totalStudents += Number(institution.currentStudentCount) || 0;
+                result.totalTeachers += Number(institution.teacherCount) || 0;
+            }
+        }
+
+        if (result.totalTeachers > 0) {
+            result.studentTeacherRatio = Math.round(
+                result.totalStudents / result.totalTeachers
+            );
+        }
+        if (result.totalCapacity > 0) {
+            result.capacityUsed = Math.round(
+                (result.totalStudents / result.totalCapacity) * 100
+            );
+        }
+
+        result.capacityGap = Math.max(
+            0, result.totalStudents - result.totalCapacity
+        );
+        result.needsMoreSchools = result.capacityGap > 0 ||
+            (result.totalStudents > 0 && result.totalCapacity === 0);
+
+        return result;
     }
 
     // =========================================================================
