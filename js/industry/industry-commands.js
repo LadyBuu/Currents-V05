@@ -2168,6 +2168,69 @@
         });
     }
 
+    // Resolves a deceased character's privately owned enterprises.
+    // The caller supplies the selected heir/buyer/employee and deceased household.
+    function resolveOwnerDeath(characterId, action, targetId, householdId) {
+        if (!_hasId(characterId)) return _fail('Deceased character id is required.');
+        if (['inherit', 'sell', 'takeover', 'close'].indexOf(action) === -1) {
+            return _fail('Unknown succession action.');
+        }
+        var owned = IS.getEnterprisesByOwner(characterId, C.OWNER_TYPE.CHARACTER).slice();
+        var year = window.getCurrentYear();
+        var changed = [];
+        for (var i = 0; i < owned.length; i++) {
+            var enterprise = IS.getEnterprise(owned[i].id);
+            if (!enterprise || enterprise.ownerType !== C.OWNER_TYPE.CHARACTER
+                || enterprise.ownerId !== characterId) continue;
+            var patch;
+            if (action === 'inherit') {
+                if (!_hasId(targetId) || !window.getCharacterById(targetId)) {
+                    return _fail('A living heir must be selected.');
+                }
+                patch = { ownerType: C.OWNER_TYPE.CHARACTER, ownerId: targetId };
+            } else if (action === 'takeover') {
+                if (!_hasId(targetId) || enterprise.workerList.indexOf(targetId) === -1
+                    || !window.getCharacterById(targetId)) {
+                    return _fail('Takeover must be assigned to an employee of the enterprise.');
+                }
+                patch = { ownerType: C.OWNER_TYPE.CHARACTER, ownerId: targetId };
+            } else if (action === 'sell') {
+                if (!_hasId(householdId) || typeof window.getHouseholdById !== 'function'
+                    || !window.getHouseholdById(householdId)) {
+                    return _fail('The deceased owner household is required for sale proceeds.');
+                }
+                var profit = window.IndustryEconomics.calculateAnnualProfit(enterprise);
+                var payment = Math.max(0, Number.isFinite(profit) ? profit : 0);
+                var household = window.getHouseholdById(householdId);
+                var currentWealth = typeof household.wealth === 'number' ? household.wealth : 0;
+                var transfer = window.HouseholdCommands.updateHousehold(householdId, {
+                    wealth: currentWealth + payment
+                });
+                if (!transfer || transfer.success !== true) {
+                    return _fail(transfer && transfer.reason || 'Could not transfer sale proceeds.');
+                }
+                patch = { ownerType: C.OWNER_TYPE.NONE, ownerId: null };
+            } else {
+                patch = {
+                    ownerType: C.OWNER_TYPE.NONE, ownerId: null,
+                    status: C.STATUS.CLOSED, workerList: [], workerWages: {}
+                };
+            }
+            var updated = updateEnterprise(enterprise.id, patch);
+            if (!updated || updated.success !== true) {
+                return _fail(updated && updated.reason || 'Could not resolve enterprise succession.');
+            }
+            changed.push(enterprise.id);
+        }
+        if (changed.length) {
+            var saved = persist();
+            if (!saved || saved.success !== true) {
+                return _fail(saved && saved.reason || 'Could not save succession changes.');
+            }
+        }
+        return _ok({ enterpriseIds: changed, action: action });
+    }
+
     // =========================================================================
     // 15. EXPORTS
     // =========================================================================
@@ -2177,6 +2240,7 @@
         persist: persist,
 
         // Enterprise lifecycle
+        resolveOwnerDeath: resolveOwnerDeath,
         createEnterprise: createEnterprise,
         updateEnterprise: updateEnterprise,
         deleteEnterprise: deleteEnterprise,
