@@ -2275,13 +2275,31 @@
         };
 
         if (options.headId) {
-            var head = null;
-            try { head = window.getCharacterById(options.headId); } catch (e) {}
-            if (head && _findMember(household, options.headId) !== -1) {
-                dept.headId = head.id;
-                dept.headName = (head.name || '') +
-                    (head.surname ? ' ' + head.surname : '');
+            if (typeof window.getCharacterById !== 'function') {
+                return _fail(
+                    'DEPENDENCY_MISSING',
+                    'Cannot verify department head: getCharacterById is unavailable'
+                );
             }
+            var head;
+            try {
+                head = window.getCharacterById(options.headId);
+            } catch (headLookupError) {
+                return _fail(
+                    'LOOKUP_FAILED',
+                    'Could not verify department head: ' +
+                    (headLookupError.message || String(headLookupError))
+                );
+            }
+            if (!head) {
+                return _fail('CHARACTER_NOT_FOUND', 'Department head character not found');
+            }
+            if (_findMember(household, options.headId) === -1) {
+                return _fail('NOT_MEMBER', 'Department head must be a household member');
+            }
+            dept.headId = head.id;
+            dept.headName = (head.name || '') +
+                (head.surname ? ' ' + head.surname : '');
         }
 
         departments.push(dept);
