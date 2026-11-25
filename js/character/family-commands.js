@@ -708,7 +708,18 @@
             if (edge.parentId !== characterId && edge.childId !== characterId) continue;
             if (edge.parentId !== characterId) affected[edge.parentId] = true;
             if (edge.childId !== characterId) affected[edge.childId] = true;
-            if (FS._remove(edge.id) === true) {
+            var edgeRemoved = false;
+            try {
+                edgeRemoved = FS._remove(edge.id) === true;
+            } catch (removeError) {
+                failures.push({
+                    edgeId: edge.id,
+                    reason: removeError && removeError.message
+                        ? removeError.message : 'FamilyState edge removal threw.'
+                });
+                continue;
+            }
+            if (edgeRemoved) {
                 removed++;
             } else {
                 failures.push({
@@ -719,14 +730,26 @@
         }
 
         if (failures.length > 0) {
-            FS.replaceAll(snapshotBeforeCleanup);
-            return {
-                success: false,
-                partial: false,
-                removedCount: 0,
-                failures: failures,
-                rolledBack: true
-            };
+            try {
+                FS.replaceAll(snapshotBeforeCleanup);
+                return {
+                    success: false,
+                    partial: false,
+                    removedCount: 0,
+                    failures: failures,
+                    rolledBack: true
+                };
+            } catch (rollbackError) {
+                return {
+                    success: false,
+                    partial: true,
+                    removedCount: removed,
+                    failures: failures,
+                    rolledBack: false,
+                    rollbackReason: rollbackError && rollbackError.message
+                        ? rollbackError.message : 'Family reference rollback threw.'
+                };
+            }
         }
 
         if (removed > 0) {
