@@ -163,7 +163,10 @@ var VALIDATION_CONSTANTS = {
     MAX_EPITHET_LENGTH: 50,
     MAX_SPECIALIZATION_LENGTH: 50,
     ID_REGEX: /^[a-zA-Z0-9_-]+$/,
-    NAME_REGEX: /^[\p{L}\s\-'\.]+$/u,
+    // Accept Unicode letters/combining marks and apostrophe forms used in many
+    // names, including Samoan glottal-stop spelling (Saofa’i / Saofaʻi / Saofa‘i).
+    // Preserve the original spelling; validation must not rewrite names.
+    NAME_REGEX: /^[\p{L}\p{M}\s\-'’‘ʻʼ\.]+$/u,
     VARIABLE_KEY_REGEX: /^[a-z0-9_]+$/
 };
 
