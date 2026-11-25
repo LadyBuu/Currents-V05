@@ -288,6 +288,90 @@
         CROSS_TAB_SYNC_MS: 100
     });
 
+    // Compact JSON before writing to localStorage. Large character/relationship
+    // datasets contain repeated keys and values; plain JSON can exceed the
+    // browser's small per-origin quota even when the actual information fits.
+    // The prefix keeps the format self-identifying and raw legacy JSON remains
+    // readable without a migration step.
+    var _COMPRESSED_PREFIX = 'SWLZW1:';
+
+    function _lzwCompress(text) {
+        var bytes = new TextEncoder().encode(text);
+        var dictionary = new Map();
+        for (var i = 0; i < 256; i++) dictionary.set(String.fromCharCode(i), i);
+
+        var nextCode = 256;
+        var output = [];
+        var phrase = '';
+        for (var j = 0; j < bytes.length; j++) {
+            var symbol = String.fromCharCode(bytes[j]);
+            var combined = phrase + symbol;
+            if (dictionary.has(combined)) {
+                phrase = combined;
+            } else {
+                if (phrase) output.push(dictionary.get(phrase));
+                if (nextCode < 65535) dictionary.set(combined, nextCode++);
+                phrase = symbol;
+            }
+        }
+        if (phrase) output.push(dictionary.get(phrase));
+
+        var binary = '';
+        for (var k = 0; k < output.length; k += 8192) {
+            binary += String.fromCharCode.apply(null, output.slice(k, k + 8192));
+        }
+        return _COMPRESSED_PREFIX + btoa(binary);
+    }
+
+    function _lzwDecompress(payload) {
+        var binary = atob(payload.slice(_COMPRESSED_PREFIX.length));
+        var codes = new Array(binary.length);
+        for (var i = 0; i < binary.length; i++) codes[i] = binary.charCodeAt(i);
+        if (!codes.length) return '';
+
+        var dictionary = new Array(65535);
+        for (var j = 0; j < 256; j++) dictionary[j] = String.fromCharCode(j);
+
+        var nextCode = 256;
+        var phrase = dictionary[codes[0]];
+        if (phrase === undefined) throw new Error('Invalid compressed save header.');
+        var output = phrase;
+
+        for (var k = 1; k < codes.length; k++) {
+            var code = codes[k];
+            var entry = dictionary[code];
+            if (entry === undefined && code === nextCode) {
+                entry = phrase + phrase.charAt(0);
+            }
+            if (entry === undefined) throw new Error('Invalid compressed save data.');
+            output += entry;
+            if (nextCode < 65535) {
+                dictionary[nextCode++] = phrase + entry.charAt(0);
+            }
+            phrase = entry;
+        }
+
+        var decodedBytes = new Uint8Array(output.length);
+        for (var n = 0; n < output.length; n++) decodedBytes[n] = output.charCodeAt(n);
+        return new TextDecoder().decode(decodedBytes);
+    }
+
+    function _encodeStoredPayload(text) {
+        try {
+            var compressed = _lzwCompress(text);
+            return compressed.length < text.length ? compressed : text;
+        } catch (e) {
+            // Compression is an optimization, never a reason to block a save.
+            return text;
+        }
+    }
+
+    function _decodeStoredPayload(value) {
+        return typeof value === 'string' && value.indexOf(_COMPRESSED_PREFIX) === 0
+            ? _lzwDecompress(value)
+            : value;
+    }
+
     // Envelope-level markers that _performSave strips before serializing.
     // See LEGACY SAVE MARKERS in the header.
     var _MARKER_KEYS = [
@@ -458,7 +542,7 @@
 
             var parsed;
             try {
-                parsed = JSON.parse(stored);
+                parsed = JSON.parse(_decodeStoredPayload(stored));
             } catch (parseError) {
                 console.error('storage.js: persisted data is not valid JSON:', parseError);
                 return { ok: false, error: 'corrupt' };
@@ -632,7 +716,7 @@
 
             var serialized = _serializeWithoutMarkers(window.masterData);
 
-            localStorage.setItem(STORAGE_CONFIG.STORAGE_KEY, serialized);
+            localStorage.setItem(STORAGE_CONFIG.STORAGE_KEY, _encodeStoredPayload(serialized));
             return { ok: true };
         } catch (e) {
             return { ok: false, error: e };
