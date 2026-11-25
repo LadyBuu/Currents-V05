@@ -169,11 +169,14 @@
  *   storage-schema.js, which is a required dependency.
  *
  * MIGRATION:
- *   No version-to-version migration implementation currently exists.
- *   Numbered envelopes must match the running schema version; older and
- *   newer versions are rejected until an explicit migration is added.
- *   Envelope-less legacy blobs remain a separately marked compatibility
- *   path and are never confused with numbered older envelopes.
+ *   Numbered envelopes use explicit version-to-version migrations.
+ *   The v3 -> v4 migration adds the placesOfWorship collection while
+ *   preserving every existing field and record. Normalization runs before
+ *   the migrated envelope is installed; the new envelope is then written
+ *   atomically. If persistence fails, the original stored value remains
+ *   intact and the in-memory migrated data is marked dirty for retry.
+ *   Unsupported older/newer versions are rejected. Envelope-less legacy
+ *   blobs remain a separately marked compatibility path.
  *
  * DEPENDENCIES (REQUIRED):
  *   - time.js:          TIME_CONSTANTS (for schema defaults via storage-schema)
@@ -361,6 +364,63 @@
     }
 
     // =========================================================================
+    // 5. SCHEMA MIGRATIONS
+    // =========================================================================
+
+    /**
+     * Apply explicit, lossless migrations to a parsed persistence envelope.
+     *
+     * v3 -> v4 introduced the canonical placesOfWorship collection. The v3
+     * schema did not have this field, so the only structural change required
+     * is to add an empty collection when it is absent. Existing data is never
+     * replaced. If the field exists but is malformed, normalization rejects
+     * it rather than discarding it.
+     *
+     * The returned envelope is a new shallow envelope with a copied data
+     * object. The caller persists it only after normalisation succeeds.
+     *
+     * @private
+     * @param {Object} sourceEnvelope
+     * @returns {{ envelope: Object, migrated: boolean, fromVersion?: number }}
+     */
+    function _migrateEnvelope(sourceEnvelope) {
+        if (!sourceEnvelope || typeof sourceEnvelope !== 'object'
+            || !sourceEnvelope.data || typeof sourceEnvelope.data !== 'object'
+            || Array.isArray(sourceEnvelope.data)) {
+            throw new Error('storage.js: cannot migrate an invalid persistence envelope.');
+        }
+
+        var envelope = Object.assign({}, sourceEnvelope, {
+            data: Object.assign({}, sourceEnvelope.data)
+        });
+        var version = envelope.schemaVersion;
+        var migrated = false;
+        var originalVersion = version;
+
+        if (version === 3 && window.STORAGE_SCHEMA_VERSION >= 4) {
+            if (!Object.prototype.hasOwnProperty.call(envelope.data, 'placesOfWorship')) {
+                envelope.data.placesOfWorship = [];
+            }
+            envelope.schemaVersion = 4;
+            version = 4;
+            migrated = true;
+        }
+
+        if (version !== window.STORAGE_SCHEMA_VERSION) {
+            throw new Error(
+                'storage.js: no migration path from schema version ' + originalVersion +
+                ' to ' + window.STORAGE_SCHEMA_VERSION + '.'
+            );
+        }
+
+        return {
+            envelope: envelope,
+            migrated: migrated,
+            fromVersion: migrated ? originalVersion : undefined
+        };
+    }
+
+    // =========================================================================
     // 5. LOAD
     // =========================================================================
 
@@ -423,31 +483,59 @@
                 return { ok: false, error: 'schema' };
             }
 
-            // Do not silently reinterpret a numbered save from another schema.
-            if (envelope.schemaVersion !== window.STORAGE_SCHEMA_VERSION) {
-                console.error(
-                    'storage.js: persisted schema version ' +
-                    envelope.schemaVersion + ' does not match this build ' +
-                    '(' + window.STORAGE_SCHEMA_VERSION + '); an explicit migration is required.'
-                );
-                return { ok: false, error: 'version' };
+            var migration;
+            try {
+                migration = _migrateEnvelope(envelope);
+                envelope = migration.envelope;
+            } catch (migrationError) {
+                console.error('storage.js: persisted schema cannot be migrated:', migrationError);
+                return {
+                    ok: false,
+                    error: 'version',
+                    message: migrationError.message
+                };
             }
 
             if (isLegacyEnvelopeLess) {
                 envelope._legacyEnvelopeLess = true;
             }
 
-            // Normalize via the schema layer.
+            // Normalize before installing anything into the live application.
+            // A malformed field therefore cannot leave a half-initialised
+            // masterData object behind.
             envelope = window.normalizeMasterData(envelope);
 
             window.masterData = envelope;
             _isDirty = false;
             _lastSaveError = null;
 
+            var warnings = _collectLoadWarnings(envelope);
+            if (migration.migrated) {
+                // localStorage.setItem is atomic: if this write fails, the
+                // original v3 value remains intact and the app can still use
+                // the successfully normalised in-memory data. Keep it dirty
+                // and retry through the normal debounced persistence path.
+                _isDirty = true;
+                if (saveMasterData()) {
+                    warnings.push(
+                        'Save data was migrated from schema v' +
+                        migration.fromVersion + ' to v' +
+                        window.STORAGE_SCHEMA_VERSION + '.'
+                    );
+                } else {
+                    _isDirty = true;
+                    scheduleSave();
+                    warnings.push(
+                        'Save data was migrated in memory, but the updated save could not be written. ' +
+                        'The original stored data has been left intact; persistence will be retried.'
+                    );
+                }
+            }
+
             return {
                 ok: true,
                 source: 'storage',
-                warnings: _collectLoadWarnings(envelope)
+                warnings: warnings
             };
         } catch (e) {
             console.error('storage.js: load failed:', e);
