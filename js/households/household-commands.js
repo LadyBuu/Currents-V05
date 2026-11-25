@@ -562,12 +562,18 @@
         }
     }
 
+    var _transactionSideEffects = [];
+
     function _commit(eventName, payload) {
         _hydrateState();
         _markDirty();
         _invalidateAccessorCaches();
-        _publish(eventName, payload);
-        _dispatch(eventName, payload);
+        if (window.CrossDomainTransaction && window.CrossDomainTransaction.isActive()) {
+            _transactionSideEffects.push({ eventName: eventName, payload: payload });
+        } else {
+            _publish(eventName, payload);
+            _dispatch(eventName, payload);
+        }
     }
 
     // =========================================================================
@@ -3650,6 +3656,20 @@
         repairMemberships: repairMemberships,
 
         // Cross-domain reference cleanup
+        _transactionFlushSideEffects: function () {
+            var pending = _transactionSideEffects.slice();
+            _transactionSideEffects.length = 0;
+            pending.forEach(function (event) {
+                _publish(event.eventName, event.payload);
+                _dispatch(event.eventName, event.payload);
+            });
+            return { success: true, count: pending.length };
+        },
+        _transactionDiscardSideEffects: function () {
+            var count = _transactionSideEffects.length;
+            _transactionSideEffects.length = 0;
+            return { success: true, discarded: count };
+        },
         removeCharacterReferences: removeCharacterReferences,
         clearLocationReferences: clearLocationReferences,
         clearLocationReferencesMany: clearLocationReferencesMany,
