@@ -1583,6 +1583,19 @@
         removeRecords(surrogacyIds, ChS._removeSurrogacy, 'surrogacy');
         removeRecords(adoptionIds, ChS._removeAdoption, 'adoption');
 
+        if (failures.length > 0) {
+            ChS.replaceAllPregnancies(pregnanciesBeforeCleanup);
+            ChS.replaceAllSurrogacy(surrogacyBeforeCleanup);
+            ChS.replaceAllAdoptions(adoptionsBeforeCleanup);
+            return {
+                success: false,
+                partial: false,
+                removedCount: 0,
+                failures: failures,
+                rolledBack: true
+            };
+        }
+
         if (removed > 0) {
             if (!_commit()) {
                 ChS.replaceAllPregnancies(pregnanciesBeforeCleanup);
