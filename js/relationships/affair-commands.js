@@ -212,44 +212,21 @@
             ? options.startYear
             : _getCurrentYear();
 
-        // Commit 1: create the committed relationship carrying SECRET.
+        // Include affair metadata in the initial relationship insert.
         var romanceResult = RoC.startCommittedRelationship(idA, idB, {
             startYear: startYear,
             forceAffair: true,
             isScandalous: !!options.isScandalous,
-            notes: typeof options.notes === 'string' ? options.notes : ''
+            notes: typeof options.notes === 'string' ? options.notes : '',
+            affairMetadata: {
+                affairType: affairType,
+                publicBehavior: !!options.publicBehavior
+            }
         });
         if (!romanceResult.success) return romanceResult;
 
         var relId = romanceResult.relationship.relationshipId
             || romanceResult.relationship.id;
-
-        // Commit 2: upgrade metadata with affair-specific fields.
-        // Failure here leaves a valid affair with default metadata —
-        // see COMMIT SEMANTICS in the module header for the rationale.
-        var metaUpdate = RC.update(relId, {
-            metadata: {
-                affairType: affairType,
-                discovered: false,
-                discoveryYear: null,
-                discoveryCircumstances: null,
-                discovererId: null,
-                consequencesTriggered: false,
-                consequences: [],
-                publicBehavior: !!options.publicBehavior
-            }
-        });
-        if (!metaUpdate.success) {
-            // The affair exists but its metadata could not be written.
-            // Return the failure with the relationship id so the caller
-            // can retry the metadata write via RelationshipCommands.update
-            // without recreating the relationship.
-            return _fail(
-                metaUpdate.code || 'META_WRITE_FAILED',
-                'Affair created (relationshipId: ' + relId +
-                ') but metadata write failed: ' + (metaUpdate.message || 'unknown')
-            );
-        }
 
         var charA = _getCharacter(idA);
         var charB = _getCharacter(idB);
