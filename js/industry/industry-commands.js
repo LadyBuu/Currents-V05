@@ -2175,16 +2175,18 @@
         if (['inherit', 'sell', 'takeover', 'close'].indexOf(action) === -1) {
             return _fail('Unknown succession action.');
         }
+        if (!window.CrossDomainTransaction
+            || typeof window.CrossDomainTransaction.execute !== 'function') {
+            return _fail('CrossDomainTransaction is required for owner succession.');
+        }
 
         var owned = IS.getEnterprisesByOwner(characterId, C.OWNER_TYPE.CHARACTER).slice();
         var target = null;
         var household = null;
-        if (action === 'inherit' || action === 'sell' || action === 'takeover') {
+        if (action !== 'close') {
             target = _hasId(targetId) ? window.getCharacterById(targetId) : null;
             if (!target || target.isDeceased === true) {
-                return _fail(action === 'inherit' ? 'A living heir must be selected.'
-                    : action === 'sell' ? 'A living buyer must be selected.'
-                    : 'A living employee must be selected.');
+                return _fail('A living successor must be selected.');
             }
         }
         if (action === 'sell') {
@@ -2196,64 +2198,102 @@
             }
         }
 
-        // Validate every enterprise before the first mutation. In particular,
-        // takeover must be valid for every enterprise being transferred.
-        for (var v = 0; v < owned.length; v++) {
-            var candidate = IS.getEnterprise(owned[v].id);
-            if (!candidate || candidate.ownerType !== C.OWNER_TYPE.CHARACTER
-                || candidate.ownerId !== characterId) {
-                return _fail('Enterprise ownership changed during succession. Please retry.');
-            }
-            if (action === 'takeover' && (!Array.isArray(candidate.workerList)
-                || candidate.workerList.indexOf(targetId) === -1)) {
-                return _fail('Takeover must be assigned to an employee of every enterprise being transferred.');
-            }
-        }
-
-        var changed = [];
+        var snapshots = [];
+        var plans = [];
         var totalPayment = 0;
         for (var i = 0; i < owned.length; i++) {
             var enterprise = IS.getEnterprise(owned[i].id);
-            var patch;
-            if (action === 'inherit' || action === 'takeover' || action === 'sell') {
-                patch = { ownerType: C.OWNER_TYPE.CHARACTER, ownerId: targetId };
-                if (action === 'sell') {
-                    var profit = window.IndustryEconomics.calculateAnnualProfit(enterprise);
-                    totalPayment += Math.max(0, Number.isFinite(profit) ? profit : 0);
-                }
-            } else {
-                patch = { ownerType: C.OWNER_TYPE.NONE, ownerId: null, status: C.STATUS.CLOSED };
-                var workersToRemove = (enterprise.workerList || []).slice();
-                for (var wi = 0; wi < workersToRemove.length; wi++) {
-                    var removed = removeWorkerFromEnterprise(enterprise.id, workersToRemove[wi]);
-                    if (!removed || removed.success !== true) {
-                        return _fail(removed && removed.reason || 'Could not release enterprise workers.');
-                    }
-                }
+            if (!enterprise || enterprise.ownerType !== C.OWNER_TYPE.CHARACTER
+                || enterprise.ownerId !== characterId) {
+                return _fail('Enterprise ownership changed during succession. Please retry.');
             }
-            var updated = updateEnterprise(enterprise.id, patch);
-            if (!updated || updated.success !== true) {
-                return _fail(updated && updated.reason || 'Could not resolve enterprise succession.');
+            if (action === 'takeover' && (!Array.isArray(enterprise.workerList)
+                || enterprise.workerList.indexOf(targetId) === -1)) {
+                return _fail('Takeover must be assigned to an employee of every enterprise being transferred.');
             }
-            changed.push(enterprise.id);
+            if (action === 'sell') {
+                var profit = window.IndustryEconomics.calculateAnnualProfit(enterprise);
+                totalPayment += Math.max(0, Number.isFinite(profit) ? profit : 0);
+            }
+            snapshots.push(IS._transactionSnapshotEnterprise(enterprise.id));
+            plans.push({
+                id: enterprise.id,
+                patch: action === 'close'
+                    ? { ownerType: C.OWNER_TYPE.NONE, ownerId: null, status: C.STATUS.CLOSED,
+                        workerList: [], workerWages: {}, updatedAt: Date.now() }
+                    : { ownerType: C.OWNER_TYPE.CHARACTER, ownerId: targetId, updatedAt: Date.now() }
+            });
         }
 
+        var participants = [{
+            name: 'industry-owner-succession',
+            prepare: function () {
+                for (var p = 0; p < plans.length; p++) {
+                    var current = IS.getEnterprise(plans[p].id);
+                    if (!current || current.ownerId !== characterId
+                        || current.ownerType !== C.OWNER_TYPE.CHARACTER) {
+                        return _fail('Enterprise ownership changed during succession. Please retry.');
+                    }
+                }
+                return { success: true };
+            },
+            snapshot: function () { return snapshots; },
+            apply: function () {
+                for (var p = 0; p < plans.length; p++) {
+                    IS._updateEnterprise(plans[p].id, plans[p].patch, { silent: true });
+                }
+                return { success: true };
+            },
+            rollback: function (saved) {
+                for (var p = saved.length - 1; p >= 0; p--) {
+                    IS._transactionRestoreEnterprise(saved[p]);
+                }
+                return { success: true };
+            },
+            afterCommit: function () {
+                for (var p = 0; p < plans.length; p++) {
+                    IS._notifyTransactionEnterpriseUpdated(plans[p].id);
+                }
+            }
+        }];
+
         if (action === 'sell' && owned.length) {
-            var currentWealth = typeof household.wealth === 'number' ? household.wealth : 0;
-            var transfer = window.HouseholdCommands.updateHousehold(householdId, {
-                wealth: currentWealth + totalPayment
+            var originalWealth = typeof household.wealth === 'number' ? household.wealth : 0;
+            participants.push({
+                name: 'household-sale-proceeds',
+                prepare: function () {
+                    var current = window.getHouseholdById(householdId);
+                    return current ? { success: true }
+                        : _fail('Household no longer exists.');
+                },
+                snapshot: function () { return originalWealth; },
+                apply: function () {
+                    return window.HouseholdCommands.updateHousehold(householdId,
+                        { wealth: originalWealth + totalPayment }, { deferCommit: true });
+                },
+                rollback: function (saved) {
+                    var restored = window.HouseholdCommands.updateHousehold(householdId,
+                        { wealth: saved }, { deferCommit: true });
+                    if (!restored || restored.success !== true) {
+                        throw new Error(restored && restored.reason
+                            || 'Could not restore household sale proceeds.');
+                    }
+                    return { success: true };
+                }
             });
-            if (!transfer || transfer.success !== true) {
-                return _fail(transfer && transfer.reason || 'Could not transfer sale proceeds.');
-            }
         }
-        if (changed.length) {
-            var saved = persist();
-            if (!saved || saved.success !== true) {
-                return _fail(saved && saved.reason || 'Could not save succession changes.');
-            }
+
+        var transaction = window.CrossDomainTransaction.execute({
+            context: { characterId: characterId, action: action },
+            participants: participants,
+            persist: function () { return persist(); }
+        });
+        if (!transaction || transaction.success !== true) {
+            return _fail(transaction && transaction.reason
+                || 'Enterprise succession transaction failed.'
+                + (transaction && transaction.code ? ' (' + transaction.code + ')' : ''));
         }
-        return _ok({ enterpriseIds: changed, action: action });
+        return _ok({ enterpriseIds: plans.map(function (plan) { return plan.id; }), action: action });
     }
     // =========================================================================
     // 15. EXPORTS
