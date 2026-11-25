@@ -659,6 +659,15 @@
 <script src="js/relationships/romance-commands.js"></script>
 
 <script src="js/relationships/relationship-commands.js"></script>
+<script src="js/relationships/friendship-rules.js"></script>
+<script src="js/relationships/friendship-queries.js"></script>
+<script src="js/relationships/friendship-commands.js"></script>
+<script src="js/relationships/rivalry-rules.js"></script>
+<script src="js/relationships/rivalry-queries.js"></script>
+<script src="js/relationships/rivalry-commands.js"></script>
+<script src="js/relationships/relationship-ui-metadata.js"></script>
+<script src="js/relationships/modals-friendship.js"></script>
+<script src="js/relationships/modals-relationship.js"></script>
 <script src="js/relationships/professional-rules.js"></script>
 <script src="js/relationships/professional-queries.js"></script>
 <script src="js/relationships/professional-commands.js"></script>
@@ -861,9 +870,7 @@
 <!-- build" empty state from _buildEmptyState('no-renderer').      -->
 <!-- When the tab file lands, uncomment the reference below.       -->
 <!--                                                                -->
-<!-- The social and educational buttons exist in the strip but     -->
-<!-- have no registered renderer yet. They render the same         -->
-<!-- "not loaded" empty state.                                     -->
+<!-- Educational remains a future facet. Social has a renderer. -->
 <!-- ============================================================ -->
 
 <script src="js/tabs/events-deaths-tab.js"></script>
@@ -872,10 +879,10 @@
 <script src="js/tabs/events-surrogacy-tab.js"></script>
 <script src="js/tabs/events-disaster-tab.js"></script>
 <script src="js/tabs/events-crime-tab.js"></script>
+<script src="js/tabs/events-social-tab.js"></script>
 
 <!-- Future facet tabs land here as they are built:
      <script src="js/tabs/events-disasters-tab.js"></script>
-     <script src="js/tabs/events-social-tab.js"></script>
      <script src="js/tabs/events-educational-tab.js"></script>
      Until then, the corresponding tabs render via the
      "no-renderer" empty state from _buildEmptyState in the
