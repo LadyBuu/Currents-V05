@@ -707,16 +707,33 @@
         var applied = [];
         var failures = [];
 
+        if (!Array.isArray(assignments)) {
+            return _fail('assignments must be an array', C.CODES.VALIDATION);
+        }
+
         var dept = State._getDepartmentCanonical(departmentId);
         if (!dept) return _fail('Department not found', C.CODES.NOT_FOUND);
 
         var pos = State._getPositionCanonical(departmentId, positionId);
         if (!pos) return _fail('Position not found', C.CODES.NOT_FOUND);
 
-        // Pass 1: plan each input against the current state.
+        // Plan against both existing state and this batch. Without the batch
+        // set, duplicate character IDs pass preflight because no assignment
+        // has been written yet, producing duplicate active appointments.
         var plans = [];
+        var seenCharacters = new Set();
         for (var i = 0; i < assignments.length; i++) {
             var input = assignments[i];
+            if (!input || typeof input !== 'object' ||
+                typeof input.characterId !== 'string' || input.characterId.length === 0) {
+                failures.push({ input: input, reason: 'A valid characterId is required', code: C.CODES.VALIDATION });
+                continue;
+            }
+            if (seenCharacters.has(input.characterId)) {
+                failures.push({ input: input, reason: 'Character appears more than once in this batch', code: C.CODES.ALREADY_ASSIGNED });
+                continue;
+            }
+            seenCharacters.add(input.characterId);
             var plan = _planAssignmentStandalone(departmentId, positionId, input.characterId, input);
             if (plan.success) plans.push({ input: input, data: plan.data });
             else failures.push({ input: input, reason: plan.reason, code: plan.code });
@@ -727,11 +744,60 @@
                 ' invalid input(s)', C.CODES.ATOMIC_ABORT);
         }
 
-        // Pass 2: apply. Each apply mutates State but does not commit.
+        // Atomic mode snapshots every character field it may touch and the
+        // department's existing assignment IDs before the first write. If a
+        // later profession write fails, all earlier profession and
+        // appointment writes are compensated before returning failure.
+        var professionSnapshots = new Map();
+        if (mode === 'atomic') {
+            for (var snapshotIndex = 0; snapshotIndex < plans.length; snapshotIndex++) {
+                var snapshotId = plans[snapshotIndex].data.characterId;
+                if (!professionSnapshots.has(snapshotId)) {
+                    var snapshotFacts = _CharacterQueries.getCharacterById
+                        ? _CharacterQueries.getCharacterById(snapshotId)
+                        : null;
+                    if (!snapshotFacts) {
+                        return _fail('Bulk assignment aborted: character could not be snapshotted (' + snapshotId + ')', C.CODES.ATOMIC_ABORT);
+                    }
+                    professionSnapshots.set(snapshotId, Array.isArray(snapshotFacts.professions)
+                        ? snapshotFacts.professions.map(function (entry) { return Object.assign({}, entry); })
+                        : []);
+                }
+            }
+        }
+
         for (var j = 0; j < plans.length; j++) {
             var res = _applyAssignmentPlan(departmentId, positionId, plans[j].data);
-            if (res.success) applied.push(res.data);
-            else failures.push({ input: plans[j].input, reason: res.reason, code: res.code });
+            if (res.success) {
+                applied.push(res.data);
+                continue;
+            }
+
+            failures.push({ input: plans[j].input, reason: res.reason, code: res.code });
+            if (mode === 'atomic') {
+                var rollbackErrors = [];
+                for (var rollbackAssignmentIndex = applied.length - 1; rollbackAssignmentIndex >= 0; rollbackAssignmentIndex--) {
+                    var removed = State._removeAssignment(departmentId, applied[rollbackAssignmentIndex].assignmentId);
+                    if (!removed) rollbackErrors.push('Could not remove assignment ' + applied[rollbackAssignmentIndex].assignmentId);
+                }
+                professionSnapshots.forEach(function (professions, characterId) {
+                    var restored = _CharacterCommands.replaceProfessions(characterId, professions);
+                    if (!restored || restored.success !== true) {
+                        rollbackErrors.push('Could not restore professions for ' + characterId +
+                            ': ' + ((restored && restored.reason) || 'unknown error'));
+                    }
+                });
+                if (rollbackErrors.length > 0) {
+                    _commit(C.EVENTS.CHARACTER_ASSIGNED, {
+                        departmentId: departmentId,
+                        positionId: positionId,
+                        bulk: true,
+                        rollbackFailed: true
+                    });
+                    return _fail('Atomic assignment failed and rollback was incomplete: ' + rollbackErrors.join('; '), C.CODES.ATOMIC_ABORT);
+                }
+                return _fail('Atomic assignment rolled back: ' + res.reason, C.CODES.ATOMIC_ABORT);
+            }
         }
 
         if (applied.length > 0) {
