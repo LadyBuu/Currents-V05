@@ -375,16 +375,34 @@
         var typeInitResult = window.IndustryTypeInit
             .ensureEnterpriseTypesInitialized();
 
+        var typeSeedPersistence = { attempted: false, saved: true, reason: null };
         if (typeInitResult.seeded === true) {
+            typeSeedPersistence.attempted = true;
+            // Keep the dirty flag truthful if the synchronous storage write
+            // fails. The seeded defaults remain usable in memory and a later
+            // successful save can persist them.
+            if (typeof window.markDataDirty === 'function') {
+                window.markDataDirty();
+            }
             try {
-                window.saveMasterData();
-            } catch (e) {
-                if (typeof console !== 'undefined' && console.error) {
-                    console.error(
-                        'industry-bootstrap.js: saveMasterData threw after ' +
-                        'type seeding:', e
-                    );
+                typeSeedPersistence.saved = window.saveMasterData() === true;
+                if (!typeSeedPersistence.saved) {
+                    var seedSaveError = typeof window.getLastSaveError === 'function'
+                        ? window.getLastSaveError()
+                        : null;
+                    typeSeedPersistence.reason = seedSaveError && seedSaveError.message
+                        ? seedSaveError.message
+                        : 'saveMasterData returned false';
                 }
+            } catch (e) {
+                typeSeedPersistence.saved = false;
+                typeSeedPersistence.reason = e && e.message ? e.message : String(e);
+            }
+            if (!typeSeedPersistence.saved && typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'industry-bootstrap.js: enterprise type defaults were seeded in memory ' +
+                    'but could not be saved:', typeSeedPersistence.reason
+                );
             }
         }
 
@@ -475,7 +493,8 @@
             },
             typeInit: {
                 seeded: typeInitResult.seeded,
-                count: typeInitResult.count
+                count: typeInitResult.count,
+                persistence: typeSeedPersistence
             },
             integrity: {
                 valid: integrity.valid,
