@@ -327,7 +327,9 @@
      *   reason?: string
      * }}
      */
-    function preserveKnowledgeOnDeath(dyingId, heirId) {
+    function preserveKnowledgeOnDeath(dyingId, heirId, inheritanceYear) {
+        var effectiveYear = typeof inheritanceYear === 'number' && isFinite(inheritanceYear)
+            ? inheritanceYear : _getCurrentYear();
         var dying = _getCharacterById(dyingId);
         var heir = _getCharacterById(heirId);
         if (!dying) return fail('DYING_NOT_FOUND', 'Dying character not found');
@@ -390,7 +392,7 @@
                     id: roleId,
                     name: roleName,
                     skillLevel: inheritedLevel,
-                    startYear: _getCurrentYear(),
+                    startYear: effectiveYear,
                     notes: 'Inherited from ' + dying.name,
                     specs: []
                 });
@@ -527,7 +529,12 @@
         if (!heirId) {
             return { success: true, skipped: true, reason: 'No living biological descendants.' };
         }
-        var result = preserveKnowledgeOnDeath(characterId, heirId);
+        var result = preserveKnowledgeOnDeath(
+            characterId,
+            heirId,
+            context && typeof context.deathYear === 'number'
+                ? context.deathYear : undefined
+        );
         if (!result || result.success !== true) {
             return {
                 success: false,
