@@ -282,6 +282,13 @@
             rankDisplay: typeof character.rankDisplay === 'string'
                 ? character.rankDisplay : null,
 
+            activeRelationshipCount: typeof character.activeRelationshipCount === 'number'
+                ? character.activeRelationshipCount : 0,
+            relationshipIconName: character.activeRelationshipCount > 0 ? 'HEART' : null,
+            childCount: typeof character.childCount === 'number' ? character.childCount : 0,
+            youngestChildBirthYear: typeof character.youngestChildBirthYear === 'number'
+                ? character.youngestChildBirthYear : null,
+
             isSelected: false
         };
     }
