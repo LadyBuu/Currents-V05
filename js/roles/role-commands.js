@@ -816,6 +816,9 @@
                     return true;
                 },
                 afterCommit: function () {
+                    if (typeof relationshipState._transactionFlushNotifications === 'function') {
+                        relationshipState._transactionFlushNotifications();
+                    }
                     if (typeof RS._transactionFlushNotifications === 'function') {
                         RS._transactionFlushNotifications();
                     }
@@ -840,6 +843,9 @@
         });
 
         if (!result || result.success !== true) {
+            if (typeof relationshipState._transactionDiscardNotifications === 'function') {
+                relationshipState._transactionDiscardNotifications();
+            }
             if (typeof RS._transactionDiscardNotifications === 'function') {
                 RS._transactionDiscardNotifications();
             }
