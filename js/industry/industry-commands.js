@@ -2184,13 +2184,13 @@
                 || enterprise.ownerId !== characterId) continue;
             var patch;
             if (action === 'inherit') {
-                if (!_hasId(targetId) || !window.getCharacterById(targetId)) {
+                if (!_hasId(targetId) || !window.getCharacterById(targetId) || window.getCharacterById(targetId).isDeceased === true) {
                     return _fail('A living heir must be selected.');
                 }
                 patch = { ownerType: C.OWNER_TYPE.CHARACTER, ownerId: targetId };
             } else if (action === 'takeover') {
                 if (!_hasId(targetId) || enterprise.workerList.indexOf(targetId) === -1
-                    || !window.getCharacterById(targetId)) {
+                    || !window.getCharacterById(targetId) || window.getCharacterById(targetId).isDeceased === true) {
                     return _fail('Takeover must be assigned to an employee of the enterprise.');
                 }
                 patch = { ownerType: C.OWNER_TYPE.CHARACTER, ownerId: targetId };
@@ -2209,12 +2209,20 @@
                 if (!transfer || transfer.success !== true) {
                     return _fail(transfer && transfer.reason || 'Could not transfer sale proceeds.');
                 }
-                patch = { ownerType: C.OWNER_TYPE.NONE, ownerId: null };
+                if (!_hasId(targetId) || !window.getCharacterById(targetId) || window.getCharacterById(targetId).isDeceased === true) return _fail('A living buyer must be selected.');
+                patch = { ownerType: C.OWNER_TYPE.CHARACTER, ownerId: targetId };
             } else {
                 patch = {
                     ownerType: C.OWNER_TYPE.NONE, ownerId: null,
-                    status: C.STATUS.CLOSED, workerList: [], workerWages: {}
+                    status: C.STATUS.CLOSED
                 };
+            }
+            if (action === 'close') {
+                var workersToRemove = enterprise.workerList.slice();
+                for (var wi = 0; wi < workersToRemove.length; wi++) {
+                    var removed = removeWorkerFromEnterprise(enterprise.id, workersToRemove[wi]);
+                    if (!removed || removed.success !== true) return _fail(removed && removed.reason || 'Could not release enterprise workers.');
+                }
             }
             var updated = updateEnterprise(enterprise.id, patch);
             if (!updated || updated.success !== true) {
