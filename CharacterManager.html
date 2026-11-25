@@ -1993,6 +1993,12 @@
     var exportBtn = document.getElementById('exportBtn');
     if (exportBtn) {
         exportBtn.addEventListener('click', function () {
+            if (typeof window.flushPendingSave !== 'function' || window.flushPendingSave() !== true) {
+                var saveError = window.getLastSaveError && window.getLastSaveError();
+                _toast('Export cancelled because the latest changes could not be saved. ' +
+                    (saveError && saveError.message ? saveError.message : ''), 'error');
+                return;
+            }
             var source = window.masterData && window.masterData.data
                 ? window.masterData.data : {};
             var exportData = {
