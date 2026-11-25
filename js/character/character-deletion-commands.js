@@ -611,6 +611,12 @@
             }
         }
 
+        // A repeated id must represent one deletion, not multiple cleanup
+        // passes against the same character. Keep first-seen order for reports.
+        ids = ids.filter(function (id, index) {
+            return ids.indexOf(id) === index;
+        });
+
         if (useSoft) {
             return _bulkSoftDelete(ids);
         }
