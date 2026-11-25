@@ -3,7 +3,7 @@
  * STILL WATERS - HOUSEHOLD UI LIST (household-ui-list.js)
  * =============================================================================
  *
- * LOCATION: js/systems/household/household-ui-list.js
+ * LOCATION: js/households/household-ui-list.js
  *
  * PURPOSE
  * -------
