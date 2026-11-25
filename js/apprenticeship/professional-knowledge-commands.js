@@ -190,6 +190,12 @@
         var hasAccessor = (typeof window.getRoleById === 'function');
 
         if (hasRoleState) {
+            // Some manager pages load the role domain for cross-domain
+            // commands without opening Role Manager. Initialise lazily from
+            // the already-loaded masterData before the canonical read.
+            if (typeof window.RoleState.init === 'function') {
+                window.RoleState.init();
+            }
             return window.RoleState.getRole(id);
         }
         if (hasAccessor) {
