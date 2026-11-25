@@ -175,7 +175,53 @@
         });
     }
 
+    function _getSchoolInstitutions(locationId) {
+        var queries = window.SettlementEducationQueries;
+        if (!queries || typeof queries.getSchools !== 'function') return null;
+        var schools = queries.getSchools(locationId);
+        if (!Array.isArray(schools)) return null;
+        for (var i = 0; i < schools.length; i++) {
+            if (schools[i] && schools[i].featureId === 'school') {
+                return schools[i].institutions || [];
+            }
+        }
+        return [];
+    }
+
+    function _openSchoolInstitution(institutionId, locationId) {
+        var fn = institutionId
+            ? window.openEditInstitutionModal
+            : window.openCreateInstitutionModal;
+        if (typeof fn !== 'function') {
+            H().toast('Education institution editor is not available.', 'error');
+            return;
+        }
+        try {
+            if (institutionId) fn(institutionId, function () {
+                H().requestRefresh(SCOPE, TAB_ID);
+            });
+            else fn(function () {
+                H().requestRefresh(SCOPE, TAB_ID);
+            }, { locationId: locationId });
+        } catch (err) {
+            H().toast('Could not open the education institution editor: ' +
+                (err.message || 'unknown error'), 'error');
+        }
+    }
+
     function _handleRemove(locationId, featureId) {
+        if (featureId === 'school') {
+            var linkedInstitutions = _getSchoolInstitutions(locationId);
+            if (linkedInstitutions === null || linkedInstitutions.length > 0) {
+                H().toast(
+                    linkedInstitutions === null
+                        ? 'Cannot verify the school institutions. Removal is blocked.'
+                        : 'Move or close the school institutions before removing this school feature.',
+                    'error'
+                );
+                return;
+            }
+        }
         var feature;
         try { feature = _getFeatureQueries().getFeatureById(featureId); }
         catch (e) { feature = null; }
@@ -209,6 +255,18 @@
     }
 
     function _handleDemolish(locationId, featureId) {
+        if (featureId === 'school') {
+            var linkedInstitutions = _getSchoolInstitutions(locationId);
+            if (linkedInstitutions === null || linkedInstitutions.length > 0) {
+                H().toast(
+                    linkedInstitutions === null
+                        ? 'Cannot verify the school institutions. Demolition is blocked.'
+                        : 'Move or close the school institutions before demolishing this school feature.',
+                    'error'
+                );
+                return;
+            }
+        }
         var feature;
         try { feature = _getFeatureQueries().getFeatureById(featureId); }
         catch (e) { feature = null; }
@@ -313,10 +371,39 @@
 
     function _buildBuiltCard(feature, locationId) {
         var costText = (typeof feature.cost === 'number')
-            ? ' \u00b7 ' + feature.cost + 'g' : '';
+            ? ' · ' + feature.cost + 'g' : '';
         var maintText = (typeof feature.maintenance === 'number'
                         && feature.maintenance > 0)
-            ? ' \u00b7 ' + feature.maintenance + 'g/yr' : '';
+            ? ' · ' + feature.maintenance + 'g/yr' : '';
+
+        var schoolInstitutions = null;
+        var schoolActions = '';
+        if (feature.id === 'school') {
+            schoolInstitutions = _getSchoolInstitutions(locationId);
+            if (schoolInstitutions && schoolInstitutions.length > 0) {
+                schoolActions = schoolInstitutions.map(function (institution) {
+                    return '<button type="button" class="st-btn st-btn--small st-btn--accent" ' +
+                        'data-action="manage-school" data-institution-id="' +
+                        esc(institution.id) + '">' +
+                        'Edit ' + esc(institution.name || 'Institution') + '</button>';
+                }).join('');
+            } else {
+                schoolActions = '<button type="button" class="st-btn st-btn--small st-btn--accent" ' +
+                    'data-action="create-school-institution">Create Institution</button>';
+            }
+        }
+
+        var featureActions = feature.id === 'school' &&
+            schoolInstitutions && schoolInstitutions.length > 0
+            ? ''
+            : '<button type="button" class="st-btn st-btn--small" ' +
+                'data-action="remove" data-feature-id="' + esc(feature.id) + '" ' +
+                'title="Remove (full refund)">' +
+                icon('REFRESH') + ' Refund</button>' +
+                '<button type="button" class="st-btn st-btn--small st-btn--danger" ' +
+                'data-action="demolish" data-feature-id="' + esc(feature.id) + '" ' +
+                'title="Demolish (no refund)">' +
+                icon('TRASH') + ' Demolish</button>';
 
         return '<div class="st-row st-row--accent">' +
             '<div class="st-row__body">' +
@@ -325,14 +412,7 @@
             esc(costText + maintText) + '</div>' +
             '</div>' +
             '<div class="st-row__actions">' +
-            '<button type="button" class="st-btn st-btn--small" ' +
-            'data-action="remove" data-feature-id="' + esc(feature.id) + '" ' +
-            'title="Remove (full refund)">' +
-            icon('REFRESH') + ' Refund</button>' +
-            '<button type="button" class="st-btn st-btn--small st-btn--danger" ' +
-            'data-action="demolish" data-feature-id="' + esc(feature.id) + '" ' +
-            'title="Demolish (no refund)">' +
-            icon('TRASH') + ' Demolish</button>' +
+            schoolActions + featureActions +
             '</div>' +
             '</div>';
     }
@@ -444,7 +524,11 @@
             event.preventDefault();
             var action = btn.dataset.action;
             var featureId = btn.dataset.featureId;
-            if (action === 'build') {
+            if (action === 'manage-school') {
+                _openSchoolInstitution(btn.dataset.institutionId, container.__stFeaturesLocationId);
+            } else if (action === 'create-school-institution') {
+                _openSchoolInstitution(null, container.__stFeaturesLocationId);
+            } else if (action === 'build') {
                 _handleBuild(container.__stFeaturesLocationId, featureId, container.__stFeaturesWealth);
             } else if (action === 'remove') {
                 _handleRemove(container.__stFeaturesLocationId, featureId);
