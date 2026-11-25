@@ -549,6 +549,7 @@
     };
 
     var _subscribers = [];
+    var _integrityErrors = [];
 
     var _rebuilding = false;
     var _rebuildPending = false;
@@ -645,11 +646,20 @@
         _clearCaches();
         _characters = window.getCharacters();
         var characters = _characters;
+        _integrityErrors = [];
+        var seenIds = new Set();
 
         for (var i = 0; i < characters.length; i++) {
             var c = characters[i];
-            if (!c || !_hasId(c.id)) continue;
-
+            if (!c || !_hasId(c.id)) {
+                _integrityErrors.push('invalid_character_record_at_index:' + i);
+                continue;
+            }
+            if (seenIds.has(c.id)) {
+                _integrityErrors.push('duplicate_character_id:' + c.id + ':index:' + i);
+                continue;
+            }
+            seenIds.add(c.id);
             _byId.set(c.id, c);
 
             var fullName = (typeof c.name === 'string' ? c.name : '')
@@ -1904,6 +1914,25 @@
         __owner: 'character/character-state.js',
 
         subscribe: subscribe,
+        validateIntegrity: function () {
+            var errors = _integrityErrors.slice();
+            var seen = new Set();
+            var coll = _getCanonicalCollection();
+            if (!coll.ok) errors.push('canonical_collection_unavailable:' + coll.reason);
+            else {
+                for (var i = 0; i < coll.collection.length; i++) {
+                    var record = coll.collection[i];
+                    if (!record || !_hasId(record.id)) {
+                        errors.push('invalid_character_record_at_index:' + i);
+                        continue;
+                    }
+                    if (seen.has(record.id)) errors.push('duplicate_character_id:' + record.id + ':index:' + i);
+                    seen.add(record.id);
+                    if (!_byId.has(record.id)) errors.push('character_missing_from_byId:' + record.id);
+                }
+            }
+            return { valid: errors.length === 0, errors: Array.from(new Set(errors)) };
+        },
 
         getAllCharacters: getAllCharacters,
         getTotalCharacterCount: getTotalCharacterCount,
