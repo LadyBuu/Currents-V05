@@ -2376,9 +2376,22 @@
                 dept.headId = null;
                 dept.headName = null;
             } else {
-                var head = null;
-                try { head = window.getCharacterById(updates.headId); }
-                catch (e) {}
+                if (typeof window.getCharacterById !== 'function') {
+                    return _fail(
+                        'DEPENDENCY_MISSING',
+                        'Cannot verify department head: getCharacterById is unavailable'
+                    );
+                }
+                var head;
+                try {
+                    head = window.getCharacterById(updates.headId);
+                } catch (headLookupError) {
+                    return _fail(
+                        'LOOKUP_FAILED',
+                        'Could not verify department head: ' +
+                        (headLookupError.message || String(headLookupError))
+                    );
+                }
                 if (!head) return _fail('CHARACTER_NOT_FOUND', 'Character not found');
                 if (_findMember(household, updates.headId) === -1) {
                     return _fail('NOT_MEMBER', 'Character is not a member');
