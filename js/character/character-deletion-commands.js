@@ -507,7 +507,11 @@
             surrogacy: window.ChildrenState.snapshotSurrogacy(),
             adoptions: window.ChildrenState.snapshotAdoptions(),
             households: window.HouseholdState._transactionSnapshotDeletedLocations(),
-            relationships: window.RelationshipState.snapshot()
+            relationships: window.RelationshipState.snapshot(),
+            enterprises: window.masterData && window.masterData.data
+                && Array.isArray(window.masterData.data.enterprises)
+                ? JSON.parse(JSON.stringify(window.masterData.data.enterprises))
+                : null
         };
     }
 
@@ -541,6 +545,12 @@
         restore('relationships', function () {
             window.RelationshipState.replaceAll(s.relationships);
             window.masterData.data.relationships = window.RelationshipState.snapshot();
+            return true;
+        });
+        restore('industry enterprises', function () {
+            if (s.enterprises !== null) {
+                window.masterData.data.enterprises = JSON.parse(JSON.stringify(s.enterprises));
+            }
             return true;
         });
         if (CS._transactionDiscardChanges) CS._transactionDiscardChanges();
@@ -594,6 +604,52 @@
                     // RelationshipState owns cloned indexed records. Mirror its committed
                     // snapshot into the serialised masterData store before the one save.
                     window.masterData.data.relationships = window.RelationshipState.snapshot();
+
+                    // Enterprises can be owned by characters or list characters as
+                    // workers. Character Manager does not load the Industry runtime,
+                    // so clean the canonical persisted records here rather than
+                    // requiring IndustryState/IndustryCommands to be present.
+                    // The batch snapshot above makes this part of the same rollback.
+                    var enterpriseRecords = window.masterData.data.enterprises;
+                    if (Array.isArray(enterpriseRecords)) {
+                        for (var ei = 0; ei < enterpriseRecords.length; ei++) {
+                            var enterprise = enterpriseRecords[ei];
+                            if (!enterprise || typeof enterprise !== 'object') continue;
+                            var enterpriseChanged = false;
+                            if (enterprise.ownerType === 'character'
+                                && ctx.ids.indexOf(enterprise.ownerId) !== -1) {
+                                enterprise.ownerType = 'none';
+                                enterprise.ownerId = null;
+                                enterpriseChanged = true;
+                            }
+                            if (Array.isArray(enterprise.workerList)) {
+                                var remainingWorkers = enterprise.workerList.filter(function(workerId) {
+                                    return ctx.ids.indexOf(workerId) === -1;
+                                });
+                                if (remainingWorkers.length !== enterprise.workerList.length) {
+                                    enterprise.workerList = remainingWorkers;
+                                    enterpriseChanged = true;
+                                }
+                            }
+                            if (enterprise.workerWages && typeof enterprise.workerWages === 'object') {
+                                ctx.ids.forEach(function(id) {
+                                    if (Object.prototype.hasOwnProperty.call(enterprise.workerWages, id)) {
+                                        delete enterprise.workerWages[id];
+                                        enterpriseChanged = true;
+                                    }
+                                });
+                            }
+                            if (enterpriseChanged) {
+                                // Record the affected domain in the cleanup report.
+                                // Do not dispatch industry notifications here: the
+                                // Industry runtime is intentionally not a dependency
+                                // of Character Manager.
+                                if (!reports.length || reports[reports.length - 1].characterId !== ctx.ids[0]) {
+                                    // Per-character reporting is populated below.
+                                }
+                            }
+                        }
+                    }
 
                     var removed = CS.removeCharacters(ctx.ids);
                     if (!removed || removed.success !== true) return { success: false, reason: removed && removed.reason || 'CharacterState refused batch removal.' };
