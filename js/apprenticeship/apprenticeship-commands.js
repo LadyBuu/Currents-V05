@@ -1436,7 +1436,7 @@
             }
         }
 
-        if (failed.length > 0 && removed.length > 0) {
+        if (failed.length > 0) {
             try {
                 window.RelationshipState.replaceAll(relationshipSnapshot);
             } catch (rollbackError) {
