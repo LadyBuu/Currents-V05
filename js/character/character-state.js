@@ -752,7 +752,9 @@
         if (options.deferCommit === true && !active) {
             throw new Error('Deferred Character notifications require an active CrossDomainTransaction.');
         }
-        window.markDataDirty();
+        // The transaction coordinator performs the one durable save after
+        // every participant has applied successfully.
+        if (!active) window.markDataDirty();
         _invalidateAccessorCaches();
         if (active || options.deferCommit === true) {
             _transactionChangeQueue.push({
