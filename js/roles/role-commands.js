@@ -685,13 +685,16 @@
         var characters = [];
         var professionSnapshots = [];
         if (removeFromCharacters) {
-            if (typeof window.getCharacters !== 'function' ||
+            if (!window.CharacterState ||
+                typeof window.CharacterState.getAllCharacters !== 'function' ||
                 typeof CC.getProfessions !== 'function' ||
                 typeof CC.replaceProfessions !== 'function') {
                 return _fail('Character profession snapshot/restore is unavailable; role deletion is blocked.');
             }
             try {
-                characters = window.getCharacters() || [];
+                // Use the same canonical character collection as
+                // CharacterCommands.removeProfessionFromAll.
+                characters = window.CharacterState.getAllCharacters() || [];
                 for (var ci = 0; ci < characters.length; ci++) {
                     var character = characters[ci];
                     if (!character || !character.id) continue;
