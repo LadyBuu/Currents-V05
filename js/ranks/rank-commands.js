@@ -429,14 +429,14 @@
      */
     function deleteRank(rankId, options) {
         options = options || {};
+        if (!_isPlainObject(options)) return _fail('options must be a plain object.');
         if (!_hasId(rankId)) return _fail('rankId is required.');
 
         var rank = RS.getRank(rankId);
         if (!rank) return _fail('Rank not found.');
 
-        // Government positions are an external policy reference. Rank deletion
-        // must not silently invalidate their eligibility requirements, even
-        // when the caller requests force deletion of character assignments.
+        // Government positions and government-type allowlists are external
+        // policy references. Never invalidate them, even under force mode.
         var governmentQueries = window.GovernmentQueries;
         var governmentPositions = [];
         var governmentTypes = [];
@@ -463,99 +463,140 @@
                 return _fail('Government queries are unavailable; cannot verify rank references. Deletion is blocked.');
             }
         }
-        if (governmentTypes.length > 0) {
-            var typeExamples = governmentTypes.slice(0, 3).map(function(type) {
-                return '"' + (type.name || type.id) + '"';
-            });
+        if (governmentTypes.length > 0 || governmentPositions.length > 0) {
             return _fail(
-                'Cannot delete rank referenced by ' + governmentTypes.length +
-                ' Government Type allowed-rank list(s): ' + typeExamples.join(', ') +
-                (governmentTypes.length > 3 ? ', and others' : '') +
-                '. Update those Government Types first.'
-            );
-        }
-        if (governmentPositions.length > 0) {
-            var examples = governmentPositions.slice(0, 3).map(function(position) {
-                return '"' + (position.name || position.id) + '"';
-            });
-            return _fail(
-                'Cannot delete rank referenced by ' + governmentPositions.length +
-                ' Government position(s): ' + examples.join(', ') +
-                (governmentPositions.length > 3 ? ', and others' : '') +
-                '. Update those positions first. Force deletion does not remove Government requirements.'
-            );
-        }
-
-        var holders = RQ.getCharactersWithRank(rankId, false);
-        var force = options.force === true;
-
-        if (holders.length > 0 && !force) {
-            return _fail(
-                'Cannot delete rank with ' + holders.length +
-                ' active holder(s). Remove or deprecate assignments first, ' +
-                'or pass { force: true }.'
+                'Cannot delete rank while Government references it (' +
+                governmentTypes.length + ' government type(s), ' +
+                governmentPositions.length + ' position(s)). Update those references first.'
             );
         }
 
         var allRanks = RS.getAllRanks();
         var referrers = [];
         for (var i = 0; i < allRanks.length; i++) {
-            var r = allRanks[i];
-            if (!r || r.id === rankId) continue;
-            if (r.parentRankId === rankId) referrers.push({ id: r.id, field: 'parentRankId' });
-            if (r.sourceRankId === rankId) referrers.push({ id: r.id, field: 'sourceRankId' });
-        }
-        if (referrers.length > 0 && !force) {
-            return _fail(
-                'Cannot delete rank referenced by ' + referrers.length +
-                ' other rank(s) as parent or source. Pass { force: true } to ' +
-                'null the references and proceed.'
-            );
-        }
-
-        if (force && holders.length > 0) {
-            for (var h = 0; h < holders.length; h++) {
-                var holderId = holders[h].id;
-                var removeResult = CC.removeRankAssignment(holderId, rankId);
-                if (!removeResult || removeResult.success !== true) {
-                    return _fail('Failed to remove rank assignment from character ' +
-                        holderId + ': ' +
-                        (removeResult && removeResult.reason
-                            ? removeResult.reason
-                            : 'unknown error'));
-                }
+            var referringRank = allRanks[i];
+            if (!referringRank || referringRank.id === rankId) continue;
+            if (referringRank.parentRankId === rankId) {
+                referrers.push({ id: referringRank.id, field: 'parentRankId' });
+            }
+            if (referringRank.sourceRankId === rankId) {
+                referrers.push({ id: referringRank.id, field: 'sourceRankId' });
             }
         }
 
-        if (force && referrers.length > 0) {
+        var force = options.force === true;
+        if (referrers.length > 0 && !force) {
+            return _fail('Cannot delete rank referenced by ' + referrers.length +
+                ' other rank(s) as parent or source. Pass { force: true } to clear those references.');
+        }
+
+        // Inspect every character assignment, including deprecated records.
+        // A deleted catalogue entry must not leave historical assignments
+        // pointing at a rank that no longer exists.
+        var characterState = window.CharacterState;
+        if (!characterState || typeof characterState.getAllCharacters !== 'function' ||
+            typeof characterState._transactionSnapshotCharacter !== 'function' ||
+            typeof characterState._transactionRestoreCharacter !== 'function') {
+            return _fail('Character transaction support is required to safely delete a rank.');
+        }
+        var allCharacters = characterState.getAllCharacters();
+        var assignmentsToRemove = [];
+        var characterSnapshots = [];
+        for (var characterIndex = 0; characterIndex < allCharacters.length; characterIndex++) {
+            var character = allCharacters[characterIndex];
+            if (!character || !Array.isArray(character.rankAssignments)) continue;
+            var matching = character.rankAssignments.filter(function (assignment) {
+                return assignment && assignment.rankId === rankId;
+            });
+            if (matching.length === 0) continue;
+            if (!force) {
+                return _fail('Cannot delete rank while character ' + character.id +
+                    ' retains an assignment (active or deprecated). Pass { force: true } to remove assignments.');
+            }
+            if (character.isDeleted === true) {
+                return _fail('Cannot force-delete this rank while soft-deleted character ' +
+                    character.id + ' retains an assignment. Restore or permanently remove that character first.');
+            }
+            if (matching.length > 1) {
+                return _fail('Character ' + character.id +
+                    ' has duplicate assignments for this rank; repair the duplicate before deletion.');
+            }
+            assignmentsToRemove.push(character.id);
+        }
+
+        if (force && assignmentsToRemove.length > 0) {
+            try {
+                for (var snapshotIndex = 0; snapshotIndex < assignmentsToRemove.length; snapshotIndex++) {
+                    characterSnapshots.push(characterState._transactionSnapshotCharacter(
+                        assignmentsToRemove[snapshotIndex]
+                    ));
+                }
+            } catch (snapshotError) {
+                return _fail('Could not snapshot character assignments before rank deletion: ' +
+                    (snapshotError && snapshotError.message ? snapshotError.message : 'unknown error'));
+            }
+        }
+
+        var rankSnapshot = RS.getAllRanks();
+        var inheritanceSnapshot = RS.getInheritanceRules();
+        var changed = false;
+        try {
+            for (var h = 0; h < assignmentsToRemove.length; h++) {
+                var removeResult = CC.removeRankAssignment(assignmentsToRemove[h], rankId);
+                if (!removeResult || removeResult.success !== true) {
+                    throw new Error('Failed to remove rank assignment from character ' +
+                        assignmentsToRemove[h] + ': ' +
+                        ((removeResult && removeResult.reason) || 'unknown error'));
+                }
+                changed = true;
+            }
+
             for (var r = 0; r < referrers.length; r++) {
                 var ref = referrers[r];
                 var patch = {};
                 patch[ref.field] = null;
-                // Coherence: clearing sourceRankId requires inheritanceSource
-                // to become 'none'. The current rank record has its own
-                // inheritanceSource which we reset here.
-                if (ref.field === 'sourceRankId') {
-                    patch.inheritanceSource = 'none';
-                }
+                if (ref.field === 'sourceRankId') patch.inheritanceSource = 'none';
                 var updateResult = RS._updateRank(ref.id, patch);
-                if (!updateResult) {
-                    return _fail('Failed to update referring rank ' + ref.id + '.');
+                if (!updateResult) throw new Error('Failed to update referring rank ' + ref.id + '.');
+                changed = true;
+            }
+
+            var deleted = RS._removeRank(rankId);
+            if (!deleted) throw new Error('RankState refused the delete.');
+        } catch (deleteError) {
+            var rollbackErrors = [];
+            for (var rollbackIndex = characterSnapshots.length - 1; rollbackIndex >= 0; rollbackIndex--) {
+                var restored = characterState._transactionRestoreCharacter(characterSnapshots[rollbackIndex]);
+                if (!restored || restored.success !== true) {
+                    rollbackErrors.push('character ' + characterSnapshots[rollbackIndex].id +
+                        ': ' + ((restored && restored.reason) || 'restore failed'));
                 }
             }
+            if (changed || referrers.length > 0) {
+                try {
+                    window.masterData.data.ranks = rankSnapshot;
+                    window.masterData.data.rankInheritanceRules = inheritanceSnapshot;
+                    RS.hydrateFromMasterData(rankSnapshot, inheritanceSnapshot);
+                } catch (rankRollbackError) {
+                    rollbackErrors.push('rank catalogue: ' +
+                        (rankRollbackError && rankRollbackError.message
+                            ? rankRollbackError.message
+                            : 'restore failed'));
+                }
+            }
+            return _fail((deleteError && deleteError.message
+                ? deleteError.message
+                : 'Rank deletion failed') +
+                (rollbackErrors.length
+                    ? ' Rollback was incomplete: ' + rollbackErrors.join('; ')
+                    : ' All changes were rolled back.'));
         }
 
-        try {
-            var deleted = RS._removeRank(rankId);
-            if (!deleted) return _fail('RankState refused the delete.');
-            return _ok({
-                rankId: rankId,
-                removedAssignments: force ? holders.length : 0,
-                clearedReferences: force ? referrers.length : 0
-            });
-        } catch (e) {
-            return _fail(e && e.message ? e.message : 'RankState refused the delete.');
-        }
+        return _ok({
+            rankId: rankId,
+            removedAssignments: assignmentsToRemove.length,
+            clearedReferences: referrers.length
+        });
     }
 
     // =========================================================================
