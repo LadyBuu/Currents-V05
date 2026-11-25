@@ -568,12 +568,25 @@
                 _toast('Storage not initialized', 'error');
                 return;
             }
+            var previousYear = window.masterData.data.currentYear;
             window.masterData.data.currentYear = y;
-            if (typeof window.markDataDirty === 'function') {
-                try { window.markDataDirty(); } catch (e) { /* ignore */ }
-            }
-            if (typeof window.saveMasterData === 'function') {
-                try { window.saveMasterData(); } catch (e) { /* ignore */ }
+            try {
+                if (typeof window.markDataDirty === 'function') window.markDataDirty();
+                if (typeof window.saveMasterData === 'function' &&
+                    window.saveMasterData() === false) {
+                    window.masterData.data.currentYear = previousYear;
+                    if (typeof window.markDataDirty === 'function') window.markDataDirty();
+                    _syncYearInput();
+                    _toast('Could not save the selected year. Previous year restored.', 'error');
+                    return;
+                }
+            } catch (saveError) {
+                window.masterData.data.currentYear = previousYear;
+                try { if (typeof window.markDataDirty === 'function') window.markDataDirty(); } catch (ignore) {}
+                _syncYearInput();
+                _toast('Could not save the selected year: ' +
+                    (saveError.message || 'unknown error'), 'error');
+                return;
             }
         }
 
@@ -630,7 +643,6 @@
 
     function init() {
         if (_initialized) return;
-        _initialized = true;
 
         var TabManager;
         var uiState;
@@ -729,6 +741,7 @@
         _syncTabStrip(uiState.getActiveTabId());
 
         TabManager.renderActive(SCOPE);
+        _initialized = true;
     }
 
     // =========================================================================
