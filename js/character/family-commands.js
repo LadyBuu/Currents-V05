@@ -691,6 +691,18 @@
      * @param {string} characterId
      * @returns {{ success: boolean, removedCount: number }}
      */
+    function _restoreFamilyCleanupSnapshot(snapshot) {
+        var restored = FS.replaceAll(snapshot);
+        if (restored !== true) {
+            throw new Error('FamilyState refused to restore the cleanup snapshot.');
+        }
+        if (!window.masterData || !window.masterData.data) {
+            throw new Error('masterData.data is unavailable during family cleanup rollback.');
+        }
+        window.masterData.data.parentChildEdges = FS.snapshot();
+        return true;
+    }
+
     function removeAllReferencesTo(characterId) {
         if (!_hasId(characterId)) {
             return _fail('characterId is required.');
@@ -731,7 +743,7 @@
 
         if (failures.length > 0) {
             try {
-                FS.replaceAll(snapshotBeforeCleanup);
+                _restoreFamilyCleanupSnapshot(snapshotBeforeCleanup);
                 return {
                     success: false,
                     partial: false,
@@ -763,7 +775,7 @@
             }
             if (!familyCommitSucceeded) {
                 try {
-                    FS.replaceAll(snapshotBeforeCleanup);
+                    _restoreFamilyCleanupSnapshot(snapshotBeforeCleanup);
                 } catch (rollbackError) {
                     return {
                         success: false,
