@@ -1360,3 +1360,56 @@ button, input, select, textarea, a,
         scroll-behavior: auto !important;
     }
 }
+
+
+/* --- Dating Sim: shoujo visual-novel romance --- */
+[data-theme="dating-sim"] {
+    --bg: #fff0f7; --surface: #fffafd; --surface-2: #ffe0ee;
+    --line: #f3a1c5; --line-strong: #e45b9a;
+    --fg: #54213f; --fg-2: #8d4e72; --fg-3: #b77b9c;
+    --accent: #f04491; --accent-fg: #fff; --accent-soft: rgba(240,68,145,.16);
+    --ok: #63b99a; --bad: #e94b69;
+    --st-idea: #b77b9c; --st-outlined: #a58be8; --st-draft: #e8ae45;
+    --st-revised: #f04491; --st-final: #63b99a;
+    --v-au: #f04491; --v-alt: #a58be8;
+    --r-a: #f04491; --r-b: #75c8e8; --r-c: #63b99a;
+    --r-d: #f4c45e; --r-e: #a58be8; --r-f: #f28a73;
+    --radius: 14px; --shadow: 0 5px 18px rgba(202,74,139,.18);
+    --scrollbar-track: var(--bg); --scrollbar-thumb: var(--line);
+    --chip-bg-subtle: rgba(240,68,145,.10);
+    --bg2: var(--surface); --bg3: var(--surface-2); --bg4: #ffd0e5;
+    --bg-card: var(--surface); --bg-solid: var(--bg);
+    --text: var(--fg); --dim: var(--fg-2); --tmut: var(--fg-3);
+    --border: var(--line); --border2: var(--line-strong);
+    --border-light: color-mix(in srgb, var(--line) 60%, transparent);
+    --accent-dark: #c92d76; --accent-light: #ff9dca; --accent-dim: var(--accent-soft);
+    --accent-glow: rgba(240,68,145,.3); --accent-glow-strong: rgba(240,68,145,.5);
+    --glow-sm: 0 0 5px var(--accent-glow); --glow-md: 0 0 10px var(--accent-glow);
+    --glow-lg: 0 0 20px var(--accent-glow); --glow-strong: 0 0 15px var(--accent-glow-strong);
+    --modal-overlay: rgba(84,33,63,.55); --modal-bg: var(--surface);
+    --success: var(--ok); --warn: var(--st-draft); --danger: #b92752; --danger-lt: var(--bad);
+    --deceased: var(--fg-3); --info: #438fbd; --info-soft: rgba(67,143,189,.14);
+    --info-hover: rgba(67,143,189,.25); --danger-soft: rgba(233,75,105,.14);
+    --danger-hover: rgba(233,75,105,.25); --warning: var(--st-draft);
+    --warning-soft: rgba(232,174,69,.15); --warning-hover: rgba(232,174,69,.28);
+    color-scheme: light;
+}
+[data-theme="dating-sim"] body {
+    background: radial-gradient(ellipse at 15% 5%, #ffd2e7 0%, transparent 40%),
+                radial-gradient(ellipse at 85% 95%, #e5d8ff 0%, transparent 42%), var(--bg);
+    background-attachment: fixed;
+}
+[data-theme="dating-sim"] .topbar,
+[data-theme="dating-sim"] .sidebar-header,
+[data-theme="dating-sim"] .manager-subtabs {
+    background-image: repeating-linear-gradient(90deg, #f04491 0 18px, #f4c45e 18px 36px, #75c8e8 36px 54px, #a58be8 54px 72px);
+    background-size: 100% 4px; background-repeat: no-repeat; background-position: bottom;
+}
+[data-theme="dating-sim"] .rt-panel,
+[data-theme="dating-sim"] .rt-god-card {
+    border-radius: 14px; border-color: #f3a1c5;
+    box-shadow: 0 4px 0 rgba(240,68,145,.12);
+}
+[data-theme="dating-sim"] h1,
+[data-theme="dating-sim"] h2,
+[data-theme="dating-sim"] h3 { color: #c92d76; }
