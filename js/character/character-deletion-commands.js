@@ -639,15 +639,6 @@
                                     }
                                 });
                             }
-                            if (enterpriseChanged) {
-                                // Record the affected domain in the cleanup report.
-                                // Do not dispatch industry notifications here: the
-                                // Industry runtime is intentionally not a dependency
-                                // of Character Manager.
-                                if (!reports.length || reports[reports.length - 1].characterId !== ctx.ids[0]) {
-                                    // Per-character reporting is populated below.
-                                }
-                            }
                         }
                     }
 
