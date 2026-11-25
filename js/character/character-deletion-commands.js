@@ -517,7 +517,7 @@
             try { var r = fn(); if (r === false || (r && r.success === false)) errors.push(name + ': ' + (r.reason || 'restore rejected')); }
             catch (e) { errors.push(name + ': ' + (e.message || String(e))); }
         }
-        restore('characters', function () { return CS._transactionRestoreDeletedLocations(s.characters); });
+        restore('characters', function () { return CS._transactionRestoreDeletedLocations(s.characters, { suppressDirty: true }); });
         restore('family', function () {
             if (window.FamilyState.replaceAll(s.family) !== true) throw new Error('FamilyState rejected snapshot');
             window.masterData.data.parentChildEdges = window.FamilyState.snapshot(); return true;
