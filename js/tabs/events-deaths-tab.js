@@ -347,8 +347,8 @@
         if (!C || !vm) return '';
 
         var genderOpts = vm.toGenderFilterOptions(filters.gender);
-        var sortOpts   = vm.toSortFilterOptions
-            ? vm.toSortFilterOptions(filters.sortBy)
+        var sortOpts   = vm.toSortOptions
+            ? vm.toSortOptions(filters.sortBy)
             : [];
 
         var U = _ui();
@@ -550,7 +550,7 @@
         // If showAllLocations is true, we fetch the roster with a
         // null locationId (all locations). If false, we fetch with
         // the sidebar's locationId.
-        var effectiveLocationId = _state.showAllLocations ? null : locationId;
+        var effectiveLocationId = _state.showAllLocations ? null : (_state.locationId || locationId);
         var roster = q.getCharacterRoster(effectiveLocationId);
         var statsBar = _resolveStatsBar({
             locationId: effectiveLocationId,
