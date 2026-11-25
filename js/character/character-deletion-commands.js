@@ -133,9 +133,16 @@
  * CONTRACT:
  *   - Every public command returns { success: boolean, reason?, ... }.
  *   - Input is validated before any mutation.
- *   - No mutation lock. Commands are synchronous.
- *   - No fallbacks. If CharacterState is missing at load, this module
- *     throws.
+ *   - Hard deletion uses CrossDomainTransaction: every participating domain
+ *     is snapshotted before mutation, all cleanup and character removal run
+ *     inside one transaction, and one save is attempted after all mutations.
+ *   - Failed apply or persistence restores every captured domain in reverse
+ *     transaction rollback. Rollback failures are reported explicitly.
+ *   - Notifications are buffered during the transaction and published only
+ *     after the durable save succeeds.
+ *   - Soft deletion remains a CharacterState-only operation.
+ *   - Commands are synchronous. If CharacterState is missing at load, this
+ *     module throws.
  *
  * DEPENDENCIES (REQUIRED):
  *   - character-state.js  (CharacterState.removeCharacter,
@@ -597,7 +604,7 @@
             }]
         });
         return { success: tx.success === true, code: tx.code, reason: tx.reason || null,
-            rolledBack: tx.rolledBack === true, rollbackErrors: tx.rollbackErrors || [],
+            rolledBack: tx.rolledBack === true || tx.code === 'TRANSACTION_SETUP_FAILED' || tx.code === 'PREPARATION_FAILED' || tx.code === 'INVALID_TRANSACTION', rollbackErrors: tx.rollbackErrors || [],
             deletedIds: tx.success ? ids.slice() : [], cleanup: reports, transaction: tx };
     }
 
