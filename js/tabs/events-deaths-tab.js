@@ -253,24 +253,15 @@
         var search = (typeof filters.search === 'string')
             ? filters.search.trim().toLowerCase()
             : '';
-        var status = filters.status || 'all';
-        var cause = filters.cause || 'all';
-        var gender = filters.gender || 'all';
+                var gender = filters.gender || 'all';
 
         var filtered = [];
         for (var i = 0; i < characters.length; i++) {
             var c = characters[i];
             if (!c) continue;
 
-            // Status
-            if (status === 'living' && c.isDeceased !== false) continue;
-            if (status === 'deceased' && c.isDeceased !== true) continue;
-
-            // Cause (only meaningful for deceased characters)
-            if (cause !== 'all') {
-                if (c.isDeceased !== true) continue;
-                if (c.deathCause !== cause) continue;
-            }
+            // This tab is for selecting living characters to kill.
+            if (c.isDeceased === true) continue;
 
             // Gender
             if (gender !== 'all' && c.gender !== gender) continue;
@@ -355,8 +346,6 @@
         var vm = _vm();
         if (!C || !vm) return '';
 
-        var statusOpts = vm.toStatusFilterOptions(filters.status);
-        var causeOpts  = vm.toCauseFilterOptions(filters.cause);
         var genderOpts = vm.toGenderFilterOptions(filters.gender);
         var sortOpts   = vm.toSortFilterOptions
             ? vm.toSortFilterOptions(filters.sortBy)
@@ -423,10 +412,6 @@
             'value="' + _esc(filters.search || '') + '">';
 
         // Row 2: filter selects
-        html += '<select class="ev-deaths-input events-filters__select" data-input="status">' +
-            optionHtml(statusOpts) + '</select>';
-        html += '<select class="ev-deaths-input events-filters__select" data-input="cause">' +
-            optionHtml(causeOpts) + '</select>';
         html += '<select class="ev-deaths-input events-filters__select" data-input="gender">' +
             optionHtml(genderOpts) + '</select>';
         html += '<select class="ev-deaths-input events-filters__select" data-input="sortBy">' +
@@ -535,7 +520,6 @@
             locationId: effectiveLocationId,
             eventsState: context && context.eventsState
         });
-        var recentEvents = _resolveRecentEvents();
 
         // 4. Apply filters + shape
         var characters = (roster && roster.available === true && Array.isArray(roster.characters))
@@ -554,7 +538,6 @@
         );
         var bodyHtml = U.renderTabBody({
             statsBar: statsBar,
-            recentEvents: recentEvents,
             rows: rows,
             emptyState: emptyState,
             emptyStateOptions: emptyState ? _emptyStateOptions(emptyState, roster) : null
