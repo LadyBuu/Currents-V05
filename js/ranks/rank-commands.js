@@ -439,15 +439,9 @@
         // This reference is never force-cleared: doing so would leave a
         // settlement without a valid civic rank.
         var settlementState = window.SettlementState;
-        if (!settlementState ||
-            typeof settlementState.getLocationIdsByRank !== 'function') {
-            var settlementStore = window.masterData && window.masterData.data &&
-                window.masterData.data.settlementData;
-            if (settlementStore && Object.keys(settlementStore).length > 0) {
-                return _fail('Settlement rank references cannot be checked; deletion is blocked.');
-            }
-        } else {
-            var settlementReferences;
+        var settlementReferences;
+        if (settlementState &&
+            typeof settlementState.getLocationIdsByRank === 'function') {
             try {
                 settlementReferences = settlementState.getLocationIdsByRank(rankId);
             } catch (settlementReferenceError) {
@@ -456,10 +450,30 @@
             if (!Array.isArray(settlementReferences)) {
                 return _fail('Settlement rank references could not be read; deletion is blocked.');
             }
-            if (settlementReferences.length > 0) {
-                return _fail('Cannot delete rank while ' + settlementReferences.length +
-                    ' settlement(s) use it. Assign those settlements another rank first.');
+        } else {
+            // Rank Manager can run without SettlementState. Check the
+            // canonical settlement records directly instead of blocking
+            // every rank deletion whenever any settlement exists.
+            var settlementStore = window.masterData && window.masterData.data
+                ? window.masterData.data.settlementData
+                : {};
+            if (settlementStore == null) settlementStore = {};
+            if (typeof settlementStore !== 'object' || Array.isArray(settlementStore)) {
+                return _fail('Settlement rank references cannot be checked; deletion is blocked.');
             }
+            settlementReferences = [];
+            var settlementIds = Object.keys(settlementStore);
+            for (var si = 0; si < settlementIds.length; si++) {
+                var settlement = settlementStore[settlementIds[si]];
+                if (!settlement || typeof settlement !== 'object' || Array.isArray(settlement)) {
+                    return _fail('Settlement rank references cannot be checked because a settlement record is malformed; deletion is blocked.');
+                }
+                if (settlement.rankId === rankId) settlementReferences.push(settlementIds[si]);
+            }
+        }
+        if (settlementReferences.length > 0) {
+            return _fail('Cannot delete rank while ' + settlementReferences.length +
+                ' settlement(s) use it. Assign those settlements another rank first.');
         }
 
         // Government positions and government-type allowlists are external
