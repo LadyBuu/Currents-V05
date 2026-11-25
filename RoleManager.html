@@ -1307,11 +1307,32 @@
             window.alert('Year is outside the allowed range.');
             return;
         }
-        if (window.masterData && window.masterData.data) {
-            window.masterData.data.currentYear = val;
+        if (!window.masterData || !window.masterData.data) {
+            window.alert('Storage is not initialized.');
+            syncYearInput();
+            return;
         }
-        if (typeof window.markDataDirty === 'function') window.markDataDirty();
-        if (typeof window.saveMasterData === 'function') window.saveMasterData();
+        var previousYear = window.masterData.data.currentYear;
+        window.masterData.data.currentYear = val;
+        try {
+            if (typeof window.markDataDirty === 'function') window.markDataDirty();
+            if (typeof window.saveMasterData === 'function' &&
+                window.saveMasterData() === false) {
+                window.masterData.data.currentYear = previousYear;
+                if (typeof window.markDataDirty === 'function') window.markDataDirty();
+                syncYearInput();
+                window.alert('Could not save the selected year. Previous year restored.');
+                return;
+            }
+        } catch (saveError) {
+            window.masterData.data.currentYear = previousYear;
+            try { if (typeof window.markDataDirty === 'function') window.markDataDirty(); } catch (ignore) {}
+            syncYearInput();
+            window.alert('Could not save the selected year: ' +
+                (saveError.message || 'unknown error'));
+            return;
+        }
+        syncYearInput();
         renderActiveTab();
     });
 
