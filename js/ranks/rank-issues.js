@@ -1216,9 +1216,21 @@
         var renumberErrors = [];
         for (var rankId in touchedRanks) {
             if (!Object.prototype.hasOwnProperty.call(touchedRanks, rankId)) continue;
-            var rn = RC.renumberRankHolders(rankId);
-            if (!rn.success && rn.reason) {
-                renumberErrors.push({ rankId: rankId, reason: rn.reason });
+            try {
+                var rn = RC.renumberRankHolders(rankId);
+                if (!rn || rn.success !== true) {
+                    renumberErrors.push({
+                        rankId: rankId,
+                        reason: rn && rn.reason
+                            ? rn.reason : 'Rank holder renumbering failed.'
+                    });
+                }
+            } catch (renumberError) {
+                renumberErrors.push({
+                    rankId: rankId,
+                    reason: renumberError && renumberError.message
+                        ? renumberError.message : 'Rank holder renumbering threw.'
+                });
             }
         }
 
