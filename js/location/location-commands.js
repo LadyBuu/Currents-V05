@@ -881,6 +881,41 @@
             );
         }
 
+        // Enterprises are active Industry entities with a direct locationId
+        // foreign key. They are not disposable Location children; require
+        // relocation before deleting their current place.
+        var enterpriseStore = window.masterData && window.masterData.data
+            ? window.masterData.data.enterprises
+            : [];
+        if (enterpriseStore != null && !Array.isArray(enterpriseStore)) {
+            return _fail('deletePlace: cannot verify Industry references because enterprises is malformed');
+        }
+        var industryBlockers = [];
+        for (var industryIndex = 0; industryIndex < (enterpriseStore || []).length; industryIndex++) {
+            var enterprise = enterpriseStore[industryIndex];
+            if (!enterprise || typeof enterprise !== 'object') {
+                return _fail(
+                    'deletePlace: cannot verify Industry references because an enterprise is malformed at index ' +
+                    industryIndex
+                );
+            }
+            if (enterprise.locationId &&
+                Object.prototype.hasOwnProperty.call(toRemove, enterprise.locationId)) {
+                industryBlockers.push({
+                    id: enterprise.id || null,
+                    name: enterprise.name || enterprise.id || 'Unnamed enterprise',
+                    locationId: enterprise.locationId
+                });
+            }
+        }
+        if (industryBlockers.length > 0) {
+            return _fail(
+                'deletePlace: Industry enterprises still reference this Location. Relocate them first: ' +
+                industryBlockers.map(function (entry) { return entry.name; }).join(', '),
+                { enterprises: industryBlockers }
+            );
+        }
+
         // Culture location associations are owned by Culture. Remove every
         // deleted Location ID through the Culture command boundary before
         // mutating the location graph. Refuse deletion if the data or command
