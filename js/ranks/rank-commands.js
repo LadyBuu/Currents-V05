@@ -574,8 +574,6 @@
             }
             if (changed || referrers.length > 0) {
                 try {
-                    window.masterData.data.ranks = rankSnapshot;
-                    window.masterData.data.rankInheritanceRules = inheritanceSnapshot;
                     RS.hydrateFromMasterData(rankSnapshot, inheritanceSnapshot);
                 } catch (rankRollbackError) {
                     rollbackErrors.push('rank catalogue: ' +
