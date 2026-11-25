@@ -3,7 +3,7 @@
  * STILL WATERS - RELATIONSHIP COMMANDS (relationship-commands.js)
  * =============================================================================
  *
- * LOCATION: js/social/relationship-commands.js
+ * LOCATION: js/relationships/relationship-commands.js
  *
  * Mutation boundary for relationship records.
  *
