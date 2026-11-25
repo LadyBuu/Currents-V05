@@ -307,8 +307,40 @@
             if (isDeceased) deceasedCount++;
             else livingCount++;
 
+            var activeRelationshipCount = 0;
+            var rq = window.RelationshipQueries;
+            if (rq && typeof rq.getActiveForCharacter === 'function') {
+                try {
+                    var activeRelationships = rq.getActiveForCharacter(summary.id);
+                    activeRelationshipCount = Array.isArray(activeRelationships)
+                        ? activeRelationships.length : 0;
+                } catch (e) { activeRelationshipCount = 0; }
+            }
+            var childCount = summary.family && typeof summary.family.childCount === 'number'
+                ? summary.family.childCount : 0;
+            var youngestChildBirthYear = null;
+            var fq = window.FamilyQueries;
+            if (fq && typeof fq.getChildIds === 'function') {
+                try {
+                    var childIds = fq.getChildIds(summary.id);
+                    if (Array.isArray(childIds)) {
+                        for (var ci = 0; ci < childIds.length; ci++) {
+                            var childSummary = cq.module.getCharacterSummary(childIds[ci]);
+                            if (childSummary && typeof childSummary.birthYear === 'number'
+                                && (youngestChildBirthYear === null
+                                    || childSummary.birthYear > youngestChildBirthYear)) {
+                                youngestChildBirthYear = childSummary.birthYear;
+                            }
+                        }
+                    }
+                } catch (e) { youngestChildBirthYear = null; }
+            }
+
             characters.push({
                 id: summary.id,
+                activeRelationshipCount: activeRelationshipCount,
+                childCount: childCount,
+                youngestChildBirthYear: youngestChildBirthYear,
                 name: typeof summary.name === 'string' ? summary.name : '',
                 surname: typeof summary.surname === 'string' ? summary.surname : '',
                 fullName: typeof summary.fullName === 'string' ? summary.fullName : '',
