@@ -254,6 +254,10 @@
         return _characterCommandsMethod('updateProfession')(cid, rid, updates);
     }
 
+    function _removeProfession(cid, rid) {
+        return _characterCommandsMethod('removeProfession')(cid, rid);
+    }
+
     function _getProfession(cid, rid) {
         return _characterCommandsMethod('getProfession')(cid, rid);
     }
@@ -329,11 +333,7 @@
         if (!dying) return fail('DYING_NOT_FOUND', 'Dying character not found');
         if (!heir) return fail('HEIR_NOT_FOUND', 'Heir not found');
 
-        // The character projection may or may not include professions.
-        // Read them through CharacterCommands to be certain. This mirrors
-        // the fix in apprenticeship-queries.getTeachableSkills.
         var dyingProfessions = _getProfessions(dyingId);
-
         if (!Array.isArray(dyingProfessions) || dyingProfessions.length === 0) {
             return ok({ preserved: [], alreadyAtOrAbove: [] });
         }
@@ -341,6 +341,7 @@
         var preserved = [];
         var alreadyAtOrAbove = [];
         var failed = [];
+        var rollbackActions = [];
 
         for (var i = 0; i < dyingProfessions.length; i++) {
             var prof = dyingProfessions[i];
@@ -351,17 +352,12 @@
             var roleId = prof.id;
             var role = _getRoleById(roleId);
             var roleName = role ? role.name : (prof.name || 'Unknown');
-
             var existing = _getProfession(heirId, roleId);
 
             if (existing) {
                 var existingLevel = typeof existing.skillLevel === 'number'
-                    ? existing.skillLevel
-                    : 0;
-
+                    ? existing.skillLevel : 0;
                 if (existingLevel >= inheritedLevel) {
-                    // Heir already at or above the inherited level. No
-                    // write; record for the caller's visibility.
                     alreadyAtOrAbove.push({
                         roleId: roleId,
                         roleName: roleName,
@@ -371,30 +367,24 @@
                     continue;
                 }
 
-                // Route through RoleCommands.recordCharacterSkillProgress
-                // so the non-decreasing invariant is enforced by the role
-                // domain. See SKILL PROGRESSION in the header.
                 var progressResult = _recordCharacterSkillProgress(
                     heirId, roleId, inheritedLevel
                 );
                 if (!progressResult || progressResult.success !== true) {
-                    var progressFailure = progressResult && progressResult.reason
-                        ? progressResult.reason : 'Skill progression failed for unknown reason.';
                     failed.push({
                         roleId: roleId,
                         roleName: roleName,
                         operation: 'progress',
-                        reason: progressFailure
+                        reason: progressResult && progressResult.reason
+                            ? progressResult.reason : 'Skill progression failed.'
                     });
-                    if (window.console && typeof window.console.warn === 'function') {
-                        window.console.warn(
-                            'ProfessionalKnowledgeCommands: skill progression ' +
-                            'failed for heir ' + heirId + ' role ' + roleId +
-                            ' (' + progressFailure + '); other roles continue.'
-                        );
-                    }
-                    continue;
+                    break;
                 }
+                rollbackActions.push({
+                    type: 'restore',
+                    roleId: roleId,
+                    skillLevel: existingLevel
+                });
             } else {
                 var addResult = _addProfession(heirId, {
                     id: roleId,
@@ -404,24 +394,17 @@
                     notes: 'Inherited from ' + dying.name,
                     specs: []
                 });
-                if (!addResult || !addResult.success) {
-                    var addFailure = addResult && addResult.reason
-                        ? addResult.reason : 'Adding inherited profession failed for unknown reason.';
+                if (!addResult || addResult.success !== true) {
                     failed.push({
                         roleId: roleId,
                         roleName: roleName,
                         operation: 'add',
-                        reason: addFailure
+                        reason: addResult && addResult.reason
+                            ? addResult.reason : 'Adding inherited profession failed.'
                     });
-                    if (window.console && typeof window.console.warn === 'function') {
-                        window.console.warn(
-                            'ProfessionalKnowledgeCommands: addProfession ' +
-                            'failed for heir ' + heirId + ' role ' + roleId +
-                            ' (' + addFailure + '); other roles continue.'
-                        );
-                    }
-                    continue;
+                    break;
                 }
+                rollbackActions.push({ type: 'remove', roleId: roleId });
             }
 
             preserved.push({
@@ -430,6 +413,48 @@
                 originalLevel: skillLevel,
                 inheritedLevel: inheritedLevel
             });
+        }
+
+        if (failed.length > 0) {
+            var rollbackErrors = [];
+            for (var r = rollbackActions.length - 1; r >= 0; r--) {
+                var action = rollbackActions[r];
+                try {
+                    var rollbackResult = action.type === 'remove'
+                        ? _removeProfession(heirId, action.roleId)
+                        : _updateProfession(heirId, action.roleId, {
+                            skillLevel: action.skillLevel
+                        });
+                    if (!rollbackResult || rollbackResult.success !== true) {
+                        rollbackErrors.push({
+                            roleId: action.roleId,
+                            reason: rollbackResult && rollbackResult.reason
+                                ? rollbackResult.reason : 'Rollback was rejected.'
+                        });
+                    }
+                } catch (rollbackError) {
+                    rollbackErrors.push({
+                        roleId: action.roleId,
+                        reason: rollbackError.message || 'Rollback threw.'
+                    });
+                }
+            }
+            return {
+                success: false,
+                code: rollbackErrors.length ? 'KNOWLEDGE_ROLLBACK_FAILED' : 'KNOWLEDGE_TRANSFER_FAILED',
+                reason: rollbackErrors.length
+                    ? 'Knowledge transfer failed and one or more heir changes could not be rolled back.'
+                    : failed[0].reason,
+                data: {
+                    dyingId: dyingId,
+                    heirId: heirId,
+                    preserved: [],
+                    alreadyAtOrAbove: alreadyAtOrAbove,
+                    failed: failed,
+                    rollbackErrors: rollbackErrors,
+                    rolledBack: rollbackErrors.length === 0
+                }
+            };
         }
 
         if (preserved.length > 0) {
@@ -445,22 +470,6 @@
             });
         }
 
-        if (failed.length > 0) {
-            return {
-                success: false,
-                code: 'PARTIAL_KNOWLEDGE_PRESERVATION',
-                reason: failed.length + ' profession(s) could not be preserved.',
-                data: {
-                    dyingId: dyingId,
-                    heirId: heirId,
-                    preserved: preserved,
-                    alreadyAtOrAbove: alreadyAtOrAbove,
-                    failed: failed,
-                    partial: preserved.length > 0
-                }
-            };
-        }
-
         return ok({
             dyingId: dyingId,
             heirId: heirId,
@@ -468,6 +477,69 @@
             alreadyAtOrAbove: alreadyAtOrAbove,
             failed: []
         });
+    }
+
+    /**
+     * Selects the oldest living biological descendant, preferring the
+     * nearest generation. If every child is deceased, searches the next
+     * generation, continuing through grandchildren and later descendants.
+     */
+    function _findKnowledgeHeir(dyingId) {
+        var family = window.FamilyQueries;
+        if (!family || typeof family.getBiologicalChildIds !== 'function') {
+            throw new Error('FamilyQueries.getBiologicalChildIds is required for knowledge inheritance.');
+        }
+
+        var generation = [dyingId];
+        var visited = Object.create(null);
+        visited[dyingId] = true;
+
+        while (generation.length > 0) {
+            var nextGeneration = [];
+            var candidates = [];
+            for (var i = 0; i < generation.length; i++) {
+                var childIds = family.getBiologicalChildIds(generation[i]) || [];
+                for (var c = 0; c < childIds.length; c++) {
+                    var childId = childIds[c];
+                    if (!childId || visited[childId]) continue;
+                    visited[childId] = true;
+                    nextGeneration.push(childId);
+                    var child = _getCharacterById(childId);
+                    if (!child || child.isDeceased === true || child.isDeleted === true) continue;
+                    if (typeof child.birthYear !== 'number' || !isFinite(child.birthYear)) continue;
+                    candidates.push(child);
+                }
+            }
+            if (candidates.length > 0) {
+                candidates.sort(function (a, b) {
+                    if (a.birthYear !== b.birthYear) return a.birthYear - b.birthYear;
+                    return String(a.id).localeCompare(String(b.id));
+                });
+                return candidates[0].id;
+            }
+            generation = nextGeneration;
+        }
+        return null;
+    }
+
+    function _handleCharacterDeathKnowledgeInheritance(characterId, context) {
+        var heirId = _findKnowledgeHeir(characterId);
+        if (!heirId) {
+            return { success: true, skipped: true, reason: 'No living biological descendants.' };
+        }
+        var result = preserveKnowledgeOnDeath(characterId, heirId);
+        if (!result || result.success !== true) {
+            return {
+                success: false,
+                code: result && result.code ? result.code : 'KNOWLEDGE_INHERITANCE_FAILED',
+                reason: result && result.reason ? result.reason : 'Professional knowledge inheritance failed.'
+            };
+        }
+        return {
+            success: true,
+            heirId: heirId,
+            data: result.data || null
+        };
     }
 
     /**
@@ -513,6 +585,11 @@
         preserveKnowledgeOnDeath: preserveKnowledgeOnDeath,
         assessKnowledgeLoss: assessKnowledgeLoss
     };
+
+    if (typeof window.registerDeathHandler === 'function') {
+        window.__professionalKnowledgeDeathHandlerUnregister =
+            window.registerDeathHandler(_handleCharacterDeathKnowledgeInheritance);
+    }
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.ProfessionalKnowledgeCommands;
