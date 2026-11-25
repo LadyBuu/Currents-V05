@@ -3,7 +3,7 @@
  * STILL WATERS - INDUSTRY BOOTSTRAP (industry-bootstrap.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/industry-bootstrap.js
+ * LOCATION: js/industry/industry-bootstrap.js
  *
  * Load-time verification and hydration for the industry domain.
  *
@@ -560,20 +560,20 @@
     //   3.  js/core/storage.js
     //   4.  js/core/accessors.js
     //
-    //   5.  js/core/industry/industry-constants.js
-    //   6.  js/core/industry/industry-economics.js
-    //   7.  js/core/industry/industry-rules.js
-    //   8.  js/core/industry/industry-type-defaults.js
-    //   9.  js/core/industry/industry-state.js
-    //   10. js/core/industry/industry-type-init.js
-    //   11. js/core/industry/industry-type-commands.js
-    //   12. js/core/industry/industry-types.js
-    //   13. js/core/industry/industry-migration.js
-    //   14. js/core/industry/industry-commands.js
-    //   15. js/core/industry/industry-queries.js
-    //   16. js/core/industry/industry-processor.js
-    //   17. js/core/industry/industry-view-models.js
-    //   18. js/core/industry/industry-bootstrap.js
+    //   5.  js/industry/industry-constants.js
+    //   6.  js/industry/industry-economics.js
+    //   7.  js/industry/industry-rules.js
+    //   8.  js/industry/industry-type-defaults.js
+    //   9.  js/industry/industry-state.js
+    //   10. js/industry/industry-type-init.js
+    //   11. js/industry/industry-type-commands.js
+    //   12. js/industry/industry-types.js
+    //   13. js/industry/industry-migration.js
+    //   14. js/industry/industry-commands.js
+    //   15. js/industry/industry-queries.js
+    //   16. js/industry/industry-processor.js
+    //   17. js/industry/industry-view-models.js
+    //   18. js/industry/industry-bootstrap.js
     //
     // And earlier, before step 5:
     //
