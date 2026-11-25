@@ -1153,6 +1153,7 @@
     // 7. EXPORTS
     // =========================================================================
 
+    window.resolveEnterpriseSuccessionForCharacter = _resolveEnterpriseSuccession;
     window.openDeathModal = openDeathModal;
     window.openMurderModal = openMurderModal;
     window.openExecutionModal = openExecutionModal;
