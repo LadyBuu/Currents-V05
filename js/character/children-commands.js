@@ -1597,15 +1597,38 @@
         }
 
         if (removed > 0) {
-            if (!_commit()) {
-                ChS.replaceAllPregnancies(pregnanciesBeforeCleanup);
-                ChS.replaceAllSurrogacy(surrogacyBeforeCleanup);
-                ChS.replaceAllAdoptions(adoptionsBeforeCleanup);
+            var childrenCommitSucceeded = false;
+            var childrenCommitError = null;
+            try {
+                childrenCommitSucceeded = _commit() === true;
+            } catch (commitError) {
+                childrenCommitError = commitError;
+            }
+            if (!childrenCommitSucceeded) {
+                try {
+                    ChS.replaceAllPregnancies(pregnanciesBeforeCleanup);
+                    ChS.replaceAllSurrogacy(surrogacyBeforeCleanup);
+                    ChS.replaceAllAdoptions(adoptionsBeforeCleanup);
+                } catch (rollbackError) {
+                    return {
+                        success: false,
+                        partial: true,
+                        removedCount: removed,
+                        failures: [{ reason: 'Children cleanup commit failed.' }],
+                        rolledBack: false,
+                        rollbackReason: rollbackError && rollbackError.message
+                            ? rollbackError.message : 'Children rollback threw.'
+                    };
+                }
                 return {
                     success: false,
                     partial: false,
                     removedCount: 0,
-                    failures: [{ reason: 'Could not persist children reference cleanup.' }]
+                    failures: [{
+                        reason: childrenCommitError && childrenCommitError.message
+                            ? childrenCommitError.message : 'Could not persist children reference cleanup.'
+                    }],
+                    rolledBack: true
                 };
             }
             _notify('removeAllReferences', [characterId]);
