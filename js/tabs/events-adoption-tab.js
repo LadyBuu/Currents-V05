@@ -454,6 +454,8 @@
         var aids = [];
         if (shared) aids.push('<span class="events-adoption-aid">⌂ Same location</span>');
         if (kin.length) aids.push('<span class="events-adoption-aid">Family: '+_esc(kin.join(' / '))+'</span>');
+        if (child && people.some(function(p){return typeof p.age==='number'&&typeof child.age==='number'&&(p.age-child.age<13);})) aids.push('<span class="events-adoption-aid events-adoption-age-warning">Age gap under 13 years</span>');
+        if (child && people.some(function(p){return typeof p.age==='number'&&typeof child.age==='number'&&p.age<child.age;})) aids.push('<span class="events-adoption-aid events-adoption-age-warning">Adoptee older than adopter</span>');
         return '<button type="button" class="events-adoption-candidate'+(ids.join('|')===_creationSelection.adopterIds.join('|')?' is-selected':'')+'" data-action="select-adopters" data-ids="'+_esc(ids.join('|'))+'"><strong>'+_esc(label)+'</strong><small>'+people.map(function(p){return _esc((p.age == null?'Age unknown':p.age+' years')+' · '+_personLocation(p));}).join('<br>')+'</small>'+aids.join('')+'</button>';
     }
     function _renderNewAdoptionBlock() {
