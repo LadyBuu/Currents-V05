@@ -468,13 +468,16 @@
             '<option value="">Select a child…</option>' +
             '</select>' +
             '</label>';
-        html += '<label class="events-adoption-new__field">' +
-            '<span>Adopter</span>' +
+        html += '<label class="events-adoption-new__field"><span>Adoption by</span>' +
+            '<select class="ev-adoption-input events-adoption-new__select" data-input="adopter-mode">' +
+            '<option value="single">One person</option><option value="couple">Couple</option></select></label>';
+        html += '<label class="events-adoption-new__field"><span>Adopter</span>' +
             '<select class="ev-adoption-input events-adoption-new__select" data-input="new-adopter-id"' +
-            disabledAttr + '>' +
-            '<option value="">Select an adopter…</option>' +
-            '</select>' +
-            '</label>';
+            disabledAttr + '><option value="">Select an adopter…</option></select></label>';
+        html += '<label class="events-adoption-new__field" data-couple-field style="display:none"><span>Second adopter</span>' +
+            '<select class="ev-adoption-input events-adoption-new__select" data-input="new-adopter2-id"' +
+            disabledAttr + '><option value="">Select second adopter…</option></select></label>';
+        html += '<div class="events-adoption-new__hint" data-age-warning role="status"></div>';
         html += '<button type="button" class="events-adoption-new__create" ' +
             'data-action="new-adoption"' + disabledAttr + '>' +
             _icon('CHECK_SIMPLE') + '<span>Create</span></button>';
@@ -492,6 +495,25 @@
         var adopterSelect = container.querySelector('[data-input="new-adopter-id"]');
         if (childSelect) _populateSelectOptions(childSelect, characters, 'Select a child…');
         if (adopterSelect) _populateSelectOptions(adopterSelect, characters, 'Select an adopter…');
+        var secondSelect = container.querySelector('[data-input="new-adopter2-id"]');
+        if (secondSelect) _populateSelectOptions(secondSelect, characters, 'Select second adopter…');
+        var modeSelect = container.querySelector('[data-input="adopter-mode"]');
+        var coupleField = container.querySelector('[data-couple-field]');
+        if (modeSelect && coupleField) modeSelect.addEventListener('change', function(){ coupleField.style.display = modeSelect.value === 'couple' ? '' : 'none'; });
+        function updateAgeWarning() {
+            var child = characters.find(function(c){ return childSelect && c.id === childSelect.value; });
+            var adopter = characters.find(function(c){ return adopterSelect && c.id === adopterSelect.value; });
+            var warning = container.querySelector('[data-age-warning]');
+            if (!warning) return;
+            var messages = [];
+            if (child && adopter && typeof child.age === 'number' && typeof adopter.age === 'number') {
+                var gap = adopter.age - child.age;
+                if (gap < 0) messages.push('Warning: the adoptee is older than the adopter.');
+                else if (gap < 13) messages.push('Warning: adopter is less than 13 years older than the adoptee.');
+            }
+            warning.textContent = messages.join(' ');
+        }
+        [childSelect, adopterSelect].forEach(function(el){ if(el) el.addEventListener('change', updateAgeWarning); });
     }
 
     // =========================================================================
@@ -840,9 +862,12 @@
     function _handleNewAdoption(container) {
         var childSelect = container.querySelector('[data-input="new-child-id"]');
         var adopterSelect = container.querySelector('[data-input="new-adopter-id"]');
+        var secondSelect = container.querySelector('[data-input="new-adopter2-id"]');
+        var modeSelect = container.querySelector('[data-input="adopter-mode"]');
 
         var childId = childSelect ? childSelect.value : '';
         var adopterId = adopterSelect ? adopterSelect.value : '';
+        var adopter2Id = modeSelect && modeSelect.value === 'couple' && secondSelect ? secondSelect.value : '';
 
         if (!childId) {
             _toast('Please select a child.', 'error');
@@ -852,9 +877,14 @@
             _toast('Please select an adopter.', 'error');
             return;
         }
-        if (childId === adopterId) {
-            _toast('A character cannot adopt themselves.', 'error');
-            return;
+        if (childId === adopterId || (adopter2Id && childId === adopter2Id)) {
+            _toast('A character cannot adopt themselves.', 'error'); return;
+        }
+        if (adopter2Id && adopter2Id === adopterId) {
+            _toast('Choose two different adopters.', 'error'); return;
+        }
+        if (adopter2Id) {
+            _toast('Couple adoption needs both legal-parent roles to be available. Record the first adopter, then add the second through the adoption flow.', 'warning');
         }
 
         if (typeof window.openCreateAdoptionModal !== 'function') {
