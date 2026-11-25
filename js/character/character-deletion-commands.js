@@ -615,12 +615,10 @@
                         for (var ei = 0; ei < enterpriseRecords.length; ei++) {
                             var enterprise = enterpriseRecords[ei];
                             if (!enterprise || typeof enterprise !== 'object') continue;
-                            var enterpriseChanged = false;
                             if (enterprise.ownerType === 'character'
                                 && ctx.ids.indexOf(enterprise.ownerId) !== -1) {
                                 enterprise.ownerType = 'none';
                                 enterprise.ownerId = null;
-                                enterpriseChanged = true;
                             }
                             if (Array.isArray(enterprise.workerList)) {
                                 var remainingWorkers = enterprise.workerList.filter(function(workerId) {
@@ -628,14 +626,12 @@
                                 });
                                 if (remainingWorkers.length !== enterprise.workerList.length) {
                                     enterprise.workerList = remainingWorkers;
-                                    enterpriseChanged = true;
                                 }
                             }
                             if (enterprise.workerWages && typeof enterprise.workerWages === 'object') {
                                 ctx.ids.forEach(function(id) {
                                     if (Object.prototype.hasOwnProperty.call(enterprise.workerWages, id)) {
                                         delete enterprise.workerWages[id];
-                                        enterpriseChanged = true;
                                     }
                                 });
                             }
