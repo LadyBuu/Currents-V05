@@ -397,7 +397,13 @@
     // 4. NOTIFICATION
     // =========================================================================
 
+    var _transactionNotifications = [];
+
     function _notify(eventName, payload) {
+        if (window.CrossDomainTransaction && window.CrossDomainTransaction.isActive()) {
+            _transactionNotifications.push({ eventName: eventName, payload: payload || {} });
+            return;
+        }
         if (typeof window.dispatchEvent === 'function' &&
             typeof window.CustomEvent === 'function') {
             window.dispatchEvent(new CustomEvent(eventName, { detail: payload || {} }));
@@ -1740,6 +1746,17 @@
         completeApprenticeship: completeApprenticeship,
         terminateApprenticeship: terminateApprenticeship,
         cancelApprenticeship: cancelApprenticeship,
+        _transactionFlushNotifications: function () {
+            var pending = _transactionNotifications.slice();
+            _transactionNotifications.length = 0;
+            pending.forEach(function (event) { _notify(event.eventName, event.payload); });
+            return { success: true, count: pending.length };
+        },
+        _transactionDiscardNotifications: function () {
+            var count = _transactionNotifications.length;
+            _transactionNotifications.length = 0;
+            return { success: true, discarded: count };
+        },
         removeAllReferencesTo: removeAllReferencesTo,
         advanceApprenticeshipSkills: advanceApprenticeshipSkills
     };
