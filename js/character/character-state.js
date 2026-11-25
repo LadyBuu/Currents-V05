@@ -1548,6 +1548,64 @@
         return { success: true };
     }
 
+    /**
+     * Applies domain-owned embedded-field patches to multiple characters as
+     * one in-memory write. Every target and patch is validated before the
+     * first record is changed, preventing partial cross-character cleanup.
+     */
+    function applyDomainFieldPatches(changes, options) {
+        options = options || {};
+        if (!Array.isArray(changes)) {
+            return { success: false, reason: 'changes must be an array.' };
+        }
+        if (changes.length === 0) return { success: true, characterIds: [] };
+
+        var coll = _getCanonicalCollection();
+        if (!coll.ok) return { success: false, reason: coll.reason };
+
+        var index = Object.create(null);
+        for (var c = 0; c < coll.collection.length; c++) {
+            var record = coll.collection[c];
+            if (record && _hasId(record.id)) index[record.id] = record;
+        }
+
+        var seen = Object.create(null);
+        var validated = [];
+        for (var i = 0; i < changes.length; i++) {
+            var change = changes[i];
+            if (!change || typeof change !== 'object' || !_hasId(change.id)) {
+                return { success: false, reason: 'Change at index ' + i + ' has no valid character id.' };
+            }
+            if (seen[change.id]) {
+                return { success: false, reason: 'Duplicate character id in domain batch: ' + change.id };
+            }
+            seen[change.id] = true;
+            if (!index[change.id]) {
+                return { success: false, reason: 'Character "' + change.id + '" not found.' };
+            }
+            var check = _validateDomainPatch(change.updates);
+            if (!check.ok) {
+                return { success: false, reason: 'Change at index ' + i + ': ' + check.reason };
+            }
+            validated.push({ id: change.id, updates: change.updates });
+        }
+
+        var affectedIds = [];
+        for (var j = 0; j < validated.length; j++) {
+            var target = index[validated[j].id];
+            var patch = validated[j].updates;
+            for (var key in patch) {
+                if (Object.prototype.hasOwnProperty.call(patch, key) && key !== 'id') {
+                    target[key] = patch[key];
+                }
+            }
+            affectedIds.push(validated[j].id);
+        }
+
+        _emitChange('domain-bulk-updated', affectedIds, options);
+        return { success: true, characterIds: affectedIds.slice() };
+    }
+
     // =========================================================================
     // 15. WRITE PRIMITIVES - COLLECTION MEMBERSHIP
     // =========================================================================
@@ -2016,6 +2074,7 @@
             return { success: true };
         },
         applyDomainFieldPatch: applyDomainFieldPatch,
+        applyDomainFieldPatches: applyDomainFieldPatches,
 
         addCharacter: addCharacter,
         addCharacters: addCharacters,
