@@ -300,6 +300,23 @@
         var institutionCount = summaryStats ? summaryStats.institutionCount : null;
         var studentCount = summaryStats ? summaryStats.currentStudents : null;
         var teacherCount = summaryStats ? summaryStats.totalTeachers : null;
+        var capacityStats = null;
+        try {
+            if (window.SettlementEducationQueries &&
+                typeof window.SettlementEducationQueries.getEducationCapacity === 'function') {
+                capacityStats = window.SettlementEducationQueries.getEducationCapacity(context.locationId);
+            }
+        } catch (capacityError) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn('settlement-education-tab: school capacity unavailable:', capacityError);
+            }
+        }
+        var schoolCount = capacityStats ? capacityStats.schoolCount : null;
+        var capacityText = capacityStats
+            ? fmtNum(capacityStats.totalStudents) + '/' +
+                fmtNum(capacityStats.totalCapacity) + ' seats (' +
+                fmtNum(capacityStats.capacityUsed) + '%)'
+            : 'Capacity unavailable';
 
         var addBtn = '<button type="button" class="st-btn st-btn--accent" ' +
             'data-action="create-institution">' +
@@ -314,7 +331,9 @@
             icon('BOOK') + ' Education in ' + esc(name) + '</div>' +
             '<div class="st-header__subtitle">' +
             'Budget: ' + fmtGold(budget) +
+            ' \u00b7 ' + fmtNum(schoolCount) + ' school features' +
             ' \u00b7 ' + fmtNum(institutionCount) + ' institutions' +
+            ' \u00b7 ' + capacityText +
             ' \u00b7 ' + fmtNum(studentCount) + ' students' +
             ' \u00b7 ' + fmtNum(teacherCount) + ' teachers' +
             '</div>' +
