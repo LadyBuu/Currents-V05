@@ -223,9 +223,17 @@
     }
 
     function _getLocationIdsForSettlement(locationId) {
-        var ids = _getLocationQueries().getAllSubLocationIds(locationId);
-        if (ids && ids.length > 0) return ids;
-        return [locationId];
+        var ids = [locationId];
+        var descendants = _getLocationQueries().getAllSubLocationIds(locationId) || [];
+        var seen = Object.create(null);
+        seen[locationId] = true;
+        for (var i = 0; i < descendants.length; i++) {
+            var id = descendants[i];
+            if (!id || seen[id]) continue;
+            seen[id] = true;
+            ids.push(id);
+        }
+        return ids;
     }
 
     // A school building is a Settlement feature. Libraries and other
@@ -257,35 +265,15 @@
      * @returns {string|null} level id or null if the character is missing
      */
     function _deriveEducationLevelId(character) {
-        if (!character) return null;
-
-        var literacyProgress = character.subjectProgress &&
-            character.subjectProgress.literacy;
-        var bestLevel = literacyProgress &&
-            typeof literacyProgress.level === 'number' &&
-            Number.isFinite(literacyProgress.level)
-            ? literacyProgress.level : 0;
-
-        // Education's literacy subject is the academic source of truth.
-        // Trade/profession proficiency must never promote someone to Scholar.
-        if (bestLevel <= 0 && character.isLiterate === true) {
-            return 'literate';
+        if (!character || !character.id) return null;
+        var learning = window.EducationLearning;
+        if (!learning || typeof learning.getEducationLevel !== 'function') {
+            throw new Error(
+                'SettlementEducationQueries requires EducationLearning.getEducationLevel.'
+            );
         }
-        if (bestLevel <= 0) return 'illiterate';
-
-        var thresholds = _getEducationLevelThresholds();
-
-        if (bestLevel >= thresholds.scholar) return 'scholar';
-        if (bestLevel >= thresholds.educated) return 'educated';
-        if (bestLevel >= thresholds.literate) return 'literate';
-        if (bestLevel >= thresholds.basic) return 'basic';
-
-        // bestLevel === 0. isLiterate === true is already established;
-        // a literate character with no meaningful subject progress is
-        // classified at the literate baseline. See EDUCATION LEVEL
-        // THRESHOLDS in the module header for why 0 maps to 'literate'
-        // rather than 'basic'.
-        return 'literate';
+        var level = learning.getEducationLevel(character.id);
+        return level && typeof level.id === 'string' ? level.id : null;
     }
 
     /**
