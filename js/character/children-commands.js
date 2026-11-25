@@ -1512,14 +1512,35 @@
     // 11. REFERENCE CLEANUP
     // =========================================================================
 
+    function _restoreChildrenCleanupSnapshot(snapshot) {
+        if (!snapshot || !Array.isArray(snapshot.pregnancies) ||
+            !Array.isArray(snapshot.surrogacy) || !Array.isArray(snapshot.adoptions)) {
+            throw new Error('Children cleanup snapshot is invalid.');
+        }
+        if (ChS.replaceAllPregnancies(snapshot.pregnancies) !== true ||
+            ChS.replaceAllSurrogacy(snapshot.surrogacy) !== true ||
+            ChS.replaceAllAdoptions(snapshot.adoptions) !== true) {
+            throw new Error('ChildrenState refused to restore one or more cleanup collections.');
+        }
+        if (!window.masterData || !window.masterData.data) {
+            throw new Error('masterData.data is unavailable during children cleanup rollback.');
+        }
+        window.masterData.data.pregnancyRecords = ChS.snapshotPregnancies();
+        window.masterData.data.surrogacyArrangements = ChS.snapshotSurrogacy();
+        window.masterData.data.adoptionRecords = ChS.snapshotAdoptions();
+        return true;
+    }
+
     function removeAllReferencesTo(characterId) {
         if (!_hasId(characterId)) {
             return _fail('characterId is required.');
         }
 
-        var pregnanciesBeforeCleanup = ChS.snapshotPregnancies();
-        var surrogacyBeforeCleanup = ChS.snapshotSurrogacy();
-        var adoptionsBeforeCleanup = ChS.snapshotAdoptions();
+        var cleanupSnapshot = {
+            pregnancies: ChS.snapshotPregnancies(),
+            surrogacy: ChS.snapshotSurrogacy(),
+            adoptions: ChS.snapshotAdoptions()
+        };
         var pregnancyIds = Object.create(null);
         var surrogacyIds = Object.create(null);
         var adoptionIds = Object.create(null);
@@ -1584,16 +1605,26 @@
         removeRecords(adoptionIds, ChS._removeAdoption, 'adoption');
 
         if (failures.length > 0) {
-            ChS.replaceAllPregnancies(pregnanciesBeforeCleanup);
-            ChS.replaceAllSurrogacy(surrogacyBeforeCleanup);
-            ChS.replaceAllAdoptions(adoptionsBeforeCleanup);
-            return {
-                success: false,
-                partial: false,
-                removedCount: 0,
-                failures: failures,
-                rolledBack: true
-            };
+            try {
+                _restoreChildrenCleanupSnapshot(cleanupSnapshot);
+                return {
+                    success: false,
+                    partial: false,
+                    removedCount: 0,
+                    failures: failures,
+                    rolledBack: true
+                };
+            } catch (rollbackError) {
+                return {
+                    success: false,
+                    partial: true,
+                    removedCount: removed,
+                    failures: failures,
+                    rolledBack: false,
+                    rollbackReason: rollbackError && rollbackError.message
+                        ? rollbackError.message : 'Children cleanup rollback threw.'
+                };
+            }
         }
 
         if (removed > 0) {
@@ -1606,9 +1637,7 @@
             }
             if (!childrenCommitSucceeded) {
                 try {
-                    ChS.replaceAllPregnancies(pregnanciesBeforeCleanup);
-                    ChS.replaceAllSurrogacy(surrogacyBeforeCleanup);
-                    ChS.replaceAllAdoptions(adoptionsBeforeCleanup);
+                    _restoreChildrenCleanupSnapshot(cleanupSnapshot);
                 } catch (rollbackError) {
                     return {
                         success: false,
