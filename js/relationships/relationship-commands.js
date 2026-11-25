@@ -858,12 +858,35 @@
             return _ok({ removed: [], count: 0 });
         }
 
-        var result = State.applyRemovals(ids);
-        if (!result.success) {
-            return _fail('STATE_REJECTED', result.reason);
+        var before = State.snapshot();
+        try {
+            var result = State.applyRemovals(ids);
+            if (!result.success) {
+                return _fail('STATE_REJECTED', result.reason);
+            }
+            return _ok({ removed: result.removed.slice(), count: result.removed.length });
+        } catch (error) {
+            try {
+                State.replaceAll(before);
+                return {
+                    success: false,
+                    code: 'STATE_REJECTED',
+                    reason: error && error.message
+                        ? error.message : 'Relationship reference cleanup threw.',
+                    rolledBack: true
+                };
+            } catch (rollbackError) {
+                return {
+                    success: false,
+                    code: 'ROLLBACK_FAILED',
+                    reason: error && error.message
+                        ? error.message : 'Relationship reference cleanup threw.',
+                    rolledBack: false,
+                    rollbackReason: rollbackError && rollbackError.message
+                        ? rollbackError.message : 'Relationship state rollback threw.'
+                };
+            }
         }
-
-        return _ok({ removed: result.removed.slice(), count: result.removed.length });
     }
 
     // =========================================================================
