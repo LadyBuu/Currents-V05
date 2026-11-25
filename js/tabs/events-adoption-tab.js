@@ -771,6 +771,21 @@
 
             var action = actionEl.getAttribute('data-action');
 
+            if (action === 'select-adoptee') {
+                e.preventDefault();
+                _creationSelection.childId = actionEl.getAttribute('data-id') || '';
+                _creationSelection.adopterIds = [];
+                _refresh();
+                return;
+            }
+            if (action === 'select-adopters') {
+                e.preventDefault();
+                var ids = (actionEl.getAttribute('data-ids') || '').split('|').filter(Boolean);
+                _creationSelection.adopterIds = ids.join('|') === _creationSelection.adopterIds.join('|') ? [] : ids;
+                _refresh();
+                return;
+            }
+
             if (action === 'new-adoption') {
                 e.preventDefault();
                 _handleNewAdoption(container);
@@ -820,57 +835,15 @@
     // =========================================================================
 
     function _handleNewAdoption(container) {
-        var childSelect = container.querySelector('[data-input="new-child-id"]');
-        var adopterSelect = container.querySelector('[data-input="new-adopter-id"]');
-        var secondSelect = container.querySelector('[data-input="new-adopter2-id"]');
-        var modeSelect = container.querySelector('[data-input="adopter-mode"]');
-
-        var childId = childSelect ? childSelect.value : '';
-        var adopterId = adopterSelect ? adopterSelect.value : '';
-        var adopter2Id = modeSelect && modeSelect.value === 'couple' && secondSelect ? secondSelect.value : '';
-
-        if (!childId) {
-            _toast('Please select a child.', 'error');
-            return;
-        }
-        if (!adopterId) {
-            _toast('Please select an adopter.', 'error');
-            return;
-        }
-        if (childId === adopterId || (adopter2Id && childId === adopter2Id)) {
-            _toast('A character cannot adopt themselves.', 'error'); return;
-        }
-        if (adopter2Id && adopter2Id === adopterId) {
-            _toast('Choose two different adopters.', 'error'); return;
-        }
-        if (adopter2Id) {
-            _toast('Couple adoption needs both legal-parent roles to be available. Record the first adopter, then add the second through the adoption flow.', 'warning');
-        }
-
-        if (typeof window.openCreateAdoptionModal !== 'function') {
-            if (typeof console !== 'undefined' && console.error) {
-                console.error(
-                    '[events-adoption-tab] openCreateAdoptionModal is not ' +
-                    'loaded; load modals-children-adoption.js.'
-                );
-            }
-            _toast(
-                'Adoption creation is unavailable: the adoption modal is not loaded.',
-                'error'
-            );
-            return;
-        }
-
-        var result = window.openCreateAdoptionModal(childId, adopterId, function() {
-            _refresh();
-        });
-        if (!result || result.success !== true) {
-            _toast(
-                'Could not open create-adoption modal: ' +
-                (result && result.reason ? result.reason : 'unknown'),
-                'error'
-            );
-        }
+        var childId = _creationSelection.childId;
+        var adopterIds = _creationSelection.adopterIds || [];
+        var typeEl = container.querySelector('[data-input="placement-type"]');
+        var type = typeEl ? typeEl.value : 'legal';
+        if (!childId || !adopterIds.length) { _toast('Select an adoptee and adopter(s).','error'); return; }
+        if (adopterIds.indexOf(childId)!==-1) { _toast('A character cannot adopt themselves.','error'); return; }
+        if (typeof window.openCreateAdoptionModal !== 'function') { _toast('Adoption modal is unavailable.','error'); return; }
+        var result = window.openCreateAdoptionModal(childId, adopterIds, function(){_creationSelection={childId:'',adopterIds:[],showSingles:_creationSelection.showSingles};_refresh();}, type);
+        if (!result || result.success !== true) _toast('Could not open placement modal: '+(result&&result.reason?result.reason:'unknown'),'error');
     }
 
     function _openEditAdoption(adoptionId) {
