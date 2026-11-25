@@ -380,6 +380,27 @@
         }
     ];
 
+    function _validateCleanupReady() {
+        var missing = [];
+        for (var i = 0; i < _CLEANUP_TARGETS.length; i++) {
+            var target = _CLEANUP_TARGETS[i];
+            var mod = window[target.moduleName];
+            if (!mod || typeof mod[target.methodName] !== 'function') {
+                missing.push({
+                    domain: target.label,
+                    reason: target.moduleName + '.' + target.methodName + ' is unavailable.'
+                });
+            }
+        }
+        if (_deleteHandlers.length === 0) {
+            missing.push({
+                domain: 'registeredHandlers',
+                reason: 'No cross-domain delete handlers are registered.'
+            });
+        }
+        return { success: missing.length === 0, missing: missing };
+    }
+
     function _dispatchCleanup(characterId) {
         var report = {
             applied: [],
@@ -427,6 +448,15 @@
     // =========================================================================
 
     function _hardDeleteInternal(characterId) {
+        var readiness = _validateCleanupReady();
+        if (!readiness.success) {
+            return {
+                success: false,
+                reason: 'Hard deletion blocked because cross-domain cleanup is not fully available.',
+                cleanupReadiness: readiness
+            };
+        }
+
         var removed = CS.removeCharacter(characterId);
         if (!removed.success) {
             return _fail(removed.reason || 'CharacterState refused removal.');
@@ -538,6 +568,18 @@
         if (toPurge.length === 0) {
             return {
                 success: true,
+                count: 0,
+                purgedIds: [],
+                cleanup: []
+            };
+        }
+
+        var readiness = _validateCleanupReady();
+        if (!readiness.success) {
+            return {
+                success: false,
+                reason: 'Purge blocked because cross-domain cleanup is not fully available.',
+                cleanupReadiness: readiness,
                 count: 0,
                 purgedIds: [],
                 cleanup: []
@@ -657,6 +699,18 @@
     }
 
     function _bulkHardDelete(ids) {
+        var readiness = _validateCleanupReady();
+        if (!readiness.success) {
+            return {
+                success: false,
+                reason: 'Bulk hard deletion blocked because cross-domain cleanup is not fully available.',
+                cleanupReadiness: readiness,
+                count: 0,
+                deletedIds: [],
+                errors: []
+            };
+        }
+
         var existingIds = [];
         var errors = [];
         for (var i = 0; i < ids.length; i++) {
