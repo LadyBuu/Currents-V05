@@ -403,117 +403,77 @@
     // "unavailable" hint and the Create button is disabled. That is
     // a legitimate reduced-harness state, not an error.
 
-    function _populateSelectOptions(selectEl, characters, placeholderText) {
-        if (!selectEl) return;
-        selectEl.innerHTML = '';
+    var _creationSelection = { childId: '', adopterIds: [], showSingles: false };
 
-        var placeholder = document.createElement('option');
-        placeholder.value = '';
-        placeholder.textContent = placeholderText;
-        selectEl.appendChild(placeholder);
-
-        for (var i = 0; i < characters.length; i++) {
-            var c = characters[i];
-            if (!c || !c.id) continue;
-            var name = ((c.name || '') + ' ' + (c.surname || '')).trim();
-            if (!name) name = c.id;
-            if (typeof c.age === 'number') name += ' (' + c.age + 'y)';
-            var opt = document.createElement('option');
-            opt.value = c.id;
-            opt.textContent = name;
-            selectEl.appendChild(opt);
-        }
+    function _personName(c) {
+        return ((c && c.name) || '') + ((c && c.surname) ? ' ' + c.surname : '');
     }
-
-    function _livingCharacters() {
-        var CQ = _characterQueries();
-        if (!CQ || typeof CQ.getAllCharacters !== 'function') return null;
-        var all;
-        try { all = CQ.getAllCharacters(); }
-        catch (e) { return null; }
-        if (!Array.isArray(all)) return null;
-
-        var out = [];
-        for (var i = 0; i < all.length; i++) {
-            var c = all[i];
-            if (!c || !c.id) continue;
-            if (c.isDeceased === true) continue;
-            if (c.isDeleted === true) continue;
-            out.push(c);
+    function _personLocation(c) {
+        var id = c && (c.locationId || c.currentLocationId || c.location);
+        var LQ = window.LocationQueries;
+        if (id && LQ && typeof LQ.getPlaceById === 'function') {
+            var place = LQ.getPlaceById(id);
+            if (place) return place.displayName || place.name || id;
         }
+        return id || 'Location unknown';
+    }
+    function _parentsFor(c) {
+        var FQ = window.FamilyQueries;
+        if (!FQ || typeof FQ.hasAnyParent !== 'function') return true;
+        return FQ.hasAnyParent(c.id) !== false;
+    }
+    function _couples(characters) {
+        var RQ = window.RomanceQueries, seen = {}, out = [];
+        if (!RQ || typeof RQ.getActiveCommittedPartners !== 'function') return out;
+        characters.forEach(function(c) {
+            (RQ.getActiveCommittedPartners(c.id) || []).forEach(function(p) {
+                var id = p.characterId || p.partnerId || p.id;
+                if (!id || id === c.id || !characters.some(function(x){return x.id===id;})) return;
+                var key = [c.id,id].sort().join('|');
+                if (seen[key]) return;
+                seen[key] = true;
+                var other = characters.find(function(x){return x.id===id;});
+                out.push([c,other]);
+            });
+        });
         return out;
     }
-
-    function _renderNewAdoptionBlock(context) {
+    function _kinshipLabel(childId, adopterId) {
+        var FQ = window.FamilyQueries;
+        if (!FQ || typeof FQ.classifyKinship !== 'function') return '';
+        var k = FQ.classifyKinship(childId, adopterId);
+        if (!k) return '';
+        var type = String(k.type || '').toLowerCase().replace(/_/g,' ');
+        if (type === 'unrelated') return '';
+        if (type === 'cousin') return (k.degree || 1) + ' degree cousin' + (k.removed ? ', removed ' + k.removed : '');
+        return type;
+    }
+    function _candidateCard(label, ids, child, people) {
+        var shared = child && people.length && people.every(function(p){return child.locationId && p.locationId === child.locationId;});
+        var kin = child ? people.map(function(p){return _kinshipLabel(child.id,p.id);}).filter(Boolean) : [];
+        var aids = [];
+        if (shared) aids.push('<span class="events-adoption-aid">⌂ Same location</span>');
+        if (kin.length) aids.push('<span class="events-adoption-aid">Family: '+_esc(kin.join(' / '))+'</span>');
+        return '<button type="button" class="events-adoption-candidate'+(ids.join('|')===_creationSelection.adopterIds.join('|')?' is-selected':'')+'" data-action="select-adopters" data-ids="'+_esc(ids.join('|'))+'"><strong>'+_esc(label)+'</strong><small>'+people.map(function(p){return _esc((p.age == null?'Age unknown':p.age+' years')+' · '+_personLocation(p));}).join('<br>')+'</small>'+aids.join('')+'</button>';
+    }
+    function _renderNewAdoptionBlock() {
         var characters = _livingCharacters();
-        var hasCharacters = Array.isArray(characters);
-
-        var disabledAttr = hasCharacters ? '' : ' disabled';
-        var hint = hasCharacters
-            ? ''
-            : '<div class="events-adoption-new__hint">' +
-              'Character picker unavailable: CharacterQueries is not loaded.' +
-              '</div>';
-
-        var html = '<div class="events-adoption-new">';
-        html += '<div class="events-adoption-new__header">' +
-            _icon('ADOPTION_LEGAL') +
-            '<span>New Adoption</span>' +
-            '</div>';
-        html += '<div class="events-adoption-new__pickers">';
-        html += '<label class="events-adoption-new__field">' +
-            '<span>Child</span>' +
-            '<select class="ev-adoption-input events-adoption-new__select" data-input="new-child-id"' +
-            disabledAttr + '>' +
-            '<option value="">Select a child…</option>' +
-            '</select>' +
-            '</label>';
-        html += '<label class="events-adoption-new__field"><span>Adoption by</span>' +
-            '<select class="ev-adoption-input events-adoption-new__select" data-input="adopter-mode">' +
-            '<option value="single">One person</option><option value="couple">Couple</option></select></label>';
-        html += '<label class="events-adoption-new__field"><span>Adopter</span>' +
-            '<select class="ev-adoption-input events-adoption-new__select" data-input="new-adopter-id"' +
-            disabledAttr + '><option value="">Select an adopter…</option></select></label>';
-        html += '<label class="events-adoption-new__field" data-couple-field style="display:none"><span>Second adopter</span>' +
-            '<select class="ev-adoption-input events-adoption-new__select" data-input="new-adopter2-id"' +
-            disabledAttr + '><option value="">Select second adopter…</option></select></label>';
-        html += '<div class="events-adoption-new__hint" data-age-warning role="status"></div>';
-        html += '<button type="button" class="events-adoption-new__create" ' +
-            'data-action="new-adoption"' + disabledAttr + '>' +
-            _icon('CHECK_SIMPLE') + '<span>Create</span></button>';
-        html += '</div>';
-        html += hint;
-        html += '</div>';
+        if (!Array.isArray(characters)) return '<div class="events-adoption-new">Character picker unavailable.</div>';
+        var eligible = characters.filter(function(c){return !_parentsFor(c);});
+        var child = characters.find(function(c){return c.id===_creationSelection.childId;}) || null;
+        var couples = _couples(characters), html = '<section class="events-adoption-new"><div class="events-adoption-new__header">'+_icon('ADOPTION_LEGAL')+'<span>New placement</span></div><div class="events-adoption-columns">';
+        html += '<div class="events-adoption-column"><h4>People with no parents</h4>';
+        html += eligible.map(function(c){return '<button type="button" class="events-adoption-candidate'+(c.id===_creationSelection.childId?' is-selected':'')+'" data-action="select-adoptee" data-id="'+_esc(c.id)+'"><strong>'+_esc(_personName(c))+'</strong><small>'+_esc((c.age == null?'Age unknown':c.age+' years')+' · '+_personLocation(c))+'</small></button>';}).join('') || '<p>No eligible adoptees.</p>';
+        html += '</div><div class="events-adoption-column"><h4>Committed couples</h4>';
+        html += '<label class="events-adoption-show-singles"><input type="checkbox" data-input="show-singles"'+(_creationSelection.showSingles?' checked':'')+'> Show single people</label>';
+        html += couples.map(function(pair){return _candidateCard(_personName(pair[0])+' + '+_personName(pair[1]),pair.map(function(p){return p.id;}),child,pair);}).join('') || '<p>No committed couples found.</p>';
+        if (_creationSelection.showSingles) html += '<h4>Single adopters</h4>'+characters.filter(function(c){return !couples.some(function(pair){return pair.some(function(p){return p.id===c.id;});});}).map(function(c){return _candidateCard(_personName(c),[c.id],child,[c]);}).join('');
+        html += '</div></div><div class="events-adoption-create-controls"><label>Placement type <select data-input="placement-type"><option value="legal">Adoption</option><option value="foster">Foster care</option><option value="guardianship">Guardianship</option></select></label><button type="button" class="events-adoption-new__create" data-action="new-adoption"'+(!_creationSelection.childId||!_creationSelection.adopterIds.length?' disabled':'')+'>'+_icon('CHECK_SIMPLE')+'<span>Create placement</span></button></div></section>';
         return html;
     }
-
     function _wireNewAdoptionBlock(container) {
-        var characters = _livingCharacters();
-        if (!Array.isArray(characters)) return;
-
-        var childSelect = container.querySelector('[data-input="new-child-id"]');
-        var adopterSelect = container.querySelector('[data-input="new-adopter-id"]');
-        if (childSelect) _populateSelectOptions(childSelect, characters, 'Select a child…');
-        if (adopterSelect) _populateSelectOptions(adopterSelect, characters, 'Select an adopter…');
-        var secondSelect = container.querySelector('[data-input="new-adopter2-id"]');
-        if (secondSelect) _populateSelectOptions(secondSelect, characters, 'Select second adopter…');
-        var modeSelect = container.querySelector('[data-input="adopter-mode"]');
-        var coupleField = container.querySelector('[data-couple-field]');
-        if (modeSelect && coupleField) modeSelect.addEventListener('change', function(){ coupleField.style.display = modeSelect.value === 'couple' ? '' : 'none'; });
-        function updateAgeWarning() {
-            var child = characters.find(function(c){ return childSelect && c.id === childSelect.value; });
-            var adopter = characters.find(function(c){ return adopterSelect && c.id === adopterSelect.value; });
-            var warning = container.querySelector('[data-age-warning]');
-            if (!warning) return;
-            var messages = [];
-            if (child && adopter && typeof child.age === 'number' && typeof adopter.age === 'number') {
-                var gap = adopter.age - child.age;
-                if (gap < 0) messages.push('Warning: the adoptee is older than the adopter.');
-                else if (gap < 13) messages.push('Warning: adopter is less than 13 years older than the adoptee.');
-            }
-            warning.textContent = messages.join(' ');
-        }
-        [childSelect, adopterSelect].forEach(function(el){ if(el) el.addEventListener('change', updateAgeWarning); });
+        var checkbox = container.querySelector('[data-input="show-singles"]');
+        if (checkbox) checkbox.addEventListener('change',function(){_creationSelection.showSingles=checkbox.checked;_refresh();});
     }
 
     // =========================================================================
@@ -688,7 +648,7 @@
             { locationId: locationId, locationName: context && context.locationName },
             _state
         );
-        var newAdoptionHtml = _renderNewAdoptionBlock(context);
+        var newAdoptionHtml = _renderNewAdoptionBlock();
         var bodyHtml = U.renderAdoptionTabBody({
             statsBar: statsBar,
             typeGroups: typeGroups,
