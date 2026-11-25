@@ -3,7 +3,7 @@
  * STILL WATERS - INDUSTRY QUERIES (industry-queries.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/industry-queries.js
+ * LOCATION: js/industry/industry-queries.js
  *
  * Read operations for the industry system.
  *
