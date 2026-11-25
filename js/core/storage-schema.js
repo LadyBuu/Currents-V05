@@ -189,6 +189,7 @@
                 rankInheritanceRules: {},
                 educationalSubjects: {},
                 subjectProgress: {},
+                roleCategories: {},
 
                 // ─── Settlement domain collection ─────────────────────────
                 settlementData: {},
@@ -239,7 +240,8 @@
 
         var objectKeys = [
             'nameLists', 'cityNameParts', 'rankInheritanceRules',
-            'educationalSubjects', 'subjectProgress', 'settlementData'
+            'educationalSubjects', 'subjectProgress', 'roleCategories',
+            'settlementData'
         ];
         for (var j = 0; j < objectKeys.length; j++) {
             var ok = objectKeys[j];
