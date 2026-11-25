@@ -3,7 +3,7 @@
  * STILL WATERS - INDUSTRY PROCESSOR (industry-processor.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/industry-processor.js
+ * LOCATION: js/industry/industry-processor.js
  *
  * Annual processing orchestration.
  *
