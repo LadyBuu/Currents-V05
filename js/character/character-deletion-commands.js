@@ -457,30 +457,52 @@
             };
         }
 
-        var removed = CS.removeCharacter(characterId);
-        if (!removed.success) {
-            return _fail(removed.reason || 'CharacterState refused removal.');
-        }
-
+        // Clean references before removing the canonical character. Cleanup
+        // handlers are idempotent, so a partial failure can be retried while
+        // the character record remains available. This is not a full rollback:
+        // earlier domains may already have removed references.
         var cleanup = _dispatchCleanup(characterId);
 
-        // Phase 3.13b: invoke registered delete handlers after the
-        // named cleanup table. This reaches the domains that load
-        // after this file (notably the relationship domain).
+        // Invoke registered handlers (notably relationship integration).
         var handlers = _invokeDeleteHandlers(characterId);
         cleanup.handlers = handlers;
-        cleanup.success = cleanup.failed.length === 0 && cleanup.skipped.length === 0 && handlers.success;
+        cleanup.success = cleanup.failed.length === 0 &&
+            cleanup.skipped.length === 0 && handlers.success;
         cleanup.partial = !cleanup.success;
 
+        if (!cleanup.success) {
+            return {
+                success: false,
+                reason: 'Character was retained, but cross-domain cleanup was incomplete; retry cleanup before deleting.',
+                deletedId: characterId,
+                deletionComplete: false,
+                partial: true,
+                cleanup: cleanup,
+                cleanupFailed: true
+            };
+        }
+
+        var removed = CS.removeCharacter(characterId);
+        if (!removed.success) {
+            return {
+                success: false,
+                reason: removed.reason || 'CharacterState refused removal after references were cleaned.',
+                deletedId: characterId,
+                deletionComplete: false,
+                partial: true,
+                cleanup: cleanup,
+                cleanupFailed: false
+            };
+        }
+
         return {
-            success: cleanup.success,
-            reason: cleanup.success ? undefined : 'Character was deleted, but cross-domain cleanup was incomplete.',
+            success: true,
             deletedId: characterId,
             deletedCharacter: removed.character,
             deletionComplete: true,
-            partial: !cleanup.success,
+            partial: false,
             cleanup: cleanup,
-            cleanupFailed: !cleanup.success
+            cleanupFailed: false
         };
     }
 
