@@ -3,7 +3,7 @@
  * STILL WATERS - INDUSTRY RULES (industry-rules.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/industry-rules.js
+ * LOCATION: js/industry/industry-rules.js
  *
  * Pure policy for the industry domain.
  *
