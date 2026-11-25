@@ -3,7 +3,7 @@
  * STILL WATERS - INDUSTRY ECONOMICS (industry-economics.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/industry-economics.js
+ * LOCATION: js/industry/industry-economics.js
  *
  * Pure economic calculations for enterprises.
  *
