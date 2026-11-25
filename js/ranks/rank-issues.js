@@ -1196,9 +1196,20 @@
                 if (!a || a.isDeprecated === true) continue;
                 if (a.inheritedFrom !== characterId) continue;
 
-                var update = CC.updateRankAssignment(c.id, a.rankId, {
-                    inheritedFrom: null
-                });
+                var update;
+                try {
+                    update = CC.updateRankAssignment(c.id, a.rankId, {
+                        inheritedFrom: null
+                    });
+                } catch (updateError) {
+                    updateErrors.push({
+                        characterId: c.id,
+                        rankId: a.rankId,
+                        reason: updateError && updateError.message
+                            ? updateError.message : 'Rank assignment update threw.'
+                    });
+                    continue;
+                }
                 if (update && update.success === true) {
                     cleaned++;
                     touchedRanks[a.rankId] = true;
@@ -1235,7 +1246,16 @@
         }
 
         if (updateErrors.length > 0 || renumberErrors.length > 0) {
-            var rollback = window.CharacterState._transactionRestoreDeletedLocations(characterSnapshot);
+            var rollback;
+            try {
+                rollback = window.CharacterState._transactionRestoreDeletedLocations(characterSnapshot);
+            } catch (rollbackError) {
+                rollback = {
+                    success: false,
+                    reason: rollbackError && rollbackError.message
+                        ? rollbackError.message : 'Character rank cleanup rollback threw.'
+                };
+            }
             return {
                 success: false,
                 partial: !(rollback && rollback.success === true),
