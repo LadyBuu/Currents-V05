@@ -94,6 +94,7 @@
     var _byChild = new Map();
     var _byPair = new Map();
     var _initialized = false;
+    var _transactionNotifications = [];
 
     // =========================================================================
     // 2. HELPERS
@@ -358,6 +359,10 @@
     }
 
     function _notify(event) {
+        if (window.CrossDomainTransaction && window.CrossDomainTransaction.isActive()) {
+            _transactionNotifications.push(event);
+            return;
+        }
         var snapshotSubs = _subscribers.slice();
         for (var i = 0; i < snapshotSubs.length; i++) {
             try {
@@ -368,6 +373,16 @@
                 }
             }
         }
+    }
+
+    function _transactionFlushNotifications() {
+        var pending = _transactionNotifications.slice();
+        _transactionNotifications.length = 0;
+        if (pending.length) _notify({ type: 'transactionCommitted', events: pending });
+    }
+
+    function _transactionDiscardNotifications() {
+        _transactionNotifications.length = 0;
     }
 
     // =========================================================================
@@ -449,7 +464,9 @@
         _getLiveEdge: _getLiveEdge,
         _insert: _insert,
         _update: _update,
-        _remove: _remove
+        _remove: _remove,
+        _transactionFlushNotifications: _transactionFlushNotifications,
+        _transactionDiscardNotifications: _transactionDiscardNotifications
     };
 
     if (typeof module !== 'undefined' && module.exports) {
