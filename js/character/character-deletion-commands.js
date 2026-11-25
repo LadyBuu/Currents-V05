@@ -549,6 +549,19 @@
         var tx = window.CrossDomainTransaction.execute({
             id: 'hard-delete-' + ids.join(','),
             context: { ids: ids.slice(), reports: reports },
+            persist: function () {
+                if (typeof window.saveMasterData !== 'function') {
+                    return { success: false, reason: 'saveMasterData is unavailable.' };
+                }
+                try {
+                    return window.saveMasterData() === true
+                        ? { success: true }
+                        : { success: false, reason: typeof window.getLastSaveError === 'function' && window.getLastSaveError()
+                            ? window.getLastSaveError().message : 'saveMasterData returned false.' };
+                } catch (error) {
+                    return { success: false, reason: error && error.message ? error.message : 'saveMasterData threw.' };
+                }
+            },
             participants: [{
                 name: 'hard-delete-all-domains',
                 snapshot: _captureHardDeleteSnapshot,
