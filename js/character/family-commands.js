@@ -754,13 +754,36 @@
 
         if (removed > 0) {
             var ids = Object.keys(affected);
-            if (!_commit()) {
-                FS.replaceAll(snapshotBeforeCleanup);
+            var familyCommitSucceeded = false;
+            var familyCommitError = null;
+            try {
+                familyCommitSucceeded = _commit() === true;
+            } catch (commitError) {
+                familyCommitError = commitError;
+            }
+            if (!familyCommitSucceeded) {
+                try {
+                    FS.replaceAll(snapshotBeforeCleanup);
+                } catch (rollbackError) {
+                    return {
+                        success: false,
+                        partial: true,
+                        removedCount: removed,
+                        failures: [{ reason: 'Family cleanup commit failed.' }],
+                        rolledBack: false,
+                        rollbackReason: rollbackError && rollbackError.message
+                            ? rollbackError.message : 'Family rollback threw.'
+                    };
+                }
                 return {
                     success: false,
                     partial: false,
                     removedCount: 0,
-                    failures: [{ reason: 'Could not persist family reference cleanup.' }]
+                    failures: [{
+                        reason: familyCommitError && familyCommitError.message
+                            ? familyCommitError.message : 'Could not persist family reference cleanup.'
+                    }],
+                    rolledBack: true
                 };
             }
             _notify('removeAllReferences', ids);
