@@ -90,8 +90,8 @@
  *   To close that gap, this module exposes registerDeleteHandler(fn).
  *   Any module that loads after this file may register a handler.
  *   Every hard delete invokes every registered handler exactly once,
- *   after the death of the record and after the named cleanup table
- *   has run.
+ *   after the named cleanup table has run and before the character record
+ *   is removed.
  *
  *   RelationshipIntegrations registers itself at load time (see
  *   relationship-integrations.js's REGISTRATION HOOKS section).
@@ -522,11 +522,19 @@
             if (window.FamilyState.replaceAll(s.family) !== true) throw new Error('FamilyState rejected snapshot');
             window.masterData.data.parentChildEdges = window.FamilyState.snapshot(); return true;
         });
-        restore('children', function () {
+        restore('children/pregnancies', function () {
             var st = window.ChildrenState;
-            if (st.replaceAllPregnancies(s.pregnancies) !== true || st.replaceAllSurrogacy(s.surrogacy) !== true || st.replaceAllAdoptions(s.adoptions) !== true) throw new Error('ChildrenState rejected snapshot');
-            window.masterData.data.pregnancyRecords = st.snapshotPregnancies();
-            window.masterData.data.surrogacyArrangements = st.snapshotSurrogacy();
+            if (st.replaceAllPregnancies(s.pregnancies) !== true) throw new Error('ChildrenState rejected pregnancy snapshot');
+            window.masterData.data.pregnancyRecords = st.snapshotPregnancies(); return true;
+        });
+        restore('children/surrogacy', function () {
+            var st = window.ChildrenState;
+            if (st.replaceAllSurrogacy(s.surrogacy) !== true) throw new Error('ChildrenState rejected surrogacy snapshot');
+            window.masterData.data.surrogacyArrangements = st.snapshotSurrogacy(); return true;
+        });
+        restore('children/adoptions', function () {
+            var st = window.ChildrenState;
+            if (st.replaceAllAdoptions(s.adoptions) !== true) throw new Error('ChildrenState rejected adoption snapshot');
             window.masterData.data.adoptionRecords = st.snapshotAdoptions(); return true;
         });
         restore('households', function () { return window.HouseholdState._transactionRestoreDeletedLocations(s.households); });
@@ -593,13 +601,25 @@
                 },
                 rollback: _restoreHardDeleteSnapshot,
                 afterCommit: function () {
-                    if (CS._transactionFlushChanges) CS._transactionFlushChanges();
-                    if (window.FamilyCommands && window.FamilyCommands._transactionFlushSideEffects) window.FamilyCommands._transactionFlushSideEffects();
-                    if (window.ChildrenCommands && window.ChildrenCommands._transactionFlushSideEffects) window.ChildrenCommands._transactionFlushSideEffects();
-                    if (window.FamilyState && window.FamilyState._transactionFlushNotifications) window.FamilyState._transactionFlushNotifications();
-                    if (window.RelationshipState && window.RelationshipState._transactionFlushNotifications) window.RelationshipState._transactionFlushNotifications();
-                    if (window.ApprenticeshipCommands && window.ApprenticeshipCommands._transactionFlushNotifications) window.ApprenticeshipCommands._transactionFlushNotifications();
-                    if (window.HouseholdCommands && window.HouseholdCommands._transactionFlushSideEffects) window.HouseholdCommands._transactionFlushSideEffects();
+                    // One broken listener must not strand the remaining domains'
+                    // committed notifications. Attempt every queue, then let the
+                    // coordinator report the aggregate post-commit failure.
+                    var failures = [];
+                    function flush(name, owner, method) {
+                        try {
+                            if (owner && typeof owner[method] === 'function') owner[method]();
+                        } catch (error) {
+                            failures.push(name + ': ' + (error && error.message ? error.message : String(error)));
+                        }
+                    }
+                    flush('characters', CS, '_transactionFlushChanges');
+                    flush('family commands', window.FamilyCommands, '_transactionFlushSideEffects');
+                    flush('children commands', window.ChildrenCommands, '_transactionFlushSideEffects');
+                    flush('family state', window.FamilyState, '_transactionFlushNotifications');
+                    flush('relationships', window.RelationshipState, '_transactionFlushNotifications');
+                    flush('apprenticeships', window.ApprenticeshipCommands, '_transactionFlushNotifications');
+                    flush('households', window.HouseholdCommands, '_transactionFlushSideEffects');
+                    if (failures.length) throw new Error(failures.join('; '));
                 }
             }]
         });
