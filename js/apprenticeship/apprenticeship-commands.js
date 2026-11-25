@@ -1458,12 +1458,40 @@
         }
 
         if (removed.length > 0) {
-            _commitAndNotify({
-                action: 'removeAllReferencesTo',
-                characterId: characterId,
-                removed: removed.length,
-                failed: failed.length
-            });
+            try {
+                _commitAndNotify({
+                    action: 'removeAllReferencesTo',
+                    characterId: characterId,
+                    removed: removed.length,
+                    failed: failed.length
+                });
+            } catch (commitError) {
+                try {
+                    window.RelationshipState.replaceAll(relationshipSnapshot);
+                } catch (rollbackError) {
+                    return {
+                        success: false,
+                        code: 'REFERENCE_CLEANUP_ROLLBACK_FAILED',
+                        reason: 'Apprenticeship cleanup commit failed and relationship rollback failed: ' +
+                            (rollbackError && rollbackError.message
+                                ? rollbackError.message : String(rollbackError)),
+                        data: { characterId: characterId, removed: removed.length, failed: failed }
+                    };
+                }
+                return {
+                    success: false,
+                    code: 'REFERENCE_CLEANUP_COMMIT_FAILED',
+                    reason: commitError && commitError.message
+                        ? commitError.message : 'Apprenticeship cleanup commit failed.',
+                    data: {
+                        characterId: characterId,
+                        expected: expected.length,
+                        removed: 0,
+                        failed: failed,
+                        rolledBack: true
+                    }
+                };
+            }
         }
 
         if (failed.length > 0) {
