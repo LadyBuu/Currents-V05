@@ -141,7 +141,10 @@
     }
 
     function _pushIndex(map, key, value) {
-        if (key === null || key === undefined) return;
+        // Foreign-key indexes contain stable string IDs only. Legacy or
+        // malformed values must not become object/number Map keys that look
+        // like valid references to downstream queries.
+        if (typeof key !== 'string' || key.length === 0) return;
         var list = map.get(key);
         if (!list) {
             list = [];
