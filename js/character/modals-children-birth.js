@@ -818,18 +818,16 @@
                         modifier: commandOptions.fertilityModifier
                     });
                     if (commandOptions.forceConception) chance = 1;
-                    commandOptions.rolls = {
-                        conception: window.random(),
-                        complication: window.random(),
-                        miscarriage: window.random(),
-                        stillbirth: window.random(),
-                        maternalDeath: window.random(),
-                        multipleBirth: window.random()
-                    };
+                    commandOptions.rolls = { conception: window.random() };
                     var conceived = ChR.evaluateConception(
                         { conceptionChance: chance }, commandOptions.rolls.conception
                     );
                     if (conceived.valid && conceived.conceived) {
+                        commandOptions.rolls.complication = window.random();
+                        commandOptions.rolls.miscarriage = window.random();
+                        commandOptions.rolls.stillbirth = window.random();
+                        commandOptions.rolls.maternalDeath = window.random();
+                        commandOptions.rolls.multipleBirth = window.random();
                         var preview = ChR.resolvePregnancyOutcome({
                             motherAge: motherAge,
                             pregnancyNumber: commandOptions.attemptNumber,
@@ -867,8 +865,12 @@
                     }
                     if (typeof onSuccess === 'function') onSuccess(result);
                 }
-                if ((commandOptions.maternalDeath === true || commandOptions._preflightMaternalDeath === true)
-                    && typeof window.resolveEnterpriseSuccessionForCharacter === 'function') {
+                var requiresSuccession = commandOptions.maternalDeath === true
+                    || commandOptions._preflightMaternalDeath === true;
+                if (requiresSuccession) {
+                    if (typeof window.resolveEnterpriseSuccessionForCharacter !== 'function') {
+                        throw new Error('Enterprise succession preflight is unavailable; maternal death was not recorded.');
+                    }
                     window.resolveEnterpriseSuccessionForCharacter(motherId, recordAttempt);
                     if (result === null) return false;
                 } else {
