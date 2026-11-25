@@ -549,6 +549,32 @@
             return _fail('Role not found.');
         }
 
+        // Education institutions also keep taughtRoles as role foreign
+        // keys. Role Manager does not load EducationQueries, so inspect the
+        // canonical institution records and fail closed on malformed data.
+        var educationInstitutions = window.masterData && window.masterData.data
+            ? window.masterData.data.educationalInstitutions
+            : [];
+        if (educationInstitutions != null && !Array.isArray(educationInstitutions)) {
+            return _fail('Education role references cannot be checked; deletion is blocked.');
+        }
+        var educationReferences = [];
+        for (var ei = 0; ei < (educationInstitutions || []).length; ei++) {
+            var institution = educationInstitutions[ei];
+            if (!institution || typeof institution !== 'object' ||
+                (institution.taughtRoles != null && !Array.isArray(institution.taughtRoles))) {
+                return _fail('Education role references cannot be checked because an institution is malformed; deletion is blocked.');
+            }
+            if (Array.isArray(institution.taughtRoles) &&
+                institution.taughtRoles.indexOf(roleId) !== -1) {
+                educationReferences.push(institution.name || institution.id || ('index ' + ei));
+            }
+        }
+        if (educationReferences.length > 0) {
+            return _fail('Cannot delete role while Education institutions teach it: ' +
+                educationReferences.join(', ') + '. Remove it from those curricula first.');
+        }
+
         // Government positions store requiredRoleId as a foreign key. Role
         // Manager does not load GovernmentQueries, so inspect the canonical
         // department records and fail closed on malformed data.
