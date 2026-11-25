@@ -174,7 +174,8 @@
             return false;
         }
         window.masterData.data.parentChildEdges = FS.snapshot();
-        if (typeof window.markDataDirty === 'function') {
+        if (!(window.CrossDomainTransaction && window.CrossDomainTransaction.isActive()) &&
+            typeof window.markDataDirty === 'function') {
             window.markDataDirty();
         }
         return true;
