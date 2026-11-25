@@ -1948,10 +1948,19 @@
             if (!coll.ok) throw new Error(coll.reason);
             return JSON.parse(JSON.stringify(coll.collection));
         },
-        _transactionRestoreDeletedLocations: function (snapshot) {
+        _transactionRestoreDeletedLocations: function (snapshot, options) {
             if (!Array.isArray(snapshot) || !window.masterData || !window.masterData.data) return { success: false, reason: 'Invalid Character transaction snapshot.' };
             window.masterData.data.characters = snapshot;
-            try { _rebuildCaches(); _invalidateAccessorCaches(); window.markDataDirty(); return { success: true }; } catch (error) { return { success: false, reason: error.message || String(error) }; }
+            try {
+                _rebuildCaches();
+                _invalidateAccessorCaches();
+                // A coordinated rollback must not schedule an independent save.
+                // The transaction coordinator owns compensation persistence.
+                if (!(options && options.suppressDirty === true)) window.markDataDirty();
+                return { success: true };
+            } catch (error) {
+                return { success: false, reason: error.message || String(error) };
+            }
         },
 
         __owner: 'character/character-state.js',
