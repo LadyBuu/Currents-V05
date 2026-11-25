@@ -631,7 +631,7 @@
         if (!_state) _state = _defaultFilters();
 
         // Fetch
-        var effectiveLocationId = _state.showAllLocations ? null : locationId;
+        var effectiveLocationId = _state.showAllLocations ? null : (_state.locationId || locationId);
         var result = q.getAdoptionRecords(effectiveLocationId);
 
         if (!result || result.available !== true) {
