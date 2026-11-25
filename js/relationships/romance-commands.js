@@ -3,7 +3,7 @@
  * STILL WATERS - ROMANCE COMMANDS (romance-commands.js)
  * =============================================================================
  *
- * LOCATION: js/social/romance-commands.js
+ * LOCATION: js/relationships/romance-commands.js
  *
  * Mutation boundary for romantic relationships.
  *
