@@ -506,7 +506,13 @@
             H().toast('State religion controls are unavailable.', 'error');
             return;
         }
-        var result = commands.setStateReligion(locationId, select.value || null);
+        var result;
+        try {
+            result = commands.setStateReligion(locationId, select.value || null);
+        } catch (error) {
+            H().toast('Could not save state religion. Check storage and try again.', 'error');
+            return;
+        }
         if (!result || result.success !== true) {
             H().toast('Could not change state religion: ' +
                 (result && result.code ? result.code : 'UNKNOWN_ERROR'), 'error');
@@ -524,7 +530,13 @@
             H().toast('Religious law policy controls are unavailable.', 'error');
             return;
         }
-        var result = commands.setUseReligiousLawsAsCivil(locationId, checkbox.checked);
+        var result;
+        try {
+            result = commands.setUseReligiousLawsAsCivil(locationId, checkbox.checked);
+        } catch (error) {
+            H().toast('Could not save religious law policy. Check storage and try again.', 'error');
+            return;
+        }
         if (!result || result.success !== true) {
             H().toast('Could not update religious law policy: ' +
                 (result && result.code ? result.code : 'UNKNOWN_ERROR'), 'error');
