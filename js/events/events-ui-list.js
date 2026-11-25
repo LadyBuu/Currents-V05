@@ -270,12 +270,29 @@
                 '</button>';
         }
 
+        var familyIndicators = '';
+        if (vm.activeRelationshipCount > 0) {
+            familyIndicators += '<span class="events-row__family-indicator" title="In an active relationship" aria-label="In an active relationship">' +
+                _icon(vm.relationshipIconName || 'HEART') + '</span>';
+        }
+        if (vm.childCount > 0) {
+            familyIndicators += '<span class="events-row__family-indicator" title="' +
+                _esc(vm.childCount + ' children') + '" aria-label="' +
+                _esc(vm.childCount + ' children') + '">' +
+                _icon('CHILD') + '<span>' + _esc(String(vm.childCount)) + '</span>' +
+                (vm.youngestChildBirthYear !== null
+                    ? '<span class="events-row__youngest-child-year">' +
+                        _esc(String(vm.youngestChildBirthYear)) + '</span>' : '') +
+                '</span>';
+        }
+
         return '<div class="' + _esc(rowClasses) + '" ' +
             'data-action="open-character" ' +
             'data-character-id="' + _esc(vm.id) + '" ' +
             'role="button" tabindex="0">' +
             _renderRowLeading(vm) +
             _renderRowBody(vm, secondaryParts, deathParts) +
+            '<div class="events-row__family-indicators">' + familyIndicators + '</div>' +
             '<div class="events-row__action-wrap">' + actionHtml + '</div>' +
             '</div>';
     }
