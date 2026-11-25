@@ -427,7 +427,7 @@
         if (!RQ || typeof RQ.getActiveCommittedPartners !== 'function') return out;
         characters.forEach(function(c) {
             (RQ.getActiveCommittedPartners(c.id) || []).forEach(function(p) {
-                var id = p.characterId || p.partnerId || p.id;
+                var id = p.partnerId;
                 if (!id || id === c.id || !characters.some(function(x){return x.id===id;})) return;
                 var key = [c.id,id].sort().join('|');
                 if (seen[key]) return;
@@ -943,6 +943,16 @@
         var style = document.createElement('style');
         style.id = 'events-adoption-tab-styles';
         style.textContent = [
+            '.events-adoption-columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:0.75rem; }',
+            '.events-adoption-column { min-width:0; display:flex; flex-direction:column; gap:0.4rem; padding:0.6rem; border:1px solid var(--border); border-radius:var(--radius); }',
+            '.events-adoption-column h4 { margin:0; color:var(--accent); font-size:0.7rem; }',
+            '.events-adoption-candidate { display:flex; flex-direction:column; gap:0.2rem; text-align:left; padding:0.5rem; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg); color:var(--text); cursor:pointer; }',
+            '.events-adoption-candidate.is-selected { border-color:var(--accent); background:var(--bg3); }',
+            '.events-adoption-candidate small { color:var(--dim); font-size:0.6rem; }',
+            '.events-adoption-aid { font-size:0.58rem; color:var(--accent); }',
+            '.events-adoption-show-singles { font-size:0.65rem; color:var(--text); }',
+            '.events-adoption-create-controls { display:flex; justify-content:space-between; align-items:center; gap:0.5rem; }',
+            '@media(max-width:700px){.events-adoption-columns{grid-template-columns:1fr;}}',
             '.events-adoption-tab {',
             '  display: flex;',
             '  flex-direction: column;',
