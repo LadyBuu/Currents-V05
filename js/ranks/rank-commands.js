@@ -694,6 +694,14 @@
 
         var policy = RR.canAssignRank(character, rank, options);
         if (!policy.valid) return _fail(policy.reason);
+        if (!_isMissing(options.assignedYear) && !_isValidYearOrMissing(options.assignedYear)) {
+            return _fail('assignedYear must be a valid world year.');
+        }
+        if (options.number !== undefined && options.number !== null &&
+            typeof options.number === 'number' &&
+            (!Number.isInteger(options.number) || options.number < 1)) {
+            return _fail('A manually supplied rank number must be a positive integer.');
+        }
 
         // Numbering.
         var numberInfo = null;
@@ -724,12 +732,16 @@
                         sourceId
                     );
                 } catch (e) {
-                    numberInfo = null;
+                    return _fail('Could not calculate rank numbering: ' +
+                        (e && e.message ? e.message : 'unknown error'));
+                }
+                if (!numberInfo) {
+                    return _fail('Could not calculate a number for this numbered rank.');
                 }
             }
         }
 
-        var assignedYear = _isValidYearOrMissing(options.assignedYear)
+        var assignedYear = !_isMissing(options.assignedYear)
             ? _resolveYear(options.assignedYear)
             : window.getCurrentYear();
 
