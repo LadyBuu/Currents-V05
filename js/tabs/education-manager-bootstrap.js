@@ -662,28 +662,33 @@
             return;
         }
 
+        var storageResult;
         try {
             if (typeof window.initializeStorage === 'function') {
-                window.initializeStorage();
+                storageResult = window.initializeStorage();
+            } else if (typeof window.loadMasterData === 'function') {
+                storageResult = window.loadMasterData();
+            } else {
+                throw new Error('Storage initialization is unavailable.');
             }
-        } catch (e) {
+            if (storageResult === false ||
+                (storageResult && storageResult.ok === false) ||
+                (storageResult && storageResult.success === false)) {
+                throw new Error(storageResult.error || storageResult.reason ||
+                    'Storage initialization failed.');
+            }
+        } catch (storageError) {
             if (typeof console !== 'undefined' && console.error) {
-                console.error(
-                    'education-manager-bootstrap: initializeStorage threw:', e
-                );
+                console.error('education-manager-bootstrap: storage initialization failed:', storageError);
             }
-        }
-
-        try {
-            if (typeof window.loadMasterData === 'function') {
-                window.loadMasterData();
+            var storageEmpty = document.getElementById(ID_EMPTY_STATE);
+            if (storageEmpty) {
+                storageEmpty.textContent =
+                    'Education Manager cannot load saved data: ' +
+                    (storageError.message || 'unknown storage error');
+                storageEmpty.style.color = 'var(--danger)';
             }
-        } catch (e) {
-            if (typeof console !== 'undefined' && console.error) {
-                console.error(
-                    'education-manager-bootstrap: loadMasterData threw:', e
-                );
-            }
+            return;
         }
 
         var hydratedOk = _hydrateEducationState();
