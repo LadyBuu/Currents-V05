@@ -611,41 +611,30 @@
             };
         }
 
-        var removed = CS.removeCharacters(toPurge);
-        if (!removed.success) {
-            return {
-                success: false,
-                reason: removed.reason || 'CharacterState refused batch removal.',
-                count: 0,
-                purgedIds: [],
-                cleanup: []
-            };
-        }
-
         var cleanupReports = [];
         for (var j = 0; j < toPurge.length; j++) {
             var purgeReport = _dispatchCleanup(toPurge[j]);
             purgeReport.handlers = _invokeDeleteHandlers(toPurge[j]);
-            purgeReport.success = purgeReport.failed.length === 0 && purgeReport.skipped.length === 0 && purgeReport.handlers.success;
+            purgeReport.success = purgeReport.failed.length === 0 &&
+                purgeReport.skipped.length === 0 && purgeReport.handlers.success;
             purgeReport.partial = !purgeReport.success;
-            cleanupReports.push({
-                characterId: toPurge[j],
-                report: purgeReport
-            });
+            cleanupReports.push({ characterId: toPurge[j], report: purgeReport });
         }
-
         var cleanupFailed = cleanupReports.some(function (entry) {
             return !entry.report.success;
         });
-        return {
-            success: !cleanupFailed,
-            partial: cleanupFailed,
-            deletionComplete: true,
-            cleanupFailed: cleanupFailed,
-            count: toPurge.length,
-            purgedIds: toPurge,
-            cleanup: cleanupReports
-        };
+        if (cleanupFailed) {
+            return { success: false, reason: 'Purge cleanup incomplete; soft-deleted records were retained for retry.',
+                partial: true, deletionComplete: false, cleanupFailed: true,
+                count: 0, purgedIds: [], cleanup: cleanupReports };
+        }
+        var removed = CS.removeCharacters(toPurge);
+        if (!removed.success) {
+            return { success: false, reason: removed.reason || 'CharacterState refused batch removal after cleanup.',
+                partial: true, deletionComplete: false, count: 0, purgedIds: [], cleanup: cleanupReports };
+        }
+        return { success: true, partial: false, deletionComplete: true, cleanupFailed: false,
+            count: toPurge.length, purgedIds: toPurge, cleanup: cleanupReports };
     }
 
     // =========================================================================
@@ -756,41 +745,32 @@
             };
         }
 
-        var removed = CS.removeCharacters(existingIds);
-        if (!removed.success) {
-            return {
-                success: false,
-                reason: removed.reason || 'CharacterState refused batch removal.',
-                count: 0,
-                errors: errors
-            };
-        }
-
         var cleanupReports = [];
         for (var j = 0; j < existingIds.length; j++) {
             var bulkReport = _dispatchCleanup(existingIds[j]);
             bulkReport.handlers = _invokeDeleteHandlers(existingIds[j]);
-            bulkReport.success = bulkReport.failed.length === 0 && bulkReport.skipped.length === 0 && bulkReport.handlers.success;
+            bulkReport.success = bulkReport.failed.length === 0 &&
+                bulkReport.skipped.length === 0 && bulkReport.handlers.success;
             bulkReport.partial = !bulkReport.success;
-            cleanupReports.push({
-                characterId: existingIds[j],
-                report: bulkReport
-            });
+            cleanupReports.push({ characterId: existingIds[j], report: bulkReport });
         }
-
         var cleanupFailed = cleanupReports.some(function (entry) {
             return !entry.report.success;
         });
-        return {
-            success: errors.length === 0 && !cleanupFailed,
-            partial: (errors.length > 0 && existingIds.length > 0) || cleanupFailed,
-            deletionComplete: true,
-            cleanupFailed: cleanupFailed,
-            count: existingIds.length,
-            deletedIds: existingIds,
-            errors: errors,
-            cleanup: cleanupReports
-        };
+        if (cleanupFailed) {
+            return { success: false, reason: 'Bulk cleanup incomplete; character records were retained for retry.',
+                partial: true, deletionComplete: false, cleanupFailed: true,
+                count: 0, deletedIds: [], errors: errors, cleanup: cleanupReports };
+        }
+        var removed = CS.removeCharacters(existingIds);
+        if (!removed.success) {
+            return { success: false, reason: removed.reason || 'CharacterState refused batch removal after cleanup.',
+                partial: true, deletionComplete: false, count: 0, deletedIds: [], errors: errors,
+                cleanup: cleanupReports };
+        }
+        return { success: errors.length === 0, partial: errors.length > 0, deletionComplete: true,
+            cleanupFailed: false, count: existingIds.length, deletedIds: existingIds,
+            errors: errors, cleanup: cleanupReports };
     }
 
     // =========================================================================
