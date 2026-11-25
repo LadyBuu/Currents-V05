@@ -512,8 +512,17 @@
 
         try {
             options = options || {};
-            var processYear = year || _getCurrentYear();
-            var dryRun = options.dryRun || false;
+            var processYear = (year === undefined || year === null)
+                ? _getCurrentYear()
+                : year;
+            if (typeof window.isValidYear !== 'function' ||
+                window.isValidYear(processYear) !== true) {
+                return {
+                    success: false,
+                    reason: 'Annual processing requires a valid world year.'
+                };
+            }
+            var dryRun = options.dryRun === true;
             var showToast = options.showToast !== false;
 
             var results = {
