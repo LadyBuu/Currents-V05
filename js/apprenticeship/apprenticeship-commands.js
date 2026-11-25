@@ -1396,6 +1396,21 @@
         }
         expected = Object.keys(ids);
 
+        var relationshipSnapshot;
+        try {
+            if (!window.RelationshipState ||
+                typeof window.RelationshipState.snapshot !== 'function' ||
+                typeof window.RelationshipState.replaceAll !== 'function') {
+                return fail('RELATIONSHIP_STATE_UNAVAILABLE',
+                    'Cannot safely clean apprenticeship references without RelationshipState snapshot/restore.');
+            }
+            relationshipSnapshot = window.RelationshipState.snapshot();
+        } catch (snapshotError) {
+            return fail('REFERENCE_SNAPSHOT_FAILED',
+                snapshotError && snapshotError.message ? snapshotError.message :
+                    'Could not snapshot relationship records.');
+        }
+
         var removed = [];
         var failed = [];
         for (var k = 0; k < expected.length; k++) {
@@ -1419,6 +1434,27 @@
                         ? result.reason : 'Relationship removal failed.'
                 });
             }
+        }
+
+        if (failed.length > 0 && removed.length > 0) {
+            try {
+                window.RelationshipState.replaceAll(relationshipSnapshot);
+            } catch (rollbackError) {
+                return {
+                    success: false,
+                    code: 'REFERENCE_CLEANUP_ROLLBACK_FAILED',
+                    reason: 'Apprenticeship cleanup partially failed and relationship rollback failed: ' +
+                        (rollbackError && rollbackError.message
+                            ? rollbackError.message : String(rollbackError)),
+                    data: { characterId: characterId, removed: removed.length, failed: failed }
+                };
+            }
+            return {
+                success: false,
+                code: 'REFERENCE_CLEANUP_ROLLED_BACK',
+                reason: 'Apprenticeship cleanup failed; relationship changes were rolled back.',
+                data: { characterId: characterId, expected: expected.length, removed: 0, failed: failed, rolledBack: true }
+            };
         }
 
         if (removed.length > 0) {
