@@ -565,26 +565,49 @@
     function _handleImportFile(event) {
         var file = event.target.files && event.target.files[0];
         if (!file) return;
+
         var reader = new FileReader();
         reader.onload = function (e) {
             try {
-                var parsed = JSON.parse(e.target.result);
-                if (parsed && parsed.data) {
-                    window.masterData = parsed;
-                    if (typeof window.saveMasterData === 'function') {
-                        window.saveMasterData();
-                    }
-                    if (window.HouseholdState
-                        && typeof window.HouseholdState.refresh === 'function') {
-                        window.HouseholdState.refresh();
-                    }
-                    _refreshAll();
+                if (typeof window.importMasterDataText !== 'function') {
+                    throw new Error('The storage import service is unavailable. Reload the page and try again.');
                 }
+
+                var result = window.importMasterDataText(e.target.result);
+                if (!result || result.ok !== true) {
+                    var reason = result && result.message
+                        ? result.message
+                        : 'The file could not be imported.';
+                    if (result && result.error === 'save-failed'
+                        && /quota|exceeded/i.test(reason)) {
+                        reason =
+                            'The import was not saved because this browser has run out of local storage space. ' +
+                            'Your current in-memory data was restored. Export a backup, then reduce the save ' +
+                            'size or move to a larger storage backend before importing this file. Details: ' + reason;
+                    }
+                    throw new Error(reason);
+                }
+
+                _refreshAll();
+                window.alert(
+                    'Import completed and saved. ' +
+                    result.charCount + ' characters imported.'
+                );
             } catch (err) {
                 if (typeof console !== 'undefined' && console.error) {
-                    console.error('household-manager-bootstrap: import failed', err);
+                    console.error('household-manager-bootstrap: import failed:', err);
                 }
+                window.alert('Import failed. Existing data was kept.\n\n' +
+                    (err && err.message ? err.message : String(err)));
+            } finally {
+                // Permit selecting the same file again after correcting the
+                // storage problem; browsers otherwise suppress change events.
+                if (event.target) event.target.value = '';
             }
+        };
+        reader.onerror = function () {
+            window.alert('Import failed: the selected file could not be read.');
+            if (event.target) event.target.value = '';
         };
         reader.readAsText(file);
     }
