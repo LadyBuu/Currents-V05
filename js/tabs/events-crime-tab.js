@@ -12,7 +12,7 @@
     function render(container, context) {
         if (!container) return;
         var scopedId = context && context.locationId || '';
-        var selectedId = scopedId;
+        var selectedId = scopedId || container.__crimeSelectedLocation || '';
         if (!selectedId && typeof window.getCurrentLocationId === 'function') {
             try { selectedId = window.getCurrentLocationId() || ''; } catch (e) {}
         }
