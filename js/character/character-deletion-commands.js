@@ -472,13 +472,16 @@
         cleanup.success = cleanup.failed.length === 0 && cleanup.skipped.length === 0 && handlers.success;
         cleanup.partial = !cleanup.success;
 
-        return _ok({
+        return {
+            success: cleanup.success,
+            reason: cleanup.success ? undefined : 'Character was deleted, but cross-domain cleanup was incomplete.',
             deletedId: characterId,
             deletedCharacter: removed.character,
             deletionComplete: true,
+            partial: !cleanup.success,
             cleanup: cleanup,
             cleanupFailed: !cleanup.success
-        });
+        };
     }
 
     function _softDeleteInternal(characterId) {
