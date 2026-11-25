@@ -410,6 +410,18 @@
     var _isDirty = false;
     var _lastSaveError = null;
 
+    function _emitSaveStatus(status, error) {
+        try {
+            window.dispatchEvent(new CustomEvent('masterDataSaveStatus', {
+                detail: {
+                    status: status,
+                    dirty: _isDirty === true,
+                    error: error ? (error.message || String(error)) : null
+                }
+            }));
+        } catch (e) { /* UI status must never break persistence. */ }
+    }
+
     var _storageListenerAdded = false;
     var _syncTimeout = null;
 
@@ -768,10 +780,13 @@
         if (result.ok) {
             _isDirty = false;
             _lastSaveError = null;
+            _emitSaveStatus('saved', null);
             return true;
         }
+        _isDirty = true;
         _lastSaveError = result.error || new Error('unknown save failure');
         console.error('storage.js: save failed:', _lastSaveError);
+        _emitSaveStatus('error', _lastSaveError);
         return false;
     }
 
@@ -782,16 +797,21 @@
 
     function scheduleSave() {
         if (_saveTimeout !== null) clearTimeout(_saveTimeout);
+        _emitSaveStatus('pending', null);
         _saveTimeout = setTimeout(function() {
             _saveTimeout = null;
             saveMasterData();
         }, STORAGE_CONFIG.SAVE_DEBOUNCE_MS);
     }
 
+    // A failed debounced write leaves the data dirty. Explicit flush/retry
+    // must therefore attempt a write even when no timeout is pending.
     function flushPendingSave() {
-        if (_saveTimeout === null) {
-            return !_isDirty;
+        if (_saveTimeout !== null) {
+            clearTimeout(_saveTimeout);
+            _saveTimeout = null;
         }
+        if (!_isDirty) return true;
         return saveMasterData();
     }
 
@@ -973,7 +993,18 @@
             };
         }
 
+        // Never replace a working in-memory dataset while it contains
+        // unsaved edits. Persist those first or leave the import untouched.
+        if (_isDirty && !flushPendingSave()) {
+            return {
+                ok: false,
+                error: 'unsaved-changes',
+                message: 'The current data could not be saved. Import was cancelled to protect those changes.'
+            };
+        }
+
         var prior = window.masterData;
+        var priorDirty = _isDirty;
         window.masterData = envelope;
         try {
             if (window.RelationshipState
@@ -1000,7 +1031,9 @@
             if (window.RelationshipState && typeof window.RelationshipState.reload === 'function') {
                 window.RelationshipState.reload();
             }
-            _isDirty = false;
+            _isDirty = priorDirty;
+            if (_isDirty) scheduleSave();
+            _emitSaveStatus(_isDirty ? 'pending' : 'error', _lastSaveError);
             return {
                 ok: false,
                 error: 'save-failed',
@@ -1011,6 +1044,7 @@
             };
         }
 
+        _emitSaveStatus('saved', null);
         _invalidateAccessorCaches();
         try {
             window.dispatchEvent(new CustomEvent('masterDataUpdated', {
