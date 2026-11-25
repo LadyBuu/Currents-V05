@@ -1666,6 +1666,49 @@
         return { success: true };
     }
 
+    /**
+     * Preflight a hard-delete batch without mutating canonical state.
+     * Cross-domain deletion commands call this before cleaning references,
+     * so a known education constraint cannot leave the other domains altered.
+     */
+    function validateCharacterRemoval(ids) {
+        if (!Array.isArray(ids)) {
+            return { success: false, reason: 'ids must be an array.' };
+        }
+        var requested = Object.create(null);
+        for (var i = 0; i < ids.length; i++) {
+            if (!_hasId(ids[i])) {
+                return { success: false, reason: 'Invalid id at index ' + i + '.' };
+            }
+            requested[ids[i]] = true;
+        }
+
+        var coll = _getCanonicalCollection();
+        if (!coll.ok) return { success: false, reason: coll.reason };
+
+        var found = Object.create(null);
+        for (var j = 0; j < coll.collection.length; j++) {
+            var candidate = coll.collection[j];
+            if (!candidate || !requested[candidate.id]) continue;
+            found[candidate.id] = true;
+            var check = _educationReferencesForDeletion(candidate);
+            if (!check.success) {
+                return {
+                    success: false,
+                    reason: 'Character deletion blocked for ' + candidate.id + ': ' + check.reason,
+                    characterId: candidate.id
+                };
+            }
+        }
+
+        for (var id in requested) {
+            if (Object.prototype.hasOwnProperty.call(requested, id) && !found[id]) {
+                return { success: false, reason: 'Character not found: ' + id, characterId: id };
+            }
+        }
+        return { success: true, characterIds: Object.keys(requested) };
+    }
+
     function removeCharacter(id) {
         if (!_hasId(id)) {
             return { success: false, reason: 'Character id is required.' };
@@ -1967,6 +2010,7 @@
         addCharacters: addCharacters,
         removeCharacter: removeCharacter,
         removeCharacters: removeCharacters,
+        validateCharacterRemoval: validateCharacterRemoval,
 
         getLiveCharacterForMutation: getLiveCharacterForMutation,
 
