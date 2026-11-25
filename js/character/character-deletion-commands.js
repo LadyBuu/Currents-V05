@@ -617,8 +617,27 @@
                             if (!enterprise || typeof enterprise !== 'object') continue;
                             if (enterprise.ownerType === 'character'
                                 && ctx.ids.indexOf(enterprise.ownerId) !== -1) {
+                                var previousOwnerId = enterprise.ownerId;
                                 enterprise.ownerType = 'none';
                                 enterprise.ownerId = null;
+                                if (!Array.isArray(enterprise.history)) enterprise.history = [];
+                                var historyEntry = {
+                                    type: 'owner_changed',
+                                    previousOwnerType: 'character',
+                                    previousOwnerId: previousOwnerId,
+                                    newOwnerType: 'none',
+                                    newOwnerId: null,
+                                    newOwnerName: null,
+                                    reason: 'Owner character deleted',
+                                    timestamp: Date.now()
+                                };
+                                if (typeof window.getCurrentYear === 'function') {
+                                    var deletionYear = window.getCurrentYear();
+                                    if (typeof deletionYear === 'number' && Number.isFinite(deletionYear)) {
+                                        historyEntry.year = deletionYear;
+                                    }
+                                }
+                                enterprise.history.push(historyEntry);
                             }
                             if (Array.isArray(enterprise.workerList)) {
                                 var remainingWorkers = enterprise.workerList.filter(function(workerId) {
