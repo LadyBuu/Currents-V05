@@ -88,7 +88,8 @@
  *
  * LOAD ORDER
  * ----------
- * Load LAST among household scripts:
+ * Load after every household domain module and modal helper, but before
+ * the manager's tab renderers and UI bootstrap:
  *
  *   household-constants.js
  *   household-rules.js
@@ -101,9 +102,10 @@
  *   household-assignment.js
  *   household-servant.js
  *   residence-system.js
- *   household-bootstrap.js        ← this file
- *   household-ui-list.js
  *   modals-*.js
+ *   household-bootstrap.js        ← this file
+ *   household tab renderers
+ *   household-manager-bootstrap.js
  *
  * Also verify (loaded earlier in the page):
  *   character-commands.js, character-queries.js
@@ -140,12 +142,11 @@
  *       which is why the original _requireGlobal checks failed the
  *       same way.
  *
- *       This is the same class of bug that household-servant.js has
- *       (its _resolveRelationshipCommandsFn /
- *       _resolveRelationshipQueriesFn wrappers call the wrong method
- *       names through the same namespaces; the servant-service feature
- *       will fail at call time until that file is also corrected —
- *       see that file's header).
+ *       household-servant.js now resolves those compact method names and
+ *       adapts its service API to RelationshipCommands.create's single
+ *       input object and structured { success, relationship } result.
+ *       This prevents the old positional-argument mismatch and avoids
+ *       treating a failed structured command result as success.
  *
  *     - Added _requireNamespaceFunction(namespace, fnName) helper in
  *       §1 to replace the failed _requireGlobal calls in
