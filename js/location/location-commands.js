@@ -1785,7 +1785,8 @@
         if (!prep.success) return prep;
 
         var charResult = CC.updateCharacterFields(prep.data.characterId, {
-            moves: prep.data.nextMoves
+            moves: prep.data.nextMoves,
+            currentLocationId: prep.data.locationId
         });
         if (!charResult || charResult.success !== true) {
             return _fail('recordMove: ' +
@@ -1841,14 +1842,22 @@
             return _fail('fromLocationId must be a non-empty string or null');
         }
 
+        var isBirthMove = options.isBirthMove === true;
+        var fromLocationId = options.fromLocationId || null;
+        if (!isBirthMove && options.fromLocationId === undefined) {
+            fromLocationId = _resolveCurrentLocationId(character);
+        }
+        if (fromLocationId && !LS._getPlaceCanonical(fromLocationId)) {
+            return _fail('fromLocationId not found: ' + fromLocationId);
+        }
         var moveData = {
             year: year,
             locationId: locationId,
             locationName: place.displayName,
             note: options.note || null,
-            fromLocationId: options.fromLocationId || null,
+            fromLocationId: fromLocationId,
             fromLocationName: null,
-            isBirthMove: options.isBirthMove === true,
+            isBirthMove: isBirthMove,
             timestamp: Date.now()
         };
         if (moveData.fromLocationId) {
@@ -1898,7 +1907,8 @@
             }
 
             var charResult = CC.updateCharacterFields(prep.data.characterId, {
-                moves: prep.data.nextMoves
+                moves: prep.data.nextMoves,
+                currentLocationId: prep.data.locationId
             });
             if (!charResult || charResult.success !== true) {
                 failed.push({
