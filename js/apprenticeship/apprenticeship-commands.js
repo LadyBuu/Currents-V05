@@ -1686,6 +1686,13 @@
     // =========================================================================
 
     function _handleRoleDeleted(event) {
+        // RoleCommands performs apprenticeship cleanup inside the same
+        // CrossDomainTransaction as role deletion. Ignore the state-level
+        // notification emitted while that transaction is still applying.
+        if (window.CrossDomainTransaction &&
+            typeof window.CrossDomainTransaction.isActive === 'function' &&
+            window.CrossDomainTransaction.isActive()) return;
+
         var roleId = event && event.detail && event.detail.roleId;
         if (!roleId) return;
 
