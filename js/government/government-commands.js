@@ -1139,7 +1139,12 @@
         var rankError = _validateLeaderCandidateForPlace(placeId, characterId);
         if (rankError) return _fail(rankError, C.CODES.VALIDATION);
 
-        var result = _LocationCommands.assignLeader(placeId, characterId, startYear, title);
+        var effectiveStartYear = startYear == null ? _now() : startYear;
+        if (typeof window.isValidYear !== 'function' ||
+            window.isValidYear(effectiveStartYear) !== true) {
+            return _fail('Leader start year must be a valid world year', C.CODES.VALIDATION);
+        }
+        var result = _LocationCommands.assignLeader(placeId, characterId, effectiveStartYear, title);
         var wrapped = _wrapLocationResult(result);
 
         if (wrapped.success) {
@@ -1152,7 +1157,7 @@
                 characterId: characterId,
                 characterName: c ? c.fullName : null,
                 eventType: C.GOVERNMENT_HISTORY_EVENT_TYPES.LEADER_ASSIGNED,
-                startYear: startYear,
+                startYear: effectiveStartYear,
                 title: title || null,
                 recordedAt: _now()
             });
@@ -1163,7 +1168,12 @@
     }
 
     function endLeaderTerm(placeId, characterId, endYear) {
-        var result = _LocationCommands.endLeaderTerm(placeId, characterId, endYear);
+        var effectiveEndYear = endYear == null ? _now() : endYear;
+        if (typeof window.isValidYear !== 'function' ||
+            window.isValidYear(effectiveEndYear) !== true) {
+            return _fail('Leader end year must be a valid world year', C.CODES.VALIDATION);
+        }
+        var result = _LocationCommands.endLeaderTerm(placeId, characterId, effectiveEndYear);
         var wrapped = _wrapLocationResult(result);
 
         if (wrapped.success) {
@@ -1173,7 +1183,7 @@
                 locationId: placeId,
                 characterId: characterId,
                 eventType: C.GOVERNMENT_HISTORY_EVENT_TYPES.LEADER_TERM_ENDED,
-                endYear: endYear,
+                endYear: effectiveEndYear,
                 recordedAt: _now()
             });
             _commit(C.EVENTS.LEADER_TERM_ENDED, { placeId: placeId, characterId: characterId });
