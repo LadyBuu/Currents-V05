@@ -565,6 +565,35 @@
         html += '<select class="ev-adoption-input events-filters__select" data-input="sortBy">' +
             U.renderOptionList(sortOpts) + '</select>';
 
+        var lq = window.LocationQueries;
+        var locationChain = [];
+        if (lq && typeof lq.getPlaceHierarchy === 'function' && filters.locationId) {
+            try { locationChain = lq.getPlaceHierarchy(filters.locationId) || []; } catch (e) {}
+        }
+        var locationOptions = [];
+        if (lq && typeof lq.getRootPlaces === 'function') {
+            try { locationOptions = lq.getRootPlaces({ includeDeprecated: false }) || []; } catch (e) {}
+        }
+        var level = 0;
+        while (locationOptions.length) {
+            var selectedPlace = locationChain[level] || null;
+            var foundSelected = false;
+            html += '<select class="ev-adoption-input events-filters__select" data-input="location-level" data-level="' + level + '">';
+            html += '<option value="">All ' + (level === 0 ? 'locations' : 'sub-locations') + '</option>';
+            for (var li = 0; li < locationOptions.length; li++) {
+                var place = locationOptions[li];
+                if (!place || !place.id) continue;
+                var selected = !!selectedPlace && selectedPlace.id === place.id;
+                if (selected) foundSelected = true;
+                html += '<option value="' + _esc(place.id) + '"' + (selected ? ' selected' : '') + '>' +
+                    _esc(place.displayName || place.name || place.id) + '</option>';
+            }
+            html += '</select>';
+            if (!foundSelected || !selectedPlace || !lq || typeof lq.getPlaceChildren !== 'function') break;
+            try { locationOptions = lq.getPlaceChildren(selectedPlace.id, false) || []; } catch (e) { break; }
+            level++;
+        }
+
         html += '</div>';
         html += '</div>';
         return html;
@@ -723,6 +752,16 @@
 
                 if (input.tagName === 'SELECT') {
                     input.addEventListener('change', function() {
+                        if (key === 'location-level') {
+                            var selectedLocationId = input.value || null;
+                            var level = parseInt(input.getAttribute('data-level'), 10);
+                            if (!selectedLocationId && level > 0) {
+                                var prior = container.querySelector('[data-input="location-level"][data-level="' + (level - 1) + '"]');
+                                selectedLocationId = prior && prior.value ? prior.value : null;
+                            }
+                            commit({ locationId: selectedLocationId, showAllLocations: !selectedLocationId });
+                            return;
+                        }
                         var patch = {};
                         patch[key] = input.value;
                         commit(patch);
