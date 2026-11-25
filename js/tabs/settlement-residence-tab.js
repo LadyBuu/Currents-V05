@@ -86,7 +86,7 @@
     function _getResidencesByLocation(locationId) {
         var RS = _getResidenceSystem();
         if (RS && typeof RS.getResidencesByLocation === 'function') {
-            try { return RS.getResidencesByLocation(locationId) || []; }
+            try { return RS.getResidencesByLocation(locationId, { includeDemolished: true }) || []; }
             catch (e) { return []; }
         }
         if (RS && typeof RS.getAllResidences === 'function') {
