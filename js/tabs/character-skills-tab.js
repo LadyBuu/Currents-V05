@@ -720,6 +720,12 @@
         body += _sectionHtml(SECTIONS[5], _bodyTraits(model));
 
         container.innerHTML = body;
+        // The pane survives tab switches while its children are replaced.
+        // Keep the delegated listener singular and refresh its context.
+        container.__characterSkillsContext = {
+            characterId: context.characterId,
+            model: model
+        };
         _wire(container, context.characterId, model);
     }
 
@@ -733,6 +739,8 @@
             headers[i].addEventListener('click', _onToggleSection);
         }
 
+        if (container.__characterSkillsClickHandlerInstalled === true) return;
+        container.__characterSkillsClickHandlerInstalled = true;
         container.addEventListener('click', function (e) {
             var btn = e.target.closest
                 ? e.target.closest('[data-action]')
@@ -742,8 +750,16 @@
             if (!action) return;
             if (action === 'toggle-section') return;
             if (btn.disabled) return;
+            var context = container.__characterSkillsContext;
+            if (!context || !_hasId(context.characterId)) return;
             e.preventDefault();
-            _dispatchAction(action, btn, characterId, container, model);
+            _dispatchAction(
+                action,
+                btn,
+                context.characterId,
+                container,
+                context.model
+            );
         });
     }
 
