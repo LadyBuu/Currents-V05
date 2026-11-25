@@ -630,6 +630,17 @@
             }
         }
 
+        // RoleState owns the canonical roles and roleCategories collections.
+        // Data Manager renders the same category editor as Role Manager, so
+        // hydrate that state after storage has loaded and before any tab can render.
+        if (window.RoleState && typeof window.RoleState.init === 'function') {
+            try {
+                window.RoleState.init();
+            } catch (roleStateError) {
+                console.error('[data-manager] RoleState.init failed:', roleStateError);
+            }
+        }
+
         // --- Tab switching ---
         var tabButtons = document.querySelectorAll('.panel-tabs .tab-btn');
         var tabPanes = {
