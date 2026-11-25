@@ -617,6 +617,16 @@
 <script src="js/character/family-state.js"></script>
 <script src="js/character/children-state.js"></script>
 <script src="js/character/character-commands.js"></script>
+<script src="js/roles/role-constants.js"></script>
+<script src="js/roles/role-state.js"></script>
+<script src="js/roles/role-queries.js"></script>
+<script src="js/roles/role-commands.js"></script>
+<script>
+    if (window.RoleState && typeof window.RoleState.init === 'function') {
+        try { window.RoleState.init(); }
+        catch (e) { console.error('[household-manager] RoleState.init failed:', e); }
+    }
+</script>
 <script src="js/character/character-queries.js"></script>
 <script src="js/character/family-queries.js"></script>
 <script src="js/character/family-commands.js"></script>
@@ -625,6 +635,7 @@
 <script src="js/character/family-statistics.js"></script>
 <script src="js/character/character-statistics.js"></script>
 <script src="js/character/character-lifecycle.js"></script>
+<script src="js/apprenticeship/professional-knowledge-commands.js"></script>
 
 <!-- Relationship domain (before household — household-servant needs it) -->
 <script src="js/relationships/relationship-types.js"></script>
