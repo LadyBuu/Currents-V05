@@ -579,7 +579,25 @@
             var index = _institutions.indexOf(inst);
             if (index !== -1) _institutions[index] = previous;
             _indexesRebuild();
-            try { _writeToMasterData(); } catch (restoreError) {}
+            try {
+                _writeToMasterData();
+            } catch (restoreError) {
+                // Preserve the original mutation failure, but never hide a
+                // failed compensation: callers must know canonical storage
+                // may no longer match the restored in-memory institution.
+                error.rollbackError = restoreError;
+                error.message = (error.message || 'Institution update failed.') +
+                    '; rollback to masterData also failed: ' +
+                    (restoreError && restoreError.message
+                        ? restoreError.message
+                        : String(restoreError));
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'EducationState._updateInstitution rollback failed:',
+                        restoreError
+                    );
+                }
+            }
             throw error;
         }
         _lastUpdated = Date.now();
