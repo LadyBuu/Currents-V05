@@ -629,11 +629,11 @@
 
         var TabManager, HS, Q, runtime;
         try {
-            _requireHouseholdDomain();
             TabManager = _requireTabManager();
             HS = _requireState();
             Q = _requireQueries();
             runtime = _requireRuntime();
+            _requireHouseholdDomain();
         } catch (depErr) {
             var errEl = document.getElementById('bootstrapError')
                 || document.getElementById('emptyStateText');
