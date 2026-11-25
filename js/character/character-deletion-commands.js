@@ -99,7 +99,7 @@
  *   Handler contract:
  *     fn(characterId) -> { success: true, ... } | { success: false, reason }
  *   Missing or malformed results and exceptions are recorded as failures.
- *   A failing handler does not prevent subsequent handlers from running.
+ *   A failing handler blocks subsequent handlers for that character to limit partial cleanup.
  *
  *   RelationshipIntegrations is intentionally omitted from the named
  *   cleanup table because it registers through this hook.
@@ -677,6 +677,23 @@
                 purgeReport.skipped.length === 0 && purgeReport.handlers.success;
             purgeReport.partial = !purgeReport.success;
             cleanupReports.push({ characterId: toPurge[j], report: purgeReport });
+            if (!purgeReport.success) {
+                for (var blockedPurge = j + 1; blockedPurge < toPurge.length; blockedPurge++) {
+                    cleanupReports.push({
+                        characterId: toPurge[blockedPurge],
+                        report: {
+                            applied: [],
+                            skipped: [{ domain: 'all', reason: 'blocked because an earlier character cleanup failed' }],
+                            failed: [],
+                            handlers: { applied: 0, failed: [], success: false, skipped: true },
+                            success: false,
+                            partial: false,
+                            blocked: true
+                        }
+                    });
+                }
+                break;
+            }
         }
         var cleanupFailed = cleanupReports.some(function (entry) {
             return !entry.report.success;
@@ -822,6 +839,23 @@
                 bulkReport.skipped.length === 0 && bulkReport.handlers.success;
             bulkReport.partial = !bulkReport.success;
             cleanupReports.push({ characterId: existingIds[j], report: bulkReport });
+            if (!bulkReport.success) {
+                for (var blockedBulk = j + 1; blockedBulk < existingIds.length; blockedBulk++) {
+                    cleanupReports.push({
+                        characterId: existingIds[blockedBulk],
+                        report: {
+                            applied: [],
+                            skipped: [{ domain: 'all', reason: 'blocked because an earlier character cleanup failed' }],
+                            failed: [],
+                            handlers: { applied: 0, failed: [], success: false, skipped: true },
+                            success: false,
+                            partial: false,
+                            blocked: true
+                        }
+                    });
+                }
+                break;
+            }
         }
         var cleanupFailed = cleanupReports.some(function (entry) {
             return !entry.report.success;
