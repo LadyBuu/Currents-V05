@@ -39,7 +39,7 @@
  *   - Aggregate statistics             -> mortality-statistics.js
  *   - Childbirth orchestration         -> children-commands.js
  *   - Succession / inheritance         -> future succession domain
- *   - Relationship termination logic   -> relationship-integration.js
+ *   - Relationship termination logic   -> relationship-integrations.js
  *   - Rank deprecation logic           -> rank-issues.js
  *   - Location leader-term cleanup     -> location-commands.js
  *                                         (LocationCommands.handleCharacterDeath,
@@ -221,7 +221,7 @@
  *
  * DEPENDENCIES (OPTIONAL, called only if loaded):
  *   - family-commands.js:              FamilyCommands.handleCharacterDeath
- *   - relationships/relationship-integration.js:
+ *   - relationships/relationship-integrations.js:
  *                                       RelationshipIntegrations.handleCharacterDeath
  *   - ranks/rank-issues.js:            RankIssues.handleCharacterDeath
  *   - location/location-commands.js:   LocationCommands.handleCharacterDeath
