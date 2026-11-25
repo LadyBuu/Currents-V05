@@ -312,7 +312,8 @@
         window.masterData.data.surrogacyArrangements = ChS.snapshotSurrogacy();
         window.masterData.data.adoptionRecords = ChS.snapshotAdoptions();
 
-        if (typeof window.markDataDirty === 'function') {
+        if (!(window.CrossDomainTransaction && window.CrossDomainTransaction.isActive()) &&
+            typeof window.markDataDirty === 'function') {
             window.markDataDirty();
         }
         return true;
