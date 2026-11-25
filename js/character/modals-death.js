@@ -795,18 +795,27 @@
         }
         var enterprises = IS.getEnterprisesByOwner(characterId, 'character') || [];
         if (!enterprises.length) { continuation(); return; }
-        var householdId = null;
+
         var household = typeof window.getHouseholdByCharacterId === 'function'
             ? window.getHouseholdByCharacterId(characterId) : null;
-        householdId = household && household.id || null;
+        var householdId = household && household.id || null;
+        var familyIds = _getLivingFamilyIds(characterId);
+        var employeeIds = [];
+        enterprises.forEach(function(e) {
+            (e.workerList || []).forEach(function(id) {
+                if (employeeIds.indexOf(id) === -1) employeeIds.push(id);
+            });
+        });
+        var populationIds = (window.getCharacters() || []).filter(function(ch) {
+            return ch && ch.id !== characterId && ch.isDeceased !== true;
+        }).map(function(ch) { return ch.id; });
 
         var options = [
             '<option value="inherit">Inherit (family)</option>',
             '<option value="sell">Sell</option>',
             '<option value="close">Close</option>'
         ];
-        var hasEmployees = enterprises.some(function(e) { return (e.workerList || []).length > 0; });
-        if (hasEmployees) options.push('<option value="takeover">Employee takeover</option>');
+        if (employeeIds.length) options.push('<option value="takeover">Employee takeover</option>');
         var modal = window.openModal({
             titleHtml: 'Resolve enterprise ownership',
             contentHtml: '<p>The character owns ' + enterprises.length + ' enterprise(s). Choose what happens to them.</p><select id="enterprise-succession-action" class="character-modal__form-input">' + options.join('') + '</select>',
@@ -819,30 +828,45 @@
                     if (!result || result.success !== true) throw new Error(result && result.reason || 'Enterprise succession failed.');
                     continuation();
                 }
-                if (action === 'inherit') {
+                if (action === 'inherit' || action === 'sell' || action === 'takeover') {
+                    var ids = action === 'inherit' ? familyIds : (action === 'sell' ? populationIds : employeeIds);
+                    if (!ids.length) throw new Error(action === 'inherit'
+                        ? 'No living family member is eligible to inherit.'
+                        : action === 'sell' ? 'No living buyer is available.' : 'No living employee is eligible to take over.');
                     window.openCharacterSelector({
-                        title: 'Select family heir',
+                        title: action === 'inherit' ? 'Select family heir' : action === 'sell' ? 'Select buyer' : 'Select employee takeover',
                         filters: { status: 'all', showDeceased: false },
+                        allowedIds: ids,
                         onSelect: function(ch) { finish(ch.id); }
-                    });
-                    return false;
-                }
-                if (action === 'takeover') {
-                    window.openCharacterSelector({
-                        title: 'Select employee takeover',
-                        filters: { status: 'all', showDeceased: false },
-                        onSelect: function(ch) {
-                            if (!enterprises.some(function(e) { return (e.workerList || []).indexOf(ch.id) !== -1; })) {
-                                throw new Error('Select an employee of an owned enterprise.');
-                            }
-                            finish(ch.id);
-                        }
                     });
                     return false;
                 }
                 finish(null);
             }
         });
+    }
+
+    function _getLivingFamilyIds(characterId) {
+        var FQ = window.FamilyQueries;
+        if (!FQ) return [];
+        var seen = Object.create(null);
+        var queue = [characterId];
+        var out = [];
+        while (queue.length) {
+            var id = queue.shift();
+            var related = [];
+            try {
+                related = (FQ.getChildIds(id) || []).concat(FQ.getAllParentIds(id) || []);
+            } catch (e) { related = []; }
+            related.forEach(function(otherId) {
+                if (!otherId || seen[otherId] || otherId === characterId) return;
+                seen[otherId] = true;
+                queue.push(otherId);
+                var person = window.getCharacterById(otherId);
+                if (person && person.isDeceased !== true) out.push(otherId);
+            });
+        }
+        return out;
     }
 
     // =========================================================================
