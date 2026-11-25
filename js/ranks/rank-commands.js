@@ -435,6 +435,33 @@
         var rank = RS.getRank(rankId);
         if (!rank) return _fail('Rank not found.');
 
+        // Settlements hold a direct foreign-key reference to their rank.
+        // This reference is never force-cleared: doing so would leave a
+        // settlement without a valid civic rank.
+        var settlementState = window.SettlementState;
+        if (!settlementState ||
+            typeof settlementState.getLocationIdsByRank !== 'function') {
+            var settlementStore = window.masterData && window.masterData.data &&
+                window.masterData.data.settlementData;
+            if (settlementStore && Object.keys(settlementStore).length > 0) {
+                return _fail('Settlement rank references cannot be checked; deletion is blocked.');
+            }
+        } else {
+            var settlementReferences;
+            try {
+                settlementReferences = settlementState.getLocationIdsByRank(rankId);
+            } catch (settlementReferenceError) {
+                return _fail('Settlement rank references could not be read; deletion is blocked.');
+            }
+            if (!Array.isArray(settlementReferences)) {
+                return _fail('Settlement rank references could not be read; deletion is blocked.');
+            }
+            if (settlementReferences.length > 0) {
+                return _fail('Cannot delete rank while ' + settlementReferences.length +
+                    ' settlement(s) use it. Assign those settlements another rank first.');
+            }
+        }
+
         // Government positions and government-type allowlists are external
         // policy references. Never invalidate them, even under force mode.
         var governmentQueries = window.GovernmentQueries;
