@@ -1063,9 +1063,19 @@
         var cascadeFailures = [];
         var settlementFailures = [];
         var settlementsSkipped = options.skipSettlements === true;
-        var maxDeaths = typeof options.maxDeaths === 'number'
-            ? options.maxDeaths
-            : Infinity;
+        var maxDeaths = Infinity;
+        if (options.maxDeaths !== undefined && options.maxDeaths !== null) {
+            if (typeof options.maxDeaths !== 'number' ||
+                !Number.isFinite(options.maxDeaths) ||
+                !Number.isInteger(options.maxDeaths) ||
+                options.maxDeaths < 0) {
+                return {
+                    success: false,
+                    reason: 'options.maxDeaths must be a non-negative integer.'
+                };
+            }
+            maxDeaths = options.maxDeaths;
+        }
 
         var finalYear = startYear;
 
