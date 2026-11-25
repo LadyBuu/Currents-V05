@@ -619,71 +619,70 @@
             characters.push(built[j].character);
         }
 
-        var inserted = CS.addCharacters(characters);
-        if (!inserted.success) {
+        var transaction = window.CrossDomainTransaction;
+        if (!transaction || typeof transaction.execute !== 'function') {
+            return { success: false, reason: 'CrossDomainTransaction is required for atomic character creation.', count: 0, data: [], errors: [] };
+        }
+        var result = transaction.execute({
+            context: { entries: built, characters: characters, options: options },
+            participants: [
+                {
+                    name: 'characters',
+                    snapshot: function () {
+                        if (!window.masterData || !window.masterData.data || !Array.isArray(window.masterData.data.characters)) throw new Error('Canonical character collection is unavailable.');
+                        return JSON.parse(JSON.stringify(window.masterData.data.characters));
+                    },
+                    apply: function (ctx) {
+                        var inserted = CS.addCharacters(ctx.characters);
+                        return inserted && inserted.success ? { success: true } : { success: false, reason: inserted && inserted.reason || 'CharacterState refused batch insertion.' };
+                    },
+                    rollback: function (snapshot) {
+                        if (!window.masterData || !window.masterData.data) return { success: false, reason: 'Canonical character collection unavailable during rollback.' };
+                        window.masterData.data.characters = JSON.parse(JSON.stringify(snapshot));
+                        if (typeof CS.refresh === 'function') CS.refresh();
+                        if (typeof CS._transactionDiscardChanges === 'function') CS._transactionDiscardChanges();
+                        return { success: true };
+                    },
+                    afterCommit: function () {
+                        if (typeof CS._transactionFlushChanges === 'function') CS._transactionFlushChanges();
+                    }
+                },
+                {
+                    name: 'family',
+                    snapshot: function () {
+                        return window.FamilyState && typeof window.FamilyState.snapshot === 'function' ? window.FamilyState.snapshot() : [];
+                    },
+                    apply: function (ctx) {
+                        for (var k = 0; k < ctx.entries.length; k++) {
+                            var entry = ctx.entries[k];
+                            var familyResult = _establishFamilyEdges(entry.character.id, ctx.options, entry.character.birthYear);
+                            if (!familyResult.ok) return { success: false, reason: 'Entry ' + k + ': ' + familyResult.reason };
+                            var religionResult = _establishReligionEdge(entry.character.id, entry.data);
+                            if (!religionResult.ok) return { success: false, reason: 'Entry ' + k + ': ' + religionResult.reason };
+                        }
+                        return { success: true };
+                    },
+                    rollback: function (snapshot) {
+                        if (!window.FamilyState || typeof window.FamilyState.replaceAll !== 'function') return { success: false, reason: 'FamilyState.replaceAll unavailable.' };
+                        if (!window.FamilyState.replaceAll(snapshot)) return { success: false, reason: 'Family edges could not be restored.' };
+                        window.masterData.data.parentChildEdges = window.FamilyState.snapshot();
+                        return { success: true };
+                    }
+                }
+            ]
+        });
+        if (!result.success) {
             return {
                 success: false,
-                reason: inserted.reason || 'CharacterState refused batch insertion.',
+                reason: result.reason || 'Atomic batch creation failed.',
+                code: result.code,
+                rollbackFailed: result.rolledBack !== true,
                 count: 0,
                 data: [],
-                errors: []
+                errors: [{ reason: result.reason || 'Atomic batch creation failed.', rollback: result.rollbackErrors || [] }]
             };
         }
-
-        var created = [];
-        var errors = [];
-        for (var k = 0; k < built.length; k++) {
-            var entry = built[k];
-
-            var familyResult = _establishFamilyEdges(
-                entry.character.id,
-                options,
-                entry.character.birthYear
-            );
-            if (!familyResult.ok) {
-                var familyRollback = _rollbackCreatedCharacter(
-                    entry.character.id,
-                    familyResult.createdEdgeIds
-                );
-                errors.push({
-                    index: k,
-                    characterId: entry.character.id,
-                    reason: familyResult.reason,
-                    rollback: familyRollback,
-                    rollbackFailed: familyRollback.success !== true
-                });
-                continue;
-            }
-
-            var religionResult = _establishReligionEdge(entry.character.id, entry.data);
-            if (!religionResult.ok) {
-                var religionRollback = _rollbackCreatedCharacter(
-                    entry.character.id,
-                    familyResult.createdEdgeIds
-                );
-                errors.push({
-                    index: k,
-                    characterId: entry.character.id,
-                    reason: religionResult.reason,
-                    rollback: religionRollback,
-                    rollbackFailed: religionRollback.success !== true
-                });
-                continue;
-            }
-
-            created.push(entry.character);
-        }
-
-        return {
-            success: errors.length === 0,
-            partial: errors.length > 0 && created.length > 0,
-            rollbackFailed: errors.some(function (entry) {
-                return entry.rollbackFailed === true;
-            }),
-            count: created.length,
-            data: created,
-            errors: errors
-        };
+        return { success: true, partial: false, rollbackFailed: false, count: characters.length, data: characters, errors: [] };
     }
 
     // =========================================================================
