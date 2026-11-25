@@ -1,10 +1,10 @@
-// js/core/industry/modals-industry.js
+// js/industry/modals-industry.js
 /**
  * =============================================================================
  * STILL WATERS - INDUSTRY MODALS (modals-industry.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/modals-industry.js
+ * LOCATION: js/industry/modals-industry.js
  *
  * Modal dialogs for enterprise management.
  *
