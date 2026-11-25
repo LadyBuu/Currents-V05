@@ -127,7 +127,8 @@
     //   stork       events-stork-tab.js
     //   adoption    events-adoption-tab.js
     //   surrogacy   events-surrogacy-tab.js
-    //   disasters   events-disasters-tab.js
+    //   disasters   events-disaster-tab.js
+    //   crime       events-crime-tab.js
     //
     // Declared but not yet registered:
     //   social, educational   -> empty-state "not loaded"
@@ -137,6 +138,7 @@
         'adoption',
         'surrogacy',
         'disasters',
+        'crime',
         'social',
         'educational'
     ];
