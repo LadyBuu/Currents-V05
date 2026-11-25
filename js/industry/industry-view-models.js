@@ -3,7 +3,7 @@
  * STILL WATERS - INDUSTRY VIEW MODELS (industry-view-models.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/industry-view-models.js
+ * LOCATION: js/industry/industry-view-models.js
  *
  * Presentation preparation for enterprise UI.
  *
