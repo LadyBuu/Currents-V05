@@ -106,6 +106,11 @@
         }
         .tb-btn.primary:hover { background: var(--accent-dark); }
         .tb-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .save-status { font-size: 0.62rem; color: var(--dim); white-space: nowrap; }
+        .save-status[data-state="error"] { color: var(--danger-lt); font-weight: 600; }
+        .save-status[data-state="pending"] { color: var(--warning, var(--accent)); }
+        .save-retry { display: none; }
+        .save-retry.is-visible { display: inline-flex; }
 
         .year-input {
             display: inline-flex;
@@ -1394,6 +1399,8 @@
     </button>
     <div class="title" id="characterManagerTitle">Character Manager</div>
     <div class="spacer"></div>
+    <span id="saveStatus" class="save-status" role="status" aria-live="polite" data-state="saved">Saved</span>
+    <button id="saveRetryBtn" class="tb-btn save-retry" type="button">Retry save</button>
 
     <div class="year-input">
         <label for="yearInput">Year</label>
@@ -1875,13 +1882,31 @@
                 _toast('Please enter a valid year.', 'error');
                 return;
             }
-            if (typeof window.setCurrentYear === 'function') {
-                try { window.setCurrentYear(y); } catch (e) {}
-            } else if (window.masterData && window.masterData.data) {
-                window.masterData.data.currentYear = y;
-                if (typeof window.markDataDirty === 'function') {
-                    window.markDataDirty();
+            var previousYear = window.getCurrentYear ? window.getCurrentYear() : null;
+            try {
+                if (typeof window.setCurrentYear === 'function') {
+                    var yearResult = window.setCurrentYear(y);
+                    if (yearResult === false || (yearResult && yearResult.success === false)) {
+                        throw new Error(yearResult && yearResult.reason ? yearResult.reason : 'Year change was rejected.');
+                    }
+                } else if (window.masterData && window.masterData.data) {
+                    window.masterData.data.currentYear = y;
+                    if (typeof window.markDataDirty === 'function') window.markDataDirty();
+                } else {
+                    throw new Error('Storage is not initialized.');
                 }
+                if (typeof window.saveMasterData !== 'function' || window.saveMasterData() !== true) {
+                    if (window.masterData && window.masterData.data && previousYear !== null) {
+                        window.masterData.data.currentYear = previousYear;
+                        if (typeof window.markDataDirty === 'function') window.markDataDirty();
+                    }
+                    throw new Error(window.getLastSaveError && window.getLastSaveError()
+                        ? window.getLastSaveError().message : 'The year could not be saved.');
+                }
+            } catch (e) {
+                _syncYearInput();
+                _toast('Year was not saved: ' + (e && e.message ? e.message : String(e)), 'error');
+                return;
             }
             _refreshAll();
             _toast('Year set to ' + y + '.', 'success');
@@ -1944,36 +1969,21 @@
             if (!f) return;
             var reader = new FileReader();
             reader.onload = function (e) {
-                var parsed = null;
-                try { parsed = JSON.parse(e.target.result); }
-                catch (err) {
-                    _toast('Invalid JSON file.', 'error');
+                if (typeof window.importMasterDataText !== 'function') {
+                    _toast('Validated import is unavailable. No data was changed.', 'error');
                     return;
                 }
-                var data = parsed && parsed.data ? parsed.data : parsed;
-                if (!data || typeof data !== 'object') {
-                    _toast('Unexpected JSON shape.', 'error');
+                var result = window.importMasterDataText(e.target.result);
+                if (!result || result.ok !== true) {
+                    _toast('Import failed: ' + (result && result.message ? result.message : 'unknown error'), 'error');
                     return;
                 }
-                if (!window.masterData) window.masterData = { data: {} };
-                if (!window.masterData.data) window.masterData.data = {};
-                var keys = Object.keys(data);
-                for (var i = 0; i < keys.length; i++) {
-                    window.masterData.data[keys[i]] = data[keys[i]];
-                }
-                if (typeof window.markDataDirty === 'function') {
-                    window.markDataDirty();
-                }
-                if (typeof window.CharacterState !== 'undefined'
-                    && typeof window.CharacterState.refresh === 'function') {
-                    try { window.CharacterState.refresh(); } catch (err) {}
-                }
-                try {
-                    window.dispatchEvent(new CustomEvent('masterDataUpdated'));
-                } catch (err) {}
                 _refreshAll();
                 _syncYearInput();
-                _toast('Import complete.', 'success');
+                _toast('Import complete. ' + (result.charCount || 0) + ' characters loaded.', 'success');
+            };
+            reader.onerror = function () {
+                _toast('Could not read the selected import file.', 'error');
             };
             reader.readAsText(f);
             fileInput.value = '';
@@ -2010,21 +2020,60 @@
     var refreshBtn = document.getElementById('refreshBtn');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', function () {
-            if (typeof window.loadMasterData === 'function') {
-                try { window.loadMasterData(); } catch (e) {}
+            if (typeof window.reloadMasterData !== 'function') {
+                _toast('Safe reload is unavailable.', 'error');
+                return;
             }
-            if (typeof window.invalidateAccessorCaches === 'function') {
-                try { window.invalidateAccessorCaches(); } catch (e) {}
+            var result = window.reloadMasterData();
+            if (!result || result.ok !== true) {
+                _toast(result && result.error === 'unsaved-changes'
+                    ? 'Refresh cancelled: there are unsaved changes. Save or retry first.'
+                    : 'Refresh failed: ' + (result && result.error ? result.error : 'unknown error'), 'error');
+                return;
             }
-            if (typeof window.CharacterState !== 'undefined'
-                && typeof window.CharacterState.refresh === 'function') {
-                try { window.CharacterState.refresh(); } catch (e) {}
-            }
+            if (typeof window.invalidateAccessorCaches === 'function') window.invalidateAccessorCaches();
             _refreshAll();
             _syncYearInput();
-            _toast('Refreshed.', 'success');
+            _toast('Refreshed from saved data.', 'success');
         });
     }
+
+    var saveStatus = document.getElementById('saveStatus');
+    var saveRetryBtn = document.getElementById('saveRetryBtn');
+    function _setSaveStatus(state, message) {
+        if (saveStatus) {
+            saveStatus.dataset.state = state;
+            saveStatus.textContent = message || (state === 'saved' ? 'Saved' : state === 'pending' ? 'Saving…' : 'Save failed');
+        }
+        if (saveRetryBtn) saveRetryBtn.classList.toggle('is-visible', state === 'error');
+    }
+    window.addEventListener('masterDataSaveStatus', function (event) {
+        var detail = event && event.detail ? event.detail : {};
+        if (detail.status === 'error') {
+            _setSaveStatus('error', 'Save failed');
+            _toast('Save failed. Your changes remain in memory. ' + (detail.error || ''), 'error');
+        } else if (detail.status === 'pending') {
+            _setSaveStatus('pending', 'Saving…');
+        } else if (detail.status === 'saved') {
+            _setSaveStatus('saved', 'Saved');
+        }
+    });
+    if (saveRetryBtn) saveRetryBtn.addEventListener('click', function () {
+        if (typeof window.flushPendingSave !== 'function' || window.flushPendingSave() !== true) {
+            var error = window.getLastSaveError && window.getLastSaveError();
+            _setSaveStatus('error', 'Save failed');
+            _toast('Save retry failed. ' + (error && error.message ? error.message : ''), 'error');
+            return;
+        }
+        _setSaveStatus('saved', 'Saved');
+        _toast('Changes saved.', 'success');
+    });
+    window.addEventListener('beforeunload', function (event) {
+        if (typeof window.hasUnsavedChanges === 'function' && window.hasUnsavedChanges()) {
+            event.preventDefault();
+            event.returnValue = '';
+        }
+    });
 
     var burgerBtn = document.getElementById('menuToggle');
     var sidebar = document.getElementById('characterSidebar');
