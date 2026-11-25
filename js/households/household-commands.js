@@ -3380,12 +3380,28 @@
             });
         }
 
-        _commit('householdReferencesRemoved', {
-            characterId: characterId,
-            removedCount: removedCount,
-            households: affectedHouseholds,
-            year: year
-        });
+        try {
+            _commit('householdReferencesRemoved', {
+                characterId: characterId,
+                removedCount: removedCount,
+                households: affectedHouseholds,
+                year: year
+            });
+        } catch (commitError) {
+            try {
+                _state._transactionRestoreEnterpriseIndexes(snapshot);
+            } catch (rollbackError) {
+                return _fail('HOUSEHOLD_CLEANUP_ROLLBACK_FAILED',
+                    'Household commit failed and rollback failed: ' +
+                    (rollbackError && rollbackError.message
+                        ? rollbackError.message : String(rollbackError)));
+            }
+            return _fail('HOUSEHOLD_CLEANUP_COMMIT_FAILED',
+                'Household cleanup commit failed; changes were rolled back: ' +
+                (commitError && commitError.message
+                    ? commitError.message : String(commitError)),
+                { rolledBack: true, removedCount: 0 });
+        }
 
         return _ok({
             removedCount: removedCount,
