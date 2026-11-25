@@ -300,92 +300,39 @@
     // CREATE ADOPTION MODAL
     // =========================================================================
 
-    function openCreateAdoptionModal(childId, adopterId, onSuccess) {
+    function openCreateAdoptionModal(childId, adopterIds, onSuccess, initialType) {
+        if (!Array.isArray(adopterIds)) adopterIds = [adopterIds];
+        adopterIds = adopterIds.filter(Boolean);
+        if (!adopterIds.length || adopterIds.length > 2) return { success:false, reason:'Select one person or a couple.' };
+        if (adopterIds.indexOf(childId)!==-1) return { success:false, reason:'Cannot adopt oneself.' };
+        if (adopterIds.length===2 && adopterIds[0]===adopterIds[1]) return { success:false, reason:'Choose two different adopters.' };
         var child = _readSummary(childId);
-        if (!child) return { success: false, reason: 'Child not found.' };
-        if (child.isDeceased === true) return { success: false, reason: 'Child is deceased.' };
-
-        var adopter = _readSummary(adopterId);
-        if (!adopter) return { success: false, reason: 'Adopter not found.' };
-        if (adopter.isDeceased === true) return { success: false, reason: 'Adopter is deceased.' };
-        if (adopterId === childId) return { success: false, reason: 'Cannot adopt oneself.' };
-
+        if (!child || child.isDeceased===true) return {success:false,reason:'Living adoptee not found.'};
+        var adopters = adopterIds.map(_readSummary);
+        if (adopters.some(function(p){return !p || p.isDeceased===true;})) return {success:false,reason:'Living adopter not found.'};
         var currentYear = window.getCurrentYear();
-        var existing = ChQ.getAdoptionRecordForPair(adopterId, childId);
-        if (existing && existing.status === 'active') {
-            return { success: false, reason: 'An active adoption already exists for this pair.' };
-        }
-
-        var content = '<div class="character-modal">';
-        content += '<div class="character-modal__section">'
-                 + '<strong>Child: ' + _esc(_fullName(child)) + '</strong>'
-                 + '<br>' + _esc(child.age === null ? 'Unknown age' : child.age + ' years')
-                 + '<br><strong>Adopter: ' + _esc(_fullName(adopter)) + '</strong>'
-                 + '<br>' + _esc(adopter.age === null ? 'Unknown age' : adopter.age + ' years')
-                 + ' &middot; ' + _esc(adopter.gender || 'Unknown') + '</div>';
-        content += '<div class="character-modal__form-field">'
-                 + '<label class="character-modal__form-label" for="adoption-type">Type</label>'
-                 + '<select id="adoption-type" class="character-modal__form-input">'
-                 + _typeOptionsHtml(ChR.ADOPTION_TYPE.LEGAL) + '</select></div>';
-        content += '<div class="character-modal__grid">'
-                 + '<div class="character-modal__form-field">'
-                 + '<label class="character-modal__form-label" for="adoption-role">Role</label>'
-                 + '<select id="adoption-role" class="character-modal__form-input">'
-                 + '<option value="father">Father</option>'
-                 + '<option value="mother">Mother</option>'
-                 + '<option value="parent">Parent</option></select></div>'
-                 + '<div class="character-modal__form-field">'
-                 + '<label class="character-modal__form-label" for="adoption-year">Year</label>'
-                 + '<input type="number" id="adoption-year" class="character-modal__form-input" '
-                 + 'value="' + _esc(currentYear) + '" min="1" max="' + (currentYear + 10) + '"></div></div>';
-        content += '<div class="character-modal__form-field">'
-                 + '<label class="character-modal__form-label" for="adoption-notes">Notes</label>'
-                 + '<textarea id="adoption-notes" class="character-modal__form-input" rows="2"></textarea></div>';
-        content += '</div>';
-
-        var modal = window.openModal({
-            titleHtml: 'Adoption: ' + _esc(child.name || ''),
-            contentHtml: content,
-            confirmText: 'Record Adoption',
-            cancelText: 'Cancel',
-            onConfirm: function () {
-                var typeEl = modal.element.querySelector('#adoption-type');
-                var roleEl = modal.element.querySelector('#adoption-role');
-                var yearEl = modal.element.querySelector('#adoption-year');
-                var notesEl = modal.element.querySelector('#adoption-notes');
-
-                var type = typeEl.value;
-                var role = roleEl.value;
-                var year = parseInt(yearEl.value, 10);
-                if (!Number.isInteger(year) || !window.isValidYear(year)) {
-                    throw new Error('Please enter a valid year.');
-                }
-
-                var edgeResult = FC.createAdoption(childId, adopterId, {
-                    parentRole: role, startYear: year, notes: notesEl.value || '',
-                    biologicalParentsConsent: true
-                });
-                if (!edgeResult || edgeResult.success !== true) {
-                    throw new Error(edgeResult && edgeResult.reason
-                        ? edgeResult.reason : 'Failed to create legal parent edge.');
-                }
-
-                var metaResult = ChC.recordAdoptionMetadata(childId, adopterId, {
-                    type: type, year: year, notes: notesEl.value || ''
-                });
-                if (!metaResult || metaResult.success !== true) {
-                    FC.removeAdoption(childId, adopterId, {
-                        endYear: year, reason: 'adoption metadata failed'
-                    });
-                    throw new Error(metaResult && metaResult.reason
-                        ? metaResult.reason : 'Failed to record adoption metadata.');
-                }
-
-                if (typeof onSuccess === 'function') onSuccess(metaResult.adoptionId);
+        var content = '<div class="character-modal"><div class="character-modal__section"><strong>Adoptee: '+_esc(_fullName(child))+'</strong><br>'+_esc(child.age==null?'Unknown age':child.age+' years');
+        adopters.forEach(function(p){content+='<br><strong>Adopter: '+_esc(_fullName(p))+'</strong> · '+_esc(p.age==null?'Unknown age':p.age+' years');});
+        content+='</div><div class="character-modal__form-field"><label class="character-modal__form-label" for="adoption-type">Placement type</label><select id="adoption-type" class="character-modal__form-input">'+_typeOptionsHtml(initialType||ChR.ADOPTION_TYPE.LEGAL)+'</select></div>';
+        content+='<div class="character-modal__grid"><div class="character-modal__form-field"><label class="character-modal__form-label" for="adoption-role">Parent role</label><select id="adoption-role" class="character-modal__form-input"><option value="father">Father</option><option value="mother">Mother</option><option value="parent">Parent</option></select></div><div class="character-modal__form-field"><label class="character-modal__form-label" for="adoption-year">Year</label><input type="number" id="adoption-year" class="character-modal__form-input" value="'+_esc(currentYear)+'" min="1" max="'+(currentYear+10)+'"></div></div><div class="character-modal__form-field"><label class="character-modal__form-label" for="adoption-notes">Notes</label><textarea id="adoption-notes" class="character-modal__form-input" rows="2"></textarea></div></div>';
+        var modal = window.openModal({titleHtml:'Record placement',contentHtml:content,confirmText:'Record placement',cancelText:'Cancel',onConfirm:function(){
+            var type=modal.element.querySelector('#adoption-type').value;
+            var role=modal.element.querySelector('#adoption-role').value;
+            var year=parseInt(modal.element.querySelector('#adoption-year').value,10);
+            var notes=modal.element.querySelector('#adoption-notes').value||'';
+            if(!Number.isInteger(year)||!window.isValidYear(year)) throw new Error('Please enter a valid year.');
+            var created=[];
+            for(var i=0;i<adopterIds.length;i++){
+                var parentRole=adopterIds.length===2?(i===0?'father':'mother'):role;
+                var edge=FC.createAdoption(childId,adopterIds[i],{parentRole:parentRole,startYear:year,notes:notes,biologicalParentsConsent:true});
+                if(!edge||edge.success!==true){for(var j=created.length-1;j>=0;j--){FC.removeAdoption(childId,created[j],{endYear:year,reason:'placement creation rolled back'});}throw new Error(edge&&edge.reason?edge.reason:'Failed to create parent edge.');}
+                var meta=ChC.recordAdoptionMetadata(childId,adopterIds[i],{type:type,year:year,notes:notes});
+                if(!meta||meta.success!==true){FC.removeAdoption(childId,adopterIds[i],{endYear:year,reason:'placement metadata failed'});for(var k=created.length-1;k>=0;k--){FC.removeAdoption(childId,created[k],{endYear:year,reason:'placement creation rolled back'});}throw new Error(meta&&meta.reason?meta.reason:'Failed to record placement metadata.');}
+                created.push(adopterIds[i]);
             }
-        });
-
-        return { success: true, modal: modal };
+            if(typeof onSuccess==='function') onSuccess(created);
+        }});
+        return {success:true,modal:modal};
     }
 
     // =========================================================================
