@@ -652,24 +652,204 @@
                 ' settlement(s) use it as their specialization. Change those settlements first.');
         }
 
-        var reassignedCount = 0;
+        var transaction = window.CrossDomainTransaction;
+        var relationshipState = window.RelationshipState;
+        var apprenticeshipQueries = window.ApprenticeshipQueries;
+        var apprenticeshipCommands = window.ApprenticeshipCommands;
+        if (!transaction || typeof transaction.execute !== 'function') {
+            return _fail('CrossDomainTransaction is required for safe role deletion.');
+        }
+        if (!relationshipState ||
+            typeof relationshipState.snapshot !== 'function' ||
+            typeof relationshipState.replaceAll !== 'function') {
+            return _fail('RelationshipState snapshot/restore is required for safe role deletion.');
+        }
+        if (!apprenticeshipQueries ||
+            typeof apprenticeshipQueries.getApprenticeshipsByRole !== 'function' ||
+            !apprenticeshipCommands ||
+            typeof apprenticeshipCommands.cancelApprenticeship !== 'function') {
+            return _fail('Apprenticeship cleanup is unavailable; role deletion is blocked.');
+        }
+
+        var relatedApprenticeships;
+        try {
+            relatedApprenticeships = apprenticeshipQueries.getApprenticeshipsByRole(roleId);
+        } catch (lookupError) {
+            return _fail('Could not inspect apprenticeship references: ' +
+                (lookupError.message || 'unknown error'));
+        }
+        if (!Array.isArray(relatedApprenticeships)) {
+            return _fail('Apprenticeship reference query returned invalid data.');
+        }
+
+        var characters = [];
+        var professionSnapshots = [];
         if (removeFromCharacters) {
-            var result = CC.removeProfessionFromAll(roleId);
-            if (!result || result.success !== true) {
-                return _fail('Failed to remove role from characters: ' +
-                    (result && result.reason ? result.reason : 'unknown error'));
+            if (typeof window.getCharacters !== 'function' ||
+                typeof CC.getProfessions !== 'function' ||
+                typeof CC.replaceProfessions !== 'function') {
+                return _fail('Character profession snapshot/restore is unavailable; role deletion is blocked.');
             }
-            reassignedCount = result.removedCount || 0;
+            try {
+                characters = window.getCharacters() || [];
+                for (var ci = 0; ci < characters.length; ci++) {
+                    var character = characters[ci];
+                    if (!character || !character.id) continue;
+                    var professions = CC.getProfessions(character.id);
+                    if (!Array.isArray(professions)) {
+                        return _fail('Could not snapshot professions for character ' + character.id + '.');
+                    }
+                    if (professions.some(function (profession) {
+                        return profession && profession.id === roleId;
+                    })) {
+                        professionSnapshots.push({
+                            characterId: character.id,
+                            professions: professions
+                        });
+                    }
+                }
+            } catch (snapshotError) {
+                return _fail('Could not snapshot character professions: ' +
+                    (snapshotError.message || 'unknown error'));
+            }
         }
 
-        var deleted = RS.deleteRole(roleId);
-        if (!deleted) {
-            return _fail('Failed to delete role from state.');
+        var reassignedCount = 0;
+        var roleSnapshot;
+        var relationshipSnapshot;
+        var result = transaction.execute({
+            id: 'delete-role-' + roleId,
+            context: { roleId: roleId },
+            participants: [{
+                name: 'roles-apprenticeships-and-assignments',
+                prepare: function () {
+                    if (!RS.getRole(roleId)) return { success: false, reason: 'Role no longer exists.' };
+                    return true;
+                },
+                snapshot: function () {
+                    roleSnapshot = RS.getAllRoles();
+                    relationshipSnapshot = relationshipState.snapshot();
+                    return {
+                        roles: roleSnapshot,
+                        relationships: relationshipSnapshot,
+                        professions: professionSnapshots
+                    };
+                },
+                apply: function () {
+                    for (var ai = 0; ai < relatedApprenticeships.length; ai++) {
+                        var apprenticeship = relatedApprenticeships[ai];
+                        if (!apprenticeship || apprenticeship.status !== 'ongoing') continue;
+                        var cancelled = apprenticeshipCommands.cancelApprenticeship(
+                            apprenticeship.masterId,
+                            apprenticeship.apprenticeId,
+                            apprenticeship.roleId,
+                            'Role deleted: ' + roleId
+                        );
+                        if (!cancelled || cancelled.success !== true) {
+                            return {
+                                success: false,
+                                reason: 'Could not cancel apprenticeship ' +
+                                    (apprenticeship.id || '') + ': ' +
+                                    (cancelled && cancelled.reason ? cancelled.reason : 'unknown error')
+                            };
+                        }
+                    }
+
+                    if (removeFromCharacters) {
+                        var removed = CC.removeProfessionFromAll(roleId);
+                        if (!removed || removed.success !== true) {
+                            return {
+                                success: false,
+                                reason: 'Failed to remove role from characters: ' +
+                                    (removed && removed.reason ? removed.reason : 'unknown error')
+                            };
+                        }
+                        reassignedCount = removed.removedCount || 0;
+                    }
+
+                    if (!RS.deleteRole(roleId)) {
+                        return { success: false, reason: 'Failed to delete role from state.' };
+                    }
+                    _notify('roleDeleted', { roleId: roleId, roleName: role.name });
+                    return true;
+                },
+                rollback: function (snapshot) {
+                    var errors = [];
+                    try {
+                        relationshipState.replaceAll(snapshot.relationships);
+                        if (window.masterData && window.masterData.data) {
+                            window.masterData.data.relationships = snapshot.relationships;
+                        }
+                    } catch (relationshipRollbackError) {
+                        errors.push('relationships: ' + relationshipRollbackError.message);
+                    }
+                    try {
+                        RS.setRoles(snapshot.roles);
+                    } catch (roleRollbackError) {
+                        errors.push('roles: ' + roleRollbackError.message);
+                    }
+                    for (var pi = 0; pi < snapshot.professions.length; pi++) {
+                        var professionSnapshot = snapshot.professions[pi];
+                        try {
+                            var restored = CC.replaceProfessions(
+                                professionSnapshot.characterId,
+                                professionSnapshot.professions
+                            );
+                            if (!restored || restored.success !== true) {
+                                errors.push('professions for ' +
+                                    professionSnapshot.characterId + ': ' +
+                                    (restored && restored.reason ? restored.reason : 'restore rejected'));
+                            }
+                        } catch (professionRollbackError) {
+                            errors.push('professions for ' +
+                                professionSnapshot.characterId + ': ' +
+                                professionRollbackError.message);
+                        }
+                    }
+                    if (typeof window.invalidateAccessorCaches === 'function') {
+                        window.invalidateAccessorCaches();
+                    }
+                    if (errors.length) return { success: false, reason: errors.join('; ') };
+                    return true;
+                },
+                afterCommit: function () {
+                    if (typeof apprenticeshipCommands._transactionFlushNotifications === 'function') {
+                        apprenticeshipCommands._transactionFlushNotifications();
+                    }
+                    _transactionFlushEvents();
+                }
+            }],
+            persist: function () {
+                if (typeof window.saveMasterData !== 'function') {
+                    return { success: false, reason: 'saveMasterData is unavailable.' };
+                }
+                try {
+                    return window.saveMasterData() === true
+                        ? { success: true }
+                        : { success: false, reason: 'saveMasterData returned false.' };
+                } catch (saveError) {
+                    return { success: false, reason: saveError.message || 'saveMasterData threw.' };
+                }
+            }
+        });
+
+        if (!result || result.success !== true) {
+            if (typeof apprenticeshipCommands._transactionDiscardNotifications === 'function') {
+                apprenticeshipCommands._transactionDiscardNotifications();
+            }
+            _transactionDiscardEvents();
+            return _fail(result && result.reason
+                ? result.reason
+                : 'Role deletion transaction failed: ' + (result && result.code ? result.code : 'unknown error'));
         }
 
-        _notify('roleDeleted', { roleId: roleId, roleName: role.name });
-
-        return _ok({ roleName: role.name, removedFromCharacters: reassignedCount });
+        return _ok({
+            roleName: role.name,
+            removedFromCharacters: reassignedCount,
+            cancelledApprenticeships: relatedApprenticeships.filter(function (a) {
+                return a && a.status === 'ongoing';
+            }).length
+        });
     }
 
     function setRoles(roles) {
