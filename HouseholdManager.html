@@ -671,8 +671,6 @@
 <script src="js/households/household-assignment.js"></script>
 <script src="js/households/household-servant.js"></script>
 <script src="js/households/residence-system.js"></script>
-<script src="js/households/household-bootstrap.js"></script>
-
 <!-- Household runtime -->
 <script src="js/tabs/household-tab-runtime.js"></script>
 
@@ -686,6 +684,9 @@
 <script src="js/households/modals-residence-owner.js"></script>
 <script src="js/households/modals-residence-rental.js"></script>
 <script src="js/households/modals-residence-staff.js"></script>
+
+<!-- Domain bootstrap: run only after all household modules, including modals, exist. -->
+<script src="js/households/household-bootstrap.js"></script>
 
 <!-- ================================================================
      SELECTORS — must load AFTER household-queries.js
