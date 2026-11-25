@@ -287,11 +287,24 @@
                     }
                     return;
                 }
-                if (window.masterData && window.masterData.data) {
-                    window.masterData.data.currentYear = n;
+                if (!window.masterData || !window.masterData.data
+                    || typeof window.saveMasterData !== 'function') {
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('Could not save the year: storage is unavailable.', 'error');
+                    }
+                    return;
                 }
-                if (typeof window.saveMasterData === 'function') {
-                    window.saveMasterData();
+                var previousYear = window.masterData.data.currentYear;
+                window.masterData.data.currentYear = n;
+                var saved = false;
+                try { saved = window.saveMasterData() === true; }
+                catch (saveError) { saved = false; }
+                if (!saved) {
+                    window.masterData.data.currentYear = previousYear;
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('Could not save the year. The previous year was restored.', 'error');
+                    }
+                    return;
                 }
                 if (typeof window.showToast === 'function') {
                     window.showToast('Year set to ' + n + '.', 'success');
@@ -408,10 +421,6 @@
             return;
         }
 
-        // Mark initialized only after required dependencies are available.
-        // A caller may retry init() after a transient script-order failure.
-        _initialized = true;
-
         // Rebuild canonical indexes against current data.
         if (window.SettlementState
             && typeof window.SettlementState.rebuildIndexes === 'function') {
@@ -464,6 +473,10 @@
         var activeTab = uiState.getActiveTabId() || DEFAULT_ACTIVE_TAB_ID;
         _syncTabStrip(activeTab);
         TabManager.renderActive(SCOPE);
+
+        // Commit initialization only after every setup step succeeds.
+        // If setup throws, a later init() call can retry.
+        _initialized = true;
     }
 
     if (document.readyState === 'loading') {
