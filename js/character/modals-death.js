@@ -770,7 +770,7 @@
                     deathNotes: notesInput.value || ''
                 };
 
-                var result = CL.killCharacter(characterId, deathData);
+                var result;\n                _resolveEnterpriseSuccession(characterId, function() { result = CL.killCharacter(characterId, deathData); });\n                if (result === undefined) return false;
                 if (!result || result.success !== true) {
                     throw new Error(result && result.reason
                         ? result.reason
@@ -784,6 +784,65 @@
         });
 
         return { success: true, modal: modal };
+    }
+
+    function _resolveEnterpriseSuccession(characterId, continuation) {
+        var IC = window.IndustryCommands;
+        var IS = window.IndustryState;
+        if (!IC || !IS || typeof IS.getEnterprisesByOwner !== 'function') {
+            continuation();
+            return;
+        }
+        var enterprises = IS.getEnterprisesByOwner(characterId, 'character') || [];
+        if (!enterprises.length) { continuation(); return; }
+        var householdId = null;
+        var household = typeof window.getHouseholdByCharacterId === 'function'
+            ? window.getHouseholdByCharacterId(characterId) : null;
+        householdId = household && household.id || null;
+
+        var options = [
+            '<option value="inherit">Inherit (family)</option>',
+            '<option value="sell">Sell</option>',
+            '<option value="close">Close</option>'
+        ];
+        var hasEmployees = enterprises.some(function(e) { return (e.workerList || []).length > 0; });
+        if (hasEmployees) options.push('<option value="takeover">Employee takeover</option>');
+        var modal = window.openModal({
+            titleHtml: 'Resolve enterprise ownership',
+            contentHtml: '<p>The character owns ' + enterprises.length + ' enterprise(s). Choose what happens to them.</p><select id="enterprise-succession-action" class="character-modal__form-input">' + options.join('') + '</select>',
+            confirmText: 'Continue',
+            cancelText: 'Cancel death',
+            onConfirm: function() {
+                var action = modal.element.querySelector('#enterprise-succession-action').value;
+                function finish(targetId) {
+                    var result = IC.resolveOwnerDeath(characterId, action, targetId, householdId);
+                    if (!result || result.success !== true) throw new Error(result && result.reason || 'Enterprise succession failed.');
+                    continuation();
+                }
+                if (action === 'inherit') {
+                    window.openCharacterSelector({
+                        title: 'Select family heir',
+                        filters: { status: 'all', showDeceased: false },
+                        onSelect: function(ch) { finish(ch.id); }
+                    });
+                    return false;
+                }
+                if (action === 'takeover') {
+                    window.openCharacterSelector({
+                        title: 'Select employee takeover',
+                        filters: { status: 'all', showDeceased: false },
+                        onSelect: function(ch) {
+                            if (!enterprises.some(function(e) { return (e.workerList || []).indexOf(ch.id) !== -1; })) {
+                                throw new Error('Select an employee of an owned enterprise.');
+                            }
+                            finish(ch.id);
+                        }
+                    });
+                    return false;
+                }
+                finish(null);
+            }
+        });
     }
 
     // =========================================================================
@@ -924,7 +983,7 @@
                     murderMethod: method
                 };
 
-                var result = CL.killCharacter(victimId, deathData);
+                var result;\n                _resolveEnterpriseSuccession(victimId, function() { result = CL.killCharacter(victimId, deathData); });\n                if (result === undefined) return false;
                 if (!result || result.success !== true) {
                     throw new Error(result && result.reason
                         ? result.reason
@@ -1050,7 +1109,7 @@
                     executionLocation: locationInput.value.trim()
                 };
 
-                var result = CL.killCharacter(condemnedId, deathData);
+                var result;\n                _resolveEnterpriseSuccession(condemnedId, function() { result = CL.killCharacter(condemnedId, deathData); });\n                if (result === undefined) return false;
                 if (!result || result.success !== true) {
                     throw new Error(result && result.reason
                         ? result.reason
