@@ -807,6 +807,45 @@
                     commandOptions.attemptNumber = parseInt(attemptInput.value, 10) || 0;
                     if (forceConception.checked) commandOptions.forceConception = true;
                     if (forceSingle.checked) commandOptions.forceSingle = true;
+
+                    // Roll the complete outcome here so enterprise succession can
+                    // be resolved before ChildrenCommands mutates births or death.
+                    var motherAge = year - mother.birthYear;
+                    var fatherAge = father ? year - father.birthYear : null;
+                    var chance = ChR.getConceptionChance({
+                        motherAge: motherAge,
+                        fatherAge: fatherAge,
+                        modifier: commandOptions.fertilityModifier
+                    });
+                    if (commandOptions.forceConception) chance = 1;
+                    commandOptions.rolls = {
+                        conception: window.random(),
+                        complication: window.random(),
+                        miscarriage: window.random(),
+                        stillbirth: window.random(),
+                        maternalDeath: window.random(),
+                        multipleBirth: window.random()
+                    };
+                    var conceived = ChR.evaluateConception(
+                        { conceptionChance: chance }, commandOptions.rolls.conception
+                    );
+                    if (conceived.valid && conceived.conceived) {
+                        var preview = ChR.resolvePregnancyOutcome({
+                            motherAge: motherAge,
+                            pregnancyNumber: commandOptions.attemptNumber,
+                            forceSingle: commandOptions.forceSingle === true,
+                            rolls: {
+                                complication: commandOptions.rolls.complication,
+                                miscarriage: commandOptions.rolls.miscarriage,
+                                stillbirth: commandOptions.rolls.stillbirth,
+                                maternalDeath: commandOptions.rolls.maternalDeath,
+                                multipleBirth: commandOptions.rolls.multipleBirth
+                            }
+                        });
+                        if (preview.valid && preview.maternalDeath === true) {
+                            commandOptions._preflightMaternalDeath = true;
+                        }
+                    }
                 } else {
                     var outcomeSelect = modal.element.querySelector('#preg-outcome');
                     var fetusInput = modal.element.querySelector('#preg-fetus-count');
@@ -828,9 +867,8 @@
                     }
                     if (typeof onSuccess === 'function') onSuccess(result);
                 }
-                if (commandOptions.maternalDeath === true
+                if ((commandOptions.maternalDeath === true || commandOptions._preflightMaternalDeath === true)
                     && typeof window.resolveEnterpriseSuccessionForCharacter === 'function') {
-                    successionPending = true;
                     window.resolveEnterpriseSuccessionForCharacter(motherId, recordAttempt);
                     if (result === null) return false;
                 } else {
