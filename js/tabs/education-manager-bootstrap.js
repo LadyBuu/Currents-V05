@@ -571,14 +571,12 @@
             var previousYear = window.masterData.data.currentYear;
             window.masterData.data.currentYear = y;
             try {
+                if (typeof window.saveMasterData !== 'function') {
+                    throw new Error('saveMasterData is not available.');
+                }
                 if (typeof window.markDataDirty === 'function') window.markDataDirty();
-                if (typeof window.saveMasterData === 'function' &&
-                    window.saveMasterData() === false) {
-                    window.masterData.data.currentYear = previousYear;
-                    if (typeof window.markDataDirty === 'function') window.markDataDirty();
-                    _syncYearInput();
-                    _toast('Could not save the selected year. Previous year restored.', 'error');
-                    return;
+                if (window.saveMasterData() === false) {
+                    throw new Error('saveMasterData returned false.');
                 }
             } catch (saveError) {
                 window.masterData.data.currentYear = previousYear;
