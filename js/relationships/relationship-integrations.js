@@ -3,7 +3,7 @@
  * STILL WATERS - RELATIONSHIP INTEGRATIONS (relationship-integrations.js)
  * =============================================================================
  *
- * LOCATION: js/social/relationship-integrations.js
+ * LOCATION: js/relationships/relationship-integrations.js
  *
  * Cross-domain wiring owned by the relationship domain.
  *
@@ -919,7 +919,29 @@
     // 8. EXPORTS
     // =========================================================================
 
+    function validateCharacterReferences() {
+        var errors = [];
+        if (!window.RelationshipState || typeof window.RelationshipState.all !== 'function') {
+            return { valid: false, errors: ['relationship_state_unavailable'] };
+        }
+        if (!window.CharacterState || typeof window.CharacterState.hasCharacter !== 'function') {
+            return { valid: false, errors: ['character_state_unavailable'] };
+        }
+        var records = window.RelationshipState.all();
+        for (var i = 0; i < records.length; i++) {
+            var record = records[i];
+            if (!window.CharacterState.hasCharacter(record.participantA)) {
+                errors.push('missing_character:' + record.id + ':' + record.participantA);
+            }
+            if (!window.CharacterState.hasCharacter(record.participantB)) {
+                errors.push('missing_character:' + record.id + ':' + record.participantB);
+            }
+        }
+        return { valid: errors.length === 0, errors: errors, checked: records.length };
+    }
+
     window.RelationshipIntegrations = {
+        validateCharacterReferences: validateCharacterReferences,
         handleCharacterDeath: handleCharacterDeath,
         removeAllReferencesTo: removeAllReferencesTo,
 
