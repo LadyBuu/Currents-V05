@@ -3316,44 +3316,60 @@
 
         var year = _getCurrentYear();
         var all = _internal.getAllHouseholdRecords({ includeDeprecated: true });
+        var snapshot = _state._transactionSnapshotEnterpriseIndexes();
         var affectedHouseholds = [];
         var removedCount = 0;
 
-        for (var i = 0; i < all.length; i++) {
-            var household = all[i];
-            if (!Array.isArray(household.members)) continue;
+        try {
+            for (var i = 0; i < all.length; i++) {
+                var household = all[i];
+                if (!Array.isArray(household.members)) continue;
 
-            var idx = _findMember(household, characterId);
-            if (idx === -1) continue;
+                var idx = _findMember(household, characterId);
+                if (idx === -1) continue;
 
-            var wasHead = household.members[idx].isHead === true;
-            household.members.splice(idx, 1);
-            household.updatedAt = Date.now();
-            removedCount++;
+                var wasHead = household.members[idx].isHead === true;
+                household.members.splice(idx, 1);
+                household.updatedAt = Date.now();
+                removedCount++;
 
-            // Head succession — if the removed member was head, pick a
-            // new successor from the remaining members. This mirrors
-            // removeMember's succession behaviour and keeps the
-            // household from being left headless.
-            var successorId = null;
-            if (wasHead) {
-                successorId = _rules.pickSuccessor(
-                    household, _getCharacterById
-                );
-                if (successorId) {
-                    _rules.applyHeadChange(
-                        household, successorId, year,
-                        'Succession after character deletion'
+                // Head succession — if the removed member was head, pick a
+                // new successor from the remaining members.
+                var successorId = null;
+                if (wasHead) {
+                    successorId = _rules.pickSuccessor(
+                        household, _getCharacterById
                     );
+                    if (successorId) {
+                        _rules.applyHeadChange(
+                            household, successorId, year,
+                            'Succession after character deletion'
+                        );
+                    }
                 }
-            }
 
-            affectedHouseholds.push({
-                householdId: household.id,
-                householdName: household.name,
-                wasHead: wasHead,
-                successorId: successorId
-            });
+                affectedHouseholds.push({
+                    householdId: household.id,
+                    householdName: household.name,
+                    wasHead: wasHead,
+                    successorId: successorId
+                });
+            }
+        } catch (error) {
+            var rollbackSucceeded = false;
+            try {
+                _state._transactionRestoreEnterpriseIndexes(snapshot);
+                rollbackSucceeded = true;
+            } catch (rollbackError) {
+                return _fail('HOUSEHOLD_CLEANUP_ROLLBACK_FAILED',
+                    'Household cleanup failed and rollback failed: ' +
+                    (rollbackError && rollbackError.message
+                        ? rollbackError.message : String(rollbackError)));
+            }
+            return _fail('HOUSEHOLD_CLEANUP_FAILED',
+                'Household cleanup failed; changes were rolled back: ' +
+                (error && error.message ? error.message : String(error)),
+                { rolledBack: rollbackSucceeded, removedCount: 0 });
         }
 
         if (removedCount === 0) {
