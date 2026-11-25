@@ -1601,42 +1601,38 @@
 
     function removeProfessionFromAll(professionId) {
         if (!_hasId(professionId)) return _fail('Profession id is required.');
-
-        var projections = CS.getAllCharacters();
-        var affectedIds = [];
-
-        for (var i = 0; i < projections.length; i++) {
-            var live = CS.getLiveCharacterForMutation(projections[i].id);
-            if (!live) continue;
-            if (!Array.isArray(live.professions)) continue;
-            if (_findProfessionIndex(live.professions, professionId) === -1) continue;
-            affectedIds.push(live.id);
+        if (typeof CS.applyDomainFieldPatches !== 'function') {
+            return _fail('CharacterState.applyDomainFieldPatches is required for atomic profession removal.');
         }
 
-        if (affectedIds.length === 0) {
+        var projections = CS.getAllCharacters();
+        var changes = [];
+        for (var i = 0; i < projections.length; i++) {
+            var live = CS.getLiveCharacterForMutation(projections[i].id);
+            if (!live || !Array.isArray(live.professions)) continue;
+            if (_findProfessionIndex(live.professions, professionId) === -1) continue;
+
+            var next = live.professions.slice();
+            for (var j = next.length - 1; j >= 0; j--) {
+                if (next[j] && next[j].id === professionId) next.splice(j, 1);
+            }
+            changes.push({ id: live.id, updates: { professions: next } });
+        }
+
+        if (changes.length === 0) {
             return _ok({ removedCount: 0, characterIds: [] });
         }
 
-        var applied = [];
-        for (var j = 0; j < affectedIds.length; j++) {
-            var id = affectedIds[j];
-            var live = CS.getLiveCharacterForMutation(id);
-            if (!live || !Array.isArray(live.professions)) continue;
-
-            var next = live.professions.slice();
-            var removeIdx = _findProfessionIndex(next, professionId);
-            if (removeIdx === -1) continue;
-            next.splice(removeIdx, 1);
-
-            var patch = CS.applyDomainFieldPatch(id, { professions: next });
-            if (patch && patch.success === true) {
-                applied.push(id);
-            }
+        var result = CS.applyDomainFieldPatches(changes);
+        if (!result || result.success !== true) {
+            return _fail(result && result.reason
+                ? result.reason
+                : 'CharacterState refused the atomic profession removal batch.');
         }
 
         return _ok({
-            removedCount: applied.length,
-            characterIds: applied
+            removedCount: result.characterIds.length,
+            characterIds: result.characterIds
         });
     }
 
