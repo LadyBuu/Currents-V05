@@ -2175,53 +2175,60 @@
         if (['inherit', 'sell', 'takeover', 'close'].indexOf(action) === -1) {
             return _fail('Unknown succession action.');
         }
+
         var owned = IS.getEnterprisesByOwner(characterId, C.OWNER_TYPE.CHARACTER).slice();
-        var year = window.getCurrentYear();
+        var target = null;
+        var household = null;
+        if (action === 'inherit' || action === 'sell' || action === 'takeover') {
+            target = _hasId(targetId) ? window.getCharacterById(targetId) : null;
+            if (!target || target.isDeceased === true) {
+                return _fail(action === 'inherit' ? 'A living heir must be selected.'
+                    : action === 'sell' ? 'A living buyer must be selected.'
+                    : 'A living employee must be selected.');
+            }
+        }
+        if (action === 'sell') {
+            household = _hasId(householdId) && typeof window.getHouseholdById === 'function'
+                ? window.getHouseholdById(householdId) : null;
+            if (!household || !window.HouseholdCommands
+                || typeof window.HouseholdCommands.updateHousehold !== 'function') {
+                return _fail('The deceased owner household is required for sale proceeds.');
+            }
+        }
+
+        // Validate every enterprise before the first mutation. In particular,
+        // takeover must be valid for every enterprise being transferred.
+        for (var v = 0; v < owned.length; v++) {
+            var candidate = IS.getEnterprise(owned[v].id);
+            if (!candidate || candidate.ownerType !== C.OWNER_TYPE.CHARACTER
+                || candidate.ownerId !== characterId) {
+                return _fail('Enterprise ownership changed during succession. Please retry.');
+            }
+            if (action === 'takeover' && (!Array.isArray(candidate.workerList)
+                || candidate.workerList.indexOf(targetId) === -1)) {
+                return _fail('Takeover must be assigned to an employee of every enterprise being transferred.');
+            }
+        }
+
         var changed = [];
+        var totalPayment = 0;
         for (var i = 0; i < owned.length; i++) {
             var enterprise = IS.getEnterprise(owned[i].id);
-            if (!enterprise || enterprise.ownerType !== C.OWNER_TYPE.CHARACTER
-                || enterprise.ownerId !== characterId) continue;
             var patch;
-            if (action === 'inherit') {
-                if (!_hasId(targetId) || !window.getCharacterById(targetId) || window.getCharacterById(targetId).isDeceased === true) {
-                    return _fail('A living heir must be selected.');
-                }
+            if (action === 'inherit' || action === 'takeover' || action === 'sell') {
                 patch = { ownerType: C.OWNER_TYPE.CHARACTER, ownerId: targetId };
-            } else if (action === 'takeover') {
-                if (!_hasId(targetId) || enterprise.workerList.indexOf(targetId) === -1
-                    || !window.getCharacterById(targetId) || window.getCharacterById(targetId).isDeceased === true) {
-                    return _fail('Takeover must be assigned to an employee of the enterprise.');
+                if (action === 'sell') {
+                    var profit = window.IndustryEconomics.calculateAnnualProfit(enterprise);
+                    totalPayment += Math.max(0, Number.isFinite(profit) ? profit : 0);
                 }
-                patch = { ownerType: C.OWNER_TYPE.CHARACTER, ownerId: targetId };
-            } else if (action === 'sell') {
-                if (!_hasId(householdId) || typeof window.getHouseholdById !== 'function'
-                    || !window.getHouseholdById(householdId)) {
-                    return _fail('The deceased owner household is required for sale proceeds.');
-                }
-                var profit = window.IndustryEconomics.calculateAnnualProfit(enterprise);
-                var payment = Math.max(0, Number.isFinite(profit) ? profit : 0);
-                var household = window.getHouseholdById(householdId);
-                var currentWealth = typeof household.wealth === 'number' ? household.wealth : 0;
-                var transfer = window.HouseholdCommands.updateHousehold(householdId, {
-                    wealth: currentWealth + payment
-                });
-                if (!transfer || transfer.success !== true) {
-                    return _fail(transfer && transfer.reason || 'Could not transfer sale proceeds.');
-                }
-                if (!_hasId(targetId) || !window.getCharacterById(targetId) || window.getCharacterById(targetId).isDeceased === true) return _fail('A living buyer must be selected.');
-                patch = { ownerType: C.OWNER_TYPE.CHARACTER, ownerId: targetId };
             } else {
-                patch = {
-                    ownerType: C.OWNER_TYPE.NONE, ownerId: null,
-                    status: C.STATUS.CLOSED
-                };
-            }
-            if (action === 'close') {
-                var workersToRemove = enterprise.workerList.slice();
+                patch = { ownerType: C.OWNER_TYPE.NONE, ownerId: null, status: C.STATUS.CLOSED };
+                var workersToRemove = (enterprise.workerList || []).slice();
                 for (var wi = 0; wi < workersToRemove.length; wi++) {
                     var removed = removeWorkerFromEnterprise(enterprise.id, workersToRemove[wi]);
-                    if (!removed || removed.success !== true) return _fail(removed && removed.reason || 'Could not release enterprise workers.');
+                    if (!removed || removed.success !== true) {
+                        return _fail(removed && removed.reason || 'Could not release enterprise workers.');
+                    }
                 }
             }
             var updated = updateEnterprise(enterprise.id, patch);
@@ -2229,6 +2236,16 @@
                 return _fail(updated && updated.reason || 'Could not resolve enterprise succession.');
             }
             changed.push(enterprise.id);
+        }
+
+        if (action === 'sell' && owned.length) {
+            var currentWealth = typeof household.wealth === 'number' ? household.wealth : 0;
+            var transfer = window.HouseholdCommands.updateHousehold(householdId, {
+                wealth: currentWealth + totalPayment
+            });
+            if (!transfer || transfer.success !== true) {
+                return _fail(transfer && transfer.reason || 'Could not transfer sale proceeds.');
+            }
         }
         if (changed.length) {
             var saved = persist();
@@ -2238,7 +2255,6 @@
         }
         return _ok({ enterpriseIds: changed, action: action });
     }
-
     // =========================================================================
     // 15. EXPORTS
     // =========================================================================
