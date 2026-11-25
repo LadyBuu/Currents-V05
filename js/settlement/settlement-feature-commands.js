@@ -85,9 +85,14 @@
         if (wealthAfter < 0 && wealthBefore >= 0) {
             debtDelta = -wealthAfter;
             debtAfter = debtBefore + debtDelta;
+            wealthAfter += debtDelta;
         } else if (wealthAfter < 0 && wealthBefore < 0) {
             debtDelta = cost;
-            debtAfter = debtBefore + cost;
+            debtAfter = debtBefore + debtDelta;
+            // Borrowing offsets the purchase outflow. Preserve the
+            // pre-existing negative treasury balance rather than charging
+            // the same purchase to wealth and debt simultaneously.
+            wealthAfter += debtDelta;
         }
 
         var candidateFeatureIds = currentFeatureIds.slice();
