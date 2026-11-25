@@ -381,13 +381,29 @@
     // change AND re-hydrated indexes. This function does NOT re-hydrate;
     // doing so was a duplicate scan per mutation. Behavioural change: none.
 
+    var _transactionEvents = [];
+
     function _commit(eventName, payload) {
+        if (window.CrossDomainTransaction && window.CrossDomainTransaction.isActive()) {
+            _transactionEvents.push({ eventName: eventName, payload: payload });
+            return;
+        }
         if (typeof window.markDataDirty === 'function') {
             try { window.markDataDirty(); } catch (e) { /* non-fatal */ }
         }
 
         _state().publish(eventName, payload);
         _dispatch(eventName, payload);
+    }
+
+    function _transactionFlushEvents() {
+        var pending = _transactionEvents.slice();
+        _transactionEvents.length = 0;
+        for (var i = 0; i < pending.length; i++) _commit(pending[i].eventName, pending[i].payload);
+    }
+
+    function _transactionDiscardEvents() {
+        _transactionEvents.length = 0;
     }
 
     function _dispatch(eventName, payload) {
@@ -2017,6 +2033,8 @@
 
         // Character assignment
         assignReligionToCharacter: assignReligionToCharacter,
+        _transactionFlushEvents: _transactionFlushEvents,
+        _transactionDiscardEvents: _transactionDiscardEvents,
         removeReligionFromCharacter: removeReligionFromCharacter,
         convertCharacter: convertCharacter,
 
