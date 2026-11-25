@@ -925,6 +925,20 @@
         return { ok: true, charCount: charCount };
     }
 
+    /**
+     * Import an already-read JSON string through the same validated,
+     * transactional pipeline used by the file-picker importer.
+     *
+     * @param {string} text
+     * @returns {{ok:boolean,error?:string,message?:string,charCount?:number}}
+     */
+    function importMasterDataText(text) {
+        if (typeof text !== 'string' || !text.trim()) {
+            return { ok: false, error: 'empty-import', message: 'The selected file is empty.' };
+        }
+        return _processImport(text);
+    }
+
     // =========================================================================
     // 9. RESET
     // =========================================================================
@@ -1069,6 +1083,7 @@
 
     // Import / reset
     window.importData = importData;
+    window.importMasterDataText = importMasterDataText;
     window.resetMasterData = resetMasterData;
 
     // Explicit initialization entry point.
