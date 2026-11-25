@@ -166,7 +166,7 @@ var VALIDATION_CONSTANTS = {
     // Accept Unicode letters/combining marks and apostrophe forms used in many
     // names, including Samoan glottal-stop spelling (Saofa’i / Saofaʻi / Saofa‘i) and parenthetical annotations.
     // Preserve the original spelling; validation must not rewrite names.
-    NAME_REGEX: /^[\p{L}\p{M}\s\-'’‘ʻʼ\.]+$/u,
+    NAME_REGEX: /^[\p{L}\p{M}\s\-'’‘ʻʼ().]+$/u,
     VARIABLE_KEY_REGEX: /^[a-z0-9_]+$/
 };
 
