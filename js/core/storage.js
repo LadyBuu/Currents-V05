@@ -317,16 +317,27 @@
         if (phrase) output.push(dictionary.get(phrase));
 
         var binary = '';
-        for (var k = 0; k < output.length; k += 8192) {
-            binary += String.fromCharCode.apply(null, output.slice(k, k + 8192));
+        for (var k = 0; k < output.length; k += 4096) {
+            var chunk = output.slice(k, k + 4096);
+            var bytesOut = new Array(chunk.length * 2);
+            for (var n = 0; n < chunk.length; n++) {
+                bytesOut[n * 2] = (chunk[n] >>> 8) & 255;
+                bytesOut[n * 2 + 1] = chunk[n] & 255;
+            }
+            binary += String.fromCharCode.apply(null, bytesOut);
         }
         return _COMPRESSED_PREFIX + btoa(binary);
     }
 
     function _lzwDecompress(payload) {
         var binary = atob(payload.slice(_COMPRESSED_PREFIX.length));
-        var codes = new Array(binary.length);
-        for (var i = 0; i < binary.length; i++) codes[i] = binary.charCodeAt(i);
+        if (binary.length % 2 !== 0) {
+            throw new Error('Invalid compressed save length.');
+        }
+        var codes = new Array(binary.length / 2);
+        for (var i = 0; i < binary.length; i += 2) {
+            codes[i / 2] = (binary.charCodeAt(i) << 8) | binary.charCodeAt(i + 1);
+        }
         if (!codes.length) return '';
 
         var dictionary = new Array(65535);
