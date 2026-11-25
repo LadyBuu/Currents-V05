@@ -482,6 +482,14 @@
         var rel = _persistRelationshipSystem();
         var householdOk = householdResult && householdResult.success !== false;
 
+        // RelationshipState and HouseholdState share masterData. When the
+        // relationship command API has no separate persist() method, the
+        // successful HouseholdCommands.persist() above has already saved
+        // both domains in the same storage envelope.
+        var relationshipPersisted = rel.attempted
+            ? rel.persisted
+            : householdOk;
+
         if (!householdOk) {
             return _fail(
                 (householdResult && householdResult.code) || 'PERSIST_FAILED',
@@ -489,15 +497,15 @@
                     'Failed to persist household state',
                 {
                     householdPersisted: false,
-                    relationshipPersisted: rel.persisted,
+                    relationshipPersisted: relationshipPersisted,
                     relationshipPersistAttempted: rel.attempted,
                     relationshipPersistReason: rel.reason,
-                    partial: rel.persisted === true
+                    partial: relationshipPersisted === true
                 }
             );
         }
 
-        if (rel.attempted && !rel.persisted) {
+        if (rel.attempted && !relationshipPersisted) {
             return _fail(
                 'RELATIONSHIP_PERSIST_FAILED',
                 rel.reason || 'Relationship state failed to persist',
@@ -513,7 +521,7 @@
 
         return _ok({
             householdPersisted: true,
-            relationshipPersisted: rel.persisted,
+            relationshipPersisted: relationshipPersisted,
             relationshipPersistAttempted: rel.attempted,
             relationshipPersistReason: rel.reason
         });
