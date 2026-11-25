@@ -248,7 +248,13 @@
      *
      * @private
      */
+    var _transactionNotifications = [];
+
     function _notify(action, ids) {
+        if (window.CrossDomainTransaction && window.CrossDomainTransaction.isActive()) {
+            _transactionNotifications.push({ action: action, ids: ids.slice() });
+            return;
+        }
         var event = { action: action, relationshipIds: ids.slice() };
         for (var i = 0; i < _subscribers.length; i++) {
             try {
@@ -736,6 +742,18 @@
         idsForType: idsForType,
         idsForPair: idsForPair,
         hasId: hasId,
+
+        _transactionFlushNotifications: function () {
+            var pending = _transactionNotifications.slice();
+            _transactionNotifications.length = 0;
+            pending.forEach(function (event) { _notify(event.action, event.ids); });
+            return { success: true, count: pending.length };
+        },
+        _transactionDiscardNotifications: function () {
+            var count = _transactionNotifications.length;
+            _transactionNotifications.length = 0;
+            return { success: true, discarded: count };
+        },
 
         snapshot: snapshot,
         replaceAll: replaceAll,
