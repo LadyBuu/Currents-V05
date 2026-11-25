@@ -3,7 +3,7 @@
  * STILL WATERS - INDUSTRY CONSTANTS (industry-constants.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/industry-constants.js
+ * LOCATION: js/industry/industry-constants.js
  *
  * SINGLE SOURCE OF TRUTH for industry-domain vocabulary, thresholds, and
  * field classification tables.
