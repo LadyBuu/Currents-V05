@@ -1711,7 +1711,11 @@
         _transactionSnapshotDeletedLocations: function () {
             var master = _getMasterData();
             if (!Array.isArray(master.data.households) || !Array.isArray(master.data.householdPositions) || !Array.isArray(master.data.householdAssignments)) throw new Error('Household canonical stores unavailable.');
-            return { households: master.data.households, positions: master.data.householdPositions, assignments: master.data.householdAssignments };
+            return {
+                households: _cloneTransactionValue(master.data.households),
+                positions: _cloneTransactionValue(master.data.householdPositions),
+                assignments: _cloneTransactionValue(master.data.householdAssignments)
+            };
         },
         _transactionRestoreDeletedLocations: function (snapshot) {
             if (!snapshot || !Array.isArray(snapshot.households) || !Array.isArray(snapshot.positions) || !Array.isArray(snapshot.assignments)) return { success: false, reason: 'Invalid Household transaction snapshot.' };
