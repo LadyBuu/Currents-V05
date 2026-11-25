@@ -604,7 +604,7 @@
                     window.masterData.savedAt = new Date().toISOString();
                     localStorage.setItem(
                         STORAGE_CONFIG.STORAGE_KEY,
-                        _serializeWithoutMarkers(window.masterData)
+                        _encodeStoredPayload(_serializeWithoutMarkers(window.masterData))
                     );
                     _isDirty = false;
                     warnings.push(
