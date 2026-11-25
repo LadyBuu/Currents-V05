@@ -208,7 +208,8 @@
         'removeCharacters',
         'applyDomainFieldPatch',
         'getAllCharacters',
-        'getLiveCharacterForMutation'
+        'getLiveCharacterForMutation',
+        'validateCharacterRemoval'
     ];
     for (var _m = 0; _m < _required.length; _m++) {
         if (typeof CS[_required[_m]] !== 'function') {
@@ -480,6 +481,19 @@
     // =========================================================================
 
     function _hardDeleteInternal(characterId) {
+        var removalCheck = CS.validateCharacterRemoval([characterId]);
+        if (!removalCheck || removalCheck.success !== true) {
+            return {
+                success: false,
+                reason: removalCheck && removalCheck.reason
+                    ? removalCheck.reason : 'Character removal preflight failed.',
+                deletionComplete: false,
+                partial: false,
+                cleanupFailed: false,
+                removalPreflight: removalCheck || null
+            };
+        }
+
         var readiness = _validateCleanupReady();
         if (!readiness.success) {
             return {
@@ -658,6 +672,19 @@
         if (toPurge.length === 0) {
             return {
                 success: true,
+                count: 0,
+                purgedIds: [],
+                cleanup: []
+            };
+        }
+
+        var removalCheck = CS.validateCharacterRemoval(toPurge);
+        if (!removalCheck || removalCheck.success !== true) {
+            return {
+                success: false,
+                reason: removalCheck && removalCheck.reason
+                    ? removalCheck.reason : 'Purge removal preflight failed.',
+                removalPreflight: removalCheck || null,
                 count: 0,
                 purgedIds: [],
                 cleanup: []
@@ -845,6 +872,19 @@
         if (existingIds.length === 0) {
             return {
                 success: errors.length === 0,
+                count: 0,
+                deletedIds: [],
+                errors: errors
+            };
+        }
+
+        var removalCheck = CS.validateCharacterRemoval(existingIds);
+        if (!removalCheck || removalCheck.success !== true) {
+            return {
+                success: false,
+                reason: removalCheck && removalCheck.reason
+                    ? removalCheck.reason : 'Bulk removal preflight failed.',
+                removalPreflight: removalCheck || null,
                 count: 0,
                 deletedIds: [],
                 errors: errors
