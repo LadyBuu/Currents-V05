@@ -3,7 +3,7 @@
  * STILL WATERS - FRIENDSHIP COMMANDS (friendship-commands.js)
  * =============================================================================
  *
- * LOCATION: js/social/friendship-commands.js
+ * LOCATION: js/relationships/friendship-commands.js
  *
  * Mutation boundary for friendship relationships.
  *
