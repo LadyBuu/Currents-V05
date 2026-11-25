@@ -23,7 +23,7 @@
  *   - Field updates       -> character-commands.js
  *   - Family graph cleanup details      -> family-commands.js (called here)
  *   - Children domain cleanup details   -> children-commands.js (called here)
- *   - Relationship cleanup              -> relationships/relationship-integration.js
+ *   - Relationship cleanup              -> relationships/relationship-integrations.js
  *                                          (called here, when loaded)
  *   - Household cleanup                 -> households/household-commands.js
  *                                          (called here, when loaded)
@@ -111,7 +111,7 @@
  *
  * NAMING NOTE:
  *   The relationship domain's cross-domain hook is exported by
- *   js/relationships/relationship-integration.js under the namespace
+ *   js/relationships/relationship-integrations.js under the namespace
  *   "RelationshipIntegrations" (PLURAL). This is verified at line 505 of
  *   that file: `window.RelationshipIntegrations = { ... }`.
  *
@@ -147,7 +147,7 @@
  * DEPENDENCIES (OPTIONAL, called only if present):
  *   - family-commands.js          (FamilyCommands.removeAllReferencesTo)
  *   - children-commands.js        (ChildrenCommands.removeAllReferencesTo)
- *   - relationships/relationship-integration.js
+ *   - relationships/relationship-integrations.js
  *                                 (RelationshipIntegrations.removeAllReferencesTo)
  *   - households/household-commands.js
  *                                 (HouseholdCommands.removeCharacterReferences)
@@ -338,9 +338,9 @@
     // function, this table is the single place to update.
     //
     // Relationship cleanup: the relationship domain owns its cross-domain
-    // hooks in relationship-integration.js, not in relationship-commands.js.
+    // hooks in relationship-integrations.js, not in relationship-commands.js.
     // The module name exported by that file is RelationshipIntegrations
-    // (PLURAL) — verified at line 505 of that file.
+    // (PLURAL) — verified in that module's export.
     //
     // Rank cleanup: the rank domain owns its cross-domain hooks in
     // rank-issues.js, not in rank-commands.js. RankCommands is the write
