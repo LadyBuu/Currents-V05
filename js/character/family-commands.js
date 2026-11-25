@@ -180,7 +180,13 @@
         return true;
     }
 
+    var _transactionSideEffects = [];
+
     function _notify(action, characterIds) {
+        if (window.CrossDomainTransaction && window.CrossDomainTransaction.isActive()) {
+            _transactionSideEffects.push({ kind: 'notify', action: action, characterIds: characterIds || [] });
+            return;
+        }
         try {
             window.dispatchEvent(new CustomEvent('familyChanged', {
                 detail: {
@@ -196,9 +202,27 @@
     }
 
     function _logEvent(category, type, message, subjects) {
+        if (window.CrossDomainTransaction && window.CrossDomainTransaction.isActive()) {
+            _transactionSideEffects.push({ kind: 'log', category: category, type: type, message: message, subjects: subjects });
+            return;
+        }
         if (typeof window.logEvent === 'function') {
             window.logEvent(category, type, message, subjects);
         }
+    }
+
+    function _transactionFlushSideEffects() {
+        var pending = _transactionSideEffects.slice();
+        _transactionSideEffects.length = 0;
+        for (var i = 0; i < pending.length; i++) {
+            var item = pending[i];
+            if (item.kind === 'notify') _notify(item.action, item.characterIds);
+            else _logEvent(item.category, item.type, item.message, item.subjects);
+        }
+    }
+
+    function _transactionDiscardSideEffects() {
+        _transactionSideEffects.length = 0;
     }
 
     function _commitAndNotify(action, characterIds) {
@@ -721,7 +745,9 @@
         changeParentType: changeParentType,
 
         handleCharacterDeath: handleCharacterDeath,
-        removeAllReferencesTo: removeAllReferencesTo
+        removeAllReferencesTo: removeAllReferencesTo,
+        _transactionFlushSideEffects: _transactionFlushSideEffects,
+        _transactionDiscardSideEffects: _transactionDiscardSideEffects
     };
 
     if (typeof module !== 'undefined' && module.exports) {
