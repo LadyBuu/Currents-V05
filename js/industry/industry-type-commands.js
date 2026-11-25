@@ -3,7 +3,7 @@
  * STILL WATERS - INDUSTRY TYPE COMMANDS (industry-type-commands.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/industry-type-commands.js
+ * LOCATION: js/industry/industry-type-commands.js
  *
  * Write boundary for the enterprise type registry.
  *
