@@ -272,6 +272,84 @@
    aliases so the settlement stylesheets keep working without changes.
    ========================================================================== */
 
+/* --- Salmon Lime (summer ice cream) --- */
+[data-theme="salmon-lime"] {
+    --bg: #fff3e9;
+    --surface: #fffaf2;
+    --surface-2: #f8dfd2;
+    --line: #e8a99a;
+    --line-strong: #c87970;
+    --fg: #563b3b;
+    --fg-2: #8d6260;
+    --fg-3: #aa817b;
+    --accent: #e98279;
+    --accent-fg: #351f20;
+    --accent-soft: rgba(233, 130, 121, 0.16);
+    --ok: #7d9b3c;
+    --bad: #b94e62;
+    --st-idea: #aa817b;
+    --st-outlined: #9873a8;
+    --st-draft: #b58a38;
+    --st-revised: #c45e71;
+    --st-final: #6d9138;
+    --scrim: rgba(65, 39, 35, 0.48);
+    --v-au: #d96f68;
+    --v-alt: #9873a8;
+    --r-a: #c45e71;
+    --r-b: #d96f68;
+    --r-c: #7d9b3c;
+    --r-d: #b58a38;
+    --r-e: #9873a8;
+    --r-f: #d58b55;
+    --shadow: 0 4px 15px rgba(104, 57, 48, 0.12);
+    --scrollbar-track: var(--bg);
+    --scrollbar-thumb: var(--line);
+    --chip-bg-subtle: rgba(233, 130, 121, 0.10);
+    --bg2: var(--surface);
+    --bg3: var(--surface-2);
+    --bg4: color-mix(in srgb, var(--surface-2) 85%, var(--accent) 15%);
+    --bg-card: var(--surface);
+    --bg-solid: var(--bg);
+    --text: var(--fg);
+    --dim: var(--fg-2);
+    --tmut: var(--fg-3);
+    --border: var(--line);
+    --border2: var(--line-strong);
+    --border-light: color-mix(in srgb, var(--line) 60%, transparent);
+    --accent-dark: color-mix(in srgb, var(--accent) 80%, black 20%);
+    --accent-light: color-mix(in srgb, var(--accent) 70%, white 30%);
+    --accent-dim: var(--accent-soft);
+    --accent-glow: color-mix(in srgb, var(--accent) 30%, transparent);
+    --accent-glow-strong: color-mix(in srgb, var(--accent) 50%, transparent);
+    --glow-sm: 0 0 5px var(--accent-glow);
+    --glow-md: 0 0 10px var(--accent-glow);
+    --glow-lg: 0 0 20px var(--accent-glow);
+    --glow-strong: 0 0 15px var(--accent-glow-strong);
+    --modal-overlay: var(--scrim);
+    --modal-bg: var(--surface);
+    --success: var(--ok);
+    --warn: var(--st-draft);
+    --danger: #a83e54;
+    --danger-lt: var(--bad);
+    --deceased: var(--fg-3);
+    --info: var(--accent);
+    --info-soft: var(--accent-soft);
+    --info-hover: color-mix(in srgb, var(--accent) 20%, transparent);
+    --danger-soft: rgba(185, 78, 98, 0.12);
+    --danger-hover: rgba(185, 78, 98, 0.22);
+    --warning: var(--st-draft);
+    --warning-soft: rgba(181, 138, 56, 0.12);
+    --warning-hover: rgba(181, 138, 56, 0.22);
+    color-scheme: light;
+}
+[data-theme="salmon-lime"] body {
+    background:
+        radial-gradient(ellipse at 15% 0%, rgba(233, 130, 121, 0.10) 0%, transparent 45%),
+        radial-gradient(ellipse at 85% 100%, rgba(125, 155, 60, 0.09) 0%, transparent 50%),
+        var(--bg);
+    background-attachment: fixed;
+}
+
 /* --- Vaporwave --- */
 [data-theme="vaporwave"] {
     --bg: #100b24; --surface: #14102e; --surface-2: #1d1747;
