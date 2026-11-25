@@ -463,8 +463,23 @@
         // earlier domains may already have removed references.
         var cleanup = _dispatchCleanup(characterId);
 
-        // Invoke registered handlers (notably relationship integration).
-        var handlers = _invokeDeleteHandlers(characterId);
+        // Do not invoke later handlers after a named cleanup has failed.
+        // They may mutate additional domains, making a failed attempt harder
+        // to retry or diagnose.
+        var handlers;
+        if (cleanup.failed.length === 0 && cleanup.skipped.length === 0) {
+            handlers = _invokeDeleteHandlers(characterId);
+        } else {
+            handlers = {
+                applied: 0,
+                failed: [{
+                    handler: 'registry',
+                    reason: 'Not invoked because named cleanup was incomplete.'
+                }],
+                success: false,
+                skipped: true
+            };
+        }
         cleanup.handlers = handlers;
         cleanup.success = cleanup.failed.length === 0 &&
             cleanup.skipped.length === 0 && handlers.success;
@@ -614,7 +629,18 @@
         var cleanupReports = [];
         for (var j = 0; j < toPurge.length; j++) {
             var purgeReport = _dispatchCleanup(toPurge[j]);
-            purgeReport.handlers = _invokeDeleteHandlers(toPurge[j]);
+            purgeReport.handlers =
+                purgeReport.failed.length === 0 && purgeReport.skipped.length === 0
+                    ? _invokeDeleteHandlers(toPurge[j])
+                    : {
+                        applied: 0,
+                        failed: [{
+                            handler: 'registry',
+                            reason: 'Not invoked because named cleanup was incomplete.'
+                        }],
+                        success: false,
+                        skipped: true
+                    };
             purgeReport.success = purgeReport.failed.length === 0 &&
                 purgeReport.skipped.length === 0 && purgeReport.handlers.success;
             purgeReport.partial = !purgeReport.success;
@@ -748,7 +774,18 @@
         var cleanupReports = [];
         for (var j = 0; j < existingIds.length; j++) {
             var bulkReport = _dispatchCleanup(existingIds[j]);
-            bulkReport.handlers = _invokeDeleteHandlers(existingIds[j]);
+            bulkReport.handlers =
+                bulkReport.failed.length === 0 && bulkReport.skipped.length === 0
+                    ? _invokeDeleteHandlers(existingIds[j])
+                    : {
+                        applied: 0,
+                        failed: [{
+                            handler: 'registry',
+                            reason: 'Not invoked because named cleanup was incomplete.'
+                        }],
+                        success: false,
+                        skipped: true
+                    };
             bulkReport.success = bulkReport.failed.length === 0 &&
                 bulkReport.skipped.length === 0 && bulkReport.handlers.success;
             bulkReport.partial = !bulkReport.success;
