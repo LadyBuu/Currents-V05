@@ -696,6 +696,7 @@
             return _fail('characterId is required.');
         }
 
+        var snapshotBeforeCleanup = FS.snapshot();
         var allIds = FS.allIds();
         var removed = 0;
         var affected = {};
@@ -719,7 +720,16 @@
 
         if (removed > 0) {
             var ids = Object.keys(affected);
-            _commitAndNotify('removeAllReferences', ids);
+            if (!_commit()) {
+                FS.replaceAll(snapshotBeforeCleanup);
+                return {
+                    success: false,
+                    partial: false,
+                    removedCount: 0,
+                    failures: [{ reason: 'Could not persist family reference cleanup.' }]
+                };
+            }
+            _notify('removeAllReferences', ids);
         }
 
         return {
