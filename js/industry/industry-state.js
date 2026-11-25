@@ -3,7 +3,7 @@
  * STILL WATERS - INDUSTRY STATE (industry-state.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/industry-state.js
+ * LOCATION: js/industry/industry-state.js
  *
  * Authoritative in-memory store for enterprise records and enterprise types.
  *
