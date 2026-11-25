@@ -753,22 +753,35 @@
             for (var snapshotIndex = 0; snapshotIndex < plans.length; snapshotIndex++) {
                 var snapshotId = plans[snapshotIndex].data.characterId;
                 if (!professionSnapshots.has(snapshotId)) {
-                    var snapshotFacts = _CharacterQueries.getCharacterById
+                    var snapshotCharacter = _CharacterQueries.getCharacterById
                         ? _CharacterQueries.getCharacterById(snapshotId)
                         : null;
-                    if (!snapshotFacts) {
+                    if (!snapshotCharacter) {
                         return _fail('Bulk assignment aborted: character could not be snapshotted (' + snapshotId + ')', C.CODES.ATOMIC_ABORT);
                     }
-                    professionSnapshots.set(snapshotId, Array.isArray(snapshotFacts.professions)
-                        ? snapshotFacts.professions.map(function (entry) { return Object.assign({}, entry); })
-                        : []);
+                    // Professions are intentionally absent from Character
+                    // projections. Read them through their owning command API.
+                    var snapshotProfessions = _CharacterCommands.getProfessions(snapshotId);
+                    if (!Array.isArray(snapshotProfessions)) {
+                        return _fail('Bulk assignment aborted: professions could not be snapshotted (' + snapshotId + ')', C.CODES.ATOMIC_ABORT);
+                    }
+                    professionSnapshots.set(snapshotId, snapshotProfessions.map(function (entry) {
+                        return Object.assign({}, entry);
+                    }));
                 }
             }
         }
 
         for (var j = 0; j < plans.length; j++) {
-            var res = _applyAssignmentPlan(departmentId, positionId, plans[j].data);
-            if (res.success) {
+            var res;
+            try {
+                res = _applyAssignmentPlan(departmentId, positionId, plans[j].data);
+            } catch (applyError) {
+                res = _fail(applyError && applyError.message
+                    ? applyError.message
+                    : 'Assignment apply threw an unknown error', C.CODES.PROFESSION_FAILED);
+            }
+            if (res && res.success) {
                 applied.push(res.data);
                 continue;
             }
