@@ -825,12 +825,53 @@
         }
 
         if (applied.length > 0) {
-            _commit(C.EVENTS.CHARACTER_ASSIGNED, {
-                departmentId: departmentId,
-                positionId: positionId,
-                bulk: true,
-                applied: applied.length
-            });
+            try {
+                _commit(C.EVENTS.CHARACTER_ASSIGNED, {
+                    departmentId: departmentId,
+                    positionId: positionId,
+                    bulk: true,
+                    applied: applied.length
+                });
+            } catch (commitError) {
+                if (mode === 'atomic') {
+                    var commitRollbackErrors = [];
+                    for (var commitRollbackIndex = applied.length - 1;
+                        commitRollbackIndex >= 0; commitRollbackIndex--) {
+                        var removedAssignment = State._removeAssignment(
+                            departmentId,
+                            applied[commitRollbackIndex].assignmentId
+                        );
+                        if (!removedAssignment) {
+                            commitRollbackErrors.push('Could not remove assignment ' +
+                                applied[commitRollbackIndex].assignmentId);
+                        }
+                    }
+                    professionSnapshots.forEach(function (professions, characterId) {
+                        var restoredProfessions = _CharacterCommands.replaceProfessions(
+                            characterId, professions
+                        );
+                        if (!restoredProfessions || restoredProfessions.success !== true) {
+                            commitRollbackErrors.push('Could not restore professions for ' +
+                                characterId + ': ' +
+                                ((restoredProfessions && restoredProfessions.reason) || 'unknown error'));
+                        }
+                    });
+                    try {
+                        State.hydrateFromMasterData();
+                    } catch (hydrateRollbackError) {
+                        commitRollbackErrors.push('Could not rebuild government state: ' +
+                            (hydrateRollbackError.message || String(hydrateRollbackError)));
+                    }
+                    return _fail('Atomic assignment commit failed' +
+                        (commitRollbackErrors.length
+                            ? '; rollback incomplete: ' + commitRollbackErrors.join('; ')
+                            : ' and was rolled back') +
+                        ': ' + (commitError.message || String(commitError)),
+                        C.CODES.ATOMIC_ABORT);
+                }
+                return _fail('Bulk assignment state refresh failed: ' +
+                    (commitError.message || String(commitError)), C.CODES.ATOMIC_ABORT);
+            }
         }
 
         return _ok({
