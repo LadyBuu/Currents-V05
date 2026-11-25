@@ -871,6 +871,8 @@
                     results.characters.died + ' died, ' +
                     results.salaries.paid + ' salaries paid (' + Math.round(results.salaries.totalAmount) + ' gold), ' +
                     results.tuition.processed + ' tuition payments (' + Math.round(results.tuition.totalAmount) + ' gold), ' +
+                    results.education.processedStudents + ' students processed, ' +
+                    results.apprenticeships.advanced.length + ' apprentices advanced, ' +
                     results.educationFinances.totalFunding + ' education funding, ' +
                     results.educationFinances.totalProfit + ' education profit, ' +
                     results.government.salariesPaid + ' government salaries paid (' + results.government.totalSalaryPaid + ' gold), ' +
