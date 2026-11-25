@@ -940,32 +940,42 @@
 
     function bootstrap() {
         if (isInitialized) return;
-        isInitialized = true;
 
-        if (typeof window.loadMasterData === 'function') {
-            try { window.loadMasterData(); }
-            catch (e) {
-                console.error('[role-manager] loadMasterData failed:', e);
-            }
+        if (typeof window.loadMasterData !== 'function') {
+            console.error('[role-manager] loadMasterData is unavailable.');
+            return;
+        }
+        try {
+            window.loadMasterData();
+        } catch (e) {
+            console.error('[role-manager] loadMasterData failed:', e);
+            return;
+        }
+        if (!window.masterData || !window.masterData.data) {
+            console.error('[role-manager] masterData did not initialize.');
+            return;
         }
 
-        if (window.masterData && window.masterData.data) {
-            if (!Array.isArray(window.masterData.data.roles)) {
-                window.masterData.data.roles = [];
-            }
-            if (!window.masterData.data.roleCategories
-                || typeof window.masterData.data.roleCategories !== 'object'
-                || Array.isArray(window.masterData.data.roleCategories)) {
-                window.masterData.data.roleCategories = {};
-            }
+        if (!Array.isArray(window.masterData.data.roles)) {
+            window.masterData.data.roles = [];
+        }
+        if (!window.masterData.data.roleCategories
+            || typeof window.masterData.data.roleCategories !== 'object'
+            || Array.isArray(window.masterData.data.roleCategories)) {
+            window.masterData.data.roleCategories = {};
         }
 
-        // RoleState.init() must run AFTER masterData loads.
-        if (window.RoleState && typeof window.RoleState.init === 'function') {
-            try { window.RoleState.init(); }
-            catch (e) {
-                console.error('[role-manager] RoleState.init failed:', e);
-            }
+        // RoleState.init() must run AFTER masterData loads. Do not mark the
+        // manager initialized until this and the first render both succeed.
+        if (!window.RoleState || typeof window.RoleState.init !== 'function') {
+            console.error('[role-manager] RoleState.init is unavailable.');
+            return;
+        }
+        try {
+            window.RoleState.init();
+        } catch (e) {
+            console.error('[role-manager] RoleState.init failed:', e);
+            return;
         }
 
         if (window.RankBootstrap && typeof window.RankBootstrap.init === 'function') {
@@ -981,10 +991,7 @@
             try { window.ReligionBootstrap.init(); } catch (e) { console.error(e); }
         }
 
-        // Sidebar refresh hook — tab files call this after mutations.
         window.renderRoleList = renderRoleList;
-
-        // Re-render the current tab (used by the tab files' onRerender).
         window.__roleManagerRerenderActiveTab = function () {
             renderActiveTab();
         };
@@ -994,6 +1001,7 @@
         renderRoleList();
         pickInitialSelection();
         syncTabButtons(activeTabId);
+        isInitialized = true;
     }
 
     function injectIcons() {
@@ -1316,14 +1324,12 @@
         var previousYear = window.masterData.data.currentYear;
         window.masterData.data.currentYear = val;
         try {
+            if (typeof window.saveMasterData !== 'function') {
+                throw new Error('saveMasterData is not available.');
+            }
             if (typeof window.markDataDirty === 'function') window.markDataDirty();
-            if (typeof window.saveMasterData === 'function' &&
-                window.saveMasterData() === false) {
-                window.masterData.data.currentYear = previousYear;
-                if (typeof window.markDataDirty === 'function') window.markDataDirty();
-                syncYearInput();
-                window.alert('Could not save the selected year. Previous year restored.');
-                return;
+            if (window.saveMasterData() === false) {
+                throw new Error('saveMasterData returned false.');
             }
         } catch (saveError) {
             window.masterData.data.currentYear = previousYear;
