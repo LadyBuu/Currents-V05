@@ -674,7 +674,8 @@
             return;
         }
 
-        TabManager.configure(SCOPE, {
+        try {
+            TabManager.configure(SCOPE, {
             containerRoot: _resolveContainerRoot(),
             resolveContainer: function (tabId) {
                 return document.getElementById(SCOPE + '-pane-' + tabId);
@@ -705,11 +706,27 @@
         TabManager.renderActive(SCOPE);
         _renderSidebarList();
 
-        _initialized = true;
-        _initializing = false;
+            _initialized = true;
+            _initializing = false;
 
-        if (typeof console !== 'undefined' && console.log) {
-            console.log('[HouseholdManagerBootstrap] initialized');
+            if (typeof console !== 'undefined' && console.log) {
+                console.log('[HouseholdManagerBootstrap] initialized');
+            }
+        } catch (startupErr) {
+            _initializing = false;
+            var startupErrorEl = document.getElementById('bootstrapError')
+                || document.getElementById('emptyStateText');
+            if (startupErrorEl) {
+                startupErrorEl.classList.add('show');
+                startupErrorEl.innerHTML =
+                    '<strong>Household Manager failed during startup.</strong><br>' +
+                    _escSafe(startupErr && startupErr.message
+                        ? startupErr.message
+                        : 'Unknown startup error');
+            }
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('household-manager-bootstrap: startup failed', startupErr);
+            }
         }
     }
 
