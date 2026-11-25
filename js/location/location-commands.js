@@ -1965,6 +1965,24 @@
     //   { year, locationId, locationName, note,
     //     fromLocationId, fromLocationName, isBirthMove, timestamp }
 
+    function _latestMoveIndex(moves) {
+        var bestIndex = -1;
+        var bestYear = -Infinity;
+        if (!Array.isArray(moves)) return -1;
+        for (var i = 0; i < moves.length; i++) {
+            var move = moves[i];
+            if (!move || typeof move !== 'object' ||
+                !_validId(move.locationId) ||
+                typeof window.isValidYear !== 'function' ||
+                window.isValidYear(move.year) !== true) continue;
+            if (move.year > bestYear) {
+                bestYear = move.year;
+                bestIndex = i;
+            }
+        }
+        return bestIndex;
+    }
+
     function updateMove(characterId, moveIndex, patch) {
         if (!_validId(characterId)) {
             return _fail('updateMove: characterId is required');
@@ -2070,9 +2088,18 @@
         var nextMoves = moves.slice();
         nextMoves[moveIndex] = next;
 
-        var charResult = CC.updateCharacterFields(characterId, {
-            moves: nextMoves
-        });
+        var characterPatch = { moves: nextMoves };
+        // currentLocationId takes precedence over move history. Keep it in
+        // sync only when it still represents this latest recorded move.
+        if (_latestMoveIndex(moves) === moveIndex &&
+            character.currentLocationId === current.locationId) {
+            var latestAfterEdit = _latestMoveIndex(nextMoves);
+            characterPatch.currentLocationId = latestAfterEdit >= 0
+                ? nextMoves[latestAfterEdit].locationId
+                : (character.birthplaceId || null);
+        }
+
+        var charResult = CC.updateCharacterFields(characterId, characterPatch);
         if (!charResult || charResult.success !== true) {
             return _fail('updateMove: ' +
                 (charResult && charResult.reason
@@ -2123,9 +2150,18 @@
         var nextMoves = moves.slice();
         nextMoves.splice(moveIndex, 1);
 
-        var charResult = CC.updateCharacterFields(characterId, {
-            moves: nextMoves
-        });
+        var characterPatch = { moves: nextMoves };
+        // Deleting the latest move must not leave an explicit current-location
+        // override pointing at its former destination.
+        if (_latestMoveIndex(moves) === moveIndex &&
+            character.currentLocationId === (removed && removed.locationId)) {
+            var latestAfterDelete = _latestMoveIndex(nextMoves);
+            characterPatch.currentLocationId = latestAfterDelete >= 0
+                ? nextMoves[latestAfterDelete].locationId
+                : (character.birthplaceId || null);
+        }
+
+        var charResult = CC.updateCharacterFields(characterId, characterPatch);
         if (!charResult || charResult.success !== true) {
             return _fail('deleteMove: ' +
                 (charResult && charResult.reason
@@ -2199,8 +2235,12 @@
         if (!character) {
             return _fail('assignLeader: character not found: ' + characterId);
         }
-        if (character.isDeceased) {
+        if (character.isDeceased === true) {
             return _fail('assignLeader: character is deceased');
+        }
+        if (character.isDeleted === true || character.deletedAt != null ||
+            character.softDeleted === true) {
+            return _fail('assignLeader: character is soft-deleted');
         }
 
         if (!Array.isArray(place.leaderAssignments)) {
