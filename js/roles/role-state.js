@@ -226,6 +226,7 @@
         byCategory: new Map()
     };
     var _subscribers = [];
+    var _transactionNotifications = [];
     var _initialized = false;
 
     // Ephemeral UI state — facade compatibility surface only.
@@ -419,7 +420,7 @@
     // 7. NOTIFICATION
     // =========================================================================
 
-    function _notify(type, data) {
+    function _dispatchNotification(type, data) {
         var subscribers = _subscribers.slice();
         for (var i = 0; i < subscribers.length; i++) {
             try {
@@ -430,6 +431,31 @@
                 }
             }
         }
+    }
+
+    function _notify(type, data) {
+        if (window.CrossDomainTransaction &&
+            typeof window.CrossDomainTransaction.isActive === 'function' &&
+            window.CrossDomainTransaction.isActive()) {
+            _transactionNotifications.push({ type: type, data: data });
+            return;
+        }
+        _dispatchNotification(type, data);
+    }
+
+    function _transactionFlushNotifications() {
+        var pending = _transactionNotifications.slice();
+        _transactionNotifications.length = 0;
+        for (var i = 0; i < pending.length; i++) {
+            _dispatchNotification(pending[i].type, pending[i].data);
+        }
+        return { success: true, count: pending.length };
+    }
+
+    function _transactionDiscardNotifications() {
+        var count = _transactionNotifications.length;
+        _transactionNotifications.length = 0;
+        return { success: true, discarded: count };
     }
 
     // =========================================================================
@@ -947,6 +973,9 @@
         getRoleByName: getRoleByName,
         getRolesByCategory: getRolesByCategory,
         getCategories: getCategories,
+
+        _transactionFlushNotifications: _transactionFlushNotifications,
+        _transactionDiscardNotifications: _transactionDiscardNotifications,
 
         // Mutations (RoleCommands is the intended caller)
         addRole: addRole,
