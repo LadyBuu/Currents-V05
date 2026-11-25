@@ -770,7 +770,9 @@
                     deathNotes: notesInput.value || ''
                 };
 
-                var result;\n                _resolveEnterpriseSuccession(characterId, function() { result = CL.killCharacter(characterId, deathData); });\n                if (result === undefined) return false;
+                var result;
+                _resolveEnterpriseSuccession(characterId, function() { result = CL.killCharacter(characterId, deathData); });
+                if (result === undefined) return false;
                 if (!result || result.success !== true) {
                     throw new Error(result && result.reason
                         ? result.reason
@@ -1007,7 +1009,9 @@
                     murderMethod: method
                 };
 
-                var result;\n                _resolveEnterpriseSuccession(victimId, function() { result = CL.killCharacter(victimId, deathData); });\n                if (result === undefined) return false;
+                var result;
+                _resolveEnterpriseSuccession(victimId, function() { result = CL.killCharacter(victimId, deathData); });
+                if (result === undefined) return false;
                 if (!result || result.success !== true) {
                     throw new Error(result && result.reason
                         ? result.reason
@@ -1133,7 +1137,9 @@
                     executionLocation: locationInput.value.trim()
                 };
 
-                var result;\n                _resolveEnterpriseSuccession(condemnedId, function() { result = CL.killCharacter(condemnedId, deathData); });\n                if (result === undefined) return false;
+                var result;
+                _resolveEnterpriseSuccession(condemnedId, function() { result = CL.killCharacter(condemnedId, deathData); });
+                if (result === undefined) return false;
                 if (!result || result.success !== true) {
                     throw new Error(result && result.reason
                         ? result.reason
