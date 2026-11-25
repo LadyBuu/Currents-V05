@@ -650,13 +650,21 @@
             return;
         }
 
-        try {
-            if (typeof window.initializeStorage === 'function') window.initializeStorage();
-            if (typeof window.loadMasterData === 'function') window.loadMasterData();
-        } catch (storageErr) {
-            if (typeof console !== 'undefined' && console.warn) {
-                console.warn('household-manager-bootstrap: storage init failed', storageErr);
+        // Storage is initialised by HouseholdManager.html before any
+        // state module loads. Reloading here would replace masterData after
+        // CharacterState, FamilyState, RelationshipState and the household
+        // bootstrap have already hydrated their caches.
+        if (!window.masterData || !window.masterData.data) {
+            var storageErrorEl = document.getElementById('bootstrapError')
+                || document.getElementById('emptyStateText');
+            if (storageErrorEl) {
+                storageErrorEl.classList.add('show');
+                storageErrorEl.innerHTML =
+                    '<strong>Household Manager cannot start.</strong><br>' +
+                    'Storage was not initialised before the household modules loaded.';
             }
+            _initializing = false;
+            return;
         }
 
         try {
