@@ -327,15 +327,35 @@
         );
     }
 
-    // Command wrappers — bind to the actual compact names.
+    // Command wrappers — adapt the servant API to the canonical
+    // RelationshipCommands input/result contract.
     function _createRelationship(a, b, options) {
-        return _resolveRelationshipCommandsFn('create')(a, b, options);
+        options = options || {};
+        var result = _resolveRelationshipCommandsFn('create')({
+            participantA: a,
+            participantB: b,
+            type: options.type,
+            status: options.status,
+            startYear: options.startYear,
+            endYear: options.endYear,
+            attributes: Array.isArray(options.attributes)
+                ? options.attributes.slice()
+                : [],
+            metadata: options.metadata && typeof options.metadata === 'object'
+                ? Object.assign({}, options.metadata)
+                : {}
+        });
+        return result && result.success === true
+            ? (result.relationship || null)
+            : null;
     }
     function _endRelationship(id, year, reason) {
-        return _resolveRelationshipCommandsFn('end')(id, year, reason);
+        var result = _resolveRelationshipCommandsFn('end')(id, year, reason);
+        return !!(result && result.success === true);
     }
     function _updateRelationship(id, patch) {
-        return _resolveRelationshipCommandsFn('update')(id, patch);
+        var result = _resolveRelationshipCommandsFn('update')(id, patch);
+        return !!(result && result.success === true);
     }
 
     // Query wrappers — bind to the actual compact names.
