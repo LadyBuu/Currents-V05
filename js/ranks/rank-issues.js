@@ -1163,6 +1163,25 @@
         }
 
         var allCharacters = _readAllCharacters();
+        var characterSnapshot;
+        try {
+            if (!window.CharacterState ||
+                typeof window.CharacterState._transactionSnapshotDeletedLocations !== 'function' ||
+                typeof window.CharacterState._transactionRestoreDeletedLocations !== 'function') {
+                return {
+                    success: false,
+                    reason: 'CharacterState transaction snapshot/restore is unavailable.'
+                };
+            }
+            characterSnapshot = window.CharacterState._transactionSnapshotDeletedLocations();
+        } catch (snapshotError) {
+            return {
+                success: false,
+                reason: snapshotError && snapshotError.message
+                    ? snapshotError.message : 'Could not snapshot character records.'
+            };
+        }
+
         var touchedRanks = {};
         var cleaned = 0;
         var updateErrors = [];
@@ -1203,9 +1222,23 @@
             }
         }
 
+        if (updateErrors.length > 0 || renumberErrors.length > 0) {
+            var rollback = window.CharacterState._transactionRestoreDeletedLocations(characterSnapshot);
+            return {
+                success: false,
+                partial: !(rollback && rollback.success === true),
+                rolledBack: !!(rollback && rollback.success === true),
+                rollbackReason: rollback && rollback.success !== true ? rollback.reason : undefined,
+                cleaned: 0,
+                ranksRenumbered: 0,
+                updateErrors: updateErrors,
+                renumberErrors: renumberErrors
+            };
+        }
+
         return {
-            success: updateErrors.length === 0 && renumberErrors.length === 0,
-            partial: updateErrors.length > 0 || renumberErrors.length > 0,
+            success: true,
+            partial: false,
             cleaned: cleaned,
             ranksRenumbered: Object.keys(touchedRanks).length,
             updateErrors: updateErrors,
