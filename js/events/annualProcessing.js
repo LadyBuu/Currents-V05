@@ -60,9 +60,10 @@
     }
 
     function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
+        if (typeof window.saveMasterData !== 'function') {
+            return false;
         }
+        return window.saveMasterData() === true;
     }
 
     function _showToast(message, type) {
@@ -768,9 +769,20 @@
             // 9. SAVE AND FINALIZE
             // =====================================================================
             if (!dryRun) {
-                _saveMasterData();
+                var annualSaveSucceeded = _saveMasterData();
+                results.persistence = {
+                    saved: annualSaveSucceeded
+                };
+                if (!annualSaveSucceeded) {
+                    results.errors.push({
+                        system: 'persistence',
+                        error: 'Annual processing ran, but the updated world could not be saved. Changes remain in memory and are not durable.'
+                    });
+                }
 
-                var summaryMsg = 'Annual processing complete for year ' + processYear + ': ' +
+                var summaryMsg = 'Annual processing ' +
+                    (annualSaveSucceeded ? 'complete' : 'finished but NOT SAVED') +
+                    ' for year ' + processYear + ': ' +
                     results.characters.aged + ' characters aged, ' +
                     results.characters.died + ' died, ' +
                     results.salaries.paid + ' salaries paid (' + Math.round(results.salaries.totalAmount) + ' gold), ' +
