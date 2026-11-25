@@ -93,13 +93,45 @@
     }
 
     function _requireQueries() {
-        if (!window.HouseholdQueries
-            || typeof window.HouseholdQueries.getHousehold !== 'function') {
+        var queries = window.HouseholdQueries;
+        if (!queries || typeof queries.getHousehold !== 'function') {
+            var missing = [];
+            if (!window.HouseholdState) missing.push('HouseholdState');
+            if (!window.HouseholdRules) missing.push('HouseholdRules');
+            if (typeof window.getCharacterById !== 'function') missing.push('getCharacterById');
+            if (typeof window.getCharacters !== 'function') missing.push('getCharacters');
+            if (typeof window.getCurrentYear !== 'function') missing.push('getCurrentYear');
+            if (typeof window.calculateAge !== 'function') missing.push('calculateAge');
+            if (!window.FamilyQueries) missing.push('FamilyQueries');
+            else {
+                ['getChildIds', 'getBiologicalChildIds', 'getParents',
+                    'getParentsByRole', 'getBiologicalParentIds'].forEach(function (name) {
+                    if (typeof window.FamilyQueries[name] !== 'function') {
+                        missing.push('FamilyQueries.' + name);
+                    }
+                });
+            }
+            if (window.HouseholdState && window.HouseholdState._internal) {
+                ['getHouseholdRecord', 'getAllHouseholdRecords',
+                    'getPositionRecord', 'getAllPositionRecords',
+                    'getAssignmentRecord', 'getAllAssignmentRecords'].forEach(function (name) {
+                    if (typeof window.HouseholdState._internal[name] !== 'function') {
+                        missing.push('HouseholdState._internal.' + name);
+                    }
+                });
+            } else {
+                missing.push('HouseholdState._internal');
+            }
+
+            var detail = missing.length
+                ? ' Missing prerequisites: ' + missing.join(', ') + '.'
+                : ' The query script is present in HouseholdManager.html, but failed to initialise; inspect the earlier script error in the browser console.';
             throw new Error(
-                'household-manager-bootstrap: HouseholdQueries is missing. ' +
-                'Load js/households/household-queries.js.');
+                'household-manager-bootstrap: HouseholdQueries did not initialise.' +
+                detail
+            );
         }
-        return window.HouseholdQueries;
+        return queries;
     }
 
     function _requireRuntime() {
@@ -572,10 +604,11 @@
     // =========================================================================
 
     var _initialized = false;
+    var _initializing = false;
 
     function init() {
-        if (_initialized) return;
-        _initialized = true;
+        if (_initialized || _initializing) return;
+        _initializing = true;
 
         var TabManager, HS, Q, runtime;
         try {
@@ -595,6 +628,7 @@
             if (typeof console !== 'undefined' && console.error) {
                 console.error('household-manager-bootstrap.init:', depErr);
             }
+            _initializing = false;
             return;
         }
 
@@ -618,6 +652,7 @@
                     '<strong>Household state failed to hydrate.</strong><br>' +
                     _escSafe(hydrateErr && hydrateErr.message ? hydrateErr.message : 'Unknown');
             }
+            _initializing = false;
             return;
         }
 
@@ -651,6 +686,9 @@
         _syncTabStrip(DEFAULT_ACTIVE_TAB_ID);
         TabManager.renderActive(SCOPE);
         _renderSidebarList();
+
+        _initialized = true;
+        _initializing = false;
 
         if (typeof console !== 'undefined' && console.log) {
             console.log('[HouseholdManagerBootstrap] initialized');
