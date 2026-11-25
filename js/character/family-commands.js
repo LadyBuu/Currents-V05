@@ -718,6 +718,17 @@
             }
         }
 
+        if (failures.length > 0) {
+            FS.replaceAll(snapshotBeforeCleanup);
+            return {
+                success: false,
+                partial: false,
+                removedCount: 0,
+                failures: failures,
+                rolledBack: true
+            };
+        }
+
         if (removed > 0) {
             var ids = Object.keys(affected);
             if (!_commit()) {
