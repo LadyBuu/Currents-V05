@@ -3,7 +3,7 @@
  * STILL WATERS - PROFESSIONAL COMMANDS (professional-commands.js)
  * =============================================================================
  *
- * LOCATION: js/social/professional-commands.js
+ * LOCATION: js/relationships/professional-commands.js
  *
  * Mutation boundary for professional relationship edges.
  *
