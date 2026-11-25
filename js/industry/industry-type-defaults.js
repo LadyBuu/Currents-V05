@@ -3,7 +3,7 @@
  * STILL WATERS - INDUSTRY TYPE DEFAULTS (industry-type-defaults.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/industry-type-defaults.js
+ * LOCATION: js/industry/industry-type-defaults.js
  *
  * Built-in initial enterprise type definitions.
  *
