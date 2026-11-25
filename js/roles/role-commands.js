@@ -816,6 +816,9 @@
                     return true;
                 },
                 afterCommit: function () {
+                    if (typeof RS._transactionFlushNotifications === 'function') {
+                        RS._transactionFlushNotifications();
+                    }
                     if (typeof apprenticeshipCommands._transactionFlushNotifications === 'function') {
                         apprenticeshipCommands._transactionFlushNotifications();
                     }
@@ -837,6 +840,9 @@
         });
 
         if (!result || result.success !== true) {
+            if (typeof RS._transactionDiscardNotifications === 'function') {
+                RS._transactionDiscardNotifications();
+            }
             if (typeof apprenticeshipCommands._transactionDiscardNotifications === 'function') {
                 apprenticeshipCommands._transactionDiscardNotifications();
             }
