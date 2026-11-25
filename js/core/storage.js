@@ -1080,6 +1080,16 @@
     // =========================================================================
 
     function resetMasterData() {
+        // A reset must not discard edits that have not reached storage.
+        // Flush them first; if that fails, leave the current dataset intact.
+        if (_isDirty && !flushPendingSave()) {
+            return {
+                ok: false,
+                error: _lastSaveError && _lastSaveError.message
+                    ? _lastSaveError.message
+                    : 'unsaved-changes'
+            };
+        }
         var prior = window.masterData;
 
         try {
