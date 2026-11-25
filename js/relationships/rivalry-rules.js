@@ -3,7 +3,7 @@
  * STILL WATERS - RIVALRY RULES (rivalry-rules.js)
  * =============================================================================
  *
- * LOCATION: js/social/rivalry-rules.js
+ * LOCATION: js/relationships/rivalry-rules.js
  *
  * Pure policy for rivalry and enmity relationships.
  *
