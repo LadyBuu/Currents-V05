@@ -43,11 +43,10 @@
  *   with restoreSoftDeletedCharacter.
  *
  *   Hard delete dispatches cleanup before removing the canonical character
- *   record. The record is removed only after all available cleanup handlers
- *   report success. If cleanup fails, the character record is retained so
- *   cleanup can be retried. Missing modules are reported as skipped and do
- *   not block deletion; their references cannot be cleaned by an unavailable
- *   module. The response records participating, skipped, and failed domains.
+ *   record. The record is removed only after every required cleanup handler
+ *   reports success. Readiness validation blocks hard deletion when a required
+ *   cleanup module is unavailable; unavailable cleanup is not treated as safe
+ *   to skip. The response records participating, skipped, and failed domains.
  *
  * SOFT-DELETE FIELD OWNERSHIP:
  *   isDeleted and deletedAt are domain-owned fields (they are listed in
