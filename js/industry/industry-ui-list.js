@@ -3,7 +3,7 @@
  * STILL WATERS - INDUSTRY UI LIST (industry-ui-list.js)
  * =============================================================================
  *
- * LOCATION: js/core/industry/industry-ui-list.js
+ * LOCATION: js/industry/industry-ui-list.js
  *
  * Renderers over IndustryViewModels.
  *
