@@ -523,10 +523,15 @@
             window.masterData.data.adoptionRecords = st.snapshotAdoptions(); return true;
         });
         restore('households', function () { return window.HouseholdState._transactionRestoreDeletedLocations(s.households); });
-        restore('relationships', function () { return window.RelationshipState.replaceAll(s.relationships); });
+        restore('relationships', function () {
+            window.RelationshipState.replaceAll(s.relationships);
+            window.masterData.data.relationships = window.RelationshipState.snapshot();
+            return true;
+        });
         if (CS._transactionDiscardChanges) CS._transactionDiscardChanges();
         if (window.FamilyState && window.FamilyState._transactionDiscardNotifications) window.FamilyState._transactionDiscardNotifications();
         if (window.RelationshipState && window.RelationshipState._transactionDiscardNotifications) window.RelationshipState._transactionDiscardNotifications();
+        if (window.ApprenticeshipCommands && window.ApprenticeshipCommands._transactionDiscardNotifications) window.ApprenticeshipCommands._transactionDiscardNotifications();
         if (window.HouseholdCommands && window.HouseholdCommands._transactionDiscardSideEffects) window.HouseholdCommands._transactionDiscardSideEffects();
         if (window.FamilyCommands && window.FamilyCommands._transactionDiscardSideEffects) window.FamilyCommands._transactionDiscardSideEffects();
         if (window.ChildrenCommands && window.ChildrenCommands._transactionDiscardSideEffects) window.ChildrenCommands._transactionDiscardSideEffects();
@@ -569,6 +574,7 @@
                     if (window.ChildrenCommands && window.ChildrenCommands._transactionFlushSideEffects) window.ChildrenCommands._transactionFlushSideEffects();
                     if (window.FamilyState && window.FamilyState._transactionFlushNotifications) window.FamilyState._transactionFlushNotifications();
                     if (window.RelationshipState && window.RelationshipState._transactionFlushNotifications) window.RelationshipState._transactionFlushNotifications();
+                    if (window.ApprenticeshipCommands && window.ApprenticeshipCommands._transactionFlushNotifications) window.ApprenticeshipCommands._transactionFlushNotifications();
                     if (window.HouseholdCommands && window.HouseholdCommands._transactionFlushSideEffects) window.HouseholdCommands._transactionFlushSideEffects();
                 }
             }]
