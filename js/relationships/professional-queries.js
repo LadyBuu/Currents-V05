@@ -3,7 +3,7 @@
  * STILL WATERS - PROFESSIONAL QUERIES (professional-queries.js)
  * =============================================================================
  *
- * LOCATION: js/social/professional-queries.js
+ * LOCATION: js/relationships/professional-queries.js
  *
  * Semantic reads for professional relationship edges.
  *
