@@ -366,6 +366,7 @@
         var html = '';
         html += '<div class="events-filters">';
 
+
         // Header line: collapse toggle + location scope
         html += '<div class="events-filters__header">';
         html += '<button type="button" class="events-filters__collapse" ' +
@@ -410,6 +411,41 @@
         html += '<input type="search" class="ev-deaths-input events-filters__search" ' +
             'data-input="search" placeholder="Search by name..." ' +
             'value="' + _esc(filters.search || '') + '">';
+
+        // Cascading location selectors: each level lists children of the
+        // selection above it. The final selected location scopes the roster.
+        var lq = window.LocationQueries;
+        var locationChain = [];
+        if (lq && typeof lq.getPlaceHierarchy === 'function' && filters.locationId) {
+            try { locationChain = lq.getPlaceHierarchy(filters.locationId) || []; }
+            catch (e) { locationChain = []; }
+        }
+        var locationOptions = [];
+        if (lq && typeof lq.getRootPlaces === 'function') {
+            try { locationOptions = lq.getRootPlaces({ includeDeprecated: false }) || []; }
+            catch (e) { locationOptions = []; }
+        }
+        var selectedAtLevel = null;
+        var level = 0;
+        while (locationOptions.length) {
+            var selectedPlace = locationChain[level] || null;
+            html += '<select class="ev-deaths-input events-filters__select" data-input="location-level" data-level="' + level + '">';
+            html += '<option value="">All ' + (level === 0 ? 'locations' : 'sub-locations') + '</option>';
+            var foundSelected = false;
+            for (var li = 0; li < locationOptions.length; li++) {
+                var place = locationOptions[li];
+                if (!place || !place.id) continue;
+                var placeName = place.displayName || place.name || place.id;
+                var isSelected = !!selectedPlace && selectedPlace.id === place.id;
+                if (isSelected) foundSelected = true;
+                html += '<option value="' + _esc(place.id) + '"' + (isSelected ? ' selected' : '') + '>' + _esc(placeName) + '</option>';
+            }
+            html += '</select>';
+            if (!foundSelected || !selectedPlace || !lq || typeof lq.getPlaceChildren !== 'function') break;
+            try { locationOptions = lq.getPlaceChildren(selectedPlace.id, false) || []; }
+            catch (e) { locationOptions = []; }
+            level++;
+        }
 
         // Row 2: filter selects
         html += '<select class="ev-deaths-input events-filters__select" data-input="gender">' +
@@ -626,6 +662,16 @@
                 input.addEventListener(eventName, function() {
                     if (input.type === 'checkbox') {
                         commit({ showAllLocations: input.checked === true });
+                        return;
+                    }
+                    if (key === 'location-level') {
+                        var selectedLocationId = input.value || null;
+                        var level = parseInt(input.getAttribute('data-level'), 10);
+                        if (!selectedLocationId && level > 0) {
+                            var prior = container.querySelector('[data-input="location-level"][data-level="' + (level - 1) + '"]');
+                            selectedLocationId = prior && prior.value ? prior.value : null;
+                        }
+                        commit({ locationId: selectedLocationId, showAllLocations: !selectedLocationId });
                         return;
                     }
                     commit({ [key]: input.value });
