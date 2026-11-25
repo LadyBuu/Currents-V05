@@ -42,13 +42,12 @@
  *   Nothing else about the record changes. The character can be restored
  *   with restoreSoftDeletedCharacter.
  *
- *   Hard delete removes the record from the collection and dispatches a
- *   cleanup to every domain that owns a reference to a character. The
- *   cleanup pass runs AFTER removal. Each domain's cleanup function is
- *   called if the module is loaded. Missing modules do not block deletion;
- *   their references are simply not cleaned. The response records which
- *   domains participated, which were skipped (module or method not
- *   present), and which failed.
+ *   Hard delete dispatches cleanup before removing the canonical character
+ *   record. The record is removed only after all available cleanup handlers
+ *   report success. If cleanup fails, the character record is retained so
+ *   cleanup can be retried. Missing modules are reported as skipped and do
+ *   not block deletion; their references cannot be cleaned by an unavailable
+ *   module. The response records participating, skipped, and failed domains.
  *
  * SOFT-DELETE FIELD OWNERSHIP:
  *   isDeleted and deletedAt are domain-owned fields (they are listed in
@@ -74,12 +73,12 @@
  *     skipped  — domains where the module or method was absent
  *     failed   — domains whose cleanup returned failure or threw
  *
- *   Hard deletion is irreversible once CharacterState removes the record.
- *   The command therefore reports deletionComplete separately from cleanup
- *   success. Missing handlers, malformed results, returned failures, and
- *   thrown errors all make cleanup incomplete. The record remains deleted,
- *   but callers receive cleanupFailed/partial and must not report a clean
- *   deletion. There is no cross-domain rollback in this command.
+ *   CharacterState removes the record only after cleanup succeeds. A cleanup
+ *   failure retains the character record and reports incomplete deletion,
+ *   allowing retry. However, earlier cleanup handlers may already have
+ *   mutated other domains before a later handler fails; those mutations are
+ *   not rolled back. Retry safety therefore depends on cleanup handlers being
+ *   idempotent.
  *
  * DELETE HANDLER HOOK (Phase 3.13b):
  *   The named cleanup table handles FamilyCommands, ChildrenCommands,
