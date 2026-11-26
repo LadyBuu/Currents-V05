@@ -500,60 +500,59 @@
 
     function _renderNewArrangementBlock(context) {
         var characters = _livingCharacters();
-        var hasCharacters = Array.isArray(characters);
-
-        var disabledAttr = hasCharacters ? '' : ' disabled';
-        var hint = hasCharacters
-            ? ''
-            : '<div class="events-surrogacy-new__hint">' +
-              'Character picker unavailable: CharacterQueries is not loaded.' +
-              '</div>';
-
-        var introText = '';
-        var C = _constants();
-        if (C && C.UI_COPY && typeof C.UI_COPY.surrogacyIntro === 'string') {
-            introText = '<div class="events-surrogacy-new__intro">' +
-                _esc(C.UI_COPY.surrogacyIntro) +
-                '</div>';
+        if (!Array.isArray(characters)) return '<div class="events-surrogacy-new">Character picker unavailable.</div>';
+        var couples = [], seen = {};
+        var RQ = window.RomanceQueries;
+        characters.forEach(function(c) {
+            if (!RQ || typeof RQ.getActiveRomanticRelationships !== 'function') return;
+            (RQ.getActiveRomanticRelationships(c.id) || []).forEach(function(rel) {
+                var id = rel.partnerId;
+                if (!id || id === c.id || !characters.some(function(x){return x.id === id;})) return;
+                var key = [c.id,id].sort().join('|');
+                if (seen[key]) return;
+                seen[key] = true;
+                var other = characters.find(function(x){return x.id === id;});
+                couples.push([c,other]);
+            });
+        });
+        couples.sort(function(a,b) {
+            var aa = typeof a[0].age === 'number' ? a[0].age : -1;
+            var ab = typeof a[1].age === 'number' ? a[1].age : -1;
+            var ba = typeof b[0].age === 'number' ? b[0].age : -1;
+            var bb = typeof b[1].age === 'number' ? b[1].age : -1;
+            return Math.max(ab,aa) - Math.max(bb,ba);
+        });
+        var men = couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='male' || String(pair[1].gender||'').toLowerCase()==='male';});
+        var women = couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='female' || String(pair[1].gender||'').toLowerCase()==='female';});
+        function pairLabel(pair) {
+            var sorted = pair.slice().sort(function(a,b){return (b.age||-1)-(a.age||-1);});
+            return sorted.map(function(c){return _esc((c.name||'')+' '+(c.surname||'')+' ('+(c.age==null?'?':c.age)+')');}).join(' + ');
         }
-
-        var html = '<div class="events-surrogacy-new">';
-        html += '<div class="events-surrogacy-new__header">' +
-            _icon('GUARDIANSHIP') +
-            '<span>New Surrogacy Arrangement</span>' +
-            '</div>';
-        if (introText) html += introText;
-        html += '<div class="events-surrogacy-new__pickers">';
-        html += '<label class="events-surrogacy-new__field">' +
-            '<span>Intended Parent</span>' +
-            '<select class="ev-surrogacy-input events-surrogacy-new__select" ' +
-            'data-input="new-intended-parent-id"' + disabledAttr + '>' +
-            '<option value="">Select an intended parent…</option>' +
-            '</select>' +
-            '</label>';
-        html += '<button type="button" class="events-surrogacy-new__create" ' +
-            'data-action="new-surrogacy"' + disabledAttr + '>' +
-            _icon('CHECK_SIMPLE') + '<span>New Arrangement</span></button>';
-        html += '</div>';
-        html += hint;
-        html += '</div>';
+        var html = '<div class="events-surrogacy-new"><div class="events-surrogacy-new__header">'+_icon('GUARDIANSHIP')+'<span>New Surrogacy Arrangement</span></div>';
+        html += '<label><input type="checkbox" data-input="show-different-sex"> Show different-sex couples</label>';
+        html += '<div class="events-surrogacy-new__columns"><section><h4>Couples</h4>';
+        html += '<div class="events-surrogacy-new__couples" data-list="same-sex">';
+        couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()===String(pair[1].gender||'').toLowerCase();}).forEach(function(pair){
+            html += '<button type="button" data-action="choose-surrogacy-couple" data-ids="'+_esc(pair[0].id+'|'+pair[1].id)+'">'+pairLabel(pair)+'</button>';
+        });
+        html += '</div><div class="events-surrogacy-new__couples" data-list="different-sex" hidden>';
+        couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()!==String(pair[1].gender||'').toLowerCase();}).forEach(function(pair){
+            html += '<button type="button" data-action="choose-surrogacy-couple" data-ids="'+_esc(pair[0].id+'|'+pair[1].id)+'">'+pairLabel(pair)+'</button>';
+        });
+        html += '</div></section><section><h4>Singles</h4>';
+        characters.filter(function(c){return !couples.some(function(pair){return pair[0].id===c.id||pair[1].id===c.id;});}).sort(function(a,b){return (b.age||-1)-(a.age||-1);}).forEach(function(c){
+            html += '<button type="button" data-action="new-surrogacy-single" data-id="'+_esc(c.id)+'">'+_esc((c.name||'')+' '+(c.surname||'')+' ('+(c.age==null?'?':c.age)+')')+'</button>';
+        });
+        html += '</section></div></div>';
         return html;
     }
 
     function _wireNewArrangementBlock(container) {
-        var characters = _livingCharacters();
-        if (!Array.isArray(characters)) return;
-
-        var parentSelect = container.querySelector(
-            '[data-input="new-intended-parent-id"]'
-        );
-        if (parentSelect) {
-            _populateSelectOptions(
-                parentSelect,
-                characters,
-                'Select an intended parent…'
-            );
-        }
+        var toggle = container.querySelector('[data-input="show-different-sex"]');
+        if (toggle) toggle.addEventListener('change', function() {
+            var list = container.querySelector('[data-list="different-sex"]');
+            if (list) list.hidden = !toggle.checked;
+        });
     }
 
     // =========================================================================
