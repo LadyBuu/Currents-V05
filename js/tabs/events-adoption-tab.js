@@ -450,6 +450,8 @@
                 out.push([c,other]);
             });
         });
+        out.forEach(function(pair){ pair.sort(function(a,b){ var ga=String(a.gender||'').toLowerCase()==='male'?0:String(a.gender||'').toLowerCase()==='female'?1:2; var gb=String(b.gender||'').toLowerCase()==='male'?0:String(b.gender||'').toLowerCase()==='female'?1:2; return ga-gb || (typeof b.age==='number'?b.age:-1)-(typeof a.age==='number'?a.age:-1); }); });
+        out.sort(function(a,b){return Math.max(b[0].age||-1,b[1].age||-1)-Math.max(a[0].age||-1,a[1].age||-1);});
         return out;
     }
     function _kinshipLabel(childId, adopterId) {
@@ -480,7 +482,7 @@
         var couples = _couples(characters), html = '<section class="events-adoption-new"><div class="events-adoption-new__header">'+_icon('ADOPTION_LEGAL')+'<span>New placement</span></div><div class="events-adoption-columns">';
         html += '<div class="events-adoption-column"><h4>People with no parents</h4>';
         html += eligible.map(function(c){return '<button type="button" class="events-adoption-candidate'+(c.id===_creationSelection.childId?' is-selected':'')+'" data-action="select-adoptee" data-id="'+_esc(c.id)+'"><strong>'+_esc(_personName(c))+'</strong><small>'+_esc((c.age == null?'Age unknown':c.age+' years')+' · '+_personLocation(c))+'</small></button>';}).join('') || '<p>No eligible adoptees.</p>';
-        html += '</div><div class="events-adoption-column"><h4>Committed couples</h4>';
+        html += '</div><div class="events-adoption-column"><h4>All romantic couples</h4>';
         html += '<label class="events-adoption-show-singles"><input type="checkbox" data-input="show-singles"'+(_creationSelection.showSingles?' checked':'')+'> Show single people</label>';
         html += couples.map(function(pair){return _candidateCard(_personName(pair[0])+' + '+_personName(pair[1]),pair.map(function(p){return p.id;}),child,pair);}).join('') || '<p>No romantic couples found.</p>';
         if (_creationSelection.showSingles) html += '<h4>Single adopters</h4>'+characters.filter(function(c){return !couples.some(function(pair){return pair.some(function(p){return p.id===c.id;});});}).map(function(c){return _candidateCard(_personName(c),[c.id],child,[c]);}).join('');
