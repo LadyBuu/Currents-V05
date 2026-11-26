@@ -501,15 +501,17 @@
     }
 
     function getCurrentLocationId(character) {
-        if (!character || !Array.isArray(character.moves)) return null;
+        if (!character) return null;
+        var moves = Array.isArray(character.moves) ? character.moves : [];
 
-        // Current location is derived exclusively from move history.
-        // Explicit currentLocationId and birthplace are not location state.
+        // Use the latest recorded move; if there are no valid moves, the
+        // character has never moved and remains at their birthplace.
+        // Ignore explicit currentLocationId.
         var best = null;
         var bestYear = -Infinity;
 
-        for (var i = 0; i < character.moves.length; i++) {
-            var move = character.moves[i];
+        for (var i = 0; i < moves.length; i++) {
+            var move = moves[i];
             if (!move || !_hasId(move.locationId)) continue;
             if (!_isValidMoveYear(move.year)) continue;
 
@@ -519,7 +521,7 @@
             }
         }
 
-        return best ? best.locationId : null;
+        return best ? best.locationId : (_hasId(character.birthplaceId) ? character.birthplaceId : null);
     }
 
     function getCurrentPlace(character) {
