@@ -159,6 +159,7 @@
         if (!container) return;
 
         var scopedId = context && context.locationId || '';
+        container.__socialContextLocation = scopedId;
         var hasStoredLocation = Object.prototype.hasOwnProperty.call(container, '__socialLocation');
         var selectedLocation = hasStoredLocation ? container.__socialLocation : scopedId;
         var limitToLocation = container.__socialLimit === true;
@@ -243,8 +244,9 @@
             }
             if (target.matches('[data-social-limit]')) {
                 container.__socialLimit = target.checked;
-                if (!target.checked) container.__socialLocation = '';
-                else if (!container.__socialLocation) container.__socialLocation = scopedId;
+                if (target.checked && !container.__socialLocation) {
+                    container.__socialLocation = container.__socialContextLocation || '';
+                }
                 refresh();
                 return;
             }
