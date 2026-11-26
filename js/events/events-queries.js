@@ -1517,10 +1517,10 @@
             characters.forEach(function(c) {
                 if (!c || !c.id) return;
                 var current = lq.module.getCurrentLocationId(c.id);
-                if (scope && !scope[current]) return;
                 var moves = cq.module.getMoveHistory(c.id) || [];
                 moves.forEach(function(m) {
                     if (!m) return;
+                    if (scope && !scope[current] && !scope[m.locationId] && !scope[m.fromLocationId]) return;
                     records.push({
                         characterId:c.id,
                         characterName:[c.name,c.surname].filter(Boolean).join(' ') || c.id,
