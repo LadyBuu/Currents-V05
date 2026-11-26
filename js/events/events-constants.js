@@ -19,8 +19,8 @@
  *                    ChildrenQueries / ChildrenRules
  *     adoption    -> ChildrenQueries (adoption metadata) /
  *                    FamilyQueries
- *     surrogacy   -> ChildrenQueries (surrogacy arrangements) /
- *                    RomanceQueries
+ *     surrogacy   -> ChildrenState / ChildrenQueries / CharacterQueries
+ *     crime       -> CrimeQueries
  *     disasters   -> DisasterQueries / DisasterConstants
  *     social      -> RelationshipQueries / RomanceQueries /
  *                    FriendshipQueries / RivalryQueries
@@ -102,17 +102,11 @@
     // 1. FACETS (the manager's tabs)
     // =========================================================================
     //
-    // The Events Manager hosts one tab per event family. Every facet
-    // id below renders a self-registering tab at load; the
-    // EventsManagerBootstrap's KNOWN_TAB_IDS list must match this
-    // catalog exactly (plus any not-yet-loaded stubs the manager
-    // chooses to expose, which currently is none).
-    //
-    // The adoption and surrogacy facets are declared here so the tab
-    // strip can render their buttons; their renderers land in
-    // Phase 3B / 3C. Until then, TabManager renders the "not loaded
-    // in this build" empty state from _buildEmptyState's
-    // 'no-renderer' branch.
+    // The Events Manager hosts one tab per event family. This is the
+    // canonical id/label/icon catalog and must stay aligned with
+    // EventsManagerBootstrap.KNOWN_TAB_IDS. Renderer registration is
+    // owned by each facet tab script; a declared facet without a
+    // loaded renderer receives the manager's no-renderer empty state.
 
     var EVENT_FACETS = Object.freeze([
         Object.freeze({
@@ -435,7 +429,8 @@
         stork:     STORK_DEFAULT_FILTERS,
         adoption:  ADOPTION_DEFAULT_FILTERS,
         surrogacy: SURROGACY_DEFAULT_FILTERS
-        // social, educational: added when their tabs land.
+        // Facets without a dedicated filter schema use the documented
+        // fallback shape returned by getDefaultFiltersForFacet().
     });
 
     // The fallback shape for a facet whose defaults have not yet
