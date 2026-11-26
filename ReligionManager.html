@@ -1173,92 +1173,7 @@
 <script src="js/tabs/religion-followers-tab.js"></script>
 
 <!-- ============================================================ -->
-<!-- TABMANAGER LOAD-TIME PROBE                                   -->
-<!--                                                              -->
-<!-- Runs after all tab files have had a chance to load and      -->
-<!-- self-register. Verifies that TabManager actually exists and  -->
-<!-- that at least one religion tab registered. Surfaces the      -->
-<!-- three distinct failure modes for "tabs don't render":        -->
-<!--   (a) tab-manager.js did not load at all                     -->
-<!--   (b) tab-manager.js loaded but did not export TabManager    -->
-<!--   (c) TabManager loaded but a tab file failed to register    -->
-<!-- ============================================================ -->
-<script>
-(function () {
-    'use strict';
 
-    var KNOWN_TAB_IDS = ['details', 'gods', 'laws', 'places', 'followers'];
-
-    var TM = window.TabManager;
-    var tagPresent = !!document.querySelector('script[src*="tab-manager"]');
-
-    console.group('[religion-tab-probe] TabManager load check');
-    console.log('script tag for tab-manager.js present in DOM:', tagPresent);
-    console.log('typeof window.TabManager:', typeof TM);
-
-    if (typeof TM === 'undefined' || TM === null) {
-        console.error(
-            'window.TabManager is ' + typeof TM + '. The religion tabs ' +
-            'and the orchestrator will all fail because they all call ' +
-            'TabManager.register / .configure / .renderActive. Likely ' +
-            'cause: ' +
-            (!tagPresent
-                ? 'there is NO <script src="js/core/tab-manager.js"> tag ' +
-                  'in ReligionManager.html. Add it, after responsive.js and ' +
-                  'collapsible.js, before exportUtils.js.'
-                : 'the tag IS present but the script did not export ' +
-                  'window.TabManager. Check DevTools -> Network for a 404 ' +
-                  'on tab-manager.js, or check that the deployed file ends ' +
-                  'with `window.TabManager = { ... };`.')
-        );
-        console.groupEnd();
-        return;
-    }
-
-    if (typeof TM.configure !== 'function'
-        || typeof TM.register !== 'function'
-        || typeof TM.init !== 'function'
-        || typeof TM.renderActive !== 'function') {
-        console.error(
-            'window.TabManager exists but is missing required methods. ' +
-            'configure:', typeof TM.configure,
-            ' register:', typeof TM.register,
-            ' init:', typeof TM.init,
-            ' renderActive:', typeof TM.renderActive,
-            '. This is a stale or truncated tab-manager.js.'
-        );
-        console.groupEnd();
-        return;
-    }
-
-    console.log('TabManager API present: configure, register, init, renderActive.');
-
-    var registered = (typeof TM.listTabs === 'function'
-        ? TM.listTabs('religion')
-        : null) || [];
-    console.log('Registered religion tabs:', registered);
-
-    var missing = [];
-    for (var i = 0; i < KNOWN_TAB_IDS.length; i++) {
-        if (registered.indexOf(KNOWN_TAB_IDS[i]) === -1) {
-            missing.push(KNOWN_TAB_IDS[i]);
-        }
-    }
-    if (missing.length > 0) {
-        console.error(
-            'Missing religion tab registrations: ' + missing.join(', ') +
-            '. These tab files either failed to load (check the Network ' +
-            'tab for 404s on js/tabs/religion-<id>-tab.js) or threw ' +
-            'during parse. The <script> tags exist in the shell but the ' +
-            'files did not self-register.'
-        );
-    } else {
-        console.log('All 5 religion tabs registered OK.');
-    }
-
-    console.groupEnd();
-})();
-</script>
 
 <!-- ============================================================ -->
 <!-- ORCHESTRATOR                                                 -->
@@ -1511,8 +1426,7 @@
         if (!TM || typeof TM.renderActive !== 'function') {
             var msg;
             if (!TM) {
-                msg = 'TabManager is not loaded. Open the console — the ' +
-                      '[religion-tab-probe] block above says why. Most ' +
+                msg = 'TabManager is not loaded. Open the console for the underlying script error. Most ' +
                       'likely the <script src="js/core/tab-manager.js"> ' +
                       'tag is missing or the file is 404.';
             } else if (typeof TM.listTabs !== 'function') {
