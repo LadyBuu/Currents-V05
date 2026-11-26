@@ -436,8 +436,16 @@
     // 1. RESULT HELPERS
     // =========================================================================
 
+    // Mutation success means the canonical in-memory state accepted the
+    // change. It does NOT mean localStorage has been written yet. CharacterState
+    // schedules that write through markDataDirty(); callers can use persist()
+    // when they require an immediate durable-save result.
     function _ok(data) {
-        var result = { success: true };
+        var result = {
+            success: true,
+            persisted: false,
+            persistence: 'scheduled'
+        };
         if (data && typeof data === 'object') {
             for (var key in data) {
                 if (Object.prototype.hasOwnProperty.call(data, key)) {
@@ -449,7 +457,32 @@
     }
 
     function _fail(reason) {
-        return { success: false, reason: reason };
+        return { success: false, persisted: false, reason: reason };
+    }
+
+    // Force the pending character/domain changes to storage now. The return
+    // value distinguishes an accepted in-memory mutation from a durable save.
+    function persist() {
+        if (typeof window.saveMasterData !== 'function') {
+            return {
+                success: false,
+                persisted: false,
+                reason: 'Storage saveMasterData() is not available.'
+            };
+        }
+        if (window.saveMasterData() === true) {
+            return { success: true, persisted: true };
+        }
+        var error = typeof window.getLastSaveError === 'function'
+            ? window.getLastSaveError()
+            : null;
+        return {
+            success: false,
+            persisted: false,
+            reason: error && error.message
+                ? error.message
+                : 'The browser could not write the changes to local storage.'
+        };
     }
 
     // =========================================================================
@@ -3449,6 +3482,7 @@
     // =========================================================================
 
     window.CharacterCommands = {
+        persist: persist,
         updateCharacterFields: updateCharacterFields,
         updateCharactersFields: updateCharactersFields,
         // BATCH UPDATE ALIAS. See BATCH UPDATE ALIAS in the module
