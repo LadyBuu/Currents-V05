@@ -322,7 +322,7 @@
             '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;">' +
             '<label style="font-size:0.6rem;">Deaths<input id="disasterCustomDeaths" type="number" min="0" step="1" value="0" style="display:block;width:100%;margin-top:3px;padding:6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px;"></label>' +
             '<label style="font-size:0.6rem;">Prosperity loss<input id="disasterCustomProsperity" type="number" min="0" step="1" value="0" style="display:block;width:100%;margin-top:3px;padding:6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px;"></label>' +
-            '<label style="font-size:0.6rem;">Crime increase<input id="disasterCustomCrime" type="number" min="0" step="0.01" value="0" style="display:block;width:100%;margin-top:3px;padding:6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px;"></label>' +
+            '<label style="font-size:0.6rem;">Crime increase (0.25 = 25%)<input id="disasterCustomCrime" type="number" min="0" step="0.01" value="0" style="display:block;width:100%;margin-top:3px;padding:6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px;"></label>' +
             '</div>' +
             '<label style="display:flex;align-items:center;gap:7px;font-size:0.6rem;margin-top:9px;"><input type="checkbox" id="disasterCustomStructural" checked> Apply random structural damage</label>' +
             '</div>' +
