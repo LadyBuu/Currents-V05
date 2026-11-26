@@ -476,14 +476,28 @@
             return true;
         }
 
-        // Sort by full name for stable presentation.
-        var sorted = characters.slice().sort(function(a, b) {
+        // Oldest first. Use the query projection's age; unknown ages go last.
+        // Name is a stable tie-breaker so equal-age rows do not jump around.
+        function compareOldestFirst(a, b) {
+            var aSummary = window.CharacterQueries.getCharacterSummary(a.id);
+            var bSummary = window.CharacterQueries.getCharacterSummary(b.id);
+            var aAge = aSummary && typeof aSummary.age === 'number' && Number.isFinite(aSummary.age)
+                ? aSummary.age : null;
+            var bAge = bSummary && typeof bSummary.age === 'number' && Number.isFinite(bSummary.age)
+                ? bSummary.age : null;
+
+            if (aAge !== null && bAge === null) return -1;
+            if (aAge === null && bAge !== null) return 1;
+            if (aAge !== null && bAge !== null && aAge !== bAge) return bAge - aAge;
+
             var aName = (typeof a.name === 'string' ? a.name : '') + ' '
                       + (typeof a.surname === 'string' ? a.surname : '');
             var bName = (typeof b.name === 'string' ? b.name : '') + ' '
                       + (typeof b.surname === 'string' ? b.surname : '');
             return aName.localeCompare(bName);
-        });
+        }
+
+        var sorted = characters.slice().sort(compareOldestFirst);
 
         var rowOptions = {
             showStatus: showStatus,
@@ -495,7 +509,16 @@
 
         var html = '';
         if (Array.isArray(options.groups)) {
-            options.groups.forEach(function(group){html+='<details class="character-group" open><summary>'+_esc(group.label)+' ('+group.characters.length+')</summary><div class="character-list">';group.characters.forEach(function(c){html+=_renderRow(c,rowOptions);});html+='</div></details>';});
+            options.groups.forEach(function(group) {
+                var groupCharacters = group.characters.slice().sort(compareOldestFirst);
+                html += '<details class="character-group" open><summary>'
+                     + _esc(group.label) + ' (' + groupCharacters.length
+                     + ')</summary><div class="character-list">';
+                groupCharacters.forEach(function(character) {
+                    html += _renderRow(character, rowOptions);
+                });
+                html += '</div></details>';
+            });
         } else {
             html='<div class="character-list">';
             for (var i = 0; i < sorted.length; i++) html += _renderRow(sorted[i], rowOptions);
