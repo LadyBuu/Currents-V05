@@ -27,7 +27,7 @@
  * COMMIT TAIL (_commit):
  *   1. DisasterState.hydrateFromMasterData()  — rebuild indexes
  *   2. markDataDirty()                        — flag for next save
- *   3. DisasterState.publish()                — in-process subscribers
+ *   3. DisasterState mutation methods         — in-process subscribers
  *   4. dispatchEvent(CustomEvent)             — cross-domain consumers
  *
  *   No saveMasterData inside a command. Persistence is
