@@ -203,12 +203,13 @@
         if (!CC || typeof CC.persist !== 'function') {
             return false;
         }
-        var ok = false;
-        try { ok = CC.persist(); }
-        catch (e) { ok = false; }
-        if (ok === false) {
+        var result = null;
+        try { result = CC.persist(); }
+        catch (e) { result = { success: false, persisted: false, reason: e.message || String(e) }; }
+        if (!result || result.success !== true || result.persisted !== true) {
             _toast(
-                'Change saved in memory, but disk save failed. It will retry.',
+                'Change was accepted in memory, but the durable save failed. ' +
+                (result && result.reason ? result.reason : 'Use the save status to retry.'),
                 'warning'
             );
             return false;
