@@ -140,6 +140,12 @@
             description: 'Surrogacy arrangements and the children they produce.'
         }),
         Object.freeze({
+            id: 'crime',
+            label: 'Crime',
+            iconName: 'SCALES',
+            description: 'Recorded crimes, murders, executions, and vendetta violence.'
+        }),
+        Object.freeze({
             id: 'disasters',
             label: 'Disasters',
             iconName: 'EVENTS',
