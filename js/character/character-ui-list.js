@@ -231,6 +231,9 @@
 
     _requireDependencies();
 
+    // Remember disclosure state across list rerenders (selection/filter changes).
+    var _groupOpenState = Object.create(null);
+
     // =========================================================================
     // 1. INTERNAL HELPERS
     // =========================================================================
@@ -507,11 +510,23 @@
             rowClass: options.rowClass
         };
 
+        // Capture the current disclosure state before replacing the list DOM.
+        var existingGroups = container.querySelectorAll('details.character-group');
+        for (var gi = 0; gi < existingGroups.length; gi++) {
+            var existingSummary = existingGroups[gi].querySelector('summary');
+            if (existingSummary) {
+                var existingLabel = existingSummary.textContent.replace(/\\s+\\(\\d+\\)$/, '');
+                _groupOpenState[existingLabel] = existingGroups[gi].open;
+            }
+        }
+
         var html = '';
         if (Array.isArray(options.groups)) {
             options.groups.forEach(function(group) {
                 var groupCharacters = group.characters.slice().sort(compareOldestFirst);
-                html += '<details class="character-group" open><summary>'
+                var isOpen = Object.prototype.hasOwnProperty.call(_groupOpenState, group.label)
+                    ? _groupOpenState[group.label] : true;
+                html += '<details class="character-group"' + (isOpen ? ' open' : '') + '><summary>'
                      + _esc(group.label) + ' (' + groupCharacters.length
                      + ')</summary><div class="character-list">';
                 groupCharacters.forEach(function(character) {
