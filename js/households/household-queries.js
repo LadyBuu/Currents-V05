@@ -638,7 +638,7 @@
                         year: history[i].year,
                         endYear: (i === history.length - 1)
                             ? null
-                            : (history[i + 1].year || null),
+                            : (history[i + 1].year ?? null),
                         reason: history[i].reason || null
                     };
                     break;

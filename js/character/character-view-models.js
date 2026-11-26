@@ -421,7 +421,7 @@
             if (rec && _hasId(rec.killerId)) killerName = resolveName(rec.killerId);
             return {
                 isDeceased: true,
-                year: rec ? rec.deathYear : (summary.deathYear || null),
+                year: rec ? rec.deathYear : (summary.deathYear ?? null),
                 cause: rec ? rec.deathCause : (summary.deathCause || null),
                 causeDetail: rec ? rec.deathCauseDetail : (summary.deathCauseDetail || null),
                 notes: rec ? rec.deathNotes : null,

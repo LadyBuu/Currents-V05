@@ -168,7 +168,7 @@
                             id: res.id,
                             name: res.name,
                             unitNumber: summary.residenceUnitNumber || null,
-                            associatedYear: summary.associatedYear || null
+                            associatedYear: summary.associatedYear ?? null
                         };
                     }
                 } catch (e) { /* leave null */ }
@@ -196,7 +196,7 @@
             currentNameInfo = {
                 since: last.year || summary.foundedYear || 'Unknown',
                 original: nameHistory[0] ? nameHistory[0].oldName : summary.name,
-                lastChangeYear: last.year || null
+                lastChangeYear: last.year ?? null
             };
         }
 

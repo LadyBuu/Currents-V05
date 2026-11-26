@@ -280,7 +280,7 @@
             isSpecialized: inst.isSpecialized === true,
             specializationCategory: inst.specializationCategory || null,
             headmasterName: headmasterName,
-            foundedYear: inst.foundedYear || null
+            foundedYear: inst.foundedYear ?? null
         });
     }
 
@@ -614,8 +614,8 @@
                             status: inst.students[j].graduated
                                 ? 'graduated'
                                 : 'enrolled',
-                            enrollmentYear: inst.students[j].enrollmentYear || null,
-                            graduationYear: inst.students[j].graduationYear || null,
+                            enrollmentYear: inst.students[j].enrollmentYear ?? null,
+                            graduationYear: inst.students[j].graduationYear ?? null,
                             grantedRole: inst.students[j].grantedRole || null
                         }));
                         break;
@@ -640,7 +640,7 @@
                                 status: 'graduated',
                                 enrollmentYear: null,
                                 graduationYear:
-                                    inst.graduates[j].graduationYear || null,
+                                    inst.graduates[j].graduationYear ?? null,
                                 grantedRole: inst.graduates[j].grantedRole || null
                             }));
                             break;
@@ -681,7 +681,7 @@
                 id: character.id,
                 name: _formatName(character),
                 gender: character.gender || null,
-                birthYear: character.birthYear || null
+                birthYear: character.birthYear ?? null
             }) : null
         });
     }
