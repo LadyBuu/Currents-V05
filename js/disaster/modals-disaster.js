@@ -421,18 +421,24 @@
                 previewNode.textContent = 'Preview unavailable: ' + result.reason;
                 return;
             }
-            if (modeInput.value === 'custom') {
+            if (modeInput.value === 'custom' && !root.__customEffectsInitialized) {
                 root.querySelector('#disasterCustomDeaths').value = result.data.disaster.deaths;
                 root.querySelector('#disasterCustomProsperity').value = result.data.disaster.prosperityLoss;
                 root.querySelector('#disasterCustomCrime').value = result.data.disaster.crimeIncrease;
+                root.__customEffectsInitialized = true;
             }
             renderPreview();
         }
 
         modeInput.addEventListener('change', function() {
             customPanel.style.display = modeInput.value === 'custom' ? 'block' : 'none';
-            if (!root.__disasterPreview) generatePreview();
-            else renderPreview();
+            if (modeInput.value === 'custom' && !root.__customEffectsInitialized) {
+                generatePreview();
+            } else if (!root.__disasterPreview) {
+                generatePreview();
+            } else {
+                renderPreview();
+            }
         });
         [typeInput, yearInput].forEach(function(input) {
             input.addEventListener('change', generatePreview);
