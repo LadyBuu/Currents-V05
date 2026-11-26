@@ -419,7 +419,18 @@
             if(!includeDeceased&&c.isDeceased)return false;
             if(gender&&String(c.gender||'')!==gender)return false;
             if(life==='living'&&c.isDeceased)return false;if(life==='deceased'&&!c.isDeceased)return false;
-            if(chosen&&!descSet[c.currentLocationId])return false;
+            if(chosen){
+                var currentLocationId = c.currentLocationId || null;
+                if (typeof window.getCurrentLocationId === 'function') {
+                    try {
+                        var semanticLocationId = window.getCurrentLocationId(c);
+                        if (typeof semanticLocationId === 'string' && semanticLocationId) {
+                            currentLocationId = semanticLocationId;
+                        }
+                    } catch (e) { /* use the explicit field */ }
+                }
+                if (!descSet[currentLocationId]) return false;
+            }
             if(role){var ps=queries.getCharacterProfessions(c.id)||[];if(!ps.some(function(p){return String(p.professionId||p.roleId||p.id||p.name||'')===role;}))return false;}
             if(romance){var committed=!!(window.RomanceQueries&&window.RomanceQueries.hasActiveCommittedRelationship&&window.RomanceQueries.hasActiveCommittedRelationship(c.id));if(romance==='committed'?!committed:committed)return false;}
             return true;
