@@ -1375,7 +1375,34 @@
     }
 
     // =========================================================================
-    // 8. SOCIAL FACET
+    // 8. CRIME FACET
+    // =========================================================================
+
+    /**
+     * Read canonical crime records through the Crime domain.
+     * A location filter is delegated to CrimeQueries so Events does
+     * not duplicate crime ownership or filtering rules.
+     */
+    function getCrimeRecords(locationId) {
+        var cq = _requireModule('CrimeQueries', ['getAllCrimes', 'getCrimesByLocation']);
+        if (!cq.ok) return _unavailable(cq.reason);
+
+        try {
+            var list = _hasId(locationId)
+                ? cq.module.getCrimesByLocation(locationId)
+                : cq.module.getAllCrimes();
+            if (!Array.isArray(list)) {
+                return _unavailable('CrimeQueries returned a non-array.');
+            }
+            return _available({ records: list, totalCount: list.length });
+        } catch (e) {
+            return _unavailable('CrimeQueries threw: ' +
+                (e && e.message ? e.message : 'unknown error'));
+        }
+    }
+
+    // =========================================================================
+    // 9. SOCIAL FACET
     // =========================================================================
 
     function getSocialEvents(locationId) {
@@ -1421,7 +1448,7 @@
             case 'stork':       return getFertileCouples(locationId);
             case 'adoption':    return getAdoptionRecords(locationId);
             case 'surrogacy':   return getSurrogacyRecords(locationId);
-            case 'disasters':   return getDisasterRecords(locationId);
+            case 'crime':       return getCrimeRecords(locationId);\n            case 'disasters':   return getDisasterRecords(locationId);
             case 'social':      return getSocialEvents(locationId);
             case 'educational': return getEducationalEvents(locationId);
             default: return _unavailable('Unknown facet: ' + facetId);
