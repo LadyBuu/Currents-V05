@@ -688,7 +688,7 @@
             '<div style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">End Year</label>' +
                 '<input type="number" id="fndEndYear" value="' + currentYear + '" ' +
-                    'min="' + (rel.startYear || 1) + '" max="' + (currentYear + 5) + '" ' +
+                    'min="' + (rel.startYear ?? 1) + '" max="' + (currentYear + 5) + '" ' +
                     'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
             '</div>' +
 

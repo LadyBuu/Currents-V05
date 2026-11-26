@@ -688,7 +688,7 @@
         var report = {
             locationId: locationId,
             disasterId: disaster.id || null,
-            year: disaster.year || null,
+            year: disaster.year ?? null,
             featuresDestroyed:    (priorLists.features || []).slice(),
             schoolsDestroyed:     (priorLists.schools || []).slice(),
             enterprisesDestroyed: (priorLists.enterprises || []).slice(),
