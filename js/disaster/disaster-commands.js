@@ -426,9 +426,53 @@
         var subjects = [];
         var failures = [];
         var cascadeFailures = [];
+        var skippedFutureBirths = [];
+        var skippedUnknownBirthYear = [];
+        var eligible = [];
 
-        for (var i = 0; i < victims.length; i++) {
-            var char = victims[i];
+        // Never attempt to kill someone who has not yet been born in the
+        // disaster year, or whose birth year cannot be verified.
+        for (var vi = 0; vi < victims.length; vi++) {
+            var candidate = victims[vi];
+            if (!candidate || candidate.isDeceased) continue;
+            if (typeof candidate.birthYear !== 'number' || !isFinite(candidate.birthYear)) {
+                skippedUnknownBirthYear.push(candidate.id || null);
+                continue;
+            }
+            if (candidate.birthYear > disaster.year) {
+                skippedFutureBirths.push(candidate.id || null);
+                continue;
+            }
+            eligible.push(candidate);
+        }
+
+        // disaster.deaths is a population-level estimate. Convert it to
+        // the corresponding share of character records at this location;
+        // it must not mean "kill every character in the location".
+        var population = typeof disaster.population === 'number' && disaster.population > 0
+            ? disaster.population
+            : 0;
+        var estimatedDeaths = typeof disaster.deaths === 'number'
+            ? Math.max(0, disaster.deaths)
+            : 0;
+        var targetCount = population > 0
+            ? Math.round(eligible.length * Math.min(1, estimatedDeaths / population))
+            : 0;
+        targetCount = Math.min(eligible.length, Math.max(0, targetCount));
+
+        // Randomly select only the estimated number of victims.
+        var pool = eligible.slice();
+        var selected = [];
+        while (selected.length < targetCount && pool.length) {
+            var picked = window.pickRandom(pool);
+            var pickedIndex = pool.indexOf(picked);
+            if (pickedIndex < 0) break;
+            selected.push(picked);
+            pool.splice(pickedIndex, 1);
+        }
+
+        for (var i = 0; i < selected.length; i++) {
+            var char = selected[i];
             if (!char || char.isDeceased) continue;
 
             // CharacterLifecycle.killCharacter accepts (characterId, deathData).
@@ -499,7 +543,11 @@
             killed: killed,
             subjects: subjects,
             failures: failures,
-            cascadeFailures: cascadeFailures
+            cascadeFailures: cascadeFailures,
+            skippedFutureBirths: skippedFutureBirths,
+            skippedUnknownBirthYear: skippedUnknownBirthYear,
+            eligibleVictims: eligible.length,
+            targetVictims: targetCount
         };
     }
 
@@ -570,6 +618,10 @@
             victimsKilled: 0,
             victimDeathFailures: [],
             deathCascadeFailures: [],
+            skippedFutureBirths: [],
+            skippedUnknownBirthYear: [],
+            eligibleVictims: 0,
+            targetVictims: 0,
             structuralDamage: null,
             failures: []
         };
@@ -588,6 +640,10 @@
             results.victimsKilled = killResult.killed;
             results.victimDeathFailures = killResult.failures;
             results.deathCascadeFailures = killResult.cascadeFailures;
+            results.skippedFutureBirths = killResult.skippedFutureBirths;
+            results.skippedUnknownBirthYear = killResult.skippedUnknownBirthYear;
+            results.eligibleVictims = killResult.eligibleVictims;
+            results.targetVictims = killResult.targetVictims;
             for (var vf = 0; vf < killResult.failures.length; vf++) {
                 results.failures.push({
                     system: 'character-death',
@@ -620,7 +676,12 @@
         }
 
         // 3. Structural damage via the coordinator.
-        if (typeof window.DisasterDamage !== 'undefined' &&
+        if (disaster.applyStructuralDamage === false) {
+            results.structuralDamage = {
+                skipped: true,
+                reason: 'Structural damage disabled by the disaster configuration.'
+            };
+        } else if (typeof window.DisasterDamage !== 'undefined' &&
             typeof window.DisasterDamage.applyStructuralDamage === 'function') {
             try {
                 var damageResult = window.DisasterDamage.applyStructuralDamage(
@@ -724,9 +785,31 @@
         options = options || {};
         var resolvedYear = (typeof year === 'number') ? year : _now();
 
-        var genResult = generateDisaster(locationId, resolvedYear, disasterTypeId);
+        var genResult;
+        if (options.generatedRecord && options.generatedRecord.locationId === locationId
+            && options.generatedRecord.year === resolvedYear) {
+            genResult = _ok(options.generatedRecord);
+        } else {
+            genResult = generateDisaster(locationId, resolvedYear, disasterTypeId);
+        }
         if (!genResult.success) return genResult;
         var record = genResult.data;
+
+        // Explicit custom consequences override generated estimates before
+        // the record is stored and before any effects are applied.
+        if (options.customEffects && typeof options.customEffects === 'object') {
+            var custom = options.customEffects;
+            ['deaths', 'prosperityLoss', 'crimeIncrease'].forEach(function(key) {
+                if (typeof custom[key] === 'number' && isFinite(custom[key]) && custom[key] >= 0) {
+                    record[key] = custom[key];
+                }
+            });
+            if (typeof custom.applyStructuralDamage === 'boolean') {
+                record.applyStructuralDamage = custom.applyStructuralDamage;
+            }
+            record.metadata = record.metadata || {};
+            record.metadata.effectsMode = 'custom';
+        }
 
         var addResult = State.addDisaster(record);
         if (!addResult.success) {
@@ -787,6 +870,42 @@
         });
     }
 
+    function previewDisaster(locationId, disasterTypeId, year) {
+        var generated = generateDisaster(locationId, year, disasterTypeId);
+        if (!generated.success) return generated;
+        var disaster = generated.data;
+        var residents = _getCharactersAtLocation(locationId);
+        var eligible = 0;
+        var futureBorn = 0;
+        var unknownBirthYear = 0;
+        residents.forEach(function(character) {
+            if (!character || character.isDeceased) return;
+            if (typeof character.birthYear !== 'number' || !isFinite(character.birthYear)) {
+                unknownBirthYear++;
+            } else if (character.birthYear > disaster.year) {
+                futureBorn++;
+            } else {
+                eligible++;
+            }
+        });
+        var population = disaster.population > 0 ? disaster.population : 0;
+        var expectedVictims = population > 0
+            ? Math.round(eligible * Math.min(1, Math.max(0, disaster.deaths) / population))
+            : 0;
+        return _ok({
+            disaster: disaster,
+            residentCount: residents.length,
+            eligibleVictims: eligible,
+            expectedCharacterDeaths: expectedVictims,
+            futureBornExcluded: futureBorn,
+            unknownBirthYearExcluded: unknownBirthYear,
+            structuralDamageChance: window.DisasterDamage &&
+                typeof window.DisasterDamage._calculateDestructionChance === 'function'
+                ? window.DisasterDamage._calculateDestructionChance(disaster.severity)
+                : null
+        });
+    }
+
     function triggerPlague(locationId, year, options) {
         return _triggerInternal(locationId, 'plague', year, options);
     }
@@ -844,6 +963,7 @@
     window.DisasterCommands = {
         // Generation (does not persist, does not apply effects)
         generateDisaster: generateDisaster,
+        previewDisaster: previewDisaster,
         generateDisasterDescription: generateDisasterDescription,
         getDisasterLocationModifier: getDisasterLocationModifier,
 
