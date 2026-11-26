@@ -233,6 +233,57 @@
             );
         }
 
+        // Adoption and surrogacy use the Children domain's record
+        // readers plus CharacterQueries for party enrichment. Each
+        // can read directly from ChildrenState, or fall back to the
+        // corresponding ChildrenQueries scan.
+        function hasMethods(module, names) {
+            if (!module) return false;
+            for (var i = 0; i < names.length; i++) {
+                if (typeof module[names[i]] !== 'function') return false;
+            }
+            return true;
+        }
+
+        var characterReadReady = hasMethods(window.CharacterQueries, [
+            'getCharacterSummary'
+        ]);
+        var characterScanReady = hasMethods(window.CharacterQueries, [
+            'getCharacterSummary',
+            'getAllCharacters'
+        ]);
+        var adoptionStateReady = hasMethods(window.ChildrenState, [
+            'allAdoptionIds',
+            'getAdoptionCopy'
+        ]);
+        var adoptionQueryReady = hasMethods(window.ChildrenQueries, [
+            'getAdoptionsForAdopter'
+        ]);
+        if (!characterReadReady ||
+            (!adoptionStateReady && !(adoptionQueryReady && characterScanReady))) {
+            absent.push('adoption (ChildrenState/ChildrenQueries + CharacterQueries)');
+            _warnOnce('facet-adoption',
+                'Adoption record readers or CharacterQueries enrichment methods ' +
+                'are incomplete -- the adoption facet will render as unavailable.'
+            );
+        }
+
+        var surrogacyStateReady = hasMethods(window.ChildrenState, [
+            'allSurrogacyIds',
+            'getSurrogacyCopy'
+        ]);
+        var surrogacyQueryReady = hasMethods(window.ChildrenQueries, [
+            'getSurrogacyArrangementsForIntendedParent'
+        ]);
+        if (!characterReadReady ||
+            (!surrogacyStateReady && !(surrogacyQueryReady && characterScanReady))) {
+            absent.push('surrogacy (ChildrenState/ChildrenQueries + CharacterQueries)');
+            _warnOnce('facet-surrogacy',
+                'Surrogacy record readers or CharacterQueries enrichment methods ' +
+                'are incomplete -- the surrogacy facet will render as unavailable.'
+            );
+        }
+
         // Disasters facet
         if (typeof window.DisasterQueries === 'undefined') {
             absent.push('disasters (DisasterQueries)');
@@ -397,6 +448,18 @@
                     switch (facet.id) {
                         case 'deaths':      available = typeof window.MortalityQueries !== 'undefined'; break;
                         case 'stork':       available = typeof window.ChildrenQueries !== 'undefined'; break;
+                        case 'adoption':
+                            available = hasMethods(window.CharacterQueries, ['getCharacterSummary']) &&
+                                (hasMethods(window.ChildrenState, ['allAdoptionIds', 'getAdoptionCopy']) ||
+                                 (hasMethods(window.ChildrenQueries, ['getAdoptionsForAdopter']) &&
+                                  hasMethods(window.CharacterQueries, ['getAllCharacters'])));
+                            break;
+                        case 'surrogacy':
+                            available = hasMethods(window.CharacterQueries, ['getCharacterSummary']) &&
+                                (hasMethods(window.ChildrenState, ['allSurrogacyIds', 'getSurrogacyCopy']) ||
+                                 (hasMethods(window.ChildrenQueries, ['getSurrogacyArrangementsForIntendedParent']) &&
+                                  hasMethods(window.CharacterQueries, ['getAllCharacters'])));
+                            break;
                         case 'disasters':   available = typeof window.DisasterQueries !== 'undefined'; break;
                         case 'social':      available = typeof window.RelationshipQueries !== 'undefined'; break;
                         case 'educational': available = typeof window.EducationQueries !== 'undefined'; break;
