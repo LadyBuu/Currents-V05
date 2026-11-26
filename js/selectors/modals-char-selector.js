@@ -349,6 +349,12 @@
             }
         }
 
+        // Preset gender is a hard constraint for parent pickers. Caller
+        // filters may refine the selector, but must not turn a mother picker
+        // into an unrestricted or father picker.
+        if (this.preset === 'mother') defaultFilters.gender = 'female';
+        if (this.preset === 'father') defaultFilters.gender = 'male';
+
         this.state.filters = defaultFilters;
 
         this._availableChars = this._getAvailableCharacters();
