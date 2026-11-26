@@ -323,7 +323,7 @@
             if(!Number.isInteger(year)||!window.isValidYear(year)) throw new Error('Please enter a valid year.');
             var created=[];
             for(var i=0;i<adopterIds.length;i++){
-                var parentRole=adopterIds.length===2?(i===0?'father':'mother'):role;
+                var parentRole=adopterIds.length===2?(String(adopters[i].gender||'').toLowerCase()==='male'?'father':String(adopters[i].gender||'').toLowerCase()==='female'?'mother':'parent'):role;
                 var edge=FC.createAdoption(childId,adopterIds[i],{parentRole:parentRole,startYear:year,notes:notes,biologicalParentsConsent:true});
                 if(!edge||edge.success!==true){for(var j=created.length-1;j>=0;j--){FC.removeAdoption(childId,created[j],{endYear:year,reason:'placement creation rolled back'});}throw new Error(edge&&edge.reason?edge.reason:'Failed to create parent edge.');}
                 var meta=ChC.recordAdoptionMetadata(childId,adopterIds[i],{type:type,year:year,notes:notes});
