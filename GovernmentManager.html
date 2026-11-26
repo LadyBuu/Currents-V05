@@ -1882,6 +1882,11 @@ button, input, select, textarea, a,
                 return (window.LocationQueries && typeof window.LocationQueries.getPlaceSummaries === 'function')
                     ? window.LocationQueries.getPlaceSummaries()
                     : [];
+            },
+            getAllPlaces: function () {
+                return (window.LocationQueries && typeof window.LocationQueries.getAllPlaces === 'function')
+                    ? window.LocationQueries.getAllPlaces()
+                    : [];
             }
         };
     })();
