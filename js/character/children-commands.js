@@ -1311,8 +1311,12 @@
                 type: sharedOptions.type,
                 notes: sharedOptions.notes,
                 intendedPartnerId: a.intendedPartnerId,
+                intendedParentType: a.intendedParentType,
+                intendedPartnerType: a.intendedPartnerType,
+                intendedParentRole: a.intendedParentRole,
+                intendedPartnerRole: a.intendedPartnerRole,
                 spermDonorId: a.spermDonorId,
-                eggDonorId: b.eggDonorId || b.surrogateId,
+                eggDonorId: a.eggDonorId || b.surrogateId,
                 childCount: 1
             }
         );
@@ -1326,8 +1330,12 @@
                 type: sharedOptions.type,
                 notes: sharedOptions.notes,
                 intendedPartnerId: b.intendedPartnerId,
+                intendedParentType: b.intendedParentType,
+                intendedPartnerType: b.intendedPartnerType,
+                intendedParentRole: b.intendedParentRole,
+                intendedPartnerRole: b.intendedPartnerRole,
                 spermDonorId: b.spermDonorId,
-                eggDonorId: a.eggDonorId || a.surrogateId,
+                eggDonorId: b.eggDonorId || a.surrogateId,
                 childCount: 1
             }
         );
