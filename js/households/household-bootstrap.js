@@ -746,31 +746,86 @@
             // Non-fatal.
         }
 
-        // Cross-domain: characters whose householdId / household references
-        // a missing household.
+        // Cross-domain membership audit. This is diagnostic only: never
+        // rewrite either side of a membership during bootstrap.
         try {
             if (typeof window.getCharacters === 'function') {
                 var characters = window.getCharacters() || [];
                 var householdSet = {};
-                var households3 = window.masterData.data.households;
+                var characterSet = {};
+                var households3 = window.masterData.data.households || [];
                 for (var hh2 = 0; hh2 < households3.length; hh2++) {
-                    householdSet[households3[hh2].id] = true;
+                    householdSet[households3[hh2].id] = households3[hh2];
                 }
                 for (var c = 0; c < characters.length; c++) {
-                    var ch = characters[c];
-                    var hid = ch.householdId || ch.household;
-                    if (hid && !householdSet[hid]) {
+                    characterSet[characters[c].id] = characters[c];
+                }
+
+                // Character -> household reverse references.
+                for (var c2 = 0; c2 < characters.length; c2++) {
+                    var ch = characters[c2];
+                    var ids = [];
+                    if (ch.householdId) ids.push(ch.householdId);
+                    if (ch.household && ids.indexOf(ch.household) === -1) ids.push(ch.household);
+                    for (var ri = 0; ri < ids.length; ri++) {
+                        if (!householdSet[ids[ri]]) {
+                            report.crossDomainIssues.push({
+                                type: 'character_in_missing_household',
+                                characterId: ch.id,
+                                characterName: ch.name,
+                                householdId: ids[ri],
+                                field: ids[ri] === ch.householdId ? 'householdId' : 'household'
+                            });
+                        }
+                    }
+                    if (ch.householdId && ch.household && ch.householdId !== ch.household) {
                         report.crossDomainIssues.push({
-                            type: 'character_in_missing_household',
+                            type: 'character_household_fields_disagree',
                             characterId: ch.id,
                             characterName: ch.name,
-                            householdId: hid
+                            householdId: ch.householdId,
+                            household: ch.household
                         });
+                    }
+                }
+
+                // Household -> character membership records and reverse-index
+                // agreement. These distinguish stale membership rows from
+                // character-side references and are not repaired automatically.
+                for (var hh3 = 0; hh3 < households3.length; hh3++) {
+                    var household = households3[hh3];
+                    var members = Array.isArray(household.members) ? household.members : [];
+                    for (var mi = 0; mi < members.length; mi++) {
+                        var member = members[mi];
+                        var character = characterSet[member.characterId];
+                        if (!character) {
+                            report.crossDomainIssues.push({
+                                type: 'household_member_missing_character',
+                                householdId: household.id,
+                                householdName: household.name,
+                                characterId: member.characterId
+                            });
+                            continue;
+                        }
+                        var reverseHousehold = character.householdId || character.household;
+                        if (reverseHousehold && reverseHousehold !== household.id) {
+                            report.crossDomainIssues.push({
+                                type: 'membership_reverse_index_mismatch',
+                                householdId: household.id,
+                                householdName: household.name,
+                                characterId: character.id,
+                                characterName: character.name,
+                                characterHouseholdId: reverseHousehold
+                            });
+                        }
                     }
                 }
             }
         } catch (e) {
-            // Non-fatal.
+            report.crossDomainIssues.push({
+                type: 'membership_audit_unavailable',
+                reason: e && e.message ? e.message : 'Unknown'
+            });
         }
 
         return report;
