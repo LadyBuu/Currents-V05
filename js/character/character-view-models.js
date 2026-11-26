@@ -1410,28 +1410,25 @@
     // =========================================================================
 
     function _resolveCurrentLocationBlock(summary, characterId) {
-        var raw = (summary && typeof summary.locationId === 'string') ? summary.locationId : null;
-        var resolved = raw;
-        var source = raw ? 'explicit' : 'none';
+        var resolved = null;
 
         if (typeof window.getCurrentLocationId === 'function' && summary) {
             try {
                 var semantic = window.getCurrentLocationId(summary);
                 if (typeof semantic === 'string' && semantic.length > 0) {
-                    if (semantic === raw) { resolved = raw; source = 'explicit'; }
-                    else { resolved = semantic; source = raw ? 'explicit' : 'move'; }
+                    resolved = semantic;
                 }
-            } catch (e) { /* fall through */ }
+            } catch (e) { /* leave unresolved */ }
         }
 
         var name = resolved ? resolvePlaceName(resolved) : null;
 
         return {
-            locationId: resolved || null,
+            locationId: resolved,
             locationName: name || null,
-            source: source,
-            rawCurrentLocationId: raw,
-            resolvedDiffersFromRaw: (resolved || null) !== (raw || null)
+            source: resolved ? 'move' : 'none',
+            rawCurrentLocationId: null,
+            resolvedDiffersFromRaw: false
         };
     }
 
