@@ -1543,8 +1543,10 @@
     }
 
     function getHouseholdDepartureCandidates(locationId) {
-        var hq = _requireModule('HouseholdQueries',['getAllHouseholds','getHouseholdMembers']);
+        var hq = _requireModule('HouseholdQueries',['getAllHouseholds','getHouseholdMembers','getHousehold']);
+        var cq = _requireModule('CharacterQueries',['getAllCharacters']);
         if (!hq.ok) return _unavailable(hq.reason);
+        if (!cq.ok) return _unavailable(cq.reason);
         try {
             var all = hq.module.getAllHouseholds();
             if (!Array.isArray(all)) return _unavailable('HouseholdQueries returned invalid households.');
@@ -1564,7 +1566,28 @@
                     });
                 });
             });
-            return _available({records:records,totalCount:records.length});
+            var departed = [];
+            var characters = cq.module.getAllCharacters();
+            (Array.isArray(characters) ? characters : []).forEach(function(c) {
+                if (!c || !c.id || !Array.isArray(c.householdHistory)) return;
+                c.householdHistory.forEach(function(entry) {
+                    if (!entry || entry.leftYear === null || entry.leftYear === undefined) return;
+                    var household = hq.module.getHousehold(entry.householdId);
+                    if (scope && (!household || !scope[household.locationId])) return;
+                    departed.push({
+                        characterId:c.id,
+                        characterName:[c.name,c.surname].filter(Boolean).join(' ') || c.id,
+                        householdId:entry.householdId || null,
+                        householdName:entry.householdName || (household && household.name) || 'Unknown household',
+                        joinedYear:entry.joinedYear !== undefined ? entry.joinedYear : null,
+                        leftYear:entry.leftYear,
+                        reason:entry.leftReason || null,
+                        isHead:entry.isHead === true
+                    });
+                });
+            });
+            departed.sort(function(x,y){return (y.leftYear || 0)-(x.leftYear || 0);});
+            return _available({records:records,totalCount:records.length,departures:departed,departureCount:departed.length});
         } catch(e) { return _unavailable('Household departure query failed: '+(e.message || String(e))); }
     }
 
