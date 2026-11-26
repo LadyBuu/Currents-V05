@@ -946,8 +946,19 @@
         // --- Topbar + sidebar ---
         _setupTopBar();
 
-        // --- Initial location ---
-        var initialId = uiState.getSelectedLocationId() || _pickInitialLocation();
+        // --- Initial location / diagnostics deep link ---
+        var requestedLocationId = null;
+        var requestedTabId = null;
+        try {
+            var params = new URLSearchParams(window.location.search || '');
+            requestedLocationId = params.get('locationId');
+            requestedTabId = params.get('tab');
+        } catch (deepLinkError) {
+            if (typeof console !== 'undefined' && console.warn) console.warn('Government Manager ignored an invalid deep link:', deepLinkError);
+        }
+        var initialId = requestedLocationId || uiState.getSelectedLocationId() || _pickInitialLocation();
+        if (initialId) uiState.setSelectedLocationId(initialId);
+        if (requestedTabId && KNOWN_TAB_IDS.indexOf(requestedTabId) !== -1) uiState.setActiveTabId(requestedTabId);
         if (initialId) uiState.setSelectedLocationId(initialId);
 
         _setupSidebar();
