@@ -275,7 +275,7 @@
         }
     ];
 
-    function _typeOptionsHtml() {
+    function _typeOptionsHtml(allowedTypes) {
         var html = '';
         var values = [];
 
@@ -287,6 +287,7 @@
             var groupHtml = '';
             for (var i = 0; i < cat.types.length; i++) {
                 var t = cat.types[i];
+                if (Array.isArray(allowedTypes) && allowedTypes.indexOf(t) === -1) continue;
                 var name = UI.archetypeName(t);
                 if (name === null) continue;
                 var iconName = UI.archetypeIcon(t);
@@ -515,7 +516,7 @@
         var checkIcon = _icon('CHECK_SIMPLE');
         var warningIcon = _icon('WARNING');
 
-        var options = _typeOptionsHtml();
+        var options = _typeOptionsHtml(context.allowedTypes);
         var initialType = _resolveInitialType(options.values, context.defaultType);
 
         if (initialType === null) {
