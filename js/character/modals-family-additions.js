@@ -243,7 +243,12 @@
             if (!summary) continue;
             out.push(summary);
         }
+        // Family pickers use the same oldest-first convention as the
+        // shared character selector. Unknown birth years remain at the end.
         out.sort(function (a, b) {
+            var ay = typeof a.birthYear === 'number' ? a.birthYear : Infinity;
+            var by = typeof b.birthYear === 'number' ? b.birthYear : Infinity;
+            if (ay !== by) return ay - by;
             var an = ((a.name || '') + ' ' + (a.surname || '')).trim();
             var bn = ((b.name || '') + ' ' + (b.surname || '')).trim();
             return an.localeCompare(bn);
