@@ -311,10 +311,27 @@
             'Apply effects to characters and settlements' +
             '</label>' +
             '</div>' +
-            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.6rem;color:var(--dim);">' +
-            'This will generate a disaster and optionally apply its effects ' +
-            '(deaths, prosperity loss, crime increase, structural damage).' +
+            '<div style="margin-bottom:12px;">' +
+            '<label style="display:block;font-size:0.65rem;color:var(--accent);margin-bottom:4px;">Consequences</label>' +
+            '<select id="disasterEffectsMode" style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.65rem;">' +
+            '<option value="random">Generate random consequences</option>' +
+            '<option value="custom">Set consequences manually</option>' +
+            '</select>' +
+            '<div id="disasterCustomEffects" style="display:none;margin-top:8px;padding:8px;background:var(--bg3);border-radius:6px;">' +
+            '<div style="font-size:0.58rem;color:var(--dim);margin-bottom:8px;">Set the consequences to apply. Character deaths are scaled to the eligible character population at this location.</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;">' +
+            '<label style="font-size:0.6rem;">Deaths<input id="disasterCustomDeaths" type="number" min="0" step="1" value="0" style="display:block;width:100%;margin-top:3px;padding:6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px;"></label>' +
+            '<label style="font-size:0.6rem;">Prosperity loss<input id="disasterCustomProsperity" type="number" min="0" step="1" value="0" style="display:block;width:100%;margin-top:3px;padding:6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px;"></label>' +
+            '<label style="font-size:0.6rem;">Crime increase<input id="disasterCustomCrime" type="number" min="0" step="0.01" value="0" style="display:block;width:100%;margin-top:3px;padding:6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:5px;"></label>' +
             '</div>' +
+            '<label style="display:flex;align-items:center;gap:7px;font-size:0.6rem;margin-top:9px;"><input type="checkbox" id="disasterCustomStructural" checked> Apply random structural damage</label>' +
+            '</div>' +
+            '</div>' +
+            '<div id="disasterPreview" style="padding:9px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;font-size:0.62rem;">' +
+            '<div style="font-weight:bold;margin-bottom:5px;">Effect preview</div>' +
+            '<div style="color:var(--dim);">Select a location to calculate the estimated consequences.</div>' +
+            '</div>' +
+            '<div style="margin-top:8px;font-size:0.55rem;color:var(--dim);">The preview is calculated before submission. Structural destruction uses a random roll when enabled; the exact items destroyed are determined when effects are applied.</div>' +
             '</div>';
 
         return window.openModal({
@@ -324,11 +341,108 @@
             cancelText: 'Cancel',
             onMount: function(root) {
                 _buildCascadingLocationPicker(root, vm.defaultLocationId);
+                _setupDisasterPreview(root);
             },
             onConfirm: function(root) {
                 return _submitCreateDisaster(root, options);
             }
         });
+    }
+
+    function _readNonNegativeNumber(root, selector, label) {
+        var input = root.querySelector(selector);
+        var value = input ? Number(input.value) : NaN;
+        if (!isFinite(value) || value < 0) {
+            _toast(label + ' must be a non-negative number', 'error');
+            return null;
+        }
+        return value;
+    }
+
+    function _setupDisasterPreview(root) {
+        var previewNode = root.querySelector('#disasterPreview');
+        var locationInput = root.querySelector('#disasterLocation');
+        var typeInput = root.querySelector('#disasterType');
+        var yearInput = root.querySelector('#disasterYear');
+        var modeInput = root.querySelector('#disasterEffectsMode');
+        var customPanel = root.querySelector('#disasterCustomEffects');
+        if (!previewNode || !locationInput || !typeInput || !yearInput || !modeInput) return;
+
+        function renderPreview() {
+            var cached = root.__disasterPreview;
+            if (!cached || !cached.success) return;
+            var data = cached.data;
+            var disaster = data.disaster;
+            var custom = modeInput.value === 'custom';
+            var deaths = custom ? Number(root.querySelector('#disasterCustomDeaths').value) : disaster.deaths;
+            var prosperity = custom ? Number(root.querySelector('#disasterCustomProsperity').value) : disaster.prosperityLoss;
+            var crime = custom ? Number(root.querySelector('#disasterCustomCrime').value) : disaster.crimeIncrease;
+            var structural = custom
+                ? root.querySelector('#disasterCustomStructural').checked
+                : true;
+            var rows = [
+                ['Disaster', _escape(disaster.disasterType)],
+                ['Severity', disaster.severity + '/100'],
+                ['Population', String(disaster.population)],
+                ['Estimated deaths', String(deaths)],
+                ['Eligible characters', String(data.eligibleVictims)],
+                ['Expected character deaths', String(data.expectedCharacterDeaths)],
+                ['Prosperity loss', String(prosperity)],
+                ['Crime increase', (crime * 100).toFixed(1) + '%'],
+                ['Structural damage', structural ? 'Random destruction roll' : 'Disabled']
+            ];
+            var html = '<div style="font-weight:bold;margin-bottom:6px;">Effect preview</div>' +
+                '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:5px;">';
+            rows.forEach(function(row) {
+                html += '<div style="padding:5px;background:var(--bg2);border-radius:4px;">' +
+                    '<div style="font-size:0.52rem;color:var(--dim);">' + row[0] + '</div>' +
+                    '<div style="font-weight:600;">' + row[1] + '</div></div>';
+            });
+            html += '</div><div style="margin-top:7px;color:var(--dim);font-size:0.54rem;">' +
+                data.futureBornExcluded + ' future-born and ' + data.unknownBirthYearExcluded +
+                ' characters with unknown birth years will be excluded from victim selection.</div>';
+            previewNode.innerHTML = html;
+        }
+
+        function generatePreview() {
+            var locationId = locationInput.value;
+            var year = yearInput.value === '' ? window.getCurrentYearSafe() : parseInt(yearInput.value, 10);
+            if (!locationId || !isFinite(year)) {
+                root.__disasterPreview = null;
+                previewNode.innerHTML = '<div style="font-weight:bold;margin-bottom:5px;">Effect preview</div><div style="color:var(--dim);">Select a location and valid year to calculate effects.</div>';
+                return;
+            }
+            var result = Commands.previewDisaster(locationId, typeInput.value || null, year);
+            root.__disasterPreview = result.success ? result : null;
+            if (!result.success) {
+                previewNode.textContent = 'Preview unavailable: ' + result.reason;
+                return;
+            }
+            if (modeInput.value === 'custom') {
+                root.querySelector('#disasterCustomDeaths').value = result.data.disaster.deaths;
+                root.querySelector('#disasterCustomProsperity').value = result.data.disaster.prosperityLoss;
+                root.querySelector('#disasterCustomCrime').value = result.data.disaster.crimeIncrease;
+            }
+            renderPreview();
+        }
+
+        modeInput.addEventListener('change', function() {
+            customPanel.style.display = modeInput.value === 'custom' ? 'block' : 'none';
+            if (!root.__disasterPreview) generatePreview();
+            else renderPreview();
+        });
+        [typeInput, yearInput].forEach(function(input) {
+            input.addEventListener('change', generatePreview);
+        });
+        locationInput.addEventListener('change', generatePreview);
+        ['#disasterCustomDeaths', '#disasterCustomProsperity', '#disasterCustomCrime', '#disasterCustomStructural']
+            .forEach(function(selector) {
+                var input = root.querySelector(selector);
+                if (input) input.addEventListener('input', renderPreview);
+                if (input && input.type === 'checkbox') input.addEventListener('change', renderPreview);
+            });
+        root.querySelector('#disasterLocationCascade').addEventListener('change', generatePreview);
+        generatePreview();
     }
 
     function _submitCreateDisaster(root, options) {
@@ -339,6 +453,29 @@
             ? window.getCurrentYearSafe()
             : parseInt(yearRaw, 10);
         var applyEffects = root.querySelector('#disasterApplyEffects').checked;
+        var mode = root.querySelector('#disasterEffectsMode').value;
+        var previewResult = Commands.previewDisaster(locationId, disasterType, year);
+        if (!previewResult.success) {
+            _toast('Could not preview disaster: ' + previewResult.reason, 'error');
+            return false;
+        }
+        var previewRecord = previewResult.data.disaster;
+        var customEffects = null;
+        if (mode === 'custom') {
+            customEffects = {
+                deaths: _readNonNegativeNumber(root, '#disasterCustomDeaths', 'Deaths'),
+                prosperityLoss: _readNonNegativeNumber(root, '#disasterCustomProsperity', 'Prosperity loss'),
+                crimeIncrease: _readNonNegativeNumber(root, '#disasterCustomCrime', 'Crime increase'),
+                applyStructuralDamage: root.querySelector('#disasterCustomStructural').checked
+            };
+            if (customEffects.deaths === null || customEffects.prosperityLoss === null ||
+                customEffects.crimeIncrease === null) return false;
+            previewRecord.deaths = customEffects.deaths;
+            previewRecord.prosperityLoss = customEffects.prosperityLoss;
+            previewRecord.crimeIncrease = customEffects.crimeIncrease;
+            previewRecord.metadata = previewRecord.metadata || {};
+            previewRecord.metadata.effectsMode = 'custom';
+        }
 
         if (!locationId) {
             _toast('Please select a location', 'error');
@@ -350,7 +487,9 @@
         }
 
         var result = Commands.triggerDisaster(locationId, disasterType, year, {
-            applyEffects: applyEffects
+            applyEffects: applyEffects,
+            generatedRecord: previewRecord,
+            customEffects: customEffects
         });
 
         var partialFailure = !result.success &&
