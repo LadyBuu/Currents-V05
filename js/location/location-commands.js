@@ -1845,9 +1845,9 @@
         var prep = _prepareMove(characterId, locationId, options);
         if (!prep.success) return prep;
 
-        var charResult = CC.updateCharacterFields(prep.data.characterId, {
-            moves: prep.data.nextMoves,
-            currentLocationId: prep.data.locationId
+        var charResult = CC.updateCharacterFields(prep.characterId, {
+            moves: prep.nextMoves,
+            currentLocationId: prep.locationId
         });
         if (!charResult || charResult.success !== true) {
             return _fail('recordMove: ' +
@@ -1858,14 +1858,14 @@
 
         window.markDataDirty();
         _commit('moveRecorded', {
-            characterId: prep.data.characterId,
-            locationId: prep.data.locationId
+            characterId: prep.characterId,
+            locationId: prep.locationId
         });
 
         return _ok({
-            characterId: prep.data.characterId,
-            locationId: prep.data.locationId,
-            year: prep.data.year
+            characterId: prep.characterId,
+            locationId: prep.locationId,
+            year: prep.year
         });
     }
 
@@ -1967,9 +1967,9 @@
                 continue;
             }
 
-            var charResult = CC.updateCharacterFields(prep.data.characterId, {
-                moves: prep.data.nextMoves,
-                currentLocationId: prep.data.locationId
+            var charResult = CC.updateCharacterFields(prep.characterId, {
+                moves: prep.nextMoves,
+                currentLocationId: prep.locationId
             });
             if (!charResult || charResult.success !== true) {
                 failed.push({
@@ -1981,11 +1981,11 @@
                 continue;
             }
 
-            touchedCharacters[prep.data.characterId] = true;
+            touchedCharacters[prep.characterId] = true;
             succeededList.push({
-                characterId: prep.data.characterId,
-                locationId: prep.data.locationId,
-                year: prep.data.year
+                characterId: prep.characterId,
+                locationId: prep.locationId,
+                year: prep.year
             });
         }
 
