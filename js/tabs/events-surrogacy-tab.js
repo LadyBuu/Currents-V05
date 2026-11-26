@@ -541,14 +541,14 @@
             return pair.map(function(c){return _esc((c.name||'')+' '+(c.surname||'')+' ('+(c.age==null?'?':c.age)+')');}).join(' + ');
         }
         function renderPair(pair) {
-            return '<button type="button" data-action="choose-surrogacy-couple" data-ids="'+_esc(pair[0].id+'|'+pair[1].id)+'">'+pairLabel(pair)+pairAids(pair)+'</button>';
+            return '<label class="events-surrogacy-couple-choice"><input type="checkbox" data-swap-couple="'+_esc(pair[0].id+'|'+pair[1].id)+'"><span>'+pairLabel(pair)+pairAids(pair)+'</span></label>';
         }
         var html='<div class="events-surrogacy-new"><div class="events-surrogacy-new__header">'+_icon('GUARDIANSHIP')+'<span>New Surrogacy Arrangement</span></div>';
         html+='<label><input type="checkbox" data-input="show-different-sex"> Show different-sex couples</label>';
         html+='<div class="events-surrogacy-new__columns"><section><h4>Couples</h4><div class="events-surrogacy-new__couples" data-list="same-sex">';
         couples.filter(function(p){return gender(p[0])==='male'&&gender(p[1])==='male';}).forEach(function(p){html+=renderPair(p);});
         couples.filter(function(p){return gender(p[0])==='female'&&gender(p[1])==='female';}).forEach(function(p){html+=renderPair(p);});
-        html+='</div><div class="events-surrogacy-new__couples" data-list="different-sex" hidden>';
+        html+='</div><button type="button" data-action="create-surrogacy-swap">Create reciprocal surrogacy with selected couples</button><div class="events-surrogacy-new__couples" data-list="different-sex" hidden>');
         couples.filter(function(p){return gender(p[0])!==gender(p[1]);}).forEach(function(p){html+=renderPair(p);});
         html+='</div></section><section><h4>Singles</h4>';
         var singles=characters.filter(function(c){return !couples.some(function(p){return p[0].id===c.id||p[1].id===c.id;});});
@@ -831,6 +831,7 @@
             if (action === 'new-surrogacy') { e.preventDefault(); _handleNewArrangement(container); return; }
             if (action === 'new-surrogacy-single') { e.preventDefault(); _openArrangementFor(actionEl.getAttribute('data-id'), null); return; }
             if (action === 'choose-surrogacy-couple') { e.preventDefault(); var ids=(actionEl.getAttribute('data-ids')||'').split('|'); _openArrangementFor(ids[0], ids[1]||null); return; }
+            if (action === 'create-surrogacy-swap') { e.preventDefault(); _createSelectedSwap(container); return; }
 
             if (action === 'complete-surrogacy') {
                 e.preventDefault();
@@ -904,6 +905,35 @@
     // =========================================================================
     // 13. ACTION HANDLERS
     // =========================================================================
+
+    function _createSelectedSwap(container) {
+        var selected = Array.prototype.slice.call(container.querySelectorAll('[data-swap-couple]:checked'));
+        if (selected.length !== 2) { _toast('Select exactly two couples for a reciprocal surrogacy.', 'error'); return; }
+        var pairs = selected.map(function(el){ return el.getAttribute('data-swap-couple').split('|'); });
+        var chars = _livingCharacters() || [];
+        function get(id){ return chars.find(function(c){return String(c.id)===String(id);}); }
+        function age(c){ return c && typeof c.age==='number' ? c.age : -1; }
+        function byGender(pair, gender){ return pair.map(get).filter(function(c){return c && String(c.gender||'').toLowerCase()===gender;}).sort(function(a,b){return age(b)-age(a);}); }
+        var A=pairs[0], B=pairs[1], am=byGender(A,'male'), aw=byGender(A,'female'), bm=byGender(B,'male'), bw=byGender(B,'female');
+        if (!(am.length===2 && bm.length===2) && !(aw.length===2 && bw.length===2)) {
+            _toast('Reciprocal swaps require two male couples or two female couples.', 'error'); return;
+        }
+        var cmd=window.ChildrenCommands;
+        if (!cmd || typeof cmd.recordSwapSurrogacy!=='function') { _toast('Reciprocal surrogacy command is unavailable.', 'error'); return; }
+        var year=typeof window.getCurrentYear==='function'?window.getCurrentYear():null;
+        var result;
+        if (am.length===2 && bm.length===2) {
+            result=cmd.recordSwapSurrogacy(
+                {intendedParentId:am[0].id,intendedPartnerId:am[1].id,surrogateId:bw[0]&&bw[0].id,eggDonorId:bw[0]&&bw[0].id},
+                {intendedParentId:bm[0].id,intendedPartnerId:bm[1].id,surrogateId:aw[0]&&aw[0].id,eggDonorId:aw[0]&&aw[0].id},
+                {arrangementYear:year,birthYear:year,type:'gestational',notes:'Reciprocal surrogacy'}
+            );
+        } else {
+            _toast('This swap configuration is not supported by the current reciprocal-surrogacy command.', 'error'); return;
+        }
+        if (!result || result.success!==true || !result.successA || !result.successB) { _toast(result&&result.reason||'Could not create reciprocal surrogacy.', 'error'); return; }
+        _toast('Reciprocal surrogacy arrangements created.', 'success'); _refresh();
+    }
 
     function _openArrangementFor(parentId, partnerId) {
         if (!parentId || typeof window.openSurrogacyArrangementModal !== 'function') {
