@@ -18,10 +18,11 @@
  *                    ChildrenQueries / ChildrenRules
  *     adoption    -> ChildrenState / ChildrenQueries / CharacterQueries
  *     surrogacy   -> ChildrenState / ChildrenQueries / CharacterQueries
+ *     crime       -> CrimeQueries
  *     disasters   -> DisasterQueries
- *     social      -> RelationshipQueries / RomanceQueries /
- *                    FriendshipQueries / RivalryQueries
- *     educational -> EducationQueries / ApprenticeshipQueries
+ *     social      -> RelationshipQueries (current aggregate read)
+ *     educational -> EducationQueries (availability check; aggregate
+ *                    event read is not implemented)
  *
  *   This module does NOT own any state. It composes other domains'
  *   public read surfaces. It does NOT mutate. It does NOT persist.
@@ -61,9 +62,10 @@
  *   - window.ChildrenState         (adoption + surrogacy records)
  *   - window.ChildrenRules         (stork fertility math)
  *   - window.LocationQueries       (sub-location expansion)
- *   - window.DisasterQueries       (disasters facet)
- *   - window.RelationshipQueries   (social facet)
- *   - window.EducationQueries      (educational facet)
+ *   - window.CrimeQueries           (crime facet)
+ *   - window.DisasterQueries        (disasters facet)
+ *   - window.RelationshipQueries    (social facet)
+ *   - window.EducationQueries       (educational facet availability)
  *   - window.getCurrentYear        (time.js)
  *   - window.getPlaceById          (accessors.js)
  *   - window.getEventLog           (accessors.js)
@@ -75,51 +77,16 @@
  * ICON POLICY: No emojis. No icons. Returns data; the tab renders.
  * =============================================================================
  *
- * REFACTOR HISTORY:
- *   Current revision (Phase 3C):
- *     - Added the surrogacy facet's query set:
- *         getSurrogacyRecords(locationId)
- *       reads every surrogacy arrangement record via
- *       ChildrenState.allSurrogacyIds() when available, or by
- *       iterating every character and calling
- *       ChildrenQueries.getSurrogacyArrangementsForIntendedParent
- *       when it isn't.
- *     - Records are enriched with character summaries for:
- *         intended parent, intended partner, surrogate,
- *         sperm donor, egg donor, and each child in childIds.
- *     - Derived fields added for the tab's family-chain renderer:
- *         surrogateIsGeneticMother  (traditional surrogacy only)
- *         spermDonorIsGeneticFather (sperm donor present)
- *         eggDonorIsGeneticMother   (egg donor present)
- *         childrenMissingDespiteCompletion
- *           (status === 'completed' && childIds.length === 0;
- *            a legitimate state produced by
- *            completeSurrogacyArrangement when the arrangement was
- *            created with birthYear > currentYear and then
- *            completed without ever having children recorded --
- *            the tab must render this honestly rather than as an
- *            empty child circles block that looks like a
- *            rendering bug)
- *     - Location filter axis is EXPLICIT: filters by the INTENDED
- *       PARENT's currentLocationId. Rationale documented inline.
- *       A user who wants to find arrangements by surrogate or donor
- *       location must filter through the character roster, not
- *       through this query.
- *     - Added _getAllSurrogaciesRaw() and _enrichSurrogacyRecord()
- *       private helpers.
- *     - getFacetRecords now dispatches 'surrogacy' to
- *       getSurrogacyRecords.
- *     - No behavioural change to any deaths-, stork-, or
- *       adoption-facet function.
- *   Previous revision (Phase 3B):
- *     - Added the adoption facet's query set.
- *   Previous revision (Phase 3A):
- *     - Added the stork facet's query set.
- *   Initial revision:
- *     - Created with the deaths facet's read API and the facet
- *       stubs (getDisasterRecords, getSocialEvents,
- *       getEducationalEvents).
- * =============================================================================
+ * FACET IMPLEMENTATION NOTES:
+ *   - Deaths, stork, adoption, surrogacy, crime, disasters, and
+ *     social have query entry points in this module.
+ *   - Educational availability can be reported when its domain is
+ *     loaded, but no aggregate educational event query is exposed.
+ *   - Adoption and surrogacy prefer ChildrenState record indexes and
+ *     fall back to ChildrenQueries scans when necessary.
+ *   - Crime and disaster reads delegate filtering to their owning
+ *     domain query APIs.
+ *   - getFacetRecords() is the canonical generic facet dispatcher.
  */
 
 (function() {
