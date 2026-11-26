@@ -2939,7 +2939,7 @@
             return _ok({ isLiterate: value, unchanged: true });
         }
 
-        var update = CS.updateCharacter(characterId, {
+        var update = CS.applyDomainFieldPatch(characterId, {
             isLiterate: value,
             updatedAt: Date.now()
         });
