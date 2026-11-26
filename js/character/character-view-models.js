@@ -1770,20 +1770,28 @@
         var traits = safe('traits', function () { return CC.getTraits(characterId); }, null);
         var education = safe('education', function () {
             var eq = window.EducationQueries;
-            if (eq && typeof eq.getEnrollmentsForCharacter === 'function') return eq.getEnrollmentsForCharacter(characterId);
-            if (eq && typeof eq.getForCharacter === 'function') return eq.getForCharacter(characterId);
-            return null;
+            if (!eq || typeof eq.getStudentInstitutions !== 'function') return null;
+            return eq.getStudentInstitutions(characterId);
         }, null);
         var educationHistory = safe('educationHistory', function () {
             var eh = window.EducationHistory;
-            if (eh && typeof eh.getForCharacter === 'function') return eh.getForCharacter(characterId);
-            return [];
+            if (!eh || typeof eh.getCharacterEducationHistory !== 'function') return [];
+            return eh.getCharacterEducationHistory(characterId);
         }, []);
         var apprenticeship = safe('apprenticeship', function () {
             var aq = window.ApprenticeshipQueries;
-            if (!aq) return { available: false, reason: 'Apprenticeship domain is not loaded.', master: null, apprentices: [] };
-            if (typeof aq.getForCharacter === 'function') return aq.getForCharacter(characterId);
-            return { available: false, reason: 'Apprenticeship query API is unavailable.', master: null, apprentices: [] };
+            if (!aq || typeof aq.getApprenticeshipsByApprentice !== 'function'
+                || typeof aq.getApprenticeshipsByMaster !== 'function') {
+                return { available: false, reason: 'Apprenticeship query API is unavailable.', master: null, apprentices: [] };
+            }
+            var masters = aq.getApprenticeshipsByApprentice(characterId) || [];
+            var apprentices = aq.getApprenticeshipsByMaster(characterId) || [];
+            return {
+                available: true,
+                master: masters.length ? masters[0] : null,
+                masters: masters,
+                apprentices: apprentices
+            };
         }, null);
         return {
             characterId: characterId, literacy: literacy, professions: professions,
