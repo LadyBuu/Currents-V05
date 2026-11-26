@@ -20,7 +20,7 @@
  *     surrogacy   -> ChildrenState / ChildrenQueries / CharacterQueries
  *     crime       -> CrimeQueries
  *     disasters   -> DisasterQueries
- *     social      -> RelationshipQueries (current aggregate read)
+ *     social      -> RelationshipQueries (social archetypes only; optional participant-location filter)
  *     educational -> EducationQueries (availability check; aggregate
  *                    event read is not implemented)
  *
@@ -1376,14 +1376,67 @@
         var rq = _requireModule('RelationshipQueries', ['getAll']);
         if (!rq.ok) return _unavailable(rq.reason);
 
+        var socialTypes = [
+            'friendship',
+            'rivalry',
+            'enmity'
+        ];
+        var relationshipTypes = window.RELATIONSHIP_TYPES;
+        if (relationshipTypes &&
+            typeof relationshipTypes.getArchetypesByCategory === 'function') {
+            try {
+                var declared = relationshipTypes.getArchetypesByCategory('social');
+                if (Array.isArray(declared) && declared.length) socialTypes = declared.slice();
+            } catch (e) { /* retain the explicit social vocabulary */ }
+        }
+
         try {
             var list = rq.module.getAll();
             if (!Array.isArray(list)) {
                 return _unavailable('RelationshipQueries returned a non-array.');
             }
-            return _available({ records: list, totalCount: list.length });
+
+            // RelationshipState is shared by Romance, Social and
+            // Professional. The Events Social facet must never expose
+            // romance or apprenticeship/employment records.
+            list = list.filter(function(record) {
+                return record && socialTypes.indexOf(record.type) !== -1;
+            });
+
+            if (_hasId(locationId)) {
+                var cq = _requireModule('CharacterQueries', ['getAllCharacters']);
+                if (!cq.ok) return _unavailable(cq.reason);
+
+                var characters = cq.module.getAllCharacters();
+                if (!Array.isArray(characters)) {
+                    return _unavailable('CharacterQueries returned a non-array.');
+                }
+                var locationSet = _locationIdSetForFilter(locationId) || {};
+                var characterLocations = {};
+                for (var ci = 0; ci < characters.length; ci++) {
+                    var character = characters[ci];
+                    if (!character || !_hasId(character.id) || character.isDeleted === true) continue;
+                    characterLocations[character.id] =
+                        character.currentLocationId || character.locationId || null;
+                }
+
+                list = list.filter(function(record) {
+                    var aLocation = characterLocations[record.participantA];
+                    var bLocation = characterLocations[record.participantB];
+                    return !!aLocation && !!bLocation &&
+                        locationSet[aLocation] === true &&
+                        locationSet[bLocation] === true;
+                });
+            }
+
+            return _available({
+                records: list,
+                totalCount: list.length,
+                locationFilterApplied: _hasId(locationId),
+                includedTypes: socialTypes.slice()
+            });
         } catch (e) {
-            return _unavailable('RelationshipQueries threw: ' +
+            return _unavailable('Social event query threw: ' +
                 (e && e.message ? e.message : 'unknown error'));
         }
     }
@@ -1451,7 +1504,7 @@
         // Disasters facet
         getDisasterRecords: getDisasterRecords,
 
-        // Social facet (stub)
+        // Social facet (social archetypes only)
         getSocialEvents: getSocialEvents,
 
         // Educational facet (stub)
