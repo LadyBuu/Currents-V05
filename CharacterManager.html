@@ -238,6 +238,13 @@
             outline: none;
             border-color: var(--accent);
         }
+        .character-filters { padding:0.5rem; display:grid; gap:0.35rem; border-bottom:1px solid var(--border); }
+        .character-filters select { width:100%; min-width:0; box-sizing:border-box; padding:0.35rem; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:var(--radius); font:inherit; font-size:0.7rem; }
+        .character-filters label { display:flex; align-items:center; gap:0.4rem; font-size:0.7rem; }
+        .character-group { margin:0 0 0.4rem; border:1px solid var(--border); border-radius:var(--radius); }
+        .character-group summary { cursor:pointer; padding:0.45rem; color:var(--accent); font-size:0.72rem; font-weight:600; }
+        .character-group .character-list { padding:0 0.35rem 0.35rem; }
+        @media (max-width:700px) { .character-filters { grid-template-columns:1fr 1fr; } .character-filters label { grid-column:1/-1; } }
         .sidebar-list {
             flex: 1;
             overflow-y: auto;
@@ -1430,6 +1437,16 @@
         <div class="sidebar-header"><h3 id="sidebarTitle">Characters</h3></div>
         <div class="sidebar-search">
             <input type="search" id="characterSearchInput" placeholder="Search characters…" autocomplete="off">
+        </div>
+        <div class="character-filters" id="characterFilters">
+            <select id="characterLocation1" aria-label="Location"><option value="">All locations</option></select>
+            <select id="characterLocation2" aria-label="Sub-location" hidden><option value="">All sub-locations</option></select>
+            <select id="characterLocation3" aria-label="Further sub-location" hidden><option value="">All further sub-locations</option></select>
+            <select id="characterGenderFilter" aria-label="Gender"><option value="">All genders</option></select>
+            <select id="characterRoleFilter" aria-label="Role"><option value="">All roles</option></select>
+            <select id="characterLifeStatusFilter" aria-label="Life status"><option value="">Any life status</option><option value="living">Living</option><option value="deceased">Deceased</option></select>
+            <select id="characterRelationshipFilter" aria-label="Relationship status"><option value="">Committed or single</option><option value="committed">Committed</option><option value="single">Single</option></select>
+            <label><input type="checkbox" id="characterIncludeDeceased"> Include deceased</label>
         </div>
         <div class="sidebar-list" id="characterListContainer">
             <div class="loading">Loading characters…</div>
