@@ -9,9 +9,29 @@
     <link rel="stylesheet" href="css/themes.css">
     <link rel="stylesheet" href="css/common.css">
     <style>
-        body { min-height:100vh; }
-        .topbar { position:sticky; top:0; z-index:50; }
-        .diagnostics-main { width:min(1320px,100%); margin:0 auto; padding:28px clamp(16px,3vw,36px) 56px; }
+        /* Diagnostics owns the document scroll. common.css intentionally locks
+           body scrolling for its app-shell managers, so override that here. */
+        html { height:auto; min-height:100%; overflow-x:hidden; overflow-y:auto; }
+        body { min-height:100vh; height:auto; overflow-x:hidden; overflow-y:auto; background:var(--bg); }
+        .topbar { position:sticky; top:0; z-index:50; flex-wrap:wrap; }
+        .diagnostics-main { width:min(1320px,100%); min-width:0; margin:0 auto; padding:28px clamp(16px,3vw,36px) 56px; }
+        .diagnostics-main, .diagnostics-main * { min-width:0; }
+        .tab-strip { display:flex; gap:6px; width:100%; overflow-x:auto; overflow-y:hidden; white-space:nowrap; scrollbar-width:thin; -webkit-overflow-scrolling:touch; }
+        .tab-button { flex:0 0 auto; min-height:42px; }
+        #dataAuditPanel, #dataWipePanel { width:100%; min-width:0; }
+        .audit-groups { width:100%; }
+        .audit-issue-name, .audit-issue-meta { overflow-wrap:anywhere; }
+        .wipe-card { overflow-wrap:anywhere; }
+        .modal-backdrop { overflow-y:auto; overscroll-behavior:contain; }
+        .confirm-modal { max-height:calc(100dvh - 36px); overflow-y:auto; }
+        .topbar .tb-btn { min-height:34px; display:inline-flex; align-items:center; justify-content:center; white-space:nowrap; }
+        .topbar .year-input { display:flex; align-items:center; gap:6px; flex:0 0 auto; }
+        .topbar .year-input input { width:76px; min-width:0; }
+        .topbar .theme-toggle { position:relative; flex:0 0 auto; }
+        .theme-toggle__menu { position:absolute; top:calc(100% + 6px); right:0; z-index:100; max-height:min(65vh,420px); overflow-y:auto; min-width:170px; padding:5px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius,6px); box-shadow:0 12px 30px rgba(0,0,0,.25); list-style:none; }
+        .theme-toggle__menu button { display:block; width:100%; padding:9px 10px; text-align:left; color:var(--fg); border-radius:4px; }
+        .theme-toggle__menu button:hover { background:var(--surface-2); }
+        .diagnostics-main [hidden] { display:none !important; }
         .diagnostics-intro { margin:0 0 24px; }
         .diagnostics-intro h1 { margin:0 0 8px; font:600 clamp(1.45rem,3vw,2rem)/1.15 var(--f-display,Georgia,serif); color:var(--fg); }
         .diagnostics-intro p { margin:0; max-width:820px; color:var(--fg-2); line-height:1.55; }
@@ -54,8 +74,40 @@
         .cancel-button { color:var(--fg); background:transparent; border:1px solid var(--line); }
         .confirm-button { color:#fff; background:var(--bad); border:1px solid var(--bad); font-weight:700; }
         .confirm-button:disabled { opacity:.35; cursor:not-allowed; }
-        @media(max-width:900px) { .wipe-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-        @media(max-width:600px) { .diagnostics-main { padding-top:20px; } .wipe-grid { grid-template-columns:1fr; } .topbar .year-input { display:none; } }
+        @media(max-width:900px) {
+            .wipe-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+            .diagnostics-main { padding-left:20px; padding-right:20px; }
+        }
+        @media(max-width:680px) {
+            .topbar { position:sticky; padding:7px 10px; gap:6px; }
+            .topbar .title { flex:1 1 150px; white-space:normal; line-height:1.2; }
+            .topbar .spacer { display:none; }
+            .topbar .year-input { display:flex; order:10; flex:1 1 100%; }
+            .topbar .year-input input { flex:1 1 auto; width:auto; }
+            .topbar .tb-btn { padding:6px 9px; font-size:.78rem; }
+            .diagnostics-main { padding:20px 14px 40px; }
+            .diagnostics-intro { margin-bottom:18px; }
+            .diagnostics-intro h1 { font-size:1.55rem; }
+            .warning-panel { padding:12px; margin-bottom:18px; }
+            .tab-strip { margin-bottom:16px; }
+            .audit-groups { gap:12px; }
+            .audit-group h2 { padding:12px; font-size:.92rem; }
+            .audit-issue { align-items:flex-start; padding:11px 12px; gap:10px; }
+            .audit-open { padding:8px 9px; }
+            .wipe-grid { grid-template-columns:1fr; gap:10px; }
+            .wipe-card { padding:14px; }
+            .modal-backdrop { align-items:flex-start; padding:10px; }
+            .confirm-modal { width:100%; padding:17px; max-height:calc(100dvh - 20px); }
+            .modal-actions { flex-wrap:wrap; }
+            .modal-actions button { flex:1 1 auto; }
+        }
+        @media(max-width:380px) {
+            .diagnostics-main { padding-left:10px; padding-right:10px; }
+            .topbar .title { font-size:.78rem; }
+            .topbar .tb-btn { padding:6px 7px; font-size:.72rem; }
+            .audit-issue { flex-direction:column; align-items:stretch; }
+            .audit-open { align-self:flex-start; }
+        }
     </style>
 </head>
 <body>
