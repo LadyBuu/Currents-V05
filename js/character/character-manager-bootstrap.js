@@ -32,10 +32,10 @@
  *   expected ids so the tab strip can be rendered and so missing tabs
  *   produce a clean empty state instead of a silent no-render.
  *
- *   Identity is the only tab shipped in this revision. The other six
- *   are declared here so their strip buttons exist and their panes
- *   render the "no-renderer" empty state. When each tab file lands,
- *   its tab stops being empty with no bootstrap change.
+ *   All seven tabs currently have renderer files: Identity, Location,
+ *   Family, Romance, Friendship, Skills, and Overview. Each renderer
+ *   self-registers when its script loads. The no-renderer empty state
+ *   remains a fallback for a tab whose registration is missing or fails.
  *
  * CONTAINER ROOT:
  *   TabManager's click router finds [data-tab] buttons by walking up
@@ -85,8 +85,8 @@
  * REFACTOR HISTORY:
  *   Initial revision.
  *     - Configures TabManager for the 'character' scope.
- *     - KNOWN_TAB_IDS declares all seven tabs; only Identity is
- *       expected to have a registered renderer in this revision.
+ *     - KNOWN_TAB_IDS declares all seven tabs, and all seven currently
+ *       have renderer files registered by their own scripts.
  *     - _syncTabStrip toggles .active / aria-selected / tabindex on
  *       strip buttons, and .active on panes. Required because
  *       TabManager does not do this.
