@@ -515,7 +515,7 @@
         for (var gi = 0; gi < existingGroups.length; gi++) {
             var existingSummary = existingGroups[gi].querySelector('summary');
             if (existingSummary) {
-                var existingLabel = existingSummary.textContent.replace(/\\s+\\(\\d+\\)$/, '');
+                var existingLabel = existingSummary.textContent.replace(/\s+\(\d+\)$/, '');
                 _groupOpenState[existingLabel] = existingGroups[gi].open;
             }
         }
