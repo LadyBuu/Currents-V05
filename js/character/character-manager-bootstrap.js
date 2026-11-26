@@ -619,6 +619,17 @@
         // failed early boot can be retried after its missing scripts load.
         _initialized = true;
 
+        // Diagnostics deep links: select the requested character and tab before rendering.
+        try {
+            var params = new URLSearchParams(window.location.search || '');
+            var requestedCharacterId = params.get('characterId');
+            var requestedTabId = params.get('tab');
+            if (_hasId(requestedCharacterId)) uiState.setSelectedCharacterId(requestedCharacterId);
+            if (_hasId(requestedTabId) && KNOWN_TAB_IDS.indexOf(requestedTabId) !== -1) uiState.setActiveTabId(requestedTabId);
+        } catch (deepLinkError) {
+            if (typeof console !== 'undefined' && console.warn) console.warn('Character Manager ignored an invalid deep link:', deepLinkError);
+        }
+
         // -- Declare the known tab ids. The strip and panes are static
         //    in the shell; this is a bookkeeping call so state reflects
         //    the expected set.
