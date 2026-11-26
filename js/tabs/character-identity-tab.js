@@ -1030,31 +1030,44 @@
     function _birthplaceControlHtml(placeId, placeName) {
         var places = [];
         if (typeof window.getAllPlaces === 'function') {
-            try { places = window.getAllPlaces() || []; }
-            catch (e) { places = []; }
+            try { places = window.getAllPlaces() || []; } catch (e) { places = []; }
         } else if (typeof window.getPlaces === 'function') {
-            try { places = window.getPlaces() || []; }
-            catch (e) { places = []; }
+            try { places = window.getPlaces() || []; } catch (e) { places = []; }
         }
-
         if (!Array.isArray(places) || places.length === 0) {
             return _esc(placeName || placeId || '—') +
-                ' <span class="character-tab-note">' +
-                '(World is not loaded; birthplace edit disabled)</span>';
+                ' <span class="character-tab-note">(World is not loaded; birthplace edit disabled)</span>';
         }
-
-        var html = '<select data-field="birthplaceId" class="character-tab-input">' +
-            '<option value=""' + (_hasId(placeId) ? '' : ' selected') +
-                '>— None —</option>';
-        for (var i = 0; i < places.length; i++) {
-            var p = places[i];
-            if (!p || !_hasId(p.id)) continue;
-            var name = p.displayName || p.name || p.id;
-            var selected = (p.id === placeId) ? ' selected' : '';
-            html += '<option value="' + _esc(p.id) + '"' + selected + '>' +
-                _esc(name) + '</option>';
+        var byId = Object.create(null), children = Object.create(null);
+        places.forEach(function(p) {
+            if (!p || !_hasId(p.id)) return;
+            byId[p.id] = p;
+            var parent = _hasId(p.parentId) ? p.parentId : '';
+            if (!children[parent]) children[parent] = [];
+            children[parent].push(p);
+        });
+        Object.keys(children).forEach(function(k) {
+            children[k].sort(function(a,b){return String(a.displayName||a.name||a.id).localeCompare(String(b.displayName||b.name||b.id));});
+        });
+        var chain = [], current = placeId, seen = Object.create(null);
+        while (_hasId(current) && byId[current] && !seen[current]) {
+            seen[current] = true; chain.unshift(current); current = byId[current].parentId;
         }
-        return html + '</select>';
+        var html = '<div class="birthplace-cascade" data-birthplace-cascade>';
+        html += '<input type="hidden" data-field="birthplaceId" value="' + _esc(placeId || '') + '">';
+        for (var level=0; level<8; level++) {
+            var parentId = level===0 ? '' : (chain[level-1] || '');
+            var options = children[parentId] || [];
+            if (level>0 && !parentId) break;
+            html += '<select class="character-tab-input" data-birthplace-level="' + level + '" aria-label="Birthplace level ' + (level+1) + '"' + (options.length ? '' : ' hidden') + '>';
+            html += '<option value="">' + (level===0?'— Select country or region —':'— Select sub-location —') + '</option>';
+            options.forEach(function(p){var id=p.id, label=p.displayName||p.name||id;html+='<option value="'+_esc(id)+'"'+(chain[level]===id?' selected':'')+'>'+_esc(label)+'</option>';});
+            html += '</select>';
+            if (!options.length) break;
+            if (level>=chain.length) break;
+        }
+        html += '</div>';
+        return html;
     }
 
     function _deathCauseControlHtml(cause, locked) {
@@ -1347,8 +1360,44 @@
             });
         }
 
+        _wireBirthplaceCascade(container);
         _wireDirtyTracking(container, model);
         _wireFullNamePreview(container);
+    }
+
+    function _wireBirthplaceCascade(container) {
+        var cascade = container.querySelector('[data-birthplace-cascade]');
+        if (!cascade || cascade.__wired) return;
+        cascade.__wired = true;
+        cascade.addEventListener('change', function(e) {
+            var select = e.target;
+            if (!select || !select.hasAttribute('data-birthplace-level')) return;
+            var level = parseInt(select.getAttribute('data-birthplace-level'), 10);
+            var selected = select.value || '';
+            var hidden = cascade.querySelector('input[data-field="birthplaceId"]');
+            if (hidden) hidden.value = selected;
+            var levels = cascade.querySelectorAll('select[data-birthplace-level]');
+            for (var i=0;i<levels.length;i++) {
+                var idx = parseInt(levels[i].getAttribute('data-birthplace-level'),10);
+                if (idx>level) { levels[i].value=''; levels[i].hidden=true; }
+            }
+            if (!selected) return;
+            var places = [];
+            if (typeof window.getAllPlaces==='function') { try { places=window.getAllPlaces()||[]; } catch(err){} }
+            var children = places.filter(function(p){return p && p.parentId===selected;});
+            if (!children.length) return;
+            var next = cascade.querySelector('select[data-birthplace-level="'+(level+1)+'"]');
+            if (!next) {
+                next=document.createElement('select');
+                next.className='character-tab-input';
+                next.setAttribute('data-birthplace-level',String(level+1));
+                next.setAttribute('aria-label','Birthplace level '+(level+2));
+                select.parentNode.appendChild(next);
+            }
+            next.innerHTML='<option value="">— Select sub-location —</option>';
+            children.sort(function(a,b){return String(a.displayName||a.name||a.id).localeCompare(String(b.displayName||b.name||b.id));}).forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.displayName||p.name||p.id;next.appendChild(o);});
+            next.hidden=false;
+        });
     }
 
     function _onToggleSection(e) {
