@@ -112,6 +112,8 @@
         /* Shared manager topbar baseline */
         .topbar { background: var(--bg2); padding: 0.5rem 1rem; display: flex; align-items: center; gap: 0.625rem; border-bottom: 1px solid var(--border); min-height: 3rem; flex-wrap: wrap; position: relative; z-index: 100; flex-shrink: 0; }
         @media (max-width: 700px) { .topbar { padding: 0.375rem 0.625rem; gap: 0.375rem; min-height: 2.625rem; } }
+    .theme-toggle__btn #themeName { display: none !important; }
+    .tb-btn[aria-label="Import"], .tb-btn[aria-label="Export"], .tb-btn[aria-label="Refresh"] { min-width: 36px; padding-inline: 8px; }
     </style>
 </head>
 <body>
@@ -127,11 +129,11 @@
             <input type="number" id="yearInput" min="1" step="1">
             <button class="tb-btn" id="setYearBtn" type="button">Set</button>
         </div>
-        <button class="tb-btn" id="importBtn" type="button">Import</button>
-        <button class="tb-btn" id="exportBtn" type="button">Export</button>
-        <button class="tb-btn" id="refreshBtn" type="button">Refresh</button>
+        <button class="tb-btn" id="importBtn" aria-label="Import" title="Import" type="button"><span aria-hidden="true">⤓</span></button>
+        <button class="tb-btn" id="exportBtn" aria-label="Export" title="Export" type="button"><span aria-hidden="true">⤒</span></button>
+        <button class="tb-btn" id="refreshBtn" aria-label="Refresh" title="Refresh" type="button"><span aria-hidden="true">↻</span></button>
         <div class="theme-toggle" role="group" aria-label="Theme">
-            <button class="tb-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false"><span aria-hidden="true">◐</span><span id="themeName">Dark</span></button>
+            <button class="tb-btn theme-toggle__btn" id="themeBtn" aria-label="Choose theme" title="Choose theme" type="button" aria-haspopup="menu" aria-expanded="false"><span aria-hidden="true">◐</span><span id="themeName">Dark</span></button>
             <ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden></ul>
         </div>
         <input type="file" id="fileInput" accept=".json,application/json" hidden>
