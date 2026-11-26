@@ -389,55 +389,6 @@
     function _reportWarnings(status) {
         if (typeof console === 'undefined') return;
 
-        if (status.missingOptional.length > 0 && console.warn) {
-            var featureMessages = [];
-            for (var i = 0; i < status.missingOptional.length; i++) {
-                var name = status.missingOptional[i];
-                switch (name) {
-                    case 'RomanceQueries':
-                        featureMessages.push(
-                            'RomanceQueries not loaded: ranks with ' +
-                            'inheritanceSource "spouse" will not resolve ' +
-                            'their source. All other rank features are ' +
-                            'available.'
-                        );
-                        break;
-                    case 'CharacterLifecycle':
-                        featureMessages.push(
-                            'CharacterLifecycle not loaded: the death ' +
-                            'cascade will not call RankIssues.handleCharacterDeath ' +
-                            'automatically. Callers must invoke it directly ' +
-                            'after a character dies.'
-                        );
-                        break;
-                    case 'FamilyQueries':
-                        // Only reaches this branch if FamilyQueries is
-                        // absent from the OPTIONAL list — it is also
-                        // required via REQUIRED_FAMILY_QUERIES, so this
-                        // branch fires only when getParents is missing
-                        // but FamilyQueries exists.
-                        featureMessages.push(
-                            'FamilyQueries present but missing getParents: ' +
-                            'parent inheritance cannot resolve.'
-                        );
-                        break;
-                    default:
-                        // Other optional absences have no user-facing
-                        // feature message. Include the name in the list.
-                        featureMessages.push(
-                            name + ' not loaded (no rank feature currently ' +
-                            'depends on it; verify load order if you ' +
-                            'expect it to be present).'
-                        );
-                }
-            }
-            console.warn(
-                'rank-bootstrap.js: optional dependencies missing\n' +
-                _formatList(status.missingOptional) +
-                '\n\nFeature impact:\n  ' +
-                featureMessages.join('\n  ')
-            );
-        }
 
         if (status.integrityErrors.length > 0 && console.warn) {
             console.warn(
