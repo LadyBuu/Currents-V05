@@ -1682,8 +1682,8 @@
             ? val('select[data-field="religionId"]')
             : null;
         var newBirthYearRaw = val('input[data-field="birthYear"]');
-        var newBirthplaceId = container.querySelector('select[data-field="birthplaceId"]')
-            ? val('select[data-field="birthplaceId"]')
+        var newBirthplaceId = container.querySelector('[data-field="birthplaceId"]')
+            ? val('[data-field="birthplaceId"]')
             : null;
         var newDeathYearRaw = val('input[data-field="deathYear"]');
         var newDeathCause = val('select[data-field="deathCause"]');
