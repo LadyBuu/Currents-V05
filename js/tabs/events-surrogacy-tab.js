@@ -520,7 +520,7 @@
             var ab = typeof a[1].age === 'number' ? a[1].age : -1;
             var ba = typeof b[0].age === 'number' ? b[0].age : -1;
             var bb = typeof b[1].age === 'number' ? b[1].age : -1;
-            return Math.max(ab,aa) - Math.max(bb,ba);
+            return Math.max(bb,ba) - Math.max(ab,aa);
         });
         var men = couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='male' || String(pair[1].gender||'').toLowerCase()==='male';});
         var women = couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='female' || String(pair[1].gender||'').toLowerCase()==='female';});
@@ -532,7 +532,10 @@
         html += '<label><input type="checkbox" data-input="show-different-sex"> Show different-sex couples</label>';
         html += '<div class="events-surrogacy-new__columns"><section><h4>Couples</h4>';
         html += '<div class="events-surrogacy-new__couples" data-list="same-sex">';
-        couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()===String(pair[1].gender||'').toLowerCase();}).forEach(function(pair){
+        couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='male' && String(pair[1].gender||'').toLowerCase()==='male' || String(pair[0].gender||'').toLowerCase()==='male' && String(pair[1].gender||'').toLowerCase()==='male';}).forEach(function(pair){
+            html += '<button type="button" data-action="choose-surrogacy-couple" data-ids="'+_esc(pair[0].id+'|'+pair[1].id)+'">'+pairLabel(pair)+'</button>';
+        });
+        couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='female' && String(pair[1].gender||'').toLowerCase()==='female';}).forEach(function(pair){
             html += '<button type="button" data-action="choose-surrogacy-couple" data-ids="'+_esc(pair[0].id+'|'+pair[1].id)+'">'+pairLabel(pair)+'</button>';
         });
         html += '</div><div class="events-surrogacy-new__couples" data-list="different-sex" hidden>';
