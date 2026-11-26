@@ -551,8 +551,14 @@
         html+='</div><div class="events-surrogacy-new__couples" data-list="different-sex" hidden>';
         couples.filter(function(p){return gender(p[0])!==gender(p[1]);}).forEach(function(p){html+=renderPair(p);});
         html+='</div></section><section><h4>Singles</h4>';
-        characters.filter(function(c){return !couples.some(function(p){return p[0].id===c.id||p[1].id===c.id;});}).sort(function(a,b){return age(b)-age(a);}).forEach(function(c){
-            html+='<button type="button" data-action="new-surrogacy-single" data-id="'+_esc(c.id)+'">'+_esc((c.name||'')+' '+(c.surname||'')+' ('+(c.age==null?'?':c.age)+')')+'</button>';
+        var singles=characters.filter(function(c){return !couples.some(function(p){return p[0].id===c.id||p[1].id===c.id;});});
+        singles.sort(function(a,b){
+            var gm=gender(a)==='male'?0:gender(a)==='female'?1:2, gn=gender(b)==='male'?0:gender(b)==='female'?1:2;
+            return gm-gn || age(b)-age(a);
+        }).forEach(function(c){
+            var aids=[], loc=c.currentLocationId||c.locationId||c.location||null;
+            if(loc) aids.push('<small class="events-surrogacy-aid">Location: '+_esc(String(loc))+'</small>');
+            html+='<button type="button" data-action="new-surrogacy-single" data-id="'+_esc(c.id)+'">'+_esc((c.name||'')+' '+(c.surname||'')+' ('+(c.age==null?'?':c.age)+')')+(aids.length?'<span class="events-surrogacy-aids">'+aids.join('')+'</span>':'')+'</button>';
         });
         html+='</section></div></div>'; return html;
     }
