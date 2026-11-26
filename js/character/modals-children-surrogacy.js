@@ -153,7 +153,7 @@
      * @param {string} intendedParentId
      * @param {Function} [onSuccess]
      */
-    function openSurrogacyArrangementModal(intendedParentId, onSuccess) {
+    function openSurrogacyArrangementModal(intendedParentId, onSuccess, initialPartnerId) {
         var intendedParent = _readSummary(intendedParentId);
         if (!intendedParent) {
             return { success: false, reason: 'Intended parent not found.' };
@@ -165,7 +165,7 @@
         var currentYear = window.getCurrentYear();
 
         // Local selection state.
-        var selectedPartnerId = null;
+        var selectedPartnerId = _hasId(initialPartnerId) && initialPartnerId !== intendedParentId ? initialPartnerId : null;
         var selectedSurrogateId = null;
         var selectedSpermDonorId = null;
         var selectedEggDonorId = null;
@@ -188,7 +188,7 @@
                  + '<div style="display:flex; gap:8px; align-items:center;">'
                  + '<button type="button" class="btn" data-action="select-partner">'
                  + 'Select Partner</button>'
-                 + '<span id="surro-partner-name">None</span>'
+                 + '<span id="surro-partner-name">' + _esc(selectedPartnerId ? _fullName(_readSummary(selectedPartnerId)) : 'None') + '</span>'
                  + '<button type="button" class="btn" data-action="clear-partner">'
                  + 'Clear</button>'
                  + '</div>'
