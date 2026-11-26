@@ -408,14 +408,32 @@
 
         var searchInput = _byId('characterSearchInput');
         var query = searchInput ? (searchInput.value || '') : '';
-
-        var characters = (query.trim().length > 0)
-            ? queries.searchCharacters(query)
-            : queries.getAllCharacters();
+        var characters = query.trim() ? queries.searchCharacters(query) : queries.getAllCharacters();
+        var includeDeceased = !!(_byId('characterIncludeDeceased') && _byId('characterIncludeDeceased').checked);
+        var gender=(_byId('characterGenderFilter')||{}).value||'', role=(_byId('characterRoleFilter')||{}).value||'';
+        var life=(_byId('characterLifeStatusFilter')||{}).value||'', romance=(_byId('characterRelationshipFilter')||{}).value||'';
+        var locs=['characterLocation1','characterLocation2','characterLocation3'].map(function(id){return (_byId(id)||{}).value||'';}).filter(Boolean);
+        var chosen=locs.length?locs[locs.length-1]:'', L=window.LocationQueries, desc=chosen&&L&&L.getAllSubLocationIds?L.getAllSubLocationIds(chosen):[], descSet=Object.create(null);
+        desc.forEach(function(id){descSet[id]=true;});
+        characters=characters.filter(function(c){
+            if(!includeDeceased&&c.isDeceased)return false;
+            if(gender&&String(c.gender||'')!==gender)return false;
+            if(life==='living'&&c.isDeceased)return false;if(life==='deceased'&&!c.isDeceased)return false;
+            if(chosen&&!descSet[c.currentLocationId])return false;
+            if(role){var ps=queries.getCharacterProfessions(c.id)||[];if(!ps.some(function(p){return String(p.professionId||p.roleId||p.id||p.name||'')===role;}))return false;}
+            if(romance){var committed=!!(window.RomanceQueries&&window.RomanceQueries.hasActiveCommittedRelationship&&window.RomanceQueries.hasActiveCommittedRelationship(c.id));if(romance==='committed'?!committed:committed)return false;}
+            return true;
+        });
 
         var selectedId = uiState.getSelectedCharacterId();
 
+        var groups=null, stages=window.LIFE_STAGES;
+        if(stages){var stageList=Object.keys(stages).map(function(k){return stages[k];}), buckets={};stageList.forEach(function(s){buckets[s.group]=[];});buckets['Unknown age']=[];
+            characters.forEach(function(c){var sum=queries.getCharacterSummary(c.id),age=sum&&typeof sum.age==='number'?sum.age:null,stage=stageList.find(function(s){return age!==null&&age>=s.min&&(s.max===null||age<=s.max);});(stage?buckets[stage.group]:buckets['Unknown age']).push(c);});
+            groups=stageList.map(function(s){return {label:s.name+' · '+s.group,characters:buckets[s.group]};}).filter(function(g){return g.characters.length;});if(buckets['Unknown age'].length)groups.push({label:'Unknown age',characters:buckets['Unknown age']});
+        }
         uiList.renderCharacterList(container, {
+            groups: groups,
             filteredCharacters: characters,
             emptyMessage: query.trim().length > 0
                 ? 'No characters match "' + query.trim() + '".'
@@ -485,19 +503,15 @@
     }
 
     function _wireSidebarSearch() {
-        var input = _byId('characterSearchInput');
-        if (!input) return;
-        if (input.__characterBootstrapWired) return;
-        input.__characterBootstrapWired = true;
-
-        input.addEventListener('input', function () {
-            if (_searchDebounceTimer) clearTimeout(_searchDebounceTimer);
-            _searchDebounceTimer = setTimeout(function () {
-                _searchDebounceTimer = null;
-                _renderSidebarList();
-            }, 200);
-        });
+        var input=_byId('characterSearchInput');
+        if(input&&!input.__characterBootstrapWired){input.__characterBootstrapWired=true;input.addEventListener('input',function(){if(_searchDebounceTimer)clearTimeout(_searchDebounceTimer);_searchDebounceTimer=setTimeout(function(){_searchDebounceTimer=null;_renderSidebarList();},200);});}
+        ['characterLocation1','characterLocation2','characterLocation3','characterGenderFilter','characterRoleFilter','characterLifeStatusFilter','characterRelationshipFilter','characterIncludeDeceased'].forEach(function(id){var el=_byId(id);if(el&&!el.__characterFilterWired){el.__characterFilterWired=true;el.addEventListener('change',function(){if(id.indexOf('characterLocation')===0)_populateLocationFilters(id);_renderSidebarList();});}});
+        _populateSidebarFilterOptions();
     }
+    function _fillFilter(select,items,placeholder,selected){if(!select)return;select.innerHTML='<option value="">'+_esc(placeholder)+'</option>';items.forEach(function(x){var o=document.createElement('option');o.value=x.value;o.textContent=x.label;select.appendChild(o);});if(selected&&items.some(function(x){return x.value===selected;}))select.value=selected;}
+    function _populateLocationFilters(changed){var L=window.LocationQueries;if(!L)return;var ids=['characterLocation1','characterLocation2','characterLocation3'],i=ids.indexOf(changed);if(i<0)i=0;for(var j=i+1;j<3;j++){var later=_byId(ids[j]);if(later){later.value='';later.hidden=true;}}var parent=i===0?((_byId(ids[0])||{}).value||null):((_byId(ids[i])||{}).value||null),next=_byId(ids[i+1]);if(!next)return;var places=parent?L.getPlacesByParent(parent,{includeDeprecated:false}):L.getRootPlaces({includeDeprecated:false});_fillFilter(next,places.map(function(p){return {value:p.id,label:p.name||p.displayName||p.id};}),i===0?'All sub-locations':'All further sub-locations','');next.hidden=!places.length;}
+    function _populateSidebarFilterOptions(){var q=_requireQueries(),all=q.getAllCharacters(),g={};all.forEach(function(c){if(c.gender)g[c.gender]=true;});_fillFilter(_byId('characterGenderFilter'),Object.keys(g).sort().map(function(x){return {value:x,label:x};}),'All genders',(_byId('characterGenderFilter')||{}).value||'');var roles={};all.forEach(function(c){(q.getCharacterProfessions(c.id)||[]).forEach(function(p){var v=String(p.professionId||p.roleId||p.id||p.name||'');if(v)roles[v]=String(p.name||p.title||p.professionName||v);});});_fillFilter(_byId('characterRoleFilter'),Object.keys(roles).sort().map(function(x){return {value:x,label:roles[x]};}),'All roles',(_byId('characterRoleFilter')||{}).value||'');var L=window.LocationQueries;if(L){var roots=L.getRootPlaces({includeDeprecated:false})||[];_fillFilter(_byId('characterLocation1'),roots.map(function(p){return {value:p.id,label:p.name||p.displayName||p.id};}),'All locations',(_byId('characterLocation1')||{}).value||'');}}
+
 
     // =========================================================================
     // 8. TAB STRIP WIRING
