@@ -923,6 +923,8 @@
 
     window.LocationQueries = {
         getPlace: getPlace,
+        // Compatibility alias used by Crime's cross-domain contract.
+        getPlaceById: getPlace,
         getAllPlaces: getAllPlaces,
         getPlacesByParent: getPlacesByParent,
         getPlacesByType: getPlacesByType,
@@ -991,6 +993,21 @@
     if (typeof window.getAllSubLocationIds !== 'function') {
         window.getAllSubLocationIds = function (locationId) {
             return window.LocationQueries.getAllSubLocationIds(locationId);
+        };
+    }
+
+    // Disaster commands use the legacy display-name contract and pass a
+    // character record, not an ID. Keep that adapter at the Location boundary.
+    if (typeof window.getCurrentLocation !== 'function') {
+        window.getCurrentLocation = function (characterOrId) {
+            var character = typeof characterOrId === 'string'
+                ? CQ.getCharacterById(characterOrId)
+                : characterOrId;
+            if (!character) return null;
+            var locationId = _resolveCurrentLocationId(character);
+            if (!locationId) return null;
+            var place = LS.getPlaceById(locationId);
+            return place ? (place.displayName || place.name || null) : null;
         };
     }
 
