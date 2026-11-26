@@ -1199,6 +1199,48 @@
     }
 
     // =========================================================================
+    // 12. MANUAL VENDETTA WORKFLOWS
+    // =========================================================================
+
+    function createVendetta(data) {
+        data = data || {};
+        var aId = data.householdAId, bId = data.householdBId;
+        if (!aId || !bId) return _fail('Both households are required.', C.CODES.VALIDATION);
+        if (aId === bId) return _fail('A vendetta requires two different households.', C.CODES.SAME_HOUSEHOLD);
+        var a = window.getHouseholdById(aId), b = window.getHouseholdById(bId);
+        if (!a || !b) return _fail('One or both households could not be found.', C.CODES.NOT_FOUND);
+        var year = typeof data.year === 'number' ? data.year : _now();
+        if (typeof window.isValidYear === 'function' && !window.isValidYear(year)) return _fail('A valid world year is required.', C.CODES.VALIDATION);
+        try {
+            var result = State.createVendetta({
+                householdAId:aId, householdBId:bId,
+                characterAId:data.characterAId || null,
+                characterBId:data.characterBId || null,
+                cause:data.cause || 'Unspecified dispute',
+                notes:data.notes || null, year:year
+            });
+            if (!result || result.success !== true) return _fail(result && result.reason || 'Vendetta creation failed.', result && result.code || C.CODES.VALIDATION);
+            _log('vendetta','Vendetta Created','Vendetta created between '+(a.name || aId)+' and '+(b.name || bId),[]);
+            _commit(C.EVENTS.VENDETTA_CREATED,{vendettaId:result.data.id,householdAId:aId,householdBId:bId,manual:true});
+            return _ok(result.data);
+        } catch(e) { return _fail(e.message || String(e),C.CODES.VALIDATION); }
+    }
+
+    function resolveVendetta(vendettaId, options) {
+        options = _normaliseOptions(options);
+        if (!vendettaId) return _fail('Vendetta id is required.',C.CODES.VALIDATION);
+        var year = _resolveYear(options);
+        if (typeof window.isValidYear === 'function' && !window.isValidYear(year)) return _fail('A valid world year is required.',C.CODES.VALIDATION);
+        try {
+            var result = State.resolveVendetta(vendettaId,{year:year,resolution:options.resolution || 'Resolved',notes:options.notes || null});
+            if (!result || result.success !== true) return _fail(result && result.reason || 'Vendetta resolution failed.',result && result.code || C.CODES.VALIDATION);
+            _log('vendetta','Vendetta Resolved','Vendetta '+vendettaId+' resolved: '+(options.resolution || 'Resolved'),[]);
+            _commit(C.EVENTS.VENDETTA_RESOLVED,{vendettaId:vendettaId,resolution:options.resolution || 'Resolved',manual:true});
+            return _ok(result.data);
+        } catch(e) { return _fail(e.message || String(e),C.CODES.VALIDATION); }
+    }
+
+    // =========================================================================
     // 12. VENDETTA ESCALATION
     // =========================================================================
 
@@ -1478,6 +1520,8 @@
         triggerMurder: triggerMurder,
         triggerExecution: triggerExecution,
         escalateVendetta: escalateVendetta,
+        createVendetta: createVendetta,
+        resolveVendetta: resolveVendetta,
         createBloodFeud: createBloodFeud,
 
         // Persistence
