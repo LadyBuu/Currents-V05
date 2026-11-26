@@ -1374,6 +1374,8 @@
     window.HouseholdQueries = {
         // Lookups
         getHousehold: getHousehold,
+        // Explicit ID lookup alias used by cross-domain consumers (e.g. CrimeBootstrap).
+        getHouseholdById: getHousehold,
         getAllHouseholds: getAllHouseholds,
         getHouseholdsByLocation: getHouseholdsByLocation,
         getHouseholdsByStatus: getHouseholdsByStatus,
