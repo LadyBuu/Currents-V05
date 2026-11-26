@@ -524,6 +524,23 @@
         });
         var men = couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='male' || String(pair[1].gender||'').toLowerCase()==='male';});
         var women = couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='female' || String(pair[1].gender||'').toLowerCase()==='female';});
+        function pairAids(pair) {
+            var aids = [];
+            var a = pair[0], b = pair[1];
+            var al = a.currentLocationId || a.locationId || null;
+            var bl = b.currentLocationId || b.locationId || null;
+            if (al && bl && al === bl) aids.push('<small class="events-surrogacy-aid">⌂ Same location</small>');
+            var FQ = window.FamilyQueries;
+            if (FQ && typeof FQ.classifyKinship === 'function') {
+                var kin = FQ.classifyKinship(a.id, b.id);
+                if (kin && String(kin.type || '').toLowerCase() !== 'unrelated') {
+                    var label = String(kin.type || '').replace(/_/g, ' ');
+                    if (kin.degree) label = kin.degree + ' degree ' + label;
+                    aids.push('<small class="events-surrogacy-aid">Family: '+_esc(label)+'</small>');
+                }
+            }
+            return aids.length ? '<span class="events-surrogacy-aids">'+aids.join('')+'</span>' : '';
+        }
         function pairLabel(pair) {
             var sorted = pair.slice().sort(function(a,b){return (b.age||-1)-(a.age||-1);});
             return sorted.map(function(c){return _esc((c.name||'')+' '+(c.surname||'')+' ('+(c.age==null?'?':c.age)+')');}).join(' + ');
@@ -533,7 +550,7 @@
         html += '<div class="events-surrogacy-new__columns"><section><h4>Couples</h4>';
         html += '<div class="events-surrogacy-new__couples" data-list="same-sex">';
         couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='male' && String(pair[1].gender||'').toLowerCase()==='male';}).forEach(function(pair){
-            html += '<button type="button" data-action="choose-surrogacy-couple" data-ids="'+_esc(pair[0].id+'|'+pair[1].id)+'">'+pairLabel(pair)+'</button>';
+            html += '<button type="button" data-action="choose-surrogacy-couple" data-ids="'+_esc(pair[0].id+'|'+pair[1].id)+'"'>'+pairLabel(pair)+pairAids(pair)+'</button>';
         });
         couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='female' && String(pair[1].gender||'').toLowerCase()==='female';}).forEach(function(pair){
             html += '<button type="button" data-action="choose-surrogacy-couple" data-ids="'+_esc(pair[0].id+'|'+pair[1].id)+'">'+pairLabel(pair)+'</button>';
