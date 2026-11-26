@@ -493,11 +493,14 @@
             rowClass: options.rowClass
         };
 
-        var html = '<div class="character-list">';
-        for (var i = 0; i < sorted.length; i++) {
-            html += _renderRow(sorted[i], rowOptions);
+        var html = '';
+        if (Array.isArray(options.groups)) {
+            options.groups.forEach(function(group){html+='<details class="character-group" open><summary>'+_esc(group.label)+' ('+group.characters.length+')</summary><div class="character-list">';group.characters.forEach(function(c){html+=_renderRow(c,rowOptions);});html+='</div></details>';});
+        } else {
+            html='<div class="character-list">';
+            for (var i = 0; i < sorted.length; i++) html += _renderRow(sorted[i], rowOptions);
+            html += '</div>';
         }
-        html += '</div>';
 
         container.innerHTML = html;
 
