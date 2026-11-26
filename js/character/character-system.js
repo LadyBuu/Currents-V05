@@ -697,23 +697,6 @@
     //       Deleted modules. Names are undefined. Fix callers.
 
     // =========================================================================
-    // 11. DIAGNOSTIC
-    // =========================================================================
-
-    if (window.console && typeof window.console.debug === 'function') {
-        window.console.debug(
-            'character-system.js: legacy aliases installed (compatibility shim). ' +
-            'New code should call CharacterState / CharacterCommands / ' +
-            'CharacterQueries / CharacterCreationCommands / ' +
-            'CharacterDeletionCommands / CharacterLifecycle / FamilyRules / ' +
-            'FamilyState / FamilyQueries / FamilyCommands / FamilyStatistics / ' +
-            'MortalityRules / MortalityQueries / MortalityStatistics / ' +
-            'ChildrenState / ChildrenCommands / ChildrenQueries / ' +
-            'ChildrenStatistics / ChildrenRules / ChildrenGenerator directly.'
-        );
-    }
-
-    // =========================================================================
     // 12. COMMONJS EXPORT
     // =========================================================================
 
