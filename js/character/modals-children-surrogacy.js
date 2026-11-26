@@ -388,6 +388,33 @@
 
                 if (_hasId(selectedPartnerId)) {
                     options.intendedPartnerId = selectedPartnerId;
+                    var partnerSummary = _readSummary(selectedPartnerId);
+                    var parentGender = String(intendedParent.gender || '').toLowerCase();
+                    var partnerGender = String(partnerSummary && partnerSummary.gender || '').toLowerCase();
+                    // For a female couple using a sperm donor, the oldest woman is
+                    // the biological mother; her partner is the adoptive/legal mother.
+                    if (parentGender === 'female' && partnerGender === 'female' && _hasId(selectedSpermDonorId)) {
+                        var parentAge = Number(intendedParent.age);
+                        var partnerAge = Number(partnerSummary.age);
+                        if (parentAge >= partnerAge) {
+                            options.intendedParentType = 'biological';
+                            options.intendedPartnerType = 'legal';
+                        } else {
+                            options.intendedParentType = 'legal';
+                            options.intendedPartnerType = 'biological';
+                        }
+                        options.intendedParentRole = 'mother';
+                        options.intendedPartnerRole = 'mother';
+                    }
+                    // For a male couple with a gestational surrogate, the
+                    // surrogate supplies the biological egg; both men are legal parents.
+                    if (parentGender === 'male' && partnerGender === 'male' && type === 'gestational') {
+                        options.eggDonorId = selectedSurrogateId;
+                        options.intendedParentType = 'legal';
+                        options.intendedPartnerType = 'legal';
+                        options.intendedParentRole = 'father';
+                        options.intendedPartnerRole = 'father';
+                    }
                 }
                 if (_hasId(selectedSpermDonorId)) {
                     options.spermDonorId = selectedSpermDonorId;
