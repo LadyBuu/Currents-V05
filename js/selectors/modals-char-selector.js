@@ -511,9 +511,16 @@
         var currentYear = window.getCurrentYear();
         if (filters.sortBy === 'age_desc') {
             result.sort(function(a, b) {
-                var aAge = a.birthYear ? currentYear - a.birthYear : -1;
-                var bAge = b.birthYear ? currentYear - b.birthYear : -1;
-                return bAge - aAge;
+                var aAge = window.calculateAge(a.birthYear, a.isDeceased === true, a.deathYear);
+                var bAge = window.calculateAge(b.birthYear, b.isDeceased === true, b.deathYear);
+                var aKnown = typeof aAge === 'number' && Number.isFinite(aAge);
+                var bKnown = typeof bAge === 'number' && Number.isFinite(bAge);
+                if (aKnown && !bKnown) return -1;
+                if (!aKnown && bKnown) return 1;
+                if (aKnown && bKnown && aAge !== bAge) return bAge - aAge;
+                return ((a.name || '') + ' ' + (a.surname || '')).localeCompare(
+                    ((b.name || '') + ' ' + (b.surname || ''))
+                );
             });
         } else if (filters.sortBy === 'age_asc') {
             result.sort(function(a, b) {
