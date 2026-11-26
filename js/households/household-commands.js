@@ -796,6 +796,25 @@
         return _ok(null);
     }
 
+    /** Updates the joined year on the open character household-history entry. */
+    function _updateCharacterMembershipJoinedYear(characterId, householdId, joinedYear) {
+        var history = _getCharacterHistory(characterId);
+        for (var i = history.length - 1; i >= 0; i--) {
+            var entry = history[i];
+            if (entry.householdId === householdId && !entry.leftYear) {
+                entry.joinedYear = joinedYear;
+                break;
+            }
+        }
+        var update = _cc.updateCharacterFields(characterId, { householdHistory: history });
+        if (!update || update.success !== true) {
+            return _fail(update && update.code ? update.code : 'CHARACTER_UPDATE_FAILED',
+                update && update.reason ? update.reason :
+                'CharacterCommands.updateCharacterFields refused the joined-year update.');
+        }
+        return _ok(null);
+    }
+
     // =========================================================================
     // 8. FIELD ALLOWLISTS
     // =========================================================================
@@ -1850,6 +1869,14 @@
             member.departmentId = updates.departmentId;
             changed.push('departmentId');
         }
+        if (updates.joinedYear !== undefined) {
+            var joinedYear = _resolveYear(updates.joinedYear);
+            if (joinedYear === null) return _fail('INVALID_YEAR', 'Invalid joined year');
+            if (joinedYear !== member.joinedYear) {
+                member.joinedYear = joinedYear;
+                changed.push('joinedYear');
+            }
+        }
         if (updates.notes !== undefined) {
             member.notes = updates.notes;
             changed.push('notes');
@@ -1868,6 +1895,16 @@
         }
 
         household.updatedAt = Date.now();
+
+        // Keep the character reverse-index history aligned with the member record.
+        if (changed.indexOf('joinedYear') !== -1) {
+            var joinedResult = _updateCharacterMembershipJoinedYear(
+                characterId, householdId, member.joinedYear
+            );
+            if (!joinedResult.success) {
+                return _fail(joinedResult.code, joinedResult.reason);
+            }
+        }
 
         // If role changed, update the character's householdHistory entry.
         if (updates.role !== undefined) {
