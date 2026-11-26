@@ -463,6 +463,15 @@
             : parseInt(yearRaw, 10);
         var applyEffects = root.querySelector('#disasterApplyEffects').checked;
         var mode = root.querySelector('#disasterEffectsMode').value;
+        if (!locationId) {
+            _toast('Please select a location', 'error');
+            return false;
+        }
+        if (isNaN(year)) {
+            _toast('Year must be a number', 'error');
+            return false;
+        }
+
         var previewResult = root.__disasterPreview;
         if (!previewResult || !previewResult.success ||
             previewResult.data.disaster.locationId !== locationId ||
@@ -490,15 +499,6 @@
             previewRecord.crimeIncrease = customEffects.crimeIncrease;
             previewRecord.metadata = previewRecord.metadata || {};
             previewRecord.metadata.effectsMode = 'custom';
-        }
-
-        if (!locationId) {
-            _toast('Please select a location', 'error');
-            return false;
-        }
-        if (isNaN(year)) {
-            _toast('Year must be a number', 'error');
-            return false;
         }
 
         var result = Commands.triggerDisaster(locationId, disasterType, year, {
