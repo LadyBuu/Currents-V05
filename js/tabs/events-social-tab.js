@@ -1,320 +1,52 @@
 (function () {
-    'use strict';
-
-    var SCOPE = 'events';
-    var TAB_ID = 'social';
-    var TYPES = window.RELATIONSHIP_ARCHETYPES || {};
-    var SOCIAL_TYPES = [
-        TYPES.FRIENDSHIP || 'friendship',
-        TYPES.RIVALRY || 'rivalry',
-        TYPES.ENMITY || 'enmity'
-    ];
-
-    function esc(value) {
-        var text = value == null ? '' : String(value);
-        return typeof window.escapeHtml === 'function'
-            ? window.escapeHtml(text)
-            : text.replace(/[&<>"']/g, function (char) {
-                return {
-                    '&': '&amp;', '<': '&lt;', '>': '&gt;',
-                    '"': '&quot;', "'": '&#39;'
-                }[char];
-            });
-    }
-
-    function chars() {
-        var list = typeof window.getCharacters === 'function'
-            ? window.getCharacters()
-            : (window.CharacterQueries &&
-               typeof window.CharacterQueries.getAllCharacters === 'function'
-                ? window.CharacterQueries.getAllCharacters()
-                : []);
-        return Array.isArray(list) ? list.filter(function (character) {
-            return character && character.id && character.isDeleted !== true;
-        }) : [];
-    }
-
-    function characterName(character) {
-        if (!character) return '';
-        return [character.name, character.surname].filter(Boolean).join(' ') ||
-            character.fullName || character.id || '';
-    }
-
-    function characterById(id) {
-        if (window.getCharacterById) return window.getCharacterById(id);
-        var list = chars();
-        for (var i = 0; i < list.length; i++) {
-            if (String(list[i].id) === String(id)) return list[i];
-        }
-        return null;
-    }
-
-    function characterLocation(character) {
-        return character && (
-            character.currentLocationId ||
-            character.locationId ||
-            character.placeId ||
-            character.location
-        );
-    }
-
-    function locationIds(locationId) {
-        var ids = {};
-        if (!locationId) return ids;
-        ids[locationId] = true;
-        var queries = window.LocationQueries;
-        if (queries && typeof queries.getAllSubLocationIds === 'function') {
-            try {
-                var descendants = queries.getAllSubLocationIds(locationId);
-                if (Array.isArray(descendants)) {
-                    descendants.forEach(function (id) {
-                        if (id) ids[id] = true;
-                    });
-                }
-            } catch (error) {
-                // Exact-location filtering remains available if expansion fails.
-            }
-        }
-        return ids;
-    }
-
-    function locationLabel(place) {
-        return place && (place.name || place.displayName || place.id || place.placeId) || '';
-    }
-
-    function getSocialRecords(locationId) {
-        if (!window.EventsQueries ||
-            typeof window.EventsQueries.getSocialEvents !== 'function') {
-            return { available: false, reason: 'EventsQueries.getSocialEvents is unavailable.' };
-        }
-        var result = window.EventsQueries.getSocialEvents(locationId || null);
-        if (!result || result.available !== true) return result || {
-            available: false,
-            reason: 'Social relationship query returned no result.'
-        };
-        return result;
-    }
-
-    function activeSocial(locationId) {
-        var result = getSocialRecords(locationId);
-        if (!result || result.available !== true) return result;
-        return {
-            available: true,
-            records: (result.records || []).filter(function (record) {
-                return record && record.status === 'ongoing' &&
-                    SOCIAL_TYPES.indexOf(record.type) !== -1;
-            })
-        };
-    }
-
-    function refresh() {
-        if (window.TabManager && window.TabManager.renderActive) {
-            window.TabManager.renderActive(SCOPE);
-        }
-    }
-
-    function toast(message, type) {
-        if (window.showToast) window.showToast(message, type || 'info');
-        else if (window._showToast) window._showToast(message, type || 'info');
-    }
-
-    function openPair(characterA, characterB, type) {
-        if (!window.openRelationshipModal) {
-            toast('Relationship creation modal is unavailable.', 'error');
-            return;
-        }
-        window.openRelationshipModal(characterA, characterB, refresh, {
-            defaultType: type,
-            allowedTypes: SOCIAL_TYPES.slice()
-        });
-    }
-
-    function optionMarkup(character, selectedId) {
-        var selected = String(character.id) === String(selectedId) ? ' selected' : '';
-        return '<option value="' + esc(character.id) + '"' + selected + '>' +
-            esc(characterName(character)) + '</option>';
-    }
-
-    function populateCharacterB(container, pool, selectedId) {
-        var pickerB = container.querySelector('[data-social-b]');
-        var pickerA = container.querySelector('[data-social-a]');
-        if (!pickerB || !pickerA) return;
-
-        var characterAId = pickerA.value;
-        var available = pool.filter(function (character) {
-            return !characterAId || String(character.id) !== String(characterAId);
-        });
-        var keepSelected = available.some(function (character) {
-            return String(character.id) === String(selectedId);
-        }) ? selectedId : '';
-
-        pickerB.innerHTML = '<option value="">Character B</option>' +
-            available.map(function (character) {
-                return optionMarkup(character, keepSelected);
-            }).join('');
-        pickerB.disabled = available.length === 0;
-    }
-
-    function render(container, context) {
-        if (!container) return;
-
-        var scopedId = context && context.locationId || '';
-        container.__socialContextLocation = scopedId;
-        var hasStoredLocation = Object.prototype.hasOwnProperty.call(container, '__socialLocation');
-        var selectedLocation = hasStoredLocation ? container.__socialLocation : scopedId;
-        var limitToLocation = container.__socialLimit === true;
-        var places = typeof window.getPlaces === 'function' ? window.getPlaces() || [] : [];
-        var selectedIds = locationIds(selectedLocation);
-        var allCharacters = chars();
-        var pool = allCharacters.filter(function (character) {
-            if (!limitToLocation || !selectedLocation) return true;
-            return selectedIds[characterLocation(character)] === true;
-        });
-
-        var locationOptions = '<option value="">Choose location</option>' +
-            places.map(function (place) {
-                var id = place && (place.id || place.placeId);
-                if (!id) return '';
-                return '<option value="' + esc(id) + '"' +
-                    (String(id) === String(selectedLocation) ? ' selected' : '') +
-                    '>' + esc(locationLabel(place)) + '</option>';
-            }).join('');
-
-        var queryResult = activeSocial(limitToLocation ? selectedLocation : null);
-        var records = queryResult && queryResult.available ? queryResult.records : [];
-        var labels = {
-            friendship: 'Friendship',
-            rivalry: 'Rivalry',
-            enmity: 'Enmity'
-        };
-
-        var html = '<section class="events-social">' +
-            '<div class="events-social__bar">' +
-                '<label><input type="checkbox" data-social-limit ' +
-                    (limitToLocation ? 'checked' : '') + '> Limit to location</label>' +
-                '<select data-social-location ' + (limitToLocation ? '' : 'disabled') +
-                    ' aria-label="Social location filter">' + locationOptions + '</select>' +
-                '<select data-social-a aria-label="Character A">' +
-                    '<option value="">Character A</option>' +
-                    pool.map(function (character) { return optionMarkup(character, ''); }).join('') +
-                '</select>' +
-                '<select data-social-b aria-label="Character B">' +
-                    '<option value="">Character B</option>' +
-                    pool.map(function (character) { return optionMarkup(character, ''); }).join('') +
-                '</select>' +
-                '<select data-social-type aria-label="Relationship type">' +
-                    '<option value="friendship">Friendship</option>' +
-                    '<option value="rivalry">Rivalry</option>' +
-                    '<option value="enmity">Enmity</option>' +
-                '</select>' +
-                '<button type="button" data-social-action="create">Create relationship</button>' +
-                '<button type="button" data-social-action="random">Random pair</button>' +
-                '<button type="button" data-social-action="refresh">Refresh</button>' +
-            '</div>' +
-            '<p class="events-social__muted">' +
-                (queryResult && queryResult.available
-                    ? records.length + ' active social relationship(s)'
-                    : esc(queryResult && queryResult.reason || 'Social records are unavailable.')) +
-            '</p>' +
-            '<div>' +
-                (records.length ? records.map(function (record) {
-                    return '<article class="events-social__row">' +
-                        '<strong>' + esc(labels[record.type] || record.type) + '</strong> · ' +
-                        esc(characterName(characterById(record.participantA)) || record.participantA) +
-                        ' ↔ ' +
-                        esc(characterName(characterById(record.participantB)) || record.participantB) +
-                        (record.startYear != null ? ' · since ' + esc(record.startYear) : '') +
-                    '</article>';
-                }).join('') : '<p class="events-social__muted">No active social relationships match this view.</p>') +
-            '</div>' +
-        '</section>';
-
-        container.innerHTML = html;
-        populateCharacterB(container, pool, '');
-
-        if (container.__socialWired) return;
-        container.__socialWired = true;
-
-        container.addEventListener('change', function (event) {
-            var target = event.target;
-            if (target.matches('[data-social-a]')) {
-                var currentB = container.querySelector('[data-social-b]');
-                populateCharacterB(container, poolForCurrentView(container), currentB && currentB.value);
-                return;
-            }
-            if (target.matches('[data-social-limit]')) {
-                container.__socialLimit = target.checked;
-                if (target.checked && !container.__socialLocation) {
-                    container.__socialLocation = container.__socialContextLocation || '';
-                }
-                refresh();
-                return;
-            }
-            if (target.matches('[data-social-location]')) {
-                container.__socialLocation = target.value;
-                refresh();
-            }
-        });
-
-        container.addEventListener('click', function (event) {
-            var button = event.target.closest('[data-social-action]');
-            if (!button) return;
-            if (button.dataset.socialAction === 'refresh') {
-                refresh();
-                return;
-            }
-
-            var available = poolForCurrentView(container);
-            if (available.length < 2) {
-                toast('At least two characters are required in the selected scope.', 'warning');
-                return;
-            }
-
-            var characterA;
-            var characterB;
-            var type;
-
-            if (button.dataset.socialAction === 'random') {
-                var first = Math.floor(Math.random() * available.length);
-                var second = Math.floor(Math.random() * (available.length - 1));
-                if (second >= first) second++;
-                characterA = available[first];
-                characterB = available[second];
-                type = SOCIAL_TYPES[Math.floor(Math.random() * SOCIAL_TYPES.length)];
-            } else {
-                var idA = container.querySelector('[data-social-a]').value;
-                var idB = container.querySelector('[data-social-b]').value;
-                characterA = available.find(function (character) {
-                    return String(character.id) === String(idA);
-                });
-                characterB = available.find(function (character) {
-                    return String(character.id) === String(idB);
-                });
-                type = container.querySelector('[data-social-type]').value;
-                if (!characterA || !characterB || characterA.id === characterB.id) {
-                    toast('Choose two different characters.', 'warning');
-                    return;
-                }
-            }
-            openPair(characterA, characterB, type);
-        });
-    }
-
-    function poolForCurrentView(container) {
-        var selected = container.__socialLocation || '';
-        var restricted = container.__socialLimit === true && !!selected;
-        var ids = locationIds(selected);
-        return chars().filter(function (character) {
-            return !restricted || ids[characterLocation(character)] === true;
-        });
-    }
-
-    if (window.TabManager && window.TabManager.register) {
-        window.TabManager.register(SCOPE, TAB_ID, render);
-    }
-
-    window.EventsSocialTab = {
-        id: TAB_ID,
-        render: render
-    };
+'use strict';
+var SCOPE='events', TAB_ID='social', A=window.RELATIONSHIP_ARCHETYPES||{};
+var SOCIAL=[A.FRIENDSHIP||'friendship',A.RIVALRY||'rivalry',A.ENMITY||'enmity'];
+function esc(v){var s=v==null?'':String(v);return window.escapeHtml?window.escapeHtml(s):s.replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function chars(){var q=window.CharacterQueries;var a=q&&q.getAllCharacters?q.getAllCharacters():(window.getCharacters?window.getCharacters():[]);return Array.isArray(a)?a.filter(function(c){return c&&c.id&&c.isDeleted!==true;}):[];}
+function households(){var q=window.HouseholdQueries;return q&&q.getAllHouseholds?q.getAllHouseholds():[];}
+function places(){var q=window.LocationQueries;return q&&q.getAllPlaces?q.getAllPlaces({includeDeprecated:false}):(window.getPlaces?window.getPlaces()||[]:[]);}
+function name(c){return c?([c.name,c.surname].filter(Boolean).join(' ')||c.fullName||c.id):'';}
+function char(id){return window.getCharacterById?window.getCharacterById(id):chars().find(function(c){return c.id===id;});}
+function loc(c){return window.LocationQueries&&window.LocationQueries.getCurrentLocationId?window.LocationQueries.getCurrentLocationId(c.id):(c.currentLocationId||c.locationId||null);}
+function scopeIds(id){var x={};if(!id)return x;x[id]=true;var q=window.LocationQueries;if(q&&q.getAllSubLocationIds){try{q.getAllSubLocationIds(id).forEach(function(v){x[v]=true;});}catch(e){}}return x;}
+function currentScope(root){return root.__socialLimit?root.__socialLocation||'':'';}
+function people(root){var id=currentScope(root),ids=scopeIds(id);return chars().filter(function(c){return !id||ids[loc(c)]===true;});}
+function homes(root){var id=currentScope(root),ids=scopeIds(id);return households().filter(function(h){return !id||ids[h.locationId]===true;});}
+function toast(s,t){if(window.showToast)window.showToast(s,t||'info');else if(window._showToast)window._showToast(s,t||'info');}
+function refresh(){if(window.TabManager&&window.TabManager.renderActive)window.TabManager.renderActive(SCOPE);}
+function year(){return window.getCurrentYear?window.getCurrentYear():new Date().getFullYear();}
+function opt(v,l,selected){return '<option value="'+esc(v)+'"'+(selected?' selected':'')+'>'+esc(l)+'</option>';}
+function opts(list,label,empty){return opt('',empty||'Select…',true)+list.map(function(x){return opt(x.id,label(x));}).join('');}
+function q(name,id){try{var r=window.EventsQueries&&window.EventsQueries[name]?window.EventsQueries[name](id||null):null;return r&&r.available?r:{available:false,reason:r&&r.reason||name+' unavailable',records:[]};}catch(e){return {available:false,reason:e.message||String(e),records:[]};}}
+function persist(domain){return window[domain]&&window[domain].persist?window[domain].persist():{success:false,reason:domain+'.persist unavailable'};}
+function commit(result,domain,label){if(!result||!result.success){toast(result&&result.reason||label+' failed.','error');return;}var saved=persist(domain);if(!saved||!saved.success){toast(label+' changed in memory, but saving failed: '+(saved&&saved.reason||'unknown error'),'error');refresh();return;}toast(label+' saved.','success');refresh();}
+function styles(){if(document.getElementById('events-social-workflow-css'))return;var s=document.createElement('style');s.id='events-social-workflow-css';s.textContent='.events-social{display:flex;flex-direction:column;gap:.75rem;min-width:0}.events-social__panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);overflow:hidden}.events-social__head{display:flex;justify-content:space-between;gap:.5rem;padding:.55rem .75rem;background:var(--bg3);border-bottom:1px solid var(--border)}.events-social__head h3{margin:0;color:var(--accent);font:600 .72rem var(--f-display);text-transform:uppercase;letter-spacing:.05em}.events-social__body{padding:.65rem;display:flex;flex-direction:column;gap:.5rem}.events-social__form,.events-social__bar{display:flex;align-items:end;gap:.5rem;flex-wrap:wrap;padding:.6rem;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius)}.events-social__field{display:flex;flex:1 1 10rem;flex-direction:column;gap:.2rem;min-width:0;color:var(--dim);font-size:.62rem;text-transform:uppercase}.events-social__field input,.events-social__field select{box-sizing:border-box;width:100%;min-width:0;padding:.38rem;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font:inherit;font-size:.74rem;text-transform:none}.events-social button{padding:.38rem .65rem;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font:inherit;font-size:.68rem;cursor:pointer}.events-social button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}.events-social button:hover{border-color:var(--accent)}.events-social__row{display:flex;justify-content:space-between;align-items:center;gap:.5rem;flex-wrap:wrap;padding:.5rem;border:1px solid var(--border);border-radius:var(--radius);font-size:.72rem}.events-social__muted{margin:0;color:var(--dim);font-size:.66rem}.events-social__actions{display:flex;gap:.3rem;flex-wrap:wrap}@media(max-width:650px){.events-social__form>*{flex:1 1 100%}}';document.head.appendChild(s);}
+function render(root,context){
+ if(!root)return;styles();
+ if(!Object.prototype.hasOwnProperty.call(root,'__socialLocation'))root.__socialLocation=context&&context.locationId||'';
+ if(root.__socialLimit===undefined)root.__socialLimit=false;
+ var id=currentScope(root),p=places(),cs=people(root),hs=homes(root);
+ var social=q('getSocialEvents',id),vend=q('getVendettaRecords',id),moves=q('getRelocationRecords',id),deps=q('getHouseholdDepartureCandidates',id);
+ var sr=(social.records||[]).filter(function(r){return r&&r.status==='ongoing'&&SOCIAL.indexOf(r.type)!==-1;});
+ var vr=vend.records||[],mr=(moves.records||[]).slice(0,25),dr=deps.records||[];
+ var html='<section class="events-social"><div class="events-social__bar"><label><input type="checkbox" data-limit '+(root.__socialLimit?'checked':'')+'> Limit to location</label><label class="events-social__field">Location<select data-location '+(root.__socialLimit?'':'disabled')+'>'+opt('','Choose location',!root.__socialLocation)+p.map(function(x){var pid=x.id||x.placeId;return pid?opt(pid,x.displayName||x.name||pid,pid===root.__socialLocation):'';}).join('')+'</select></label><button data-action="refresh">Refresh</button></div>';
+ html+='<section class="events-social__panel"><header class="events-social__head"><h3>Relationships</h3><span class="events-social__muted">'+sr.length+' active</span></header><div class="events-social__body"><div class="events-social__form"><label class="events-social__field">Character A<select data-a>'+opts(cs,name,'Character A')+'</select></label><label class="events-social__field">Character B<select data-b>'+opts(cs,name,'Character B')+'</select></label><label class="events-social__field">Type<select data-type>'+opt('friendship','Friendship',true)+opt('rivalry','Rivalry')+opt('enmity','Enmity')+'</select></label><button class="primary" data-action="relationship">Create</button><button data-action="random-relationship">Random pair</button></div>'+(social.available?(sr.length?sr.map(function(r){return '<article class="events-social__row"><span><strong>'+esc(r.type)+'</strong> · '+esc(name(char(r.participantA))||r.participantA)+' ↔ '+esc(name(char(r.participantB))||r.participantB)+'</span></article>';}).join(''):'<p class="events-social__muted">No active social relationships.</p>'):'<p class="events-social__muted">'+esc(social.reason)+'</p>')+'</div></section>';
+ html+='<section class="events-social__panel"><header class="events-social__head"><h3>Vendettas</h3><span class="events-social__muted">'+vr.length+' records</span></header><div class="events-social__body"><div class="events-social__form"><label class="events-social__field">Household A<select data-ha>'+opts(hs,function(h){return h.name||h.id;},'Household A')+'</select></label><label class="events-social__field">Household B<select data-hb>'+opts(hs,function(h){return h.name||h.id;},'Household B')+'</select></label><label class="events-social__field">Cause<input data-cause placeholder="Reason for feud"></label><label class="events-social__field" style="flex:0 1 6rem">Year<input data-vyear type="number" value="'+esc(year())+'"></label><button class="primary" data-action="vendetta">Create vendetta</button><button data-action="random-vendetta">Random feud</button></div>'+(vend.available?(vr.length?vr.map(function(v){var active=v.status!=='resolved';return '<article class="events-social__row"><span><strong>'+esc(v.householdA&&v.householdA.name||v.householdAName||v.householdAId)+' ↔ '+esc(v.householdB&&v.householdB.name||v.householdBName||v.householdBId)+'</strong><br><span class="events-social__muted">'+esc(v.status)+' · '+esc(v.startedYear)+' · '+((v.deaths||[]).length)+' death(s) · '+esc(v.cause||'No cause recorded')+'</span></span><span class="events-social__actions">'+(active?'<button data-action="resolve" data-id="'+esc(v.id)+'">Resolve</button>'+(v.status!=='escalated'?'<button data-action="escalate" data-id="'+esc(v.id)+'">Escalate</button>':''):'')+'</span></article>';}).join(''):'<p class="events-social__muted">No vendettas in this scope.</p>'):'<p class="events-social__muted">'+esc(vend.reason)+'</p>')+'</div></section>';
+ html+='<section class="events-social__panel"><header class="events-social__head"><h3>Relocations</h3><span class="events-social__muted">'+(moves.available?moves.totalCount:'Unavailable')+' moves</span></header><div class="events-social__body"><div class="events-social__form"><label class="events-social__field">Character<select data-mchar>'+opts(cs.filter(function(c){return c.isDeceased!==true;}),name,'Character')+'</select></label><label class="events-social__field">Destination<select data-dest>'+opt('','Destination',true)+p.map(function(x){var pid=x.id||x.placeId;return pid?opt(pid,x.displayName||x.name||pid):'';}).join('')+'</select></label><label class="events-social__field" style="flex:0 1 6rem">Year<input data-myear type="number" value="'+esc(year())+'"></label><label class="events-social__field">Note<input data-note placeholder="Optional reason"></label><button class="primary" data-action="move">Move character</button><button data-action="random-move">Random relocation</button></div>'+(moves.available?(mr.length?mr.map(function(m){return '<article class="events-social__row"><span><strong>'+esc(m.characterName)+'</strong><br><span class="events-social__muted">'+esc(m.fromLocationName||'Unknown origin')+' → '+esc(m.locationName||m.locationId)+' · '+esc(m.year)+'</span></span></article>';}).join(''):'<p class="events-social__muted">No recorded moves in this scope.</p>'):'<p class="events-social__muted">'+esc(moves.reason)+'</p>')+'</div></section>';
+ html+='<section class="events-social__panel"><header class="events-social__head"><h3>Household departures</h3><span class="events-social__muted">'+dr.length+' current memberships</span></header><div class="events-social__body"><div class="events-social__form"><label class="events-social__field">Member<select data-member>'+opt('','Choose member',true)+dr.map(function(d){return opt(d.householdId+'|'+d.characterId,d.characterName+' · '+d.householdName+(d.isHead?' · Head':''));}).join('')+'</select></label><label class="events-social__field" style="flex:0 1 6rem">Year<input data-lyear type="number" value="'+esc(year())+'"></label><label class="events-social__field">Reason<input data-reason value="Left household"></label><button class="primary" data-action="leave">Record departure</button><button data-action="random-leave">Random departure</button></div><p class="events-social__muted">Departures update membership history and trigger head succession where required. Residence occupancy is not changed when an individual leaves.</p>'+(deps.available?'':'<p class="events-social__muted">'+esc(deps.reason)+'</p>')+'</div></section></section>';
+ root.innerHTML=html;filterB(root);
+ if(root.__socialWired)return;root.__socialWired=true;
+ root.addEventListener('change',function(e){var t=e.target;if(t.matches('[data-a]'))filterB(root);if(t.matches('[data-limit]')){root.__socialLimit=t.checked;refresh();}if(t.matches('[data-location]')){root.__socialLocation=t.value;refresh();}if(t.matches('[data-ha]')){var b=root.querySelector('[data-hb]');Array.from(b.options).forEach(function(o){o.hidden=!!t.value&&o.value===t.value;});if(b.value===t.value)b.value='';}});
+ root.addEventListener('click',function(e){var b=e.target.closest('[data-action]');if(!b)return;var action=b.dataset.action;if(action==='refresh'){refresh();return;}
+ if(action==='relationship'||action==='random-relationship'){var pool=people(root),a,bchar,type;if(action==='random-relationship'){if(pool.length<2){toast('At least two characters are required.','warning');return;}var i=Math.floor(Math.random()*pool.length),j=Math.floor(Math.random()*(pool.length-1));if(j>=i)j++;a=pool[i];bchar=pool[j];type=SOCIAL[Math.floor(Math.random()*SOCIAL.length)];if(!window.confirm('Create '+type+' between '+name(a)+' and '+name(bchar)+'?'))return;}else{a=char(root.querySelector('[data-a]').value);bchar=char(root.querySelector('[data-b]').value);type=root.querySelector('[data-type]').value;}if(!a||!bchar||a.id===bchar.id){toast('Choose two different characters.','warning');return;}if(!window.openRelationshipModal){toast('Relationship modal unavailable.','error');return;}window.openRelationshipModal(a,bchar,refresh,{defaultType:type,allowedTypes:SOCIAL.slice()});return;}
+ if(action==='vendetta'||action==='random-vendetta'){var h=homes(root),ha,hb,cause,yr;if(action==='random-vendetta'){var pairs=[];for(var x=0;x<h.length;x++)for(var y=x+1;y<h.length;y++){var existing=window.CrimeQueries&&window.CrimeQueries.getActiveVendettaBetween(h[x].id,h[y].id);if(!existing)pairs.push([h[x],h[y]]);}if(!pairs.length){toast('No household pair is eligible for a new vendetta.','warning');return;}var pair=pairs[Math.floor(Math.random()*pairs.length)];ha=pair[0];hb=pair[1];cause='Randomly generated dispute';yr=year();if(!window.confirm('Create a vendetta between '+ha.name+' and '+hb.name+'?'))return;}else{ha=h.find(function(z){return z.id===root.querySelector('[data-ha]').value;});hb=h.find(function(z){return z.id===root.querySelector('[data-hb]').value;});cause=root.querySelector('[data-cause]').value.trim();yr=Number(root.querySelector('[data-vyear]').value);if(!ha||!hb||ha.id===hb.id||!cause){toast('Choose two different households and enter a cause.','warning');return;}}commit(window.CrimeCommands&&window.CrimeCommands.createVendetta({householdAId:ha.id,householdBId:hb.id,cause:cause,year:yr}),'CrimeCommands','Vendetta creation');return;}
+ if(action==='resolve'||action==='escalate'){var id=b.dataset.id;if(action==='resolve'){var resolution=window.prompt('How was this vendetta resolved?','Resolved by agreement');if(resolution===null)return;commit(window.CrimeCommands.resolveVendetta(id,{year:year(),resolution:resolution}),'CrimeCommands','Vendetta resolution');}else{var reason=window.prompt('Reason for forced escalation:','Escalated by the parties');if(reason===null)return;commit(window.CrimeCommands.escalateVendetta(id,{year:year(),force:true,reason:reason}),'CrimeCommands','Vendetta escalation');}return;}
+ if(action==='move'||action==='random-move'){var pool=people(root).filter(function(c){return c.isDeceased!==true;}),person,dest,yr2,note;if(action==='random-move'){var choices=[];pool.forEach(function(c){var from=loc(c);p.forEach(function(place){var pid=place.id||place.placeId;if(pid&&pid!==from)choices.push({c:c,p:place});});});if(!choices.length){toast('No valid character and destination combination.','warning');return;}var choice=choices[Math.floor(Math.random()*choices.length)];person=choice.c;dest=choice.p.id||choice.p.placeId;yr2=year();note='Random relocation';if(!window.confirm('Move '+name(person)+' to '+(choice.p.displayName||choice.p.name||dest)+'?'))return;}else{person=char(root.querySelector('[data-mchar]').value);dest=root.querySelector('[data-dest]').value;yr2=Number(root.querySelector('[data-myear]').value);note=root.querySelector('[data-note]').value;if(!person||!dest){toast('Choose a character and destination.','warning');return;}}commit(window.LocationCommands&&window.LocationCommands.recordMove(person.id,dest,{year:yr2,note:note}),'LocationCommands','Relocation');return;}
+ if(action==='leave'||action==='random-leave'){var selected;if(action==='random-leave'){var eligible=dr.filter(function(d){return !d.isDeceased;});if(!eligible.length){toast('No eligible household members.','warning');return;}selected=eligible[Math.floor(Math.random()*eligible.length)];if(!window.confirm('Record '+selected.characterName+' leaving '+selected.householdName+'?'))return;}else{var bits=root.querySelector('[data-member]').value.split('|');selected=dr.find(function(d){return d.householdId===bits[0]&&d.characterId===bits[1];});if(!selected){toast('Choose a household member.','warning');return;}}var left=action==='random-leave'?year():Number(root.querySelector('[data-lyear]').value),why=action==='random-leave'?'Randomly generated departure':root.querySelector('[data-reason]').value.trim();commit(window.HouseholdCommands&&window.HouseholdCommands.removeMember(selected.householdId,selected.characterId,{leftYear:left,reason:why}),'HouseholdCommands','Household departure');}
+ });
+}
+function filterB(root){var a=root.querySelector('[data-a]'),b=root.querySelector('[data-b]');if(!a||!b)return;Array.from(b.options).forEach(function(o){o.hidden=!!a.value&&o.value===a.value;});if(b.value===a.value)b.value='';}
+if(window.TabManager&&window.TabManager.register)window.TabManager.register(SCOPE,TAB_ID,render);
+window.EventsSocialTab={id:TAB_ID,render:render};
 })();
