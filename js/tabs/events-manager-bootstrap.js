@@ -81,30 +81,18 @@
  * ICON POLICY: Uses SVG from icons.js. No emojis.
  *
  * =============================================================================
- * REFACTOR HISTORY:
- *   Current revision (Phase 3C):
- *     - KNOWN_TAB_IDS gains 'surrogacy'. The events-surrogacy-tab.js
- *       file self-registers at load; adding the id here makes the
- *       bootstrap's setActiveTabId and _syncTabStrip accept clicks
- *       on the surrogacy strip button. Without this entry, a click
- *       on 'surrogacy' falls through to DEFAULT_ACTIVE_TAB_ID and
- *       re-renders the deaths tab instead.
- *     - No other behavioural change. Every existing facet keeps its
- *       exact id and default.
- *   Previous revision (Phase 3B):
- *     - KNOWN_TAB_IDS gains 'adoption'. Events-adoption-tab.js
- *       self-registers at load; this entry makes its strip button
- *       clickable.
- *   Previous revision (Phase 3A):
- *     - KNOWN_TAB_IDS gains 'stork'.
- *   Initial revision:
- *     - Follows the education-manager-bootstrap.js pattern: one file
- *       owns TabManager.configure, TabManager.init, sidebar,
- *       topbar, initial render.
- *     - setActiveTabId calls _syncTabStrip, which toggles .active
- *       on both the strip buttons AND the panes.
- *     - _buildContext returns a non-null object even when no
- *       location is selected.
+ * TAB REGISTRATION:
+ *   KNOWN_TAB_IDS mirrors the canonical EVENT_FACETS catalog.
+ *   Each implemented facet tab registers its renderer independently
+ *   when its script loads. A catalog entry without a registered
+ *   renderer remains selectable and receives the no-renderer empty
+ *   state; it does not silently redirect to the default tab.
+ *
+ * OWNERSHIP:
+ *   This file owns TabManager configuration, tab-strip synchronisation,
+ *   manager context construction, sidebar and topbar orchestration,
+ *   and the initial render. Facet renderers and domain reads remain
+ *   with their respective modules.
  * =============================================================================
  */
 
@@ -117,21 +105,14 @@
 
     var SCOPE = 'events';
 
-    // The full set of facet tabs. The tab strip renders one button
-    // per id; TabManager renders one pane per id. Only the ids with
-    // a registered renderer produce content; the rest go through
-    // _buildEmptyState's 'no-renderer' branch.
+    // Canonical facet ids. Keep this list aligned with
+    // EventsConstants.EVENT_FACETS. A tab renderer registers itself
+    // from its own script; an id without a renderer uses the
+    // no-renderer empty state.
     //
-    // Registered in this revision:
-    //   deaths      events-deaths-tab.js
-    //   stork       events-stork-tab.js
-    //   adoption    events-adoption-tab.js
-    //   surrogacy   events-surrogacy-tab.js
-    //   disasters   events-disaster-tab.js
-    //   crime       events-crime-tab.js
-    //
-    // Declared but not yet registered:
-    //   social, educational   -> empty-state "not loaded"
+    // Implemented renderers: deaths, stork, adoption, surrogacy,
+    // disasters, crime, and social. Educational remains catalogued
+    // but has no registered renderer in this build.
     var KNOWN_TAB_IDS = [
         'deaths',
         'stork',
