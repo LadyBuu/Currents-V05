@@ -668,7 +668,8 @@
         if (!themeBtn || !themeMenu || !switcher) return;
 
         function _label(id) {
-            return id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+            var labels = { dark: 'System Dark', light: 'System Light', gits: 'GITS', kmt: 'KMT', 'salmon-lime': 'Salmon Lime', 'dating-sim': 'Dating Sim', 'choc-cake': 'Choc Cake', 'ukiyo-e': 'Ukiyo-e' };
+            return labels[id] || id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
         }
         function _updateLabel(id) {
             if (themeName) themeName.textContent = _label(id);
