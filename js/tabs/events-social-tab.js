@@ -124,7 +124,8 @@
             return;
         }
         window.openRelationshipModal(characterA, characterB, refresh, {
-            defaultType: type
+            defaultType: type,
+            allowedTypes: SOCIAL_TYPES.slice()
         });
     }
 
