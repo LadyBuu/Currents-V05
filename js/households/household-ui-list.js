@@ -417,7 +417,18 @@
         var html = '';
         var parentId = null;
         var depth = 0;
-        var path = Array.isArray(_ui.locationPath) ? _ui.locationPath : [];
+        var path = Array.isArray(_ui.locationPath) ? _ui.locationPath.slice() : [];
+        if (!path.length && _ui.locationFilter !== 'all' && _ui.locationFilter !== 'unknown') {
+            var target = places.find(function(p) { return p.id === _ui.locationFilter; });
+            var reversePath = [];
+            var guard = 0;
+            while (target && guard++ < 12) {
+                reversePath.unshift(target.id);
+                target = places.find(function(p) { return p.id === target.parentId; });
+            }
+            path = reversePath;
+            _ui.locationPath = path.slice();
+        }
         while (depth < 12) {
             var children = places.filter(function(p) {
                 return (p.parentId || null) === parentId;
