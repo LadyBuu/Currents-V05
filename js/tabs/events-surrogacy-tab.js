@@ -516,15 +516,15 @@
                 couples.push([c,other]);
             });
         });
-        function age(c) { return typeof c.age === 'number' ? c.age : -1; }
-        function gender(c) { return String(c.gender||'').toLowerCase(); }
-        couples.forEach(function(pair) { pair.sort(function(a,b) { var ga=gender(a)==='male'?0:gender(a)==='female'?1:2, gb=gender(b)==='male'?0:gender(b)==='female'?1:2; return ga-gb || age(b)-age(a); }); });
         // Derive age from birth year when the character query has not
         // hydrated an age field; ordering and labels must remain meaningful.
         var currentYear = typeof window.getCurrentYear === 'function' ? window.getCurrentYear() : null;
         characters.forEach(function(c) {
             if (typeof c.age !== 'number' && typeof c.birthYear === 'number' && typeof currentYear === 'number') c.age = currentYear - c.birthYear;
         });
+        function age(c) { return typeof c.age === 'number' ? c.age : -1; }
+        function gender(c) { return String(c.gender||'').toLowerCase(); }
+        couples.forEach(function(pair) { pair.sort(function(a,b) { var ga=gender(a)==='male'?0:gender(a)==='female'?1:2, gb=gender(b)==='male'?0:gender(b)==='female'?1:2; return ga-gb || age(b)-age(a); }); });
         couples.sort(function(a,b) { return Math.max(age(b[0]),age(b[1]))-Math.max(age(a[0]),age(a[1])); });
         function pairAids(pair) {
             var aids = [], a=pair[0], b=pair[1];
@@ -564,12 +564,6 @@
         }).forEach(function(c){
             var aids=[], loc=c.currentLocationId||c.locationId||c.location||null;
             if(loc) aids.push('<small class="events-surrogacy-aid">'+_icon('HOME')+' Location: '+_esc(String(loc))+'</small>');
-            var FQ=window.FamilyQueries, kin=null;
-            if(FQ) {
-                if(typeof FQ.getRelationshipBetween==='function') kin=FQ.getRelationshipBetween(c.id,c.id);
-                else if(typeof FQ.classifyKinship==='function') kin=FQ.classifyKinship(c.id,c.id);
-            }
-            if(kin) { var label=String(kin.label||kin.relationship||kin.type||'').replace(/_/g,' '); if(label&&!/unrelated/i.test(label)) aids.push('<small class="events-surrogacy-aid">'+_icon('USERS')+' Family: '+_esc((kin.degree?kin.degree+' degree ':'')+label)+'</small>'); }
             html+='<button type="button" data-action="new-surrogacy-single" data-id="'+_esc(c.id)+'">'+_esc((c.name||'')+' '+(c.surname||'')+' ('+(c.age==null?'?':c.age)+')')+(aids.length?'<span class="events-surrogacy-aids">'+aids.join('')+'</span>':'')+'</button>';
         });
         html+='</section></div></div>'; return html;
