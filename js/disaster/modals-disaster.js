@@ -376,8 +376,8 @@
             var custom = modeInput.value === 'custom';
             var deaths = custom ? Number(root.querySelector('#disasterCustomDeaths').value) : disaster.deaths;
             var prosperity = custom ? Number(root.querySelector('#disasterCustomProsperity').value) : disaster.prosperityLoss;
-            var expectedCharacterDeaths = data.population > 0
-                ? Math.round(data.eligibleVictims * Math.min(1, Math.max(0, deaths) / data.population))
+            var expectedCharacterDeaths = disaster.population > 0
+                ? Math.round(data.eligibleVictims * Math.min(1, Math.max(0, deaths) / disaster.population))
                 : 0;
             var crime = custom ? Number(root.querySelector('#disasterCustomCrime').value) : disaster.crimeIncrease;
             var structural = custom
@@ -392,7 +392,7 @@
                 ['Expected character deaths', String(expectedCharacterDeaths)],
                 ['Prosperity loss', String(prosperity)],
                 ['Crime increase', (crime * 100).toFixed(1) + '%'],
-                ['Structural damage', structural ? 'Random destruction roll' : 'Disabled']
+                ['Structural damage', structural ? 'Random roll' + (data.structuralDamageChance == null ? '' : ' (' + Math.round(data.structuralDamageChance * 100) + '% chance)') : 'Disabled']
             ];
             var html = '<div style="font-weight:bold;margin-bottom:6px;">Effect preview</div>' +
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:5px;">';
