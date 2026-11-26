@@ -1,5 +1,59 @@
 <!doctype html>
-<html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Matchmaker</title><link rel="stylesheet" href="css/themes.css"><link rel="stylesheet" href="css/common.css"><style>body{margin:0;background:var(--bg);color:var(--text);font-family:var(--f-body)}main{padding:1rem}.mm-tabs,.mm-actions{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem}.mm-tabs button,.mm-actions button,.mm-suggestion button,button{background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:.5rem .8rem;border-radius:var(--radius);cursor:pointer}.mm-tabs button.active{background:var(--accent);color:var(--accent-fg)}.mm-genders,.mm-columns{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));gap:1rem}.mm-location,.mm-columns section{padding:1rem;border:1px solid var(--border);border-radius:var(--radius);margin:.75rem 0}.mm-person,.mm-columns label{display:flex;gap:.5rem;padding:.35rem 0}.mm-person small,.mm-columns small{display:block;color:var(--dim)}.mm-history{color:var(--accent)}.mm-suggestion{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;padding:.5rem;border-bottom:1px solid var(--border)}.mm-suggestion span{flex:1}</style></head><body><main><h1>Matchmaker</h1><div id="matchmakerApp"></div></main>
+<html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Matchmaker</title><link rel="stylesheet" href="css/themes.css"><link rel="stylesheet" href="css/common.css"><style>
+/* Matchmaker-specific presentation. All colours and shapes come from themes.css. */
+html, body { min-height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--f-body); }
+main { width: min(100%, 1500px); margin: 0 auto; padding: clamp(.75rem, 2vw, 1.5rem); }
+h1 { margin: 0 0 1rem; color: var(--accent); }
+h3 { margin-bottom: .65rem; }
+h4 { margin: 0 0 .4rem; color: var(--dim); text-transform: capitalize; }
+#matchmakerApp { min-width: 0; }
+.mm-tabs, .mm-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-bottom: 1rem; }
+.mm-tabs { border-bottom: 1px solid var(--border); padding-bottom: .65rem; }
+.mm-tabs button, .mm-actions button, .mm-suggestion button, #matchmakerApp > button {
+  appearance: none; background: var(--bg2); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: .55rem .85rem; font: inherit; cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+.mm-tabs button:hover, .mm-actions button:hover, .mm-suggestion button:hover, #matchmakerApp > button:hover {
+  border-color: var(--accent); background: var(--accent-soft); color: var(--accent);
+}
+.mm-tabs button.active { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.mm-pane { min-width: 0; }
+.mm-genders, .mm-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: 1rem; }
+.mm-location, .mm-columns section {
+  min-width: 0; padding: 1rem; margin: .75rem 0; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.mm-location h3 { overflow-wrap: anywhere; }
+.mm-person, .mm-columns label {
+  display: flex; align-items: flex-start; gap: .6rem; padding: .55rem .4rem;
+  border-radius: calc(var(--radius) / 2); cursor: pointer; overflow-wrap: anywhere;
+}
+.mm-person:hover, .mm-columns label:hover { background: var(--accent-soft); }
+.mm-person input, .mm-columns input { flex: 0 0 auto; margin-top: .25rem; accent-color: var(--accent); }
+.mm-person span { min-width: 0; }
+.mm-person small, .mm-columns small { display: block; color: var(--dim); font-size: .85em; }
+.mm-history { color: var(--accent); font-weight: 600; }
+.mm-suggestions { margin-bottom: 1rem; }
+.mm-suggestion {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .65rem;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.mm-suggestion:first-child { border-top: 1px solid var(--border); }
+.mm-suggestion span { flex: 1 1 15rem; min-width: 0; overflow-wrap: anywhere; }
+.mm-suggestion button[data-deny] { color: var(--danger); }
+.mm-suggestion button[data-accept] { border-color: var(--ok); }
+#matchmakerApp p { color: var(--dim); padding: .75rem 0; }
+@media (max-width: 600px) {
+  main { padding: .75rem; }
+  .mm-actions button, .mm-tabs button { flex: 1 1 auto; }
+  .mm-location, .mm-columns section { padding: .75rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mm-tabs button, .mm-actions button, .mm-suggestion button { transition: none; }
+}
+</style></head><body><main><h1>Matchmaker</h1><div id="matchmakerApp"></div></main>
 <script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
 <script src="js/core/constants/character-constants.js"></script>
