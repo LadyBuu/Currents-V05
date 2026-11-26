@@ -1375,12 +1375,16 @@
             var level = parseInt(select.getAttribute('data-birthplace-level'), 10);
             var selected = select.value || '';
             var hidden = cascade.querySelector('input[data-field="birthplaceId"]');
-            if (hidden) hidden.value = selected;
             var levels = cascade.querySelectorAll('select[data-birthplace-level]');
+            var fallback = '';
             for (var i=0;i<levels.length;i++) {
                 var idx = parseInt(levels[i].getAttribute('data-birthplace-level'),10);
-                if (idx>level) { levels[i].value=''; levels[i].hidden=true; }
+                if (idx < level && levels[i].value) fallback = levels[i].value;
+                if (idx > level) { levels[i].value=''; levels[i].hidden=true; }
             }
+            // Clearing a child level means "use the selected parent", not
+            // "erase the birthplace entirely".
+            if (hidden) hidden.value = selected || fallback;
             if (!selected) return;
             var places = [];
             if (typeof window.getAllPlaces==='function') { try { places=window.getAllPlaces()||[]; } catch(err){} }
