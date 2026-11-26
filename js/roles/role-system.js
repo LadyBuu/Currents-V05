@@ -443,20 +443,6 @@
     // architecture survives the current refactor.
 
     // =========================================================================
-    // 8. DIAGNOSTIC
-    // =========================================================================
-
-    if (window.console && typeof window.console.debug === 'function') {
-        window.console.debug(
-            'role-system.js: legacy aliases installed (compatibility shim). ' +
-            'Read aliases return CLONES; use window.accessorsGetRoles / ' +
-            'window.accessorsGetRoleById for the live records. New code ' +
-            'should use RoleConstants / RoleState / RoleQueries / ' +
-            'RoleCommands / SkillUtils directly.'
-        );
-    }
-
-    // =========================================================================
     // 9. COMMONJS EXPORT
     // =========================================================================
 
