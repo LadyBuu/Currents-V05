@@ -20,7 +20,9 @@
  *     surrogacy   -> ChildrenState / ChildrenQueries / CharacterQueries
  *     crime       -> CrimeQueries
  *     disasters   -> DisasterQueries
- *     social      -> RelationshipQueries (social archetypes only; optional participant-location filter)
+ *     social      -> RelationshipQueries, CrimeQueries, LocationQueries,
+ *                    HouseholdQueries (relationships, vendettas, moves,
+ *                    and current household-departure candidates)
  *     educational -> EducationQueries (availability check; aggregate
  *                    event read is not implemented)
  *
