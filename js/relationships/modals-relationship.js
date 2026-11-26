@@ -169,7 +169,8 @@
         ['FriendshipCommands',       'friendship-commands.js'],
         ['RivalryCommands',          'rivalry-commands.js'],
         ['ProfessionalCommands',     'professional-commands.js'],
-        ['ApprenticeshipCommands',   'apprenticeship-commands.js']
+        ['ApprenticeshipCommands',   'apprenticeship-commands.js'],
+        ['LocationCommands',          'location-commands.js']
     ];
 
     for (var _i = 0; _i < REQUIRED.length; _i++) {
@@ -561,6 +562,16 @@
                 '</select>' +
             '</div>' +
 
+            '<div id="relLocationSection" style="display:none;margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Different locations</label>' +
+                '<select id="relLocationChoice" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                    '<option value="long_distance">Keep them in separate locations (long-distance)</option>' +
+                    '<option value="move1">Move ' + _esc(char1.name + ' ' + (char1.surname || '')) + ' to ' + _esc(String(loc2 || 'the other location')) + '</option>' +
+                    '<option value="move2">Move ' + _esc(char2.name + ' ' + (char2.surname || '')) + ' to ' + _esc(String(loc1 || 'the other location')) + '</option>' +
+                '</select>' +
+                '<small style="font-size:0.6rem;color:var(--dim);">Moving records a location-history entry using the Location system.</small>' +
+            '</div>' +
+
             '<div id="relAttributesSection" style="display:none;margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Attributes</label>' +
                 // Use the new class for the container
@@ -622,11 +633,13 @@
                 var roleSection = modalEl.querySelector('#relRoleSection');
                 var empSection = modalEl.querySelector('#relEmploymentSection');
                 var guildSection = modalEl.querySelector('#relGuildSection');
+                var locationSection = modalEl.querySelector('#relLocationSection');
 
                 if (!select) return;
 
                 function sync() {
                     var t = select.value;
+                    if (locationSection) locationSection.style.display = (loc1 && loc2 && loc1 !== loc2 && (t === A.CASUAL_DATING || t === A.ONE_NIGHT_STAND || t === A.COMMITTED)) ? 'block' : 'none';
                     if (attrsSection) {
                         attrsSection.style.display = (t === A.COMMITTED) ? 'block' : 'none';
                     }
@@ -727,6 +740,25 @@
                 if (_typeNeedsGuildFields(type)) {
                     var gEl = modalEl.querySelector('#relGuildRank');
                     form.rank = gEl ? (gEl.value || '').trim() : null;
+                }
+
+                var locationChoiceEl = modalEl.querySelector('#relLocationChoice');
+                var locationChoice = locationChoiceEl ? locationChoiceEl.value : 'long_distance';
+                if (loc1 && loc2 && loc1 !== loc2 &&
+                    (type === A.CASUAL_DATING || type === A.ONE_NIGHT_STAND || type === A.COMMITTED) &&
+                    locationChoice !== 'long_distance') {
+                    var moverId = locationChoice === 'move1' ? char1.id : char2.id;
+                    var destinationId = locationChoice === 'move1' ? loc2 : loc1;
+                    var moveResult = window.LocationCommands.recordMove(moverId, destinationId, {
+                        year: startYear,
+                        note: 'Moved to be with ' + (locationChoice === 'move1'
+                            ? (char2.name + ' ' + (char2.surname || ''))
+                            : (char1.name + ' ' + (char1.surname || '')))
+                    });
+                    if (!moveResult || !moveResult.success) {
+                        _toast((moveResult && (moveResult.message || moveResult.reason)) || 'Could not record the move; relationship was not created.', 'error');
+                        return false;
+                    }
                 }
 
                 var result = _dispatchCreate(type, char1.id, char2.id, form);
