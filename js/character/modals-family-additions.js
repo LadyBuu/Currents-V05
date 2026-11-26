@@ -169,6 +169,11 @@
         return '<input type="search" id="' + _esc(searchId) + '" ' +
             'class="character-tab-input" ' +
             'placeholder="' + _esc(placeholder) + '" autocomplete="off">' +
+            '<div class="character-tab-picker-location" data-picker-location="' + _esc(listId) + '">' +
+                '<select class="character-tab-input" data-location-level="0" aria-label="Filter by country">' +
+                    '<option value="">All locations</option>' +
+                '</select>' +
+            '</div>' +
             '<div id="' + _esc(listId) + '" ' +
                 'class="character-tab-history" ' +
                 'style="max-height:220px;overflow-y:auto;margin-top:0.5rem;">' +
@@ -177,7 +182,7 @@
                 _esc(listId) + '">No character selected</div>';
     }
 
-    function _renderCharacterPickerRows(listEl, candidates) {
+    function _renderCharacterPickerRows(listEl, candidates, targetLocationId) {
         if (!listEl) return;
         if (!Array.isArray(candidates) || candidates.length === 0) {
             listEl.innerHTML = '<div class="character-tab-empty">' +
@@ -192,6 +197,14 @@
             if (!name) name = c.id;
             var meta = [];
             if (typeof c.age === 'number') meta.push(c.age + 'y');
+            var locationId = c.currentLocationId || c.locationId || null;
+            var locationName = '';
+            if (locationId && typeof window.getPlaceById === 'function') {
+                var place = window.getPlaceById(locationId);
+                locationName = place ? (place.displayName || place.name || '') : '';
+            }
+            if (locationName) meta.push(locationName);
+            var isNeighbor = !!(targetLocationId && locationId === targetLocationId);
             if (c.gender) meta.push(c.gender);
             if (c.isDeceased === true) meta.push('deceased');
             var metaStr = meta.length > 0 ? ' · ' + meta.join(' · ') : '';
@@ -205,6 +218,7 @@
                     '<span class="character-tab-history__reason">' +
                         _esc(metaStr) +
                     '</span>' +
+                    (isNeighbor ? '<span class="character-tab-history__reason" title="Same location" aria-label="Same location">⌖ Neighbor</span>' : '') +
                 '</div>' +
             '</div>';
         }
@@ -260,10 +274,78 @@
         var listEl = root.querySelector('#' + listId);
         var searchEl = root.querySelector('#' + searchId);
         var noteEl = root.querySelector('[data-picker-selection="' + listId + '"]');
+        var locationWrap = root.querySelector('[data-picker-location="' + listId + '"]');
+        var locationSelects = [];
+        var selectedLocationId = '';
+        var targetSummary = null;
+        // The modal's current character is the target for neighbor marking.
+        var targetNode = root.querySelector('[data-target-character-id]');
+        if (targetNode && targetNode.getAttribute('data-target-character-id')) {
+            try { targetSummary = CQ.getCharacterSummary(targetNode.getAttribute('data-target-character-id')); } catch (e) {}
+        }
+        var targetLocationId = targetSummary && (targetSummary.currentLocationId || targetSummary.locationId);
 
+        function places() {
+            try { return typeof window.getPlaces === 'function' ? window.getPlaces() || [] : []; } catch (e) { return []; }
+        }
+        function childrenOf(parentId) {
+            return places().filter(function (p) { return p && (parentId ? p.parentId === parentId : !p.parentId); })
+                .sort(function (a,b) { return String(a.displayName || a.name || a.id).localeCompare(String(b.displayName || b.name || b.id)); });
+        }
+        function addLocationLevel(parentId, level) {
+            if (!locationWrap) return;
+            var select = locationWrap.querySelector('[data-location-level="' + level + '"]');
+            if (!select) {
+                select = document.createElement('select');
+                select.className = 'character-tab-input';
+                select.setAttribute('data-location-level', String(level));
+                select.setAttribute('aria-label', 'Filter by location level ' + (level + 1));
+                locationWrap.appendChild(select);
+            }
+            select.innerHTML = '<option value="">All locations</option>';
+            childrenOf(parentId).forEach(function (place) {
+                var option = document.createElement('option');
+                option.value = place.id;
+                option.textContent = place.displayName || place.name || place.id;
+                select.appendChild(option);
+            });
+            select.hidden = select.options.length <= 1;
+            locationSelects[level] = select;
+        }
+        function locationChanged(level) {
+            selectedLocationId = '';
+            for (var i = 0; i < locationSelects.length; i++) {
+                if (i < level && locationSelects[i] && locationSelects[i].value) selectedLocationId = locationSelects[i].value;
+                if (i > level && locationSelects[i]) { locationSelects[i].value = ''; locationSelects[i].hidden = true; }
+            }
+            var current = locationSelects[level] && locationSelects[level].value;
+            if (current) { selectedLocationId = current; addLocationLevel(current, level + 1); }
+            refresh(searchEl ? searchEl.value : '');
+        }
+        if (locationWrap) {
+            addLocationLevel('', 0);
+            locationWrap.addEventListener('change', function (e) {
+                var select = e.target;
+                if (!select || !select.hasAttribute('data-location-level')) return;
+                locationChanged(parseInt(select.getAttribute('data-location-level'), 10));
+            });
+        }
+        function isWithinLocation(char, locationId) {
+            if (!locationId) return true;
+            var id = char.currentLocationId || char.locationId;
+            var guard = 0;
+            while (id && guard++ < 100) {
+                if (id === locationId) return true;
+                var place = typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+                id = place && place.parentId;
+            }
+            return false;
+        }
         function refresh(query) {
-            var candidates = _getCharacterCandidates(query, excludeIds);
-            _renderCharacterPickerRows(listEl, candidates);
+            var candidates = _getCharacterCandidates(query, excludeIds).filter(function (candidate) {
+                return isWithinLocation(candidate, selectedLocationId);
+            });
+            _renderCharacterPickerRows(listEl, candidates, targetLocationId);
         }
 
         if (searchEl) {
