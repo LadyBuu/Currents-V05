@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Matchmaker</title><link rel="stylesheet" href="css/themes.css"><link rel="stylesheet" href="css/common.css"><style>
+<html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Matchmaker</title><script src="js/core/theme-boot.js"></script><link rel="stylesheet" href="css/themes.css"><link rel="stylesheet" href="css/common.css"><style>
 /* Matchmaker-specific presentation. All colours and shapes come from themes.css. */
 html, body { height: 100%; overflow: auto; }
 #matchmakerApp { max-height: calc(100vh - 7rem); overflow-y: auto; overscroll-behavior: contain; }
@@ -10,7 +10,19 @@ html, body { height: 100%; overflow: auto; }
 .mm-suggestion small { display: block; color: var(--dim); font-size: .85em; margin-top: .15rem; }
 html, body { min-height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--f-body); }
-.matchmaker-topbar { display:flex; align-items:center; gap:.75rem; flex-wrap:wrap; padding:.65rem 1rem; background:var(--bg2); border-bottom:1px solid var(--border); }
+.matchmaker-topbar { display:flex; align-items:center; gap:.45rem; flex-wrap:wrap; padding:.45rem .75rem; min-height:42px; background:var(--bg2); border-bottom:1px solid var(--border); }
+.matchmaker-topbar .tb-btn { appearance:none; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:.3rem .6rem; font:inherit; font-size:.72rem; cursor:pointer; }
+.matchmaker-topbar .tb-btn:hover { color:var(--accent); border-color:var(--accent); }
+.matchmaker-topbar .year-input { display:flex; align-items:center; gap:.3rem; padding:.2rem .4rem; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg); }
+.matchmaker-topbar .year-input label { color:var(--dim); font-size:.7rem; }
+.matchmaker-topbar .year-input input { width:4.2rem; color:var(--text); background:transparent; border:0; outline:0; font:inherit; }
+.matchmaker-topbar .spacer { flex:1; min-width:.4rem; }
+.matchmaker-topbar .theme-toggle { position:relative; }
+.matchmaker-topbar .theme-toggle__menu { position:absolute; z-index:1000; right:0; top:calc(100% + .35rem); min-width:10rem; max-height:65vh; overflow:auto; margin:0; padding:.3rem; list-style:none; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); }
+.matchmaker-topbar .theme-toggle__menu[hidden] { display:none; }
+.matchmaker-topbar .theme-toggle__menu button { width:100%; text-align:left; color:var(--text); background:transparent; border:0; border-radius:calc(var(--radius) / 2); padding:.4rem .55rem; font:inherit; cursor:pointer; }
+.matchmaker-topbar .theme-toggle__menu button:hover, .matchmaker-topbar .theme-toggle__menu button[aria-current="true"] { color:var(--accent); background:var(--accent-soft); }
+@media(max-width:700px){.matchmaker-topbar{gap:.3rem;padding:.35rem}.matchmaker-topbar .year-input{padding:.1rem .25rem}.matchmaker-topbar .year-input label{display:none}.matchmaker-topbar .year-input input{width:3.1rem}.matchmaker-topbar .tb-btn{padding:.25rem .4rem;font-size:.65rem}}
 .matchmaker-topbar .brand { color:var(--accent); font-weight:600; }
 .matchmaker-topbar .spacer { flex:1; }
 .matchmaker-topbar a { color:var(--text); text-decoration:none; padding:.35rem .65rem; border:1px solid var(--border); border-radius:var(--radius); }
@@ -66,10 +78,13 @@ h4 { margin: 0 0 .4rem; color: var(--dim); text-transform: capitalize; }
 @media (prefers-reduced-motion: reduce) {
   .mm-tabs button, .mm-actions button, .mm-suggestion button { transition: none; }
 }
-</style></head><body><nav class="matchmaker-topbar" aria-label="Main navigation"><span class="brand">Currents</span><span class="spacer"></span><a href="index.html">Home</a><a href="CharacterManager.html">Characters</a><a href="HouseholdManager.html">Households</a><a href="RelationshipManager.html">Relationships</a><label for="matchmakerTheme">Theme</label><select id="matchmakerTheme" aria-label="Theme"><option value="dark">Dark</option><option value="light">Light</option></select></nav><main><h1>Matchmaker</h1><div id="matchmakerApp"></div></main>
-<script>
-(function(){var select=document.getElementById("matchmakerTheme");var saved=document.documentElement.getAttribute("data-theme")||"dark";select.value=saved;select.addEventListener("change",function(){document.documentElement.setAttribute("data-theme",select.value);try{localStorage.setItem("theme",select.value);}catch(e){}});})();
-</script>
+</style></head><body><nav class="matchmaker-topbar" aria-label="Matchmaker controls">
+<span class="brand">Matchmaker</span><span class="spacer"></span>
+<div class="year-input"><label for="yearInput">Year</label><input type="number" id="yearInput" min="1" step="1"><button class="tb-btn" id="setYearBtn" type="button">Set</button></div>
+<input type="file" id="fileInput" accept=".json,application/json" hidden>
+<button class="tb-btn" id="importBtn" type="button">Import</button><button class="tb-btn" id="exportBtn" type="button">Export</button>
+<div class="theme-toggle" role="group" aria-label="Theme"><button class="tb-btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">Theme: <span id="themeName">Dark</span> ▾</button><ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden></ul></div>
+</nav><main><h1>Matchmaker</h1><div id="matchmakerApp"></div></main>
 <script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
 <script src="js/core/constants/character-constants.js"></script>
@@ -267,4 +282,22 @@ if (typeof window.initializeStorage === "function") {
 <script src="js/selectors/modals-household-selector.js"></script>
 <script src="js/character/character-ui-state.js"></script>
 <script src="js/character/character-view-models.js"></script>
-<script src="js/tabs/matchmaker-tabs.js"></script></body></html>
+<script src="js/tabs/matchmaker-tabs.js"></script>
+<script>
+(function () {
+ 'use strict';
+ var $=function(id){return document.getElementById(id);};
+ var yearInput=$('yearInput'),setYearBtn=$('setYearBtn'),importBtn=$('importBtn'),exportBtn=$('exportBtn');
+ function toast(m,t){if(typeof window.showToast==='function')window.showToast(m,t||'info');else if(typeof window._showToast==='function')window._showToast(m,t||'info');else console[t==='error'?'error':'log'](m);}
+ function syncYear(){if(!yearInput)return;var y=typeof window.getCurrentYear==='function'?window.getCurrentYear():(window.masterData&&window.masterData.data&&window.masterData.data.currentYear);yearInput.value=Number.isFinite(Number(y))?String(y):'';}
+ function setYear(){var y=parseInt(yearInput&&yearInput.value,10);if(!Number.isInteger(y)||(typeof window.isValidYear==='function'&&window.isValidYear(y)!==true)){toast('Please enter a valid year.','error');syncYear();return;}if(!window.masterData||!window.masterData.data){toast('World data is not initialized.','error');return;}var old=window.masterData.data.currentYear;try{if(typeof window.setCurrentYear==='function'){var r=window.setCurrentYear(y);if(r===false||(r&&r.success===false))throw new Error(r.message||r.reason||'Year change rejected.');}window.masterData.data.currentYear=y;if(typeof window.saveMasterData==='function'&&window.saveMasterData()!==true)throw new Error(window.getLastSaveError&&window.getLastSaveError()?window.getLastSaveError().message:'Save failed.');syncYear();toast('Year set to '+y+'.','success');window.dispatchEvent(new CustomEvent('masterDataUpdated',{detail:{source:'year-change'}}));}catch(e){window.masterData.data.currentYear=old;syncYear();toast('Year was not saved: '+(e.message||e),'error');}}
+ if(setYearBtn)setYearBtn.addEventListener('click',setYear);if(yearInput)yearInput.addEventListener('keydown',function(e){if(e.key==='Enter')setYear();});syncYear();
+ if(exportBtn)exportBtn.addEventListener('click',function(){try{if(typeof window.exportData!=='function')throw new Error('Export utility unavailable.');if(typeof window.saveMasterData==='function'&&window.saveMasterData()!==true)throw new Error('Latest changes could not be saved.');window.exportData();toast('World data exported.','success');}catch(e){toast('Export failed: '+(e.message||e),'error');}});
+ if(importBtn)importBtn.addEventListener('click',function(){if(typeof window.importData!=='function'){toast('Import utility unavailable.','error');return;}window.importData().then(function(){toast('Import complete. Reloading Matchmaker…','success');window.location.reload();}).catch(function(e){if(e&&e.message==='No file selected')return;toast('Import failed: '+(e&&e.message||e),'error');});});
+ var sw=window.ThemeSwitcher,btn=$('themeBtn'),menu=$('themeMenu'),name=$('themeName');
+ function label(id){return id.split('-').map(function(p){return p==='kmt'?'KMT':p==='gits'?'GITS':p.charAt(0).toUpperCase()+p.slice(1);}).join(' ');}
+ function syncTheme(){var id=document.documentElement.getAttribute('data-theme')||'dark';if(name)name.textContent=label(id);if(menu)Array.prototype.forEach.call(menu.querySelectorAll('[data-theme-id]'),function(b){b.setAttribute('aria-current',b.getAttribute('data-theme-id')===id?'true':'false');});}
+ if(sw&&Array.isArray(sw.themes)&&menu){menu.innerHTML=sw.themes.map(function(id){return '<li role="none"><button type="button" role="menuitem" data-theme-id="'+id+'">'+label(id)+'</button></li>';}).join('');btn.addEventListener('click',function(){menu.hidden=!menu.hidden;btn.setAttribute('aria-expanded',String(!menu.hidden));});menu.addEventListener('click',function(e){var b=e.target.closest('[data-theme-id]');if(!b)return;sw.apply(b.getAttribute('data-theme-id'));syncTheme();menu.hidden=true;btn.setAttribute('aria-expanded','false');});document.addEventListener('click',function(e){if(!menu.hidden&&!menu.contains(e.target)&&!btn.contains(e.target)){menu.hidden=true;btn.setAttribute('aria-expanded','false');}});document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!menu.hidden){menu.hidden=true;btn.setAttribute('aria-expanded','false');btn.focus();}});syncTheme();}else if(btn){btn.disabled=true;btn.title='Theme switcher unavailable';}
+})();
+</script>
+</body></html>
