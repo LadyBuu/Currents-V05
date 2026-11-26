@@ -1477,6 +1477,96 @@
     }
 
     // =========================================================================
+    // 11. SOCIAL WORKFLOW PROJECTIONS
+    // =========================================================================
+
+    function getVendettaRecords(locationId) {
+        var cq = _requireModule('CrimeQueries', ['getAllVendettas']);
+        var hq = _requireModule('HouseholdQueries', ['getHousehold']);
+        if (!cq.ok) return _unavailable(cq.reason);
+        if (!hq.ok) return _unavailable(hq.reason);
+        try {
+            var list = cq.module.getAllVendettas({includeResolved:true});
+            if (!Array.isArray(list)) return _unavailable('CrimeQueries returned invalid vendetta records.');
+            var scope = _locationIdSetForFilter(locationId), records = [];
+            list.forEach(function(v) {
+                if (!v) return;
+                var ha = hq.module.getHousehold(v.householdAId);
+                var hb = hq.module.getHousehold(v.householdBId);
+                var la = ha && ha.locationId, lb = hb && hb.locationId;
+                if (scope && !scope[la] && !scope[lb]) return;
+                var copy = Object.assign({},v);
+                copy.householdA = ha || {id:v.householdAId,name:v.householdAName || 'Unknown',locationId:la || null};
+                copy.householdB = hb || {id:v.householdBId,name:v.householdBName || 'Unknown',locationId:lb || null};
+                records.push(copy);
+            });
+            records.sort(function(x,y){return (y.startedYear || 0)-(x.startedYear || 0);});
+            return _available({records:records,totalCount:records.length});
+        } catch(e) { return _unavailable('Vendetta query failed: '+(e.message || String(e))); }
+    }
+
+    function getRelocationRecords(locationId) {
+        var cq = _requireModule('CharacterQueries',['getAllCharacters','getMoveHistory']);
+        var lq = _requireModule('LocationQueries',['getCurrentLocationId']);
+        if (!cq.ok) return _unavailable(cq.reason);
+        if (!lq.ok) return _unavailable(lq.reason);
+        try {
+            var characters = cq.module.getAllCharacters();
+            if (!Array.isArray(characters)) return _unavailable('CharacterQueries returned invalid characters.');
+            var scope = _locationIdSetForFilter(locationId), records = [];
+            characters.forEach(function(c) {
+                if (!c || !c.id) return;
+                var current = lq.module.getCurrentLocationId(c.id);
+                if (scope && !scope[current]) return;
+                var moves = cq.module.getMoveHistory(c.id) || [];
+                moves.forEach(function(m) {
+                    if (!m) return;
+                    records.push({
+                        characterId:c.id,
+                        characterName:[c.name,c.surname].filter(Boolean).join(' ') || c.id,
+                        currentLocationId:current || null,
+                        fromLocationId:m.fromLocationId || null,
+                        fromLocationName:m.fromLocationName || null,
+                        locationId:m.locationId || null,
+                        locationName:m.locationName || null,
+                        year:m.year !== undefined ? m.year : null,
+                        note:m.note || null,
+                        isBirthMove:m.isBirthMove === true
+                    });
+                });
+            });
+            records.sort(function(x,y){return (y.year || 0)-(x.year || 0);});
+            return _available({records:records,totalCount:records.length});
+        } catch(e) { return _unavailable('Relocation query failed: '+(e.message || String(e))); }
+    }
+
+    function getHouseholdDepartureCandidates(locationId) {
+        var hq = _requireModule('HouseholdQueries',['getAllHouseholds','getHouseholdMembers']);
+        if (!hq.ok) return _unavailable(hq.reason);
+        try {
+            var all = hq.module.getAllHouseholds();
+            if (!Array.isArray(all)) return _unavailable('HouseholdQueries returned invalid households.');
+            var scope = _locationIdSetForFilter(locationId), records = [];
+            all.forEach(function(h) {
+                if (!h || !h.id || (scope && !scope[h.locationId])) return;
+                (hq.module.getHouseholdMembers(h.id) || []).forEach(function(m) {
+                    if (!m || !m.characterId) return;
+                    records.push({
+                        householdId:h.id, householdName:h.name || h.id,
+                        householdLocationId:h.locationId || null,
+                        characterId:m.characterId,
+                        characterName:m.characterName || m.characterId,
+                        isHead:m.isHead === true,
+                        joinedYear:m.joinedYear !== undefined ? m.joinedYear : null,
+                        isDeceased:m.isDeceased === true
+                    });
+                });
+            });
+            return _available({records:records,totalCount:records.length});
+        } catch(e) { return _unavailable('Household departure query failed: '+(e.message || String(e))); }
+    }
+
+    // =========================================================================
     // 12. EXPORTS
     // =========================================================================
 
@@ -1506,6 +1596,9 @@
 
         // Social facet (social archetypes only)
         getSocialEvents: getSocialEvents,
+        getVendettaRecords: getVendettaRecords,
+        getRelocationRecords: getRelocationRecords,
+        getHouseholdDepartureCandidates: getHouseholdDepartureCandidates,
 
         // Educational facet (stub)
         getEducationalEvents: getEducationalEvents,
