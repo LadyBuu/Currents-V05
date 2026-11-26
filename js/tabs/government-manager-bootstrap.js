@@ -668,7 +668,17 @@
         if (!themeBtn || !themeMenu || !switcher) return;
 
         function _label(id) {
-            var labels = { dark: 'System Dark', light: 'System Light', gits: 'GITS', kmt: 'KMT', 'salmon-lime': 'Salmon Lime', 'dating-sim': 'Dating Sim', 'choc-cake': 'Choc Cake', 'ukiyo-e': 'Ukiyo-e' };
+            var labels = {
+                dark: 'System Dark', light: 'System Light', vaporwave: 'Vaporwave',
+                'salmon-lime': 'Salmon Lime', 'dating-sim': 'Dating Sim',
+                pastel: 'Pastel', carnival: 'Carnival', maximal: 'Maximal',
+                gits: 'GITS', nouveau: 'Nouveau', 'ukiyo-e': 'Ukiyo-e',
+                nature: 'Nature', kmt: 'KMT', gaslight: 'Gaslight',
+                grotesque: 'Grotesque', illuminated: 'Illuminated',
+                discowing: 'Disco Wing', 'choc-cake': 'Choc Cake', dada: 'Dada',
+                brutalist: 'Brutalist', orchestrion: 'Orchestrion',
+                rococo: 'Rococo', 'nautical-tile': 'Nautical Tile'
+            };
             return labels[id] || id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
         }
         function _updateLabel(id) {
