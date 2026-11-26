@@ -170,7 +170,8 @@
     function _commit(eventName, payload) {
         State.hydrateFromMasterData(true);
         window.markDataDirty();
-        State.publish(eventName, payload);
+        // DisasterState mutation methods already publish through subscribe().
+        // The command layer only emits the DOM event for cross-domain UI listeners.
         _dispatch(eventName, payload);
     }
 
