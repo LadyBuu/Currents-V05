@@ -1,6 +1,13 @@
 <!doctype html>
 <html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Matchmaker</title><link rel="stylesheet" href="css/themes.css"><link rel="stylesheet" href="css/common.css"><style>
 /* Matchmaker-specific presentation. All colours and shapes come from themes.css. */
+html, body { height: 100%; overflow: auto; }
+#matchmakerApp { max-height: calc(100vh - 7rem); overflow-y: auto; overscroll-behavior: contain; }
+.mm-location, .mm-columns section { max-height: min(62vh, 34rem); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.mm-genders, .mm-columns { min-height: 0; }
+.mm-suggestions { max-height: 35vh; overflow-y: auto; overscroll-behavior: contain; }
+.mm-person, .mm-columns label { min-width: 0; }
+.mm-suggestion small { display: block; color: var(--dim); font-size: .85em; margin-top: .15rem; }
 html, body { min-height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--f-body); }
 main { width: min(100%, 1500px); margin: 0 auto; padding: clamp(.75rem, 2vw, 1.5rem); }
