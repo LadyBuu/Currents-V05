@@ -26,7 +26,7 @@
         var crimes = locationId && window.CrimeQueries && window.CrimeQueries.getCrimesByLocation
             ? window.CrimeQueries.getCrimesByLocation(locationId) || [] : [];
         crimes = crimes.slice().sort(function(a,b) { return (b.year || 0) - (a.year || 0); });
-        var html = '<style>.events-crime{display:flex;flex-direction:column;gap:.75rem;color:var(--text)}.events-crime__toolbar{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}.events-crime__field{display:flex;gap:.5rem;align-items:center}.events-crime select,.events-crime input,.events-crime button{font:inherit;padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);color:var(--text)}.events-crime__scope{color:var(--dim)}.events-crime__list{display:flex;flex-direction:column;gap:.5rem}.events-crime__row{padding:.65rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2)}.events-crime__muted{color:var(--dim)}</style>' +
+        var html = '' +
             '<section class="events-crime"><div class="events-crime__toolbar">' + locationControl +
             '<button type="button" data-crime-action="create" ' + (!locationId ? 'disabled' : '') + '>Record Crime</button>' +
             '<button type="button" data-crime-action="refresh">Refresh</button></div>' +
