@@ -777,32 +777,40 @@
                     }
                 }
 
+                // Create the relationship first. A failed relationship command must
+                // never leave an unrelated location move behind.
                 var locationChoiceEl = modalEl.querySelector('#relLocationChoice');
                 var locationChoice = locationChoiceEl ? locationChoiceEl.value : 'long_distance';
+                var pendingMove = null;
                 if (loc1 && loc2 && loc1 !== loc2 &&
                     (type === A.CASUAL_DATING || type === A.ONE_NIGHT_STAND || type === A.COMMITTED) &&
                     locationChoice !== 'long_distance') {
-                    var moverId = locationChoice === 'move1' ? char1.id : char2.id;
-                    var destinationId = locationChoice === 'move1' ? loc2 : loc1;
-                    var moveResult = window.LocationCommands.recordMove(moverId, destinationId, {
-                        year: startYear,
+                    pendingMove = {
+                        characterId: locationChoice === 'move1' ? char1.id : char2.id,
+                        originalLocationId: locationChoice === 'move1' ? loc1 : loc2,
+                        destinationId: locationChoice === 'move1' ? loc2 : loc1,
                         note: 'Moved to be with ' + (locationChoice === 'move1'
                             ? (char2.name + ' ' + (char2.surname || ''))
                             : (char1.name + ' ' + (char1.surname || '')))
-                    });
-                    if (!moveResult || !moveResult.success) {
-                        _toast((moveResult && (moveResult.message || moveResult.reason)) || 'Could not record the move; relationship was not created.', 'error');
-                        return false;
-                    }
+                    };
                 }
 
                 var result = _dispatchCreate(type, char1.id, char2.id, form);
-
                 if (!result || !result.success) {
-                    var msg = (result && (result.message || result.reason)) ||
-                              'Failed to create relationship';
-                    _toast(msg, 'error');
+                    _toast((result && (result.message || result.reason)) || 'Failed to create relationship.', 'error');
                     return false;
+                }
+
+                if (pendingMove) {
+                    var moveResult = window.LocationCommands.recordMove(
+                        pendingMove.characterId, pendingMove.destinationId, {
+                            year: startYear,
+                            note: pendingMove.note
+                        });
+                    if (!moveResult || !moveResult.success) {
+                        var moveError = (moveResult && (moveResult.message || moveResult.reason)) || 'unknown error';
+                        _toast('Relationship created, but the requested move failed. Relationship remains active; no move was recorded. Error: ' + moveError, 'warning');
+                    }
                 }
 
                 // Toast warnings if the command returned any (e.g. underage)
@@ -865,7 +873,12 @@
                         householdTargetId = createHouseholdResult.data && createHouseholdResult.data.householdId;
                     }
                     if (householdTargetId) {
+                        var householdFailure = null;
+                        var householdNameForRecovery = householdChoiceValue === 'new'
+                            ? (newHouseholdName || 'new household')
+                            : (window.HouseholdQueries.getAllHouseholds().find(function(h) { return h.id === householdTargetId; }) || {}).name || householdTargetId;
                         [char1.id, char2.id].forEach(function(memberId) {
+                            if (householdFailure) return;
                             var currentHouseholds = window.HouseholdQueries.getHouseholdsByMember(memberId);
                             if (currentHouseholds.some(function(h) { return h.id === householdTargetId; })) return;
                             var transferResult = window.HouseholdCommands.transferMember(memberId, householdTargetId, {
@@ -875,10 +888,14 @@
                                 role: 'Family Member'
                             });
                             if (!transferResult || !transferResult.success) {
-                                _toast('Relationship created, but household membership could not be fully updated: ' +
-                                    ((transferResult && (transferResult.message || transferResult.reason)) || 'unknown error'), 'warning');
+                                householdFailure = (transferResult && (transferResult.message || transferResult.reason)) || 'unknown error';
                             }
                         });
+                        if (householdFailure) {
+                            _toast('Relationship created, but household integration is PARTIAL. Household "' +
+                                householdNameForRecovery + '" (ID ' + householdTargetId + ') remains. Check both partners’ memberships in Household Manager and manually transfer any missing member. Failure: ' +
+                                householdFailure, 'warning');
+                        }
                     }
                 }
 
