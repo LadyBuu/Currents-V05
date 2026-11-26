@@ -112,6 +112,207 @@
     }
 
     // =========================================================================
+    // CASCADING LOCATION PICKER
+    // =========================================================================
+
+    function _locationTypesByPriority() {
+        var types = window.LocationQueries.getLocationTypes().slice();
+        types.sort(function(a, b) {
+            var ap = typeof a.priority === 'number' ? a.priority : 999999;
+            var bp = typeof b.priority === 'number' ? b.priority : 999999;
+            return ap - bp || String(a.displayName || a.name || '').localeCompare(
+                String(b.displayName || b.name || '')
+            );
+        });
+        return types;
+    }
+
+    function _locationLabel(place) {
+        return place.displayName || place.name || place.id;
+    }
+
+    function _locationOptions(places, selectedId) {
+        var html = '<option value="">Select...</option>';
+        places.slice().sort(function(a, b) {
+            return _locationLabel(a).localeCompare(_locationLabel(b));
+        }).forEach(function(place) {
+            if (!place || !place.id) return;
+            html += '<option value="' + _escape(place.id) + '"' +
+                (place.id === selectedId ? ' selected' : '') + '>' +
+                _escape(_locationLabel(place)) + '</option>';
+        });
+        return html;
+    }
+
+    function _buildCascadingLocationPicker(root, defaultLocationId) {
+        var holder = root.querySelector('#disasterLocationCascade');
+        var selectedInput = root.querySelector('#disasterLocation');
+        if (!holder || !selectedInput) return;
+
+        var types = _locationTypesByPriority();
+        var allRoots = window.LocationQueries.getRootPlaces({ includeDeprecated: false });
+        var initialChain = [];
+        var current = defaultLocationId
+            ? window.getPlaceById(defaultLocationId)
+            : null;
+        var seen = {};
+        while (current && current.id && !seen[current.id]) {
+            seen[current.id] = true;
+            initialChain.unshift(current);
+            current = current.parentId ? window.getPlaceById(current.parentId) : null;
+        }
+
+        function typeForPlace(place) {
+            for (var i = 0; i < types.length; i++) {
+                if (types[i].id === place.typeId) return types[i];
+            }
+            return null;
+        }
+
+        function childrenFor(parent, expectedType) {
+            var children = window.LocationQueries.getPlacesByParent(
+                parent ? parent.id : null,
+                { includeDeprecated: false }
+            );
+            if (expectedType) {
+                children = children.filter(function(place) {
+                    return place.typeId === expectedType.id;
+                });
+            }
+            return children;
+        }
+
+        function renderLevel(parent, level, selectedId, parentSelect) {
+            var expectedType = types[level] || null;
+            var candidates = childrenFor(parent, expectedType);
+            if (!candidates.length) return;
+
+            var typeLabel = expectedType
+                ? (expectedType.displayName || expectedType.name || 'Location')
+                : 'Sub-location';
+            var wrap = document.createElement('div');
+            wrap.style.marginBottom = '9px';
+            var label = document.createElement('label');
+            label.textContent = typeLabel;
+            label.style.cssText = 'display:block;font-size:0.6rem;color:var(--accent);margin-bottom:4px;';
+            var select = document.createElement('select');
+            select.className = 'disaster-location-level';
+            select.dataset.level = String(level);
+            select.style.cssText = 'width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.65rem;';
+            select.innerHTML = _locationOptions(candidates, selectedId || null);
+            wrap.appendChild(label);
+            wrap.appendChild(select);
+            holder.appendChild(wrap);
+
+            select.addEventListener('change', function() {
+                while (wrap.nextSibling) holder.removeChild(wrap.nextSibling);
+                var chosenId = select.value;
+                selectedInput.value = chosenId;
+                if (!chosenId) return;
+                var chosen = window.getPlaceById(chosenId);
+                if (!chosen) return;
+                var nextType = types[level + 1] || null;
+                renderLevel(chosen, level + 1, null, select);
+            });
+
+            if (selectedId) {
+                selectedInput.value = selectedId;
+                var selectedPlace = window.getPlaceById(selectedId);
+                if (selectedPlace) renderLevel(selectedPlace, level + 1,
+                    initialChain[level + 1] ? initialChain[level + 1].id : null, select);
+            }
+        }
+
+        holder.innerHTML = '';
+        selectedInput.value = '';
+        var firstType = types.length ? types[0] : null;
+        var firstRoots = allRoots;
+        if (firstType) {
+            var typedRoots = allRoots.filter(function(place) {
+                return place.typeId === firstType.id;
+            });
+            if (typedRoots.length) firstRoots = typedRoots;
+        }
+        if (!firstRoots.length) {
+            holder.innerHTML = '<div style="font-size:0.6rem;color:var(--dim);">No top-level locations available.</div>';
+            return;
+        }
+
+        // If a saved location has an unusual hierarchy, start at its actual
+        // root and use its actual child types rather than losing the default.
+        var rootPlace = initialChain.length ? initialChain[0] : null;
+        var rootCandidates = firstRoots;
+        if (rootPlace && !rootCandidates.some(function(p) { return p.id === rootPlace.id; })) {
+            rootCandidates = allRoots;
+        }
+
+        var rootWrap = document.createElement('div');
+        rootWrap.style.marginBottom = '9px';
+        var rootLabel = document.createElement('label');
+        rootLabel.textContent = firstType
+            ? (firstType.displayName || firstType.name || 'Location')
+            : 'Location';
+        rootLabel.style.cssText = 'display:block;font-size:0.6rem;color:var(--accent);margin-bottom:4px;';
+        var rootSelect = document.createElement('select');
+        rootSelect.className = 'disaster-location-level';
+        rootSelect.dataset.level = '0';
+        rootSelect.style.cssText = 'width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.65rem;';
+        rootSelect.innerHTML = _locationOptions(rootCandidates, rootPlace ? rootPlace.id : null);
+        rootWrap.appendChild(rootLabel);
+        rootWrap.appendChild(rootSelect);
+        holder.appendChild(rootWrap);
+
+        function appendChildren(parent, level, selectedId) {
+            var nextType = types[level] || null;
+            var children = childrenFor(parent, nextType);
+            if (!children.length) return;
+            var labelText = nextType
+                ? (nextType.displayName || nextType.name || 'Location')
+                : 'Sub-location';
+            var wrap = document.createElement('div');
+            wrap.style.marginBottom = '9px';
+            var label = document.createElement('label');
+            label.textContent = labelText;
+            label.style.cssText = 'display:block;font-size:0.6rem;color:var(--accent);margin-bottom:4px;';
+            var select = document.createElement('select');
+            select.className = 'disaster-location-level';
+            select.dataset.level = String(level);
+            select.style.cssText = 'width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.65rem;';
+            select.innerHTML = _locationOptions(children, selectedId || null);
+            wrap.appendChild(label);
+            wrap.appendChild(select);
+            holder.appendChild(wrap);
+            select.addEventListener('change', function() {
+                while (wrap.nextSibling) holder.removeChild(wrap.nextSibling);
+                selectedInput.value = select.value;
+                var place = select.value ? window.getPlaceById(select.value) : null;
+                if (place) appendChildren(place, level + 1, null);
+            });
+            if (selectedId) {
+                selectedInput.value = selectedId;
+                var selectedPlace = window.getPlaceById(selectedId);
+                if (selectedPlace) appendChildren(selectedPlace, level + 1,
+                    initialChain[level + 1] ? initialChain[level + 1].id : null);
+            }
+        }
+
+        rootSelect.addEventListener('change', function() {
+            while (rootWrap.nextSibling) holder.removeChild(rootWrap.nextSibling);
+            selectedInput.value = rootSelect.value;
+            var place = rootSelect.value ? window.getPlaceById(rootSelect.value) : null;
+            if (place) appendChildren(place, 1, null);
+        });
+
+        if (rootPlace) {
+            selectedInput.value = rootPlace.id;
+            appendChildren(rootPlace, 1,
+                initialChain[1] ? initialChain[1].id : null);
+        } else {
+            selectedInput.value = '';
+        }
+    }
+
+    // =========================================================================
     // 2. CREATE DISASTER MODAL
     // =========================================================================
 
@@ -119,7 +320,6 @@
         options = options || {};
         var vm = VM.toCreateDisasterModalViewModel(options, window.getCurrentYearSafe());
 
-        var locationOptions = window.getFilteredLocationOptions(vm.defaultLocationId);
         var typeOptions = '<option value="">Select Disaster Type...</option>';
         for (var i = 0; i < C.DISASTER_TYPES.length; i++) {
             var dt = C.DISASTER_TYPES[i];
@@ -132,9 +332,8 @@
             '<div style="margin-bottom:12px;">' +
             '<div style="margin-bottom:12px;">' +
             '<label style="display:block;font-size:0.65rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
-            '<select id="disasterLocation" style="width:100%;padding:6px 8px;background:var(--bg);' +
-            'border:1px solid var(--border);border-radius:6px;font-size:0.65rem;">' +
-            locationOptions + '</select>' +
+            '<div id="disasterLocationCascade"></div>' +
+            '<input type="hidden" id="disasterLocation" value="">' +
             '</div>' +
             '<div style="margin-bottom:12px;">' +
             '<label style="display:block;font-size:0.65rem;color:var(--accent);margin-bottom:4px;">Disaster Type</label>' +
@@ -170,6 +369,9 @@
             content: content,
             confirmText: 'Generate Disaster',
             cancelText: 'Cancel',
+            onMount: function(root) {
+                _buildCascadingLocationPicker(root, vm.defaultLocationId);
+            },
             onConfirm: function(root) {
                 return _submitCreateDisaster(root, options);
             }
