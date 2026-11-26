@@ -732,6 +732,9 @@
             gender: _isMissing(projection.gender) ? 'unknown' : projection.gender,
             age: age,
             birthYear: _isMissing(projection.birthYear) ? null : projection.birthYear,
+            birthplaceId: _isMissing(projection.birthplaceId) ? null : projection.birthplaceId,
+            appearance: projection.appearance && typeof projection.appearance === 'object'
+                ? Object.assign({}, projection.appearance) : null,
             deathYear: _isMissing(projection.deathYear) ? null : projection.deathYear,
             deathCause: _isMissing(projection.deathCause) ? null : projection.deathCause,
             deathCauseDetail: _isMissing(projection.deathCauseDetail)
@@ -739,6 +742,17 @@
                 : projection.deathCauseDetail,
             isDeceased: projection.isDeceased === true,
             traits: _copyTraits(projection),
+            surnameHistory: projection.surnameHistory && typeof projection.surnameHistory === 'object'
+                ? Object.assign({}, projection.surnameHistory, {
+                    entries: Array.isArray(projection.surnameHistory.entries)
+                        ? projection.surnameHistory.entries.map(function (entry) {
+                            return entry && typeof entry === 'object' ? Object.assign({}, entry) : entry;
+                        }) : []
+                }) : null,
+            religionHistory: Array.isArray(projection.religionHistory)
+                ? projection.religionHistory.map(function (entry) {
+                    return entry && typeof entry === 'object' ? Object.assign({}, entry) : entry;
+                }) : [],
 
             // STABLE SHAPE PLACEHOLDER. Always null. Consumers use
             // locationId and resolve through world.js. See
