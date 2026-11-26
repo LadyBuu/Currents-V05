@@ -1426,6 +1426,8 @@ button, input, select, textarea, a,
 [data-theme="dating-sim"] h2,
 [data-theme="dating-sim"] h3 { color: #c92d76; }
 
+    .theme-toggle__btn #themeName { display: none !important; }
+    .tb-btn[aria-label="Import"], .tb-btn[aria-label="Export"], .tb-btn[aria-label="Refresh"] { min-width: 36px; padding-inline: 8px; }
     </style>
     <link rel="stylesheet" href="css/common.css">
 
@@ -1693,12 +1695,12 @@ button, input, select, textarea, a,
         <button id="setYearBtn" class="set-btn" type="button">Set</button>
     </div>
 
-    <button id="importBtn" class="tb-btn" type="button"></button>
-    <button id="exportBtn" class="tb-btn primary" type="button"></button>
-    <button id="refreshBtn" class="tb-btn" type="button"></button>
+    <button id="importBtn" aria-label="Import" title="Import" class="tb-btn" type="button"><span aria-hidden="true">⤓</span></button>
+    <button id="exportBtn" aria-label="Export" title="Export" class="tb-btn primary" type="button"><span aria-hidden="true">⤒</span></button>
+    <button id="refreshBtn" aria-label="Refresh" title="Refresh" class="tb-btn" type="button"><span aria-hidden="true">↻</span></button>
 
     <div class="theme-toggle" role="group" aria-label="Theme">
-        <button class="tb-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+        <button class="tb-btn theme-toggle__btn" id="themeBtn" aria-label="Choose theme" title="Choose theme" type="button" aria-haspopup="menu" aria-expanded="false">
             <span aria-hidden="true">◐</span>
             <span id="themeName">Dark</span>
         </button>
