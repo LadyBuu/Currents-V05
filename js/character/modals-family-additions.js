@@ -169,7 +169,7 @@
         return '<input type="search" id="' + _esc(searchId) + '" ' +
             'class="character-tab-input" ' +
             'placeholder="' + _esc(placeholder) + '" autocomplete="off">' +
-            '<div class="character-tab-picker-location" data-picker-location="' + _esc(listId) + '">' +
+            '<div class="character-tab-picker-location" data-picker-location="' + _esc(listId) + '" data-target-character-id="' + _esc(options.targetId || '') + '">' +
                 '<select class="character-tab-input" data-location-level="0" aria-label="Filter by country">' +
                     '<option value="">All locations</option>' +
                 '</select>' +
@@ -225,7 +225,7 @@
         listEl.innerHTML = html;
     }
 
-    function _getCharacterCandidates(query, excludeIds) {
+    function _getCharacterCandidates(query, excludeIds, gender) {
         var excludeSet = {};
         if (Array.isArray(excludeIds)) {
             for (var i = 0; i < excludeIds.length; i++) {
@@ -247,6 +247,7 @@
             var c = all[j];
             if (!c || !c.id) continue;
             if (excludeSet[c.id] === true) continue;
+            if (gender && c.gender !== gender) continue;
             if (lower.length > 0) {
                 var name = ((c.name || '') + ' ' + (c.surname || '')).toLowerCase();
                 if (name.indexOf(lower) === -1) continue;
@@ -270,7 +271,7 @@
         return out;
     }
 
-    function _wireCharacterPicker(root, listId, searchId, excludeIds, onSelect) {
+    function _wireCharacterPicker(root, listId, searchId, excludeIds, onSelect, gender) {
         var listEl = root.querySelector('#' + listId);
         var searchEl = root.querySelector('#' + searchId);
         var noteEl = root.querySelector('[data-picker-selection="' + listId + '"]');
@@ -342,7 +343,7 @@
             return false;
         }
         function refresh(query) {
-            var candidates = _getCharacterCandidates(query, excludeIds).filter(function (candidate) {
+            var candidates = _getCharacterCandidates(query, excludeIds, gender).filter(function (candidate) {
                 return isWithinLocation(candidate, selectedLocationId);
             });
             _renderCharacterPickerRows(listEl, candidates, targetLocationId);
@@ -511,7 +512,8 @@
                         _esc(roleLabel) + '</label>' +
                     _buildCharacterPickerHtml({
                         listId: 'sp-list',
-                        searchId: 'sp-search'
+                        searchId: 'sp-search',
+                        targetId: childId
                     }) +
                 '</div>' +
             '</div>';
@@ -584,7 +586,7 @@
         _Modals.onOpen(modal, function (root) {
             var exclude = [childId];
             _wireCharacterPicker(root, 'sp-list', 'sp-search', exclude,
-                function (id) { selectedId = id; });
+                function (id) { selectedId = id; }, role === 'mother' ? 'female' : 'male');
         });
 
         return modal;
@@ -645,7 +647,8 @@
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Child</label>' +
                     _buildCharacterPickerHtml({
                         listId: 'aec-list',
-                        searchId: 'aec-search'
+                        searchId: 'aec-search',
+                        targetId: parentId
                     }) +
                 '</div>' +
                 '<div style="margin-bottom:12px;">' +
@@ -864,7 +867,8 @@
                         '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Other Parent</label>' +
                         _buildCharacterPickerHtml({
                             listId: 'gb-list',
-                            searchId: 'gb-search'
+                            searchId: 'gb-search',
+                            targetId: parentSummary.id
                         }) +
                     '</div>') +
                 '<div style="margin-bottom:12px;">' +
@@ -1067,7 +1071,8 @@
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Sibling</label>' +
                     _buildCharacterPickerHtml({
                         listId: 'asib-list',
-                        searchId: 'asib-search'
+                        searchId: 'asib-search',
+                        targetId: childSummary.id
                     }) +
                 '</div>' +
                 '<div style="margin-bottom:12px;">' +
@@ -1252,7 +1257,8 @@
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Sibling</label>' +
                     _buildCharacterPickerHtml({
                         listId: 'adoptsib-list',
-                        searchId: 'adoptsib-search'
+                        searchId: 'adoptsib-search',
+                        targetId: childSummary.id
                     }) +
                 '</div>' +
                 '<div style="margin-bottom:12px;">' +
@@ -1433,7 +1439,8 @@
                         _esc(kindLabel) + '</label>' +
                     _buildCharacterPickerHtml({
                         listId: 'afw-list',
-                        searchId: 'afw-search'
+                        searchId: 'afw-search',
+                        targetId: parentSummary.id
                     }) +
                 '</div>' +
                 '<div style="margin-bottom:12px;">' +
