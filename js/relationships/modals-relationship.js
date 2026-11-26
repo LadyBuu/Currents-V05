@@ -763,6 +763,20 @@
                     form.rank = gEl ? (gEl.value || '').trim() : null;
                 }
 
+                var householdChoicePreflight = modalEl.querySelector('#relHouseholdChoice');
+                if ((type === A.CASUAL_DATING || type === A.ONE_NIGHT_STAND || type === A.COMMITTED) &&
+                    householdChoicePreflight && householdChoicePreflight.value === 'new') {
+                    var householdNamePreflight = modalEl.querySelector('#relHouseholdName');
+                    if (!householdNamePreflight || !(householdNamePreflight.value || '').trim()) {
+                        _toast('Enter a name for the new household', 'error');
+                        return false;
+                    }
+                    if (!loc1 && !loc2) {
+                        _toast('A household requires at least one character with a current location', 'error');
+                        return false;
+                    }
+                }
+
                 var locationChoiceEl = modalEl.querySelector('#relLocationChoice');
                 var locationChoice = locationChoiceEl ? locationChoiceEl.value : 'long_distance';
                 if (loc1 && loc2 && loc1 !== loc2 &&
