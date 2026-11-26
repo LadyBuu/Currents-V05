@@ -532,7 +532,7 @@
         html += '<label><input type="checkbox" data-input="show-different-sex"> Show different-sex couples</label>';
         html += '<div class="events-surrogacy-new__columns"><section><h4>Couples</h4>';
         html += '<div class="events-surrogacy-new__couples" data-list="same-sex">';
-        couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='male' && String(pair[1].gender||'').toLowerCase()==='male' || String(pair[0].gender||'').toLowerCase()==='male' && String(pair[1].gender||'').toLowerCase()==='male';}).forEach(function(pair){
+        couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='male' && String(pair[1].gender||'').toLowerCase()==='male';}).forEach(function(pair){
             html += '<button type="button" data-action="choose-surrogacy-couple" data-ids="'+_esc(pair[0].id+'|'+pair[1].id)+'">'+pairLabel(pair)+'</button>';
         });
         couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='female' && String(pair[1].gender||'').toLowerCase()==='female';}).forEach(function(pair){
