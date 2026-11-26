@@ -182,46 +182,6 @@
             return children;
         }
 
-        function renderLevel(parent, level, selectedId, parentSelect) {
-            var expectedType = types[level] || null;
-            var candidates = childrenFor(parent, expectedType);
-            if (!candidates.length) return;
-
-            var typeLabel = expectedType
-                ? (expectedType.displayName || expectedType.name || 'Location')
-                : 'Sub-location';
-            var wrap = document.createElement('div');
-            wrap.style.marginBottom = '9px';
-            var label = document.createElement('label');
-            label.textContent = typeLabel;
-            label.style.cssText = 'display:block;font-size:0.6rem;color:var(--accent);margin-bottom:4px;';
-            var select = document.createElement('select');
-            select.className = 'disaster-location-level';
-            select.dataset.level = String(level);
-            select.style.cssText = 'width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.65rem;';
-            select.innerHTML = _locationOptions(candidates, selectedId || null);
-            wrap.appendChild(label);
-            wrap.appendChild(select);
-            holder.appendChild(wrap);
-
-            select.addEventListener('change', function() {
-                while (wrap.nextSibling) holder.removeChild(wrap.nextSibling);
-                var chosenId = select.value;
-                selectedInput.value = chosenId;
-                if (!chosenId) return;
-                var chosen = window.getPlaceById(chosenId);
-                if (!chosen) return;
-                var nextType = types[level + 1] || null;
-                renderLevel(chosen, level + 1, null, select);
-            });
-
-            if (selectedId) {
-                selectedInput.value = selectedId;
-                var selectedPlace = window.getPlaceById(selectedId);
-                if (selectedPlace) renderLevel(selectedPlace, level + 1,
-                    initialChain[level + 1] ? initialChain[level + 1].id : null, select);
-            }
-        }
 
         holder.innerHTML = '';
         selectedInput.value = '';
