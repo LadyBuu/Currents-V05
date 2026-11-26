@@ -274,7 +274,9 @@
     function _commit(eventName, payload) {
         State.hydrateFromMasterData(true);
         window.markDataDirty();
-        State.publish(eventName, payload);
+        // CrimeState mutations publish their own domain events. It does not
+        // expose a public State.publish method; the command layer only emits
+        // the cross-domain DOM notification here.
         _dispatch(eventName, payload);
     }
 
