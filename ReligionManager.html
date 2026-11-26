@@ -1235,6 +1235,49 @@
                 console.error('[religion-manager] religion bootstrap failed:', e);
             }
         }
+        // Register the Religion tab scope before wiring the click router.
+        // The tab modules self-register their renderers, but they cannot
+        // supply the page-specific pane/context configuration.
+        if (window.TabManager && typeof window.TabManager.configure === 'function') {
+            try {
+                window.TabManager.configure('religion', {
+                    containerRoot: function () {
+                        return document.querySelector('[data-religion-editor]');
+                    },
+                    resolveContainer: function (tabId) {
+                        var root = document.querySelector('[data-religion-editor]');
+                        return root
+                            ? root.querySelector('[data-tab-content="' + tabId + '"]')
+                            : null;
+                    },
+                    buildContext: function () {
+                        var religion = window.ReligionTabContext
+                            ? window.ReligionTabContext.religion
+                            : null;
+                        return religion ? { religion: religion } : null;
+                    },
+                    buildEmptyState: function (tabId, reason) {
+                        if (reason === 'no-context') {
+                            return '<div class="rt-empty">Select a religion to view its ' +
+                                'details.</div>';
+                        }
+                        if (reason === 'no-renderer') {
+                            return '<div class="rt-empty">This religion tab is unavailable.</div>';
+                        }
+                        return '<div class="rt-empty">Unable to display this religion tab.</div>';
+                    },
+                    getActiveTabId: function () {
+                        return activeTabId;
+                    },
+                    setActiveTabId: function (tabId) {
+                        activeTabId = tabId;
+                    }
+                });
+            } catch (e) {
+                console.error('[religion-manager] TabManager.configure failed:', e);
+            }
+        }
+
         if (window.TabManager && typeof window.TabManager.init === 'function') {
             try { window.TabManager.init(); } catch (e) {
                 console.error('[religion-manager] TabManager.init failed:', e);
