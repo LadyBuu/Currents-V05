@@ -602,7 +602,8 @@
     // 9. EFFECTS: ORCHESTRATION
     // =========================================================================
 
-    function applyDisasterEffects(locationId, disaster) {
+    function applyDisasterEffects(locationId, disaster, options) {
+        options = options || {};
         var location = window.getPlaceById(locationId);
         if (!location) {
             return _fail('Location not found', C.CODES.LOCATION_NOT_FOUND);
@@ -676,7 +677,7 @@
         }
 
         // 3. Structural damage via the coordinator.
-        if (disaster.applyStructuralDamage === false) {
+        if (options.applyStructuralDamage === false) {
             results.structuralDamage = {
                 skipped: true,
                 reason: 'Structural damage disabled by the disaster configuration.'
@@ -822,7 +823,10 @@
 
         var applyResult = null;
         if (options.applyEffects !== false) {
-            applyResult = applyDisasterEffects(locationId, stored);
+            applyResult = applyDisasterEffects(locationId, stored, {
+                applyStructuralDamage: options.customEffects &&
+                    options.customEffects.applyStructuralDamage === false ? false : true
+            });
             if (!applyResult.success) {
                 // The disaster itself is already recorded and some effects may
                 // already have happened. Preserve the record in the failure
