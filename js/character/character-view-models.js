@@ -1798,6 +1798,52 @@
         };
     }
 
+    function buildOverviewModel(characterId) {
+        if (!_hasId(characterId)) return null;
+        var summary = CQ.getCharacterSummary(characterId);
+        if (!summary) return null;
+        var groups = { family: [], romantic: [], social: [], professional: [] };
+        var seen = {};
+        function add(category, id, label, status) {
+            if (!_hasId(id) || id === characterId) return;
+            var key = category + ':' + id + ':' + label;
+            if (seen[key]) return;
+            seen[key] = true;
+            var other = CQ.getCharacterSummary(id);
+            if (!other) return;
+            groups[category].push({
+                id: id, name: other.fullName || [other.name, other.surname].filter(Boolean).join(' ') || id,
+                age: typeof other.age === 'number' ? other.age : _computeAgeFromBirthYear(other.birthYear, other.isDeceased === true, other.deathYear, _getCurrentYear()),
+                gender: _genderLabel(other.gender), rank: resolveRankDisplay(other.rankId),
+                relationship: label, status: status || ''
+            });
+        }
+        try {
+            var family = buildFamilyModel(characterId);
+            if (family) {
+                ['parents','children','siblings','grandchildren','surrogacyChildren','adoptedParents'].forEach(function(k) {
+                    var block = family[k];
+                    var rows = Array.isArray(block) ? block : (block && Array.isArray(block.all) ? block.all : []);
+                    rows.forEach(function(x) { add('family', x.id || x.characterId, x.relationship || x.type || k); });
+                });
+                ['fosterAsChild','wardAsChild'].forEach(function(k) { (family[k] || []).forEach(function(x) { add('family',x.id || x.characterId,k); }); });
+            }
+        } catch(e) {}
+        var RQ = window.RelationshipQueries;
+        if (RQ && typeof RQ.getForCharacter === 'function') {
+            (RQ.getForCharacter(characterId) || []).forEach(function(r) {
+                var otherId = r.participantA === characterId ? r.participantB : r.participantA;
+                var type = r.type || '';
+                var category = /casual_dating|one_night_stand|committed/.test(type) ? 'romantic'
+                    : /friendship|rivalry|enmity/.test(type) ? 'social'
+                    : /apprenticeship|mastership|employment|guild_membership/.test(type) ? 'professional' : null;
+                if (category) add(category, otherId, type.replace(/_/g,' '), r.status);
+            });
+        }
+        Object.keys(groups).forEach(function(k) { groups[k].sort(function(a,b){return a.name.localeCompare(b.name);}); });
+        return { characterId: characterId, groups: groups };
+    }
+
     function buildLocationModel(characterId) {
         if (!_hasId(characterId)) return null;
         var summary;
@@ -1869,6 +1915,7 @@
     }
 
     window.CharacterViewModels = {
+        buildOverviewModel: buildOverviewModel,
         buildSkillsModel: buildSkillsModel,
         resolveName: resolveName,
         resolvePlaceName: resolvePlaceName,
