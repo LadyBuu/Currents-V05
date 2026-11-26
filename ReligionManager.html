@@ -1251,9 +1251,11 @@
                             : null;
                     },
                     buildContext: function () {
-                        var religion = window.ReligionTabContext
-                            ? window.ReligionTabContext.religion
-                            : null;
+                        if (!selectedReligionId || !window.ReligionQueries ||
+                            typeof window.ReligionQueries.getReligion !== 'function') {
+                            return null;
+                        }
+                        var religion = window.ReligionQueries.getReligion(selectedReligionId);
                         return religion ? { religion: religion } : null;
                     },
                     buildEmptyState: function (tabId, reason) {
