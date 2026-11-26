@@ -412,10 +412,10 @@
         if (!Array.isArray(all)) return null;
         var year = typeof window.getCurrentYear === 'function' ? window.getCurrentYear() : null;
         return all.filter(function(c) {
-            if (!c || !c.id || c.isDeleted === true || c.isDeceased === true) return false;
-            if (typeof c.age === 'number') return true;
-            if (typeof c.birthYear === 'number' && typeof year === 'number') c.age = year - c.birthYear;
-            return true;
+            return !!c && !!c.id && c.isDeleted !== true && c.isDeceased !== true;
+        }).map(function(c) {
+            if (typeof c.age === 'number' || typeof c.birthYear !== 'number' || typeof year !== 'number') return c;
+            return Object.assign({}, c, { age: year - c.birthYear });
         });
     }
 
