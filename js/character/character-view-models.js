@@ -1414,7 +1414,9 @@
 
         if (typeof window.getCurrentLocationId === 'function' && summary) {
             try {
-                var semantic = window.getCurrentLocationId(summary);
+                var character = typeof window.getCharacterById === 'function'
+                    ? window.getCharacterById(characterId) : null;
+                var semantic = window.getCurrentLocationId(character || summary);
                 if (typeof semantic === 'string' && semantic.length > 0) {
                     resolved = semantic;
                 }
@@ -1426,7 +1428,7 @@
         return {
             locationId: resolved,
             locationName: name || null,
-            source: resolved ? 'move' : 'none',
+            source: resolved ? (summary.birthplaceId === resolved ? 'birthplace' : 'move') : 'none',
             rawCurrentLocationId: null,
             resolvedDiffersFromRaw: false
         };
