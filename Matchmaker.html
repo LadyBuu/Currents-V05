@@ -25,7 +25,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--
 @media(max-width:700px){.matchmaker-topbar{gap:.3rem;padding:.35rem}.matchmaker-topbar .year-input{padding:.1rem .25rem}.matchmaker-topbar .year-input label{display:none}.matchmaker-topbar .year-input input{width:3.1rem}.matchmaker-topbar .tb-btn{padding:.25rem .4rem;font-size:.65rem}}
 .matchmaker-topbar .brand { color:var(--accent); font-weight:600; }
 .matchmaker-topbar .spacer { flex:1; }
-.matchmaker-topbar a { color:var(--text); text-decoration:none; padding:.35rem .65rem; border:1px solid var(--border); border-radius:var(--radius); }
+.matchmaker-topbar a { color:var(--text); text-decoration:none; }
 .matchmaker-topbar a:hover { color:var(--accent); border-color:var(--accent); }
 .matchmaker-topbar select { color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:.35rem; }
 main { width: min(100%, 1500px); margin: 0 auto; padding: clamp(.75rem, 2vw, 1.5rem); }
@@ -79,12 +79,12 @@ h4 { margin: 0 0 .4rem; color: var(--dim); text-transform: capitalize; }
   .mm-tabs button, .mm-actions button, .mm-suggestion button { transition: none; }
 }
 </style></head><body><nav class="matchmaker-topbar" aria-label="Matchmaker controls">
-<span class="brand">Matchmaker</span><span class="spacer"></span>
+<a id="dashboardBtn" class="tb-btn" href="index.html">← Dashboard</a><span class="brand">Matchmaker</span><span class="spacer"></span>
 <div class="year-input"><label for="yearInput">Year</label><input type="number" id="yearInput" min="1" step="1"><button class="tb-btn" id="setYearBtn" type="button">Set</button></div>
 <input type="file" id="fileInput" accept=".json,application/json" hidden>
 <button class="tb-btn" id="importBtn" type="button">Import</button><button class="tb-btn" id="exportBtn" type="button">Export</button>
 <div class="theme-toggle" role="group" aria-label="Theme"><button class="tb-btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">Theme: <span id="themeName">Dark</span> ▾</button><ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden></ul></div>
-</nav><main><h1>Matchmaker</h1><div id="matchmakerApp"></div></main>
+</nav><main><div id="matchmakerApp"></div></main>
 <script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
 <script src="js/core/constants/character-constants.js"></script>
