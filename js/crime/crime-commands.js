@@ -265,9 +265,9 @@
     // =========================================================================
     //
     // Runs after every successful command. Rebuilds indexes over whatever
-    // mutations the command performed, marks the data dirty, publishes the
-    // in-process event, and dispatches a CustomEvent for cross-domain
-    // consumers.
+    // mutations the command performed, marks the data dirty, and dispatches
+    // a CustomEvent for cross-domain consumers. CrimeState mutations publish
+    // their own in-process events.
     //
     // This is the transaction boundary. It does NOT save. Callers that
     // need persistence call CrimeCommands.persist() once after the command
