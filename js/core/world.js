@@ -501,35 +501,25 @@
     }
 
     function getCurrentLocationId(character) {
-        if (!character) return null;
+        if (!character || !Array.isArray(character.moves)) return null;
 
-        if (_hasId(character.currentLocationId)) {
-            return character.currentLocationId;
-        }
+        // Current location is derived exclusively from move history.
+        // Explicit currentLocationId and birthplace are not location state.
+        var best = null;
+        var bestYear = -Infinity;
 
-        if (Array.isArray(character.moves) && character.moves.length > 0) {
-            var best = null;
-            var bestYear = -Infinity;
+        for (var i = 0; i < character.moves.length; i++) {
+            var move = character.moves[i];
+            if (!move || !_hasId(move.locationId)) continue;
+            if (!_isValidMoveYear(move.year)) continue;
 
-            for (var i = 0; i < character.moves.length; i++) {
-                var move = character.moves[i];
-                if (!move || !_hasId(move.locationId)) continue;
-                if (!_isValidMoveYear(move.year)) continue;
-
-                if (move.year > bestYear) {
-                    bestYear = move.year;
-                    best = move;
-                }
+            if (move.year > bestYear) {
+                bestYear = move.year;
+                best = move;
             }
-
-            if (best) return best.locationId;
         }
 
-        if (_hasId(character.birthplaceId)) {
-            return character.birthplaceId;
-        }
-
-        return null;
+        return best ? best.locationId : null;
     }
 
     function getCurrentPlace(character) {
