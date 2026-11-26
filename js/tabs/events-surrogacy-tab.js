@@ -507,64 +507,54 @@
             if (!RQ || typeof RQ.getActiveRomanticRelationships !== 'function') return;
             (RQ.getActiveRomanticRelationships(c.id) || []).forEach(function(rel) {
                 var id = rel.partnerId;
-                if (!id || id === c.id || !characters.some(function(x){return x.id === id;})) return;
+                if (!id || id === c.id) return;
+                var other = characters.find(function(x){ return x.id === id; });
+                if (!other) return;
                 var key = [c.id,id].sort().join('|');
                 if (seen[key]) return;
                 seen[key] = true;
-                var other = characters.find(function(x){return x.id === id;});
                 couples.push([c,other]);
             });
         });
-        couples.sort(function(a,b) {
-            var aa = typeof a[0].age === 'number' ? a[0].age : -1;
-            var ab = typeof a[1].age === 'number' ? a[1].age : -1;
-            var ba = typeof b[0].age === 'number' ? b[0].age : -1;
-            var bb = typeof b[1].age === 'number' ? b[1].age : -1;
-            return Math.max(bb,ba) - Math.max(ab,aa);
-        });
-        var men = couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='male' || String(pair[1].gender||'').toLowerCase()==='male';});
-        var women = couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='female' || String(pair[1].gender||'').toLowerCase()==='female';});
+        function age(c) { return typeof c.age === 'number' ? c.age : -1; }
+        function gender(c) { return String(c.gender||'').toLowerCase(); }
+        couples.forEach(function(pair) { pair.sort(function(a,b){return age(b)-age(a);}); });
+        couples.sort(function(a,b) { return Math.max(age(b[0]),age(b[1]))-Math.max(age(a[0]),age(a[1])); });
         function pairAids(pair) {
-            var aids = [];
-            var a = pair[0], b = pair[1];
-            var al = a.currentLocationId || a.locationId || null;
-            var bl = b.currentLocationId || b.locationId || null;
-            if (al && bl && al === bl) aids.push('<small class="events-surrogacy-aid">⌂ Same location</small>');
-            var FQ = window.FamilyQueries;
-            if (FQ && typeof FQ.classifyKinship === 'function') {
-                var kin = FQ.classifyKinship(a.id, b.id);
-                if (kin && String(kin.type || '').toLowerCase() !== 'unrelated') {
-                    var label = String(kin.type || '').replace(/_/g, ' ');
-                    if (kin.degree) label = kin.degree + ' degree ' + label;
-                    aids.push('<small class="events-surrogacy-aid">Family: '+_esc(label)+'</small>');
-                }
+            var aids = [], a=pair[0], b=pair[1];
+            var al=a.currentLocationId||a.locationId||a.location||null;
+            var bl=b.currentLocationId||b.locationId||b.location||null;
+            if (al && bl && String(al)===String(bl)) aids.push('<small class="events-surrogacy-aid">Same location</small>');
+            var FQ=window.FamilyQueries, kin=null;
+            if (FQ) {
+                if (typeof FQ.getRelationshipBetween==='function') kin=FQ.getRelationshipBetween(a.id,b.id);
+                else if (typeof FQ.getKinship==='function') kin=FQ.getKinship(a.id,b.id);
+                else if (typeof FQ.classifyKinship==='function') kin=FQ.classifyKinship(a.id,b.id);
             }
-            return aids.length ? '<span class="events-surrogacy-aids">'+aids.join('')+'</span>' : '';
+            if (kin) {
+                var label=String(kin.label||kin.relationship||kin.type||'').replace(/_/g,' ');
+                if (label && !/unrelated/i.test(label)) aids.push('<small class="events-surrogacy-aid">Family: '+_esc((kin.degree?kin.degree+' degree ':'')+label)+'</small>');
+            }
+            return aids.length?'<span class="events-surrogacy-aids">'+aids.join('')+'</span>':'';
         }
         function pairLabel(pair) {
-            var sorted = pair.slice().sort(function(a,b){return (b.age||-1)-(a.age||-1);});
-            return sorted.map(function(c){return _esc((c.name||'')+' '+(c.surname||'')+' ('+(c.age==null?'?':c.age)+')');}).join(' + ');
+            return pair.map(function(c){return _esc((c.name||'')+' '+(c.surname||'')+' ('+(c.age==null?'?':c.age)+')');}).join(' + ');
         }
-        var html = '<div class="events-surrogacy-new"><div class="events-surrogacy-new__header">'+_icon('GUARDIANSHIP')+'<span>New Surrogacy Arrangement</span></div>';
-        html += '<label><input type="checkbox" data-input="show-different-sex"> Show different-sex couples</label>';
-        html += '<div class="events-surrogacy-new__columns"><section><h4>Couples</h4>';
-        html += '<div class="events-surrogacy-new__couples" data-list="same-sex">';
-        couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='male' && String(pair[1].gender||'').toLowerCase()==='male';}).forEach(function(pair){
-            html += '<button type="button" data-action="choose-surrogacy-couple" data-ids="'+_esc(pair[0].id+'|'+pair[1].id)+'"'>'+pairLabel(pair)+pairAids(pair)+'</button>';
+        function renderPair(pair) {
+            return '<button type="button" data-action="choose-surrogacy-couple" data-ids="'+_esc(pair[0].id+'|'+pair[1].id)+'">'+pairLabel(pair)+pairAids(pair)+'</button>';
+        }
+        var html='<div class="events-surrogacy-new"><div class="events-surrogacy-new__header">'+_icon('GUARDIANSHIP')+'<span>New Surrogacy Arrangement</span></div>';
+        html+='<label><input type="checkbox" data-input="show-different-sex"> Show different-sex couples</label>';
+        html+='<div class="events-surrogacy-new__columns"><section><h4>Couples</h4><div class="events-surrogacy-new__couples" data-list="same-sex">';
+        couples.filter(function(p){return gender(p[0])==='male'&&gender(p[1])==='male';}).forEach(function(p){html+=renderPair(p);});
+        couples.filter(function(p){return gender(p[0])==='female'&&gender(p[1])==='female';}).forEach(function(p){html+=renderPair(p);});
+        html+='</div><div class="events-surrogacy-new__couples" data-list="different-sex" hidden>';
+        couples.filter(function(p){return gender(p[0])!==gender(p[1]);}).forEach(function(p){html+=renderPair(p);});
+        html+='</div></section><section><h4>Singles</h4>';
+        characters.filter(function(c){return !couples.some(function(p){return p[0].id===c.id||p[1].id===c.id;});}).sort(function(a,b){return age(b)-age(a);}).forEach(function(c){
+            html+='<button type="button" data-action="new-surrogacy-single" data-id="'+_esc(c.id)+'">'+_esc((c.name||'')+' '+(c.surname||'')+' ('+(c.age==null?'?':c.age)+')')+'</button>';
         });
-        couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()==='female' && String(pair[1].gender||'').toLowerCase()==='female';}).forEach(function(pair){
-            html += '<button type="button" data-action="choose-surrogacy-couple" data-ids="'+_esc(pair[0].id+'|'+pair[1].id)+'">'+pairLabel(pair)+'</button>';
-        });
-        html += '</div><div class="events-surrogacy-new__couples" data-list="different-sex" hidden>';
-        couples.filter(function(pair){return String(pair[0].gender||'').toLowerCase()!==String(pair[1].gender||'').toLowerCase();}).forEach(function(pair){
-            html += '<button type="button" data-action="choose-surrogacy-couple" data-ids="'+_esc(pair[0].id+'|'+pair[1].id)+'">'+pairLabel(pair)+'</button>';
-        });
-        html += '</div></section><section><h4>Singles</h4>';
-        characters.filter(function(c){return !couples.some(function(pair){return pair[0].id===c.id||pair[1].id===c.id;});}).sort(function(a,b){return (b.age||-1)-(a.age||-1);}).forEach(function(c){
-            html += '<button type="button" data-action="new-surrogacy-single" data-id="'+_esc(c.id)+'">'+_esc((c.name||'')+' '+(c.surname||'')+' ('+(c.age==null?'?':c.age)+')')+'</button>';
-        });
-        html += '</section></div></div>';
-        return html;
+        html+='</section></div></div>'; return html;
     }
 
     function _wireNewArrangementBlock(container) {
