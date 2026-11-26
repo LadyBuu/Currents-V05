@@ -4,7 +4,7 @@
 
     var STORAGE_KEY = 'stillwaters_theme';
     var THEMES = [
-        'dark', 'light', 'vaporwave', 'pastel', 'carnival', 'maximal', 
+        'dark', 'light', 'vaporwave', 'salmon-lime', 'dating-sim', 'pastel', 'carnival', 'maximal', 
         'gits', 'nouveau', 'ukiyo-e', 'nature', 'kmt', 'gaslight', 
         'grotesque', 'illuminated', 'discowing', 'choc-cake', 'dada', 
         'brutalist', 'orchestrion', 'rococo', 'nautical-tile'
