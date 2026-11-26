@@ -162,13 +162,6 @@
             current = current.parentId ? window.getPlaceById(current.parentId) : null;
         }
 
-        function typeForPlace(place) {
-            for (var i = 0; i < types.length; i++) {
-                if (types[i].id === place.typeId) return types[i];
-            }
-            return null;
-        }
-
         function childrenFor(parent, expectedType) {
             var children = window.LocationQueries.getPlacesByParent(
                 parent ? parent.id : null,
