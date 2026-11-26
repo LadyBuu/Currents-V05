@@ -608,6 +608,18 @@
                     'placeholder="e.g., journeyman">' +
             '</div>' +
 
+            '<div id="relHouseholdSection" style="display:none;margin-bottom:12px;">' +
+                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Household</label>' +
+                '<select id="relHouseholdChoice" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                    '<option value="none">Leave household membership unchanged</option>' +
+                    '<option value="partner1">Join ' + _esc(char1.name + ' ' + (char1.surname || '')) + '\'s household</option>' +
+                    '<option value="partner2">Join ' + _esc(char2.name + ' ' + (char2.surname || '')) + '\'s household</option>' +
+                    '<option value="new">Create a new household for both</option>' +
+                '</select>' +
+                '<input id="relHouseholdName" type="text" placeholder="New household name" style="display:none;width:100%;margin-top:8px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '<small style="font-size:0.6rem;color:var(--dim);">Household membership is updated through HouseholdCommands.</small>' +
+            '</div>' +
+
             '<div style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Start Year</label>' +
                 '<input type="number" id="relStartYear" value="' + currentYear + '" ' +
@@ -634,12 +646,16 @@
                 var empSection = modalEl.querySelector('#relEmploymentSection');
                 var guildSection = modalEl.querySelector('#relGuildSection');
                 var locationSection = modalEl.querySelector('#relLocationSection');
+                var householdSection = modalEl.querySelector('#relHouseholdSection');
+                var householdChoice = modalEl.querySelector('#relHouseholdChoice');
+                var householdName = modalEl.querySelector('#relHouseholdName');
 
                 if (!select) return;
 
                 function sync() {
                     var t = select.value;
                     if (locationSection) locationSection.style.display = (loc1 && loc2 && loc1 !== loc2 && (t === A.CASUAL_DATING || t === A.ONE_NIGHT_STAND || t === A.COMMITTED)) ? 'block' : 'none';
+                    if (householdSection) householdSection.style.display = (t === A.CASUAL_DATING || t === A.ONE_NIGHT_STAND || t === A.COMMITTED) ? 'block' : 'none';
                     if (attrsSection) {
                         attrsSection.style.display = (t === A.COMMITTED) ? 'block' : 'none';
                     }
@@ -657,6 +673,11 @@
                 select.value = initialType;
                 select.addEventListener('change', sync);
                 sync();
+                if (householdChoice && householdName) {
+                    householdChoice.addEventListener('change', function() {
+                        householdName.style.display = householdChoice.value === 'new' ? 'block' : 'none';
+                    });
+                }
 
                 // --- START FAMILY WARNING LOGIC ---
                 var warningBox = modalEl.querySelector('#relFamilyWarning');
@@ -778,6 +799,72 @@
                             ? warning.message
                             : (warning && warning.code ? String(warning.code) : 'Warning.');
                         _toast(warningText, 'warning');
+                    }
+                }
+
+                // Apply the requested household integration after relationship creation.
+                // HouseholdCommands owns membership history and cross-household transfers.
+                var householdChoiceEl = modalEl.querySelector('#relHouseholdChoice');
+                var householdChoiceValue = householdChoiceEl ? householdChoiceEl.value : 'none';
+                if ((type === A.CASUAL_DATING || type === A.ONE_NIGHT_STAND || type === A.COMMITTED) &&
+                    householdChoiceValue !== 'none' && window.HouseholdCommands && window.HouseholdQueries) {
+                    var householdTargetId = null;
+                    if (householdChoiceValue === 'partner1' || householdChoiceValue === 'partner2') {
+                        var targetCharacterId = householdChoiceValue === 'partner1' ? char1.id : char2.id;
+                        var targetHouseholds = window.HouseholdQueries.getHouseholdsByMember(targetCharacterId);
+                        if (!targetHouseholds.length) {
+                            _toast('Relationship created, but the selected partner has no household to join.', 'warning');
+                            if (typeof onSuccess === 'function') onSuccess(result);
+                            _closeModal();
+                            return true;
+                        }
+                        householdTargetId = targetHouseholds[0].id;
+                    } else if (householdChoiceValue === 'new') {
+                        var householdNameEl = modalEl.querySelector('#relHouseholdName');
+                        var newHouseholdName = householdNameEl ? (householdNameEl.value || '').trim() : '';
+                        if (!newHouseholdName) {
+                            _toast('Relationship created, but a name is required to create the household.', 'warning');
+                            if (typeof onSuccess === 'function') onSuccess(result);
+                            _closeModal();
+                            return true;
+                        }
+                        var householdLocationId = loc1 || loc2;
+                        if (!householdLocationId) {
+                            _toast('Relationship created, but a household cannot be created without a location.', 'warning');
+                            if (typeof onSuccess === 'function') onSuccess(result);
+                            _closeModal();
+                            return true;
+                        }
+                        var createHouseholdResult = window.HouseholdCommands.createHousehold({
+                            name: newHouseholdName,
+                            foundedYear: startYear,
+                            locationId: householdLocationId,
+                            headId: char1.id
+                        });
+                        if (!createHouseholdResult || !createHouseholdResult.success) {
+                            _toast('Relationship created, but household creation failed: ' +
+                                ((createHouseholdResult && (createHouseholdResult.message || createHouseholdResult.reason)) || 'unknown error'), 'warning');
+                            if (typeof onSuccess === 'function') onSuccess(result);
+                            _closeModal();
+                            return true;
+                        }
+                        householdTargetId = createHouseholdResult.data && createHouseholdResult.data.householdId;
+                    }
+                    if (householdTargetId) {
+                        [char1.id, char2.id].forEach(function(memberId) {
+                            var currentHouseholds = window.HouseholdQueries.getHouseholdsByMember(memberId);
+                            if (currentHouseholds.some(function(h) { return h.id === householdTargetId; })) return;
+                            var transferResult = window.HouseholdCommands.transferMember(memberId, householdTargetId, {
+                                year: startYear,
+                                reason: 'Joined household with romantic partner',
+                                type: 'family',
+                                role: 'Family Member'
+                            });
+                            if (!transferResult || !transferResult.success) {
+                                _toast('Relationship created, but household membership could not be fully updated: ' +
+                                    ((transferResult && (transferResult.message || transferResult.reason)) || 'unknown error'), 'warning');
+                            }
+                        });
                     }
                 }
 
