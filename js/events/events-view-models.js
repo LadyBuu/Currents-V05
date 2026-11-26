@@ -889,6 +889,23 @@
 
         var child = record.child || null;
         var adopter = record.adopter || null;
+        // Resolve missing hydrated summaries from canonical character state.
+        var CS = window.CharacterState;
+        if (CS && typeof CS.getCharacter === 'function') {
+            if (!child && record.childId) {
+                try { child = CS.getCharacter(record.childId) || null; } catch (e) {}
+            }
+            if (!adopter && record.adopterId) {
+                try { adopter = CS.getCharacter(record.adopterId) || null; } catch (e) {}
+            }
+        }
+        var currentYear = typeof window.getCurrentYear === 'function' ? window.getCurrentYear() : null;
+        if (child && typeof child.age !== 'number' && typeof child.birthYear === 'number' && typeof currentYear === 'number') {
+            child = Object.assign({}, child, { age: currentYear - child.birthYear });
+        }
+        if (adopter && typeof adopter.age !== 'number' && typeof adopter.birthYear === 'number' && typeof currentYear === 'number') {
+            adopter = Object.assign({}, adopter, { age: currentYear - adopter.birthYear });
+        }
 
         var ageGap = child && adopter && typeof child.age === 'number' && typeof adopter.age === 'number' ? adopter.age - child.age : null;
         var kinship = null;
