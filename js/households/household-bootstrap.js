@@ -808,7 +808,7 @@
                             continue;
                         }
                         var reverseHousehold = character.householdId || character.household;
-                        if (reverseHousehold && reverseHousehold !== household.id) {
+                        if (reverseHousehold !== household.id) {
                             report.crossDomainIssues.push({
                                 type: 'membership_reverse_index_mismatch',
                                 householdId: household.id,
