@@ -1733,6 +1733,71 @@
         }, errors);
     }
 
+    function buildSkillsModel(characterId) {
+        if (!_hasId(characterId)) return null;
+        var errors = {};
+        var character = null;
+        try { character = window.CharacterState.getLiveCharacterForMutation(characterId); }
+        catch (e) { errors.character = e.message || String(e); }
+        if (!character) return null;
+        function safe(key, fn, fallback) {
+            try { return fn(); }
+            catch (e) { errors[key] = e && e.message ? e.message : String(e); return fallback; }
+        }
+        var progress = safe('subjectProgress', function () {
+            return CC.getAllSubjectProgress(characterId);
+        }, null);
+        var literacyProgress = progress && progress.filter(function (p) {
+            return String(p.key || p.subjectId || p.name || '').toLowerCase() === 'literacy';
+        })[0] || null;
+        var literacyLevel = literacyProgress && typeof literacyProgress.level === 'number'
+            ? literacyProgress.level : 0;
+        var literacy = {
+            isLiterate: safe('literacy', function () { return CC.isLiterate(characterId); }, false) === true,
+            literacyLevel: literacyLevel,
+            tierLabel: skillTierLabel(literacyLevel),
+            canTeach: literacyLevel >= 76
+        };
+        var professions = safe('professions', function () {
+            return CC.getProfessions(characterId).map(function (p) {
+                return {
+                    id: p.id, roleName: p.name || p.roleName || p.id,
+                    skillLevel: p.skillLevel || 0, tierLabel: skillTierLabel(p.skillLevel || 0),
+                    primary: p.primary === true, specs: Array.isArray(p.specs) ? p.specs.slice() : []
+                };
+            });
+        }, null);
+        var traits = safe('traits', function () { return CC.getTraits(characterId); }, null);
+        var education = safe('education', function () {
+            var eq = window.EducationQueries;
+            if (eq && typeof eq.getEnrollmentsForCharacter === 'function') return eq.getEnrollmentsForCharacter(characterId);
+            if (eq && typeof eq.getForCharacter === 'function') return eq.getForCharacter(characterId);
+            return null;
+        }, null);
+        var educationHistory = safe('educationHistory', function () {
+            var eh = window.EducationHistory;
+            if (eh && typeof eh.getForCharacter === 'function') return eh.getForCharacter(characterId);
+            return [];
+        }, []);
+        var apprenticeship = safe('apprenticeship', function () {
+            var aq = window.ApprenticeshipQueries;
+            if (!aq) return { available: false, reason: 'Apprenticeship domain is not loaded.', master: null, apprentices: [] };
+            if (typeof aq.getForCharacter === 'function') return aq.getForCharacter(characterId);
+            return { available: false, reason: 'Apprenticeship query API is unavailable.', master: null, apprentices: [] };
+        }, null);
+        return {
+            characterId: characterId, literacy: literacy, professions: professions,
+            education: Array.isArray(education) ? education : education,
+            educationHistory: Array.isArray(educationHistory) ? educationHistory : [],
+            subjectProgress: progress && progress.map(function (p) {
+                var level = typeof p.level === 'number' ? p.level : 0;
+                return { name: p.name || p.subjectName || p.key, level: level,
+                    tierLabel: skillTierLabel(level), lastStudied: p.lastStudied };
+            }),
+            apprenticeship: apprenticeship, traits: traits, errors: errors
+        };
+    }
+
     function buildLocationModel(characterId) {
         if (!_hasId(characterId)) return null;
         var summary;
@@ -1804,6 +1869,7 @@
     }
 
     window.CharacterViewModels = {
+        buildSkillsModel: buildSkillsModel,
         resolveName: resolveName,
         resolvePlaceName: resolvePlaceName,
         resolveRankDisplay: resolveRankDisplay,
