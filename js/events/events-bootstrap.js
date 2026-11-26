@@ -127,6 +127,14 @@
         }
     }
 
+    function hasMethods(module, names) {
+        if (!module) return false;
+        for (var i = 0; i < names.length; i++) {
+            if (typeof module[names[i]] !== 'function') return false;
+        }
+        return true;
+    }
+
     var _warned = {};
     function _warnOnce(key, message) {
         if (_warned[key]) return;
@@ -237,14 +245,6 @@
         // readers plus CharacterQueries for party enrichment. Each
         // can read directly from ChildrenState, or fall back to the
         // corresponding ChildrenQueries scan.
-        function hasMethods(module, names) {
-            if (!module) return false;
-            for (var i = 0; i < names.length; i++) {
-                if (typeof module[names[i]] !== 'function') return false;
-            }
-            return true;
-        }
-
         var characterReadReady = hasMethods(window.CharacterQueries, [
             'getCharacterSummary'
         ]);
