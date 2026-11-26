@@ -108,7 +108,7 @@
 
     var VALID_STATUS_FILTERS = [
         'all', 'active', 'vacant', 'empty', 'declining',
-        'deprecated', 'destroyed'
+        'deprecated', 'destroyed', 'everyone-deceased'
     ];
 
     var _component = {
@@ -150,6 +150,11 @@
             if (typeof data.locationFilter === 'string') {
                 _ui.locationFilter = data.locationFilter;
             }
+            if (Array.isArray(data.locationPath)) {
+                _ui.locationPath = data.locationPath.filter(function(id) {
+                    return typeof id === 'string';
+                });
+            }
             if (typeof data.filtersCollapsed === 'boolean') {
                 _ui.filtersCollapsed = data.filtersCollapsed;
             }
@@ -169,6 +174,7 @@
                 searchTerm: _ui.searchTerm,
                 statusFilter: _ui.statusFilter,
                 locationFilter: _ui.locationFilter,
+                locationPath: _ui.locationPath,
                 filtersCollapsed: _ui.filtersCollapsed,
                 showPositions: _ui.showPositions
             }));
@@ -243,7 +249,18 @@
             }
         }
 
-        if (_ui.statusFilter !== 'all') {
+        if (_ui.statusFilter === 'everyone-deceased') {
+            filtered = filtered.filter(function(h) {
+                try {
+                    var facts = _queries.getHouseholdStatus(h.id);
+                    return facts.totalMembers > 0
+                        && facts.missingCount === 0
+                        && facts.deceasedCount === facts.totalMembers;
+                } catch (e) {
+                    return false;
+                }
+            });
+        } else if (_ui.statusFilter !== 'all') {
             // Status filter is semantic. Delegate to Queries so we don't
             // reimplement the active/vacant/empty logic here.
             //
@@ -381,6 +398,8 @@
             '>Empty (' + (statusCounts.empty || 0) + ')</option>';
         html += '<option value="declining"' + (_ui.statusFilter === 'declining' ? ' selected' : '') +
             '>Declining (' + (statusCounts.declining || 0) + ')</option>';
+        html += '<option value="everyone-deceased"' + (_ui.statusFilter === 'everyone-deceased' ? ' selected' : '') +
+            '>Everyone deceased (' + (statusCounts.everyoneDeceased || 0) + ')</option>';
         if (statusCounts.deprecated) {
             html += '<option value="deprecated"' + (_ui.statusFilter === 'deprecated' ? ' selected' : '') +
                 '>Deprecated (' + statusCounts.deprecated + ')</option>';
@@ -468,6 +487,9 @@
             try {
                 var s = _queries.getHouseholdStatus(households[i].id);
                 counts[s.status] = (counts[s.status] || 0) + 1;
+                if (s.totalMembers > 0 && s.missingCount === 0 && s.deceasedCount === s.totalMembers) {
+                    counts.everyoneDeceased = (counts.everyoneDeceased || 0) + 1;
+                }
             } catch (e) {
                 // Skip corrupt rows
             }
@@ -566,6 +588,10 @@
         if (locationName && locationName !== 'Unknown') {
             html += '<span title="Location" style="display:inline-flex;align-items:center;gap:2px;">' +
                 _getIcon('LOCATION') + ' ' + _escapeHtml(locationName) + '</span>';
+            if (locationPeers.length) {
+                html += '<span title="Shared location with ' + locationPeers.length + ' other household(s)" style="display:inline-flex;align-items:center;gap:2px;">' +
+                    _getIcon('USERS') + ' ' + locationPeers.length + '</span>';
+            }
         } else {
             html += '<span title="No location" style="color:var(--warn);display:inline-flex;align-items:center;gap:2px;">' +
                 _getIcon('WARNING') + ' None</span>';
