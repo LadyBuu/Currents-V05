@@ -1448,7 +1448,8 @@
             case 'stork':       return getFertileCouples(locationId);
             case 'adoption':    return getAdoptionRecords(locationId);
             case 'surrogacy':   return getSurrogacyRecords(locationId);
-            case 'crime':       return getCrimeRecords(locationId);\n            case 'disasters':   return getDisasterRecords(locationId);
+            case 'crime':       return getCrimeRecords(locationId);
+            case 'disasters':   return getDisasterRecords(locationId);
             case 'social':      return getSocialEvents(locationId);
             case 'educational': return getEducationalEvents(locationId);
             default: return _unavailable('Unknown facet: ' + facetId);
