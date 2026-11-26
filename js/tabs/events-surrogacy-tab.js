@@ -927,10 +927,32 @@
         var cmd=window.ChildrenCommands;
         if (!cmd || typeof cmd.recordSwapSurrogacy!=='function') { _toast('Reciprocal surrogacy command is unavailable.', 'error'); return; }
         var year=typeof window.getCurrentYear==='function'?window.getCurrentYear():null;
+        // Female couple's child: oldest man provides sperm; oldest woman
+        // provides the egg and is recorded as the biological mother.
+        // Male couple's child: youngest man provides sperm; youngest woman
+        // provides the egg and carries. Keep intended/legal parentage distinct.
+        var oldestMan=malePair[0], youngestMan=malePair[malePair.length-1];
+        var oldestWoman=femalePair[0], youngestWoman=femalePair[femalePair.length-1];
         var result=cmd.recordSwapSurrogacy(
-            {intendedParentId:femalePair[0].id,intendedPartnerId:femalePair[1].id,surrogateId:malePair[0].id,eggDonorId:femalePair[0].id},
-            {intendedParentId:malePair[0].id,intendedPartnerId:malePair[1].id,surrogateId:femalePair[0].id,eggDonorId:femalePair[1].id},
-            {arrangementYear:year,birthYear:year,type:'gestational',notes:'Reciprocal surrogacy'}
+            {
+                intendedParentId: oldestWoman.id,
+                intendedPartnerId: femalePair[1].id,
+                surrogateId: oldestWoman.id,
+                spermDonorId: oldestMan.id
+            },
+            {
+                intendedParentId: malePair[0].id,
+                intendedPartnerId: malePair[1].id,
+                surrogateId: youngestWoman.id,
+                spermDonorId: youngestMan.id,
+                eggDonorId: youngestWoman.id
+            },
+            {
+                arrangementYear:year,
+                birthYear:year,
+                type:'traditional',
+                notes:'Reciprocal surrogacy'
+            }
         );
         if (!result || result.success!==true || !result.successA || !result.successB) { _toast(result&&result.reason||'Could not create reciprocal surrogacy.', 'error'); return; }
         _toast('Reciprocal surrogacy arrangements created.', 'success'); _refresh();
