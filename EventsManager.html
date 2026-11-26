@@ -2292,6 +2292,26 @@
 <script src="js/settlement/settlement-ui-state.js"></script>
 
 <!-- ============================================================ -->
+<!-- CRIME DOMAIN                                                  -->
+<!--                                                                -->
+<!-- Cross-domain prerequisites are loaded above: core utilities,  -->
+<!-- character + mortality, household, relationships, selectors,    -->
+<!-- religion, location, and the complete settlement law/query and  -->
+<!-- government-command surfaces. Keep this group in dependency    -->
+<!-- order; bootstrap must remain last.                             -->
+<!-- ============================================================ -->
+<script src="js/crime/crime-constants.js"></script>
+<script src="js/crime/crime-state.js"></script>
+<script src="js/crime/crime-law-integration.js"></script>
+<script src="js/crime/crime-queries.js"></script>
+<script src="js/crime/crime-commands.js"></script>
+<script src="js/crime/crime-view-models.js"></script>
+<script src="js/crime/modals-crime.js"></script>
+<script src="js/crime/crime-ui-stats.js"></script>
+<script src="js/crime/vendetta-system.js"></script>
+<script src="js/crime/crime-bootstrap.js"></script>
+
+<!-- ============================================================ -->
 <!-- DISASTER (disasters facet reads through these)                -->
 <!--                                                                -->
 <!-- Files live at js/disaster/, NOT js/core/disaster/. The        -->
