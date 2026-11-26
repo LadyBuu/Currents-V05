@@ -33,7 +33,7 @@
  *
  * WHAT THIS MODULE DOES NOT DO:
  *   - It does NOT configure TabManager. (events-manager-bootstrap)
- *   - It does NOT render. (events-deaths-tab / future facet tabs)
+ *   - It does NOT render. (the individual events-*-tab modules)
  *   - It does NOT touch the DOM.
  *   - It does NOT own the events data. (each facet's owning domain)
  *   - It does NOT silence a missing required dependency.
@@ -182,8 +182,10 @@
         _requireMethod('EventsConstants', window.EventsConstants, 'panelIdFor');
         _requireMethod('EventsConstants', window.EventsConstants, 'getDefaultFiltersForFacet');
 
-        // EventsQueries: the generic dispatcher + the deaths facet
-        // (the only fully-implemented facet today).
+        // EventsQueries: verify the generic facet dispatcher and
+        // the deaths-specific read methods used by the shared stats
+        // and recent-activity surfaces. Other facets expose their
+        // own query methods and are checked by their tab/domain code.
         _requireMethod('EventsQueries', window.EventsQueries, 'getFacetRecords');
         _requireMethod('EventsQueries', window.EventsQueries, 'getCharacterRoster');
         _requireMethod('EventsQueries', window.EventsQueries, 'getCharacterPopulationStats');
@@ -423,11 +425,11 @@
         _runIntegrityCheck();
 
         // Expose the aggregate facade. This is the ONLY place the
-        // Events Manager's module set is assembled under a single
-        // namespace. Callers that reach for window.Events get the
-        // same surface as the four module globals, plus a `facets`
-        // helper that reports the declared facet catalog and which
-        // of them are currently unavailable.
+        // Events Manager's shared modules are assembled under a
+        // single namespace. Callers that reach for window.Events get
+        // the module globals plus a facets helper that reports the
+        // declared catalog and the availability checks implemented
+        // below for each owning domain.
         window.Events = {
             constants:  window.EventsConstants,
             queries:    window.EventsQueries,
@@ -437,7 +439,9 @@
             /**
              * Returns the declared facet catalog (id, label, iconName,
              * description) with an `available` flag indicating
-             * whether the facet's owning domain is loaded.
+             * whether the facet's required owning-domain readers
+             * are present. This is a dependency-presence check, not
+             * a guarantee that a query will succeed for every record.
              */
             facets: (function() {
                 var list = window.EventsConstants.EVENT_FACETS;
