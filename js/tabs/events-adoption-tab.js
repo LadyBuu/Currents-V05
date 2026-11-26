@@ -438,9 +438,9 @@
     }
     function _couples(characters) {
         var RQ = window.RomanceQueries, seen = {}, out = [];
-        if (!RQ || typeof RQ.getActiveCommittedPartners !== 'function') return out;
+        if (!RQ || typeof RQ.getActiveRomanticRelationships !== 'function') return out;
         characters.forEach(function(c) {
-            (RQ.getActiveCommittedPartners(c.id) || []).forEach(function(p) {
+            (RQ.getActiveRomanticRelationships(c.id) || []).forEach(function(p) {
                 var id = p.partnerId;
                 if (!id || id === c.id || !characters.some(function(x){return x.id===id;})) return;
                 var key = [c.id,id].sort().join('|');
