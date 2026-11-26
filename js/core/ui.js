@@ -809,5 +809,7 @@
      * should be removed once those callers migrate.
      */
     window._showToast = showToast;
+    // Shared icon resolver used by domain modal modules.
+    window._getIcon = _getIcon;
 
 })();
