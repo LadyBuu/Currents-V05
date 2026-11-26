@@ -326,23 +326,50 @@
         }
 
         var exportBtn = document.getElementById('exportBtn');
-        if (exportBtn && typeof window.exportMasterData === 'function') {
+        if (exportBtn) {
             exportBtn.addEventListener('click', function () {
-                window.exportMasterData();
+                if (typeof window.exportData !== 'function') {
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('Export is unavailable: export utilities are not loaded.', 'error');
+                    }
+                    return;
+                }
+                try {
+                    window.exportData();
+                } catch (error) {
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('Export failed: ' + error.message, 'error');
+                    } else {
+                        console.error('Settlement export failed:', error);
+                    }
+                }
             });
         }
 
         var importBtn = document.getElementById('importBtn');
-        var fileInput = document.getElementById('fileInput');
-        if (importBtn && fileInput) {
-            importBtn.addEventListener('click', function () { fileInput.click(); });
-            fileInput.addEventListener('change', function () {
-                if (typeof window.importMasterData === 'function') {
-                    window.importMasterData(fileInput.files[0], function () {
-                        _renderSidebar();
-                        _requireTabManager().renderActive(SCOPE);
-                    });
+        if (importBtn) {
+            importBtn.addEventListener('click', function () {
+                if (typeof window.importData !== 'function') {
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('Import is unavailable: import utilities are not loaded.', 'error');
+                    }
+                    return;
                 }
+                window.importData().then(function () {
+                    _renderSidebar();
+                    _requireTabManager().renderActive(SCOPE);
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('Import completed.', 'success');
+                    }
+                }).catch(function (error) {
+                    if (error && error.message !== 'No file selected') {
+                        if (typeof window.showToast === 'function') {
+                            window.showToast('Import failed: ' + error.message, 'error');
+                        } else {
+                            console.error('Settlement import failed:', error);
+                        }
+                    }
+                });
             });
         }
     }
