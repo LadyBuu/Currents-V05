@@ -376,6 +376,9 @@
             var custom = modeInput.value === 'custom';
             var deaths = custom ? Number(root.querySelector('#disasterCustomDeaths').value) : disaster.deaths;
             var prosperity = custom ? Number(root.querySelector('#disasterCustomProsperity').value) : disaster.prosperityLoss;
+            var expectedCharacterDeaths = data.population > 0
+                ? Math.round(data.eligibleVictims * Math.min(1, Math.max(0, deaths) / data.population))
+                : 0;
             var crime = custom ? Number(root.querySelector('#disasterCustomCrime').value) : disaster.crimeIncrease;
             var structural = custom
                 ? root.querySelector('#disasterCustomStructural').checked
@@ -386,7 +389,7 @@
                 ['Population', String(disaster.population)],
                 ['Estimated deaths', String(deaths)],
                 ['Eligible characters', String(data.eligibleVictims)],
-                ['Expected character deaths', String(data.expectedCharacterDeaths)],
+                ['Expected character deaths', String(expectedCharacterDeaths)],
                 ['Prosperity loss', String(prosperity)],
                 ['Crime increase', (crime * 100).toFixed(1) + '%'],
                 ['Structural damage', structural ? 'Random destruction roll' : 'Disabled']
@@ -454,7 +457,13 @@
             : parseInt(yearRaw, 10);
         var applyEffects = root.querySelector('#disasterApplyEffects').checked;
         var mode = root.querySelector('#disasterEffectsMode').value;
-        var previewResult = Commands.previewDisaster(locationId, disasterType, year);
+        var previewResult = root.__disasterPreview;
+        if (!previewResult || !previewResult.success ||
+            previewResult.data.disaster.locationId !== locationId ||
+            previewResult.data.disaster.year !== year ||
+            (disasterType && previewResult.data.disaster.disasterId !== disasterType)) {
+            previewResult = Commands.previewDisaster(locationId, disasterType, year);
+        }
         if (!previewResult.success) {
             _toast('Could not preview disaster: ' + previewResult.reason, 'error');
             return false;
