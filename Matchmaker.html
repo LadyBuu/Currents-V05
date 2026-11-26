@@ -14,6 +14,15 @@
 <script src="js/core/time.js"></script>
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
+<script>
+// Matchmaker is a standalone page, so initialize the shared save before
+// any domain modules read window.masterData.
+if (typeof window.initializeStorage === "function") {
+    window.initializeStorage();
+} else if (typeof window.loadMasterData === "function") {
+    window.loadMasterData();
+}
+</script>
 <script src="js/core/accessors.js"></script>
 <script src="js/core/ui.js"></script>
 <script src="js/core/ui-state.js"></script>
