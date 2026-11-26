@@ -812,11 +812,9 @@
 
             var action = actionEl.getAttribute('data-action');
 
-            if (action === 'new-surrogacy') {
-                e.preventDefault();
-                _handleNewArrangement(container);
-                return;
-            }
+            if (action === 'new-surrogacy') { e.preventDefault(); _handleNewArrangement(container); return; }
+            if (action === 'new-surrogacy-single') { e.preventDefault(); _openArrangementFor(actionEl.getAttribute('data-id'), null); return; }
+            if (action === 'choose-surrogacy-couple') { e.preventDefault(); var ids=(actionEl.getAttribute('data-ids')||'').split('|'); _openArrangementFor(ids[0], ids[1]||null); return; }
 
             if (action === 'complete-surrogacy') {
                 e.preventDefault();
@@ -891,6 +889,14 @@
     // 13. ACTION HANDLERS
     // =========================================================================
 
+    function _openArrangementFor(parentId, partnerId) {
+        if (!parentId || typeof window.openSurrogacyArrangementModal !== 'function') {
+            _toast('Surrogacy arrangement modal is unavailable.', 'error'); return;
+        }
+        var result = window.openSurrogacyArrangementModal(parentId, function(){_refresh();}, partnerId);
+        if (!result || result.success !== true) _toast(result && result.reason || 'Could not open surrogacy arrangement modal.', 'error');
+    }
+
     function _handleNewArrangement(container) {
         var selectEl = container.querySelector(
             '[data-input="new-intended-parent-id"]'
@@ -916,12 +922,7 @@
             return;
         }
 
-        var result = window.openSurrogacyArrangementModal(
-            intendedParentId,
-            function() {
-                _refresh();
-            }
-        );
+        var result = window.openSurrogacyArrangementModal(intendedParentId, function() { _refresh(); });
         if (!result || result.success !== true) {
             _toast(
                 'Could not open surrogacy arrangement modal: ' +
