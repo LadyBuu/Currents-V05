@@ -10,6 +10,12 @@ html, body { height: 100%; overflow: auto; }
 .mm-suggestion small { display: block; color: var(--dim); font-size: .85em; margin-top: .15rem; }
 html, body { min-height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--f-body); }
+.matchmaker-topbar { display:flex; align-items:center; gap:.75rem; flex-wrap:wrap; padding:.65rem 1rem; background:var(--bg2); border-bottom:1px solid var(--border); }
+.matchmaker-topbar .brand { color:var(--accent); font-weight:600; }
+.matchmaker-topbar .spacer { flex:1; }
+.matchmaker-topbar a { color:var(--text); text-decoration:none; padding:.35rem .65rem; border:1px solid var(--border); border-radius:var(--radius); }
+.matchmaker-topbar a:hover { color:var(--accent); border-color:var(--accent); }
+.matchmaker-topbar select { color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:.35rem; }
 main { width: min(100%, 1500px); margin: 0 auto; padding: clamp(.75rem, 2vw, 1.5rem); }
 h1 { margin: 0 0 1rem; color: var(--accent); }
 h3 { margin-bottom: .65rem; }
@@ -60,7 +66,10 @@ h4 { margin: 0 0 .4rem; color: var(--dim); text-transform: capitalize; }
 @media (prefers-reduced-motion: reduce) {
   .mm-tabs button, .mm-actions button, .mm-suggestion button { transition: none; }
 }
-</style></head><body><main><h1>Matchmaker</h1><div id="matchmakerApp"></div></main>
+</style></head><body><nav class="matchmaker-topbar" aria-label="Main navigation"><span class="brand">Currents</span><span class="spacer"></span><a href="index.html">Home</a><a href="CharacterManager.html">Characters</a><a href="HouseholdManager.html">Households</a><a href="RelationshipManager.html">Relationships</a><label for="matchmakerTheme">Theme</label><select id="matchmakerTheme" aria-label="Theme"><option value="dark">Dark</option><option value="light">Light</option></select></nav><main><h1>Matchmaker</h1><div id="matchmakerApp"></div></main>
+<script>
+(function(){var select=document.getElementById("matchmakerTheme");var saved=document.documentElement.getAttribute("data-theme")||"dark";select.value=saved;select.addEventListener("change",function(){document.documentElement.setAttribute("data-theme",select.value);try{localStorage.setItem("theme",select.value);}catch(e){}});})();
+</script>
 <script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
 <script src="js/core/constants/character-constants.js"></script>
