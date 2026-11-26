@@ -1422,7 +1422,7 @@
     }
 
     // =========================================================================
-    // 9. EDUCATIONAL FACET
+    // 10. EDUCATIONAL FACET
     // =========================================================================
 
     function getEducationalEvents(locationId) {
@@ -1434,7 +1434,7 @@
     }
 
     // =========================================================================
-    // 10. FACET DISPATCH
+    // 11. FACET DISPATCH
     // =========================================================================
     //
     // A single entry point that dispatches to the correct facet read.
@@ -1456,7 +1456,7 @@
     }
 
     // =========================================================================
-    // 11. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.EventsQueries = {
@@ -1476,6 +1476,9 @@
 
         // Surrogacy facet
         getSurrogacyRecords: getSurrogacyRecords,
+
+        // Crime facet
+        getCrimeRecords: getCrimeRecords,
 
         // Disasters facet
         getDisasterRecords: getDisasterRecords,
