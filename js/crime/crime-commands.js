@@ -73,8 +73,10 @@
  * COMMIT TAIL (_commit):
  *   1. CrimeState.hydrateFromMasterData(true)
  *   2. markDataDirty()
- *   3. CrimeState.publish()
- *   4. dispatchEvent(CustomEvent)
+ *   3. dispatchEvent(CustomEvent)
+ *
+ *   CrimeState mutations publish their own in-process events; CrimeState
+ *   intentionally does not expose a public publish() method.
  *
  *   No saveMasterData inside a command. Persistence is
  *   CrimeCommands.persist(), called by the UI once per modal action.
