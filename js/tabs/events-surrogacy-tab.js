@@ -548,7 +548,7 @@
         html+='<div class="events-surrogacy-new__columns"><section><h4>Couples</h4><div class="events-surrogacy-new__couples" data-list="same-sex">';
         couples.filter(function(p){return gender(p[0])==='male'&&gender(p[1])==='male';}).forEach(function(p){html+=renderPair(p);});
         couples.filter(function(p){return gender(p[0])==='female'&&gender(p[1])==='female';}).forEach(function(p){html+=renderPair(p);});
-        html+='</div><button type="button" data-action="create-surrogacy-swap">Create reciprocal surrogacy with selected couples</button><div class="events-surrogacy-new__couples" data-list="different-sex" hidden>;
+        html+='</div><button type="button" data-action="create-surrogacy-swap">Create reciprocal surrogacy with selected couples</button><div class="events-surrogacy-new__couples" data-list="different-sex" hidden>';
         couples.filter(function(p){return gender(p[0])!==gender(p[1]);}).forEach(function(p){html+=renderPair(p);});
         html+='</div></section><section><h4>Singles</h4>';
         var singles=characters.filter(function(c){return !couples.some(function(p){return p[0].id===c.id||p[1].id===c.id;});});
