@@ -630,6 +630,22 @@
 <script src="js/religion/modals-religion.js"></script>
 <script src="js/religion/religion-bootstrap.js"></script>
 
+<!-- BLOCK 34 — LOCATION SUBSYSTEM (before disaster and crime) -->
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
+<script src="js/location/location-commands.js"></script>
+<script src="js/location/location-queries.js"></script>
+<script src="js/location/location-movement.js"></script>
+<script src="js/location/location-view-models.js"></script>
+<script src="js/location/location-ui-state.js"></script>
+<script src="js/location/location-ui-list.js"></script>
+<script src="js/location/location-presentation.js"></script>
+<script src="js/location/modals-location-helper.js"></script>
+<script src="js/location/modals-location.js"></script>
+<script src="js/location/modals-moves.js"></script>
+<script src="js/location/location-bootstrap.js"></script>
+
+
 <!-- BLOCK 21 — CULTURE SUBSYSTEM -->
 <script src="js/culture/culture-constants.js"></script>
 <script src="js/culture/culture-validation.js"></script>
@@ -796,22 +812,20 @@
 <script src="js/industry/modals-industry.js"></script>
 <script src="js/industry/industry-bootstrap.js"></script>
 
-<!-- BLOCK 34 — LOCATION SUBSYSTEM (before disaster and crime) -->
-<script src="js/location/location-state.js"></script>
-<script src="js/location/location-hierarchy.js"></script>
-<script src="js/location/location-commands.js"></script>
-<script src="js/location/location-queries.js"></script>
-<script src="js/location/location-movement.js"></script>
-<script src="js/location/location-view-models.js"></script>
-<script src="js/location/location-ui-state.js"></script>
-<script src="js/location/location-ui-list.js"></script>
-<script src="js/location/location-presentation.js"></script>
-<script src="js/location/modals-location-helper.js"></script>
-<script src="js/location/modals-location.js"></script>
-<script src="js/location/modals-moves.js"></script>
-<script src="js/location/location-bootstrap.js"></script>
-
 <!-- BLOCK 32 — DISASTER SUBSYSTEM (requires LocationQueries) -->
+<!-- BLOCK 36 — EDUCATION SUBSYSTEM -->
+<script src="js/education/education-constants.js"></script>
+<script src="js/education/education-rules.js"></script>
+<script src="js/education/education-state.js"></script>
+<script src="js/education/education-learning.js"></script>
+<script src="js/education/education-history.js"></script>
+<script src="js/education/education-queries.js"></script>
+<script src="js/education/education-commands.js"></script>
+<script src="js/education/education-annual.js"></script>
+<script src="js/education/education-ui-list.js"></script>
+<script src="js/education/modals-education.js"></script>
+
+
 <!-- BLOCK 35 — SETTLEMENT SUBSYSTEM -->
 <script src="js/settlement/settlement-fiscal-definitions.js"></script>
 <script src="js/settlement/settlement-government-definitions.js"></script>
@@ -866,18 +880,6 @@
 
 <script src="js/settlement/settlement-view-models.js"></script>
 <script src="js/settlement/settlement-ui-state.js"></script>
-
-<!-- BLOCK 36 — EDUCATION SUBSYSTEM -->
-<script src="js/education/education-constants.js"></script>
-<script src="js/education/education-rules.js"></script>
-<script src="js/education/education-state.js"></script>
-<script src="js/education/education-learning.js"></script>
-<script src="js/education/education-history.js"></script>
-<script src="js/education/education-queries.js"></script>
-<script src="js/education/education-commands.js"></script>
-<script src="js/education/education-annual.js"></script>
-<script src="js/education/education-ui-list.js"></script>
-<script src="js/education/modals-education.js"></script>
 
 <!-- BLOCK 37 — CRIME SUBSYSTEM (requires LocationQueries + RelationshipQueries) -->
 <script src="js/crime/crime-constants.js"></script>
@@ -1013,6 +1015,15 @@
         } catch (e) { console.error('HouseholdBootstrap:', e); }
 
         try { if (window.DisasterBootstrap && window.DisasterBootstrap.init) window.DisasterBootstrap.init(); } catch (e) { console.error('DisasterBootstrap:', e); }
+
+        try {
+            if (window.EducationState && typeof window.EducationState.hydrateFromMasterData === 'function') {
+                var educationRecords = window.masterData && window.masterData.data
+                    && Array.isArray(window.masterData.data.educationalInstitutions)
+                    ? window.masterData.data.educationalInstitutions : [];
+                window.EducationState.hydrateFromMasterData(educationRecords);
+            }
+        } catch (e) { console.error('EducationState hydration:', e); }
 
         try { if (window.SettlementManagerBootstrap && window.SettlementManagerBootstrap.init) window.SettlementManagerBootstrap.init(); } catch (e) { console.error('SettlementManagerBootstrap:', e); }
     })();
