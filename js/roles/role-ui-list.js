@@ -148,10 +148,15 @@
     }
 
     function _icon(name) {
-        if (!window.Icons || typeof window.Icons[name] !== 'string') {
-            throw new Error('role-ui-list.js: unknown icon "' + name + '".');
+        // Older role records can contain placeholder values such as "-".
+        // Treat an unknown stored icon as the neutral circle rather than
+        // aborting the entire role-list render.
+        if (!window.Icons) {
+            throw new Error('role-ui-list.js requires icons.js (window.Icons).');
         }
-        return window.Icons[name];
+        if (typeof window.Icons[name] === 'string') return window.Icons[name];
+        if (typeof window.Icons.CIRCLE === 'string') return window.Icons.CIRCLE;
+        throw new Error('role-ui-list.js: no valid fallback icon is available.');
     }
 
     function _iconSpan(name, size) {
