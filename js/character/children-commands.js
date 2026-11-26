@@ -1165,10 +1165,11 @@
 
             var childId = createResult.data.id;
 
-            var legalRole = intendedParent.gender === 'female' ? 'mother' : 'father';
+            var intendedRole = options.intendedParentRole || (intendedParent.gender === 'female' ? 'mother' : 'father');
+            var intendedType = options.intendedParentType || 'legal';
             var intendedEdge = FC.setParent(childId, intendedParentId, {
-                parentType: 'legal',
-                parentRole: legalRole,
+                parentType: intendedType,
+                parentRole: intendedRole,
                 startYear: birthYear,
                 notes: 'Intended parent via surrogacy'
             });
@@ -1177,9 +1178,9 @@
             if (_hasId(options.intendedPartnerId)) {
                 var partner = _getCharacter(options.intendedPartnerId);
                 if (partner) {
-                    var partnerRole = partner.gender === 'female' ? 'mother' : 'father';
+                    var partnerRole = options.intendedPartnerRole || (partner.gender === 'female' ? 'mother' : 'father');
                     FC.setParent(childId, options.intendedPartnerId, {
-                        parentType: 'legal',
+                        parentType: options.intendedPartnerType || 'legal',
                         parentRole: partnerRole,
                         startYear: birthYear,
                         notes: 'Intended parent via surrogacy'
