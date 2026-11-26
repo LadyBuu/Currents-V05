@@ -937,12 +937,16 @@
             {
                 intendedParentId: oldestWoman.id,
                 intendedPartnerId: femalePair[1].id,
+                intendedParentType: 'biological',
+                intendedPartnerType: 'legal',
                 surrogateId: oldestWoman.id,
                 spermDonorId: oldestMan.id
             },
             {
-                intendedParentId: malePair[0].id,
-                intendedPartnerId: malePair[1].id,
+                intendedParentId: youngestMan.id,
+                intendedPartnerId: malePair[0].id,
+                intendedParentType: 'biological',
+                intendedPartnerType: 'legal',
                 surrogateId: youngestWoman.id,
                 spermDonorId: youngestMan.id,
                 eggDonorId: youngestWoman.id
