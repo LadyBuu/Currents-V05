@@ -125,6 +125,7 @@
         searchTerm: '',
         statusFilter: 'all',
         locationFilter: 'all',
+        locationPath: [],
         filtersCollapsed: true,
         showPositions: false,
         selectedId: null
@@ -410,34 +411,37 @@
     }
 
     function _buildLocationOptions() {
-        var html = '';
-        html += '<option value="all"' + (_ui.locationFilter === 'all' ? ' selected' : '') +
-            '>— All Locations —</option>';
-
         var places = [];
-        try {
-            places = _getPlaces();
-        } catch (e) {
-            places = [];
-        }
-
-        if (Array.isArray(places)) {
-            var sorted = places.slice().sort(function(a, b) {
-                return (a.displayName || '').localeCompare(b.displayName || '');
+        try { places = _getPlaces(); } catch (e) { places = []; }
+        if (!Array.isArray(places)) places = [];
+        var html = '';
+        var parentId = null;
+        var depth = 0;
+        var path = Array.isArray(_ui.locationPath) ? _ui.locationPath : [];
+        while (depth < 12) {
+            var children = places.filter(function(p) {
+                return (p.parentId || null) === parentId;
+            }).sort(function(a, b) {
+                return (a.displayName || a.name || '').localeCompare(b.displayName || b.name || '');
             });
-            for (var i = 0; i < sorted.length; i++) {
-                var p = sorted[i];
-                var selected = (_ui.locationFilter === p.id) ? ' selected' : '';
+            if (!children.length) break;
+            var selectedId = path[depth] || '';
+            html += '<select data-role="location-filter" data-depth="' + depth + '" style="flex:1;min-width:60px;padding:3px 4px;background:var(--bg);border:1px solid var(--border);border-radius:3px;font-size:0.6rem;color:var(--text);">';
+            html += '<option value="">' + (depth === 0 ? '— All Locations —' : '— Any —') + '</option>';
+            for (var i = 0; i < children.length; i++) {
+                var p = children[i];
                 var label = p.displayName || p.name || 'Unknown';
                 if (p.isCapital) label += ' [Capital]';
-                html += '<option value="' + _escapeHtml(p.id) + '"' + selected + '>' +
-                    _escapeHtml(label) + '</option>';
+                html += '<option value="' + _escapeHtml(p.id) + '"' + (selectedId === p.id ? ' selected' : '') + '>' + _escapeHtml(label) + '</option>';
             }
+            if (depth === 0) {
+                html += '<option value="unknown"' + (_ui.locationFilter === 'unknown' ? ' selected' : '') + '>Unknown Location</option>';
+            }
+            html += '</select>';
+            if (!selectedId) break;
+            parentId = selectedId;
+            depth++;
         }
-
-        html += '<option value="unknown"' +
-            (_ui.locationFilter === 'unknown' ? ' selected' : '') +
-            '>Unknown Location</option>';
         return html;
     }
 
@@ -477,6 +481,7 @@
         }
 
         var locationName = _getLocationDisplayName(household.locationId);
+        var locationPeers = _queries.getAllHouseholds({ includeDeprecated: true }).filter(function(other) { return other.id !== household.id && household.locationId && other.locationId === household.locationId; });
 
         var positionInfo = '';
         if (_ui.showPositions) {
@@ -652,10 +657,14 @@
         }
 
         // Location filter
-        var locationFilter = container.querySelector('[data-role="location-filter"]');
-        if (locationFilter) {
-            locationFilter.onchange = function() {
-                _ui.locationFilter = this.value;
+        var locationFilters = container.querySelectorAll('[data-role="location-filter"]');
+        for (var lf = 0; lf < locationFilters.length; lf++) {
+            locationFilters[lf].onchange = function() {
+                var depth = Number(this.dataset.depth || 0);
+                var value = this.value;
+                _ui.locationPath = (Array.isArray(_ui.locationPath) ? _ui.locationPath : []).slice(0, depth);
+                if (value && value !== 'unknown') _ui.locationPath[depth] = value;
+                _ui.locationFilter = value === 'unknown' ? 'unknown' : (value || (_ui.locationPath.length ? _ui.locationPath[_ui.locationPath.length - 1] : 'all'));
                 _savePreferences();
                 _scheduleRender();
             };
@@ -678,6 +687,7 @@
                 _ui.searchTerm = '';
                 _ui.statusFilter = 'all';
                 _ui.locationFilter = 'all';
+                _ui.locationPath = [];
                 _ui.showPositions = false;
                 _savePreferences();
                 _scheduleRender();
