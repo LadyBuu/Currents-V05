@@ -2132,48 +2132,41 @@ button, input, select, textarea, a,
 <!-- Household bootstrap (configures TabManager, wires shell) -->
 <script src="js/tabs/household-manager-bootstrap.js"></script>
 
-<!-- Theme switcher -->
+<!-- Theme switcher uses the shared theme registry from theme-boot.js. -->
 <script>
 (function () {
     'use strict';
-    var STORAGE_KEY = 'stillwaters_theme';
-    var THEMES = [
-        { id: 'dark', label: 'Dark' }, { id: 'light', label: 'Light' },
-        { id: 'vaporwave', label: 'Vaporwave' }, { id: 'pastel', label: 'Pastel' },
-        { id: 'carnival', label: 'Carnival' }, { id: 'maximal', label: 'Maximal' },
-        { id: 'gits', label: 'GITS' }, { id: 'nouveau', label: 'Nouveau' },
-        { id: 'ukiyo-e', label: 'Ukiyo-e' }, { id: 'nature', label: 'Nature' },
-        { id: 'kmt', label: 'KMT' }, { id: 'gaslight', label: 'Gaslight' },
-        { id: 'grotesque', label: 'Grotesque' }, { id: 'illuminated', label: 'Illuminated' },
-        { id: 'discowing', label: 'Discowing' }, { id: 'choc-cake', label: 'Choc Cake' },
-        { id: 'dada', label: 'Dada' }, { id: 'brutalist', label: 'Brutalist' },
-        { id: 'orchestrion', label: 'Orchestrion' }, { id: 'rococo', label: 'Rococo' },
-        { id: 'nautical-tile', label: 'Nautical Tile' }
-    ];
-    var byId = {}; for (var i = 0; i < THEMES.length; i++) byId[THEMES[i].id] = THEMES[i];
+    var switcher = window.ThemeSwitcher;
+    if (!switcher || !Array.isArray(switcher.themes)) return;
+    var labels = {
+        dark: 'Dark', light: 'Light', vaporwave: 'Vaporwave',
+        'salmon-lime': 'Salmon Lime', 'dating-sim': 'Dating Sim',
+        pastel: 'Pastel', carnival: 'Carnival', maximal: 'Maximal',
+        gits: 'GITS', nouveau: 'Nouveau', 'ukiyo-e': 'Ukiyo-e',
+        nature: 'Nature', kmt: 'KMT', gaslight: 'Gaslight',
+        grotesque: 'Grotesque', illuminated: 'Illuminated',
+        discowing: 'Disco Wing', 'choc-cake': 'Choc Cake', dada: 'Dada',
+        brutalist: 'Brutalist', orchestrion: 'Orchestrion',
+        rococo: 'Rococo', 'nautical-tile': 'Nautical Tile'
+    };
     var themeBtn = document.getElementById('themeBtn');
     var themeMenu = document.getElementById('themeMenu');
     var themeName = document.getElementById('themeName');
-    function apply(id) {
-        if (!byId[id]) id = 'dark';
-        document.documentElement.setAttribute('data-theme', id);
-        themeName.textContent = byId[id].label;
-        try { localStorage.setItem(STORAGE_KEY, id); } catch (e) {}
-    }
-    function buildMenu() {
-        var html = '';
-        for (var i = 0; i < THEMES.length; i++) {
-            html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' +
-                THEMES[i].id + '">' + THEMES[i].label + '</button></li>';
-        }
-        themeMenu.innerHTML = html;
-    }
-    if (themeBtn) themeBtn.addEventListener('click', function (e) {
+    if (!themeBtn || !themeMenu || !themeName) return;
+    function label(id) { return labels[id] || id.replace(/-/g, ' ').replace(/\b\w/g, function (x) { return x.toUpperCase(); }); }
+    function apply(id) { switcher.apply(id); themeName.textContent = label(id); }
+    var html = '';
+    switcher.themes.forEach(function (id) {
+        html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' +
+            id + '">' + label(id) + '</button></li>';
+    });
+    themeMenu.innerHTML = html;
+    themeBtn.addEventListener('click', function (e) {
         e.stopPropagation();
         themeMenu.hidden = !themeMenu.hidden;
         themeBtn.setAttribute('aria-expanded', themeMenu.hidden ? 'false' : 'true');
     });
-    if (themeMenu) themeMenu.addEventListener('click', function (e) {
+    themeMenu.addEventListener('click', function (e) {
         var btn = e.target.closest('[data-theme-id]');
         if (!btn) return;
         apply(btn.getAttribute('data-theme-id'));
@@ -2181,17 +2174,12 @@ button, input, select, textarea, a,
         themeBtn.setAttribute('aria-expanded', 'false');
     });
     document.addEventListener('click', function (e) {
-        if (!themeMenu || themeMenu.hidden) return;
-        if (themeMenu.contains(e.target)) return;
-        if (e.target === themeBtn) return;
-        themeMenu.hidden = true;
-        themeBtn.setAttribute('aria-expanded', 'false');
+        if (!themeMenu.hidden && !themeMenu.contains(e.target) && e.target !== themeBtn) {
+            themeMenu.hidden = true;
+            themeBtn.setAttribute('aria-expanded', 'false');
+        }
     });
-    var saved = null;
-    try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
-    buildMenu();
-    apply(saved && byId[saved] ? saved : 'dark');
-    window.ThemeSwitcher = { apply: apply, themes: THEMES.slice() };
+    apply(switcher.getSaved() || 'dark');
 })();
 </script>
 
