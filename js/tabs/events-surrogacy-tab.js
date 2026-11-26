@@ -518,7 +518,7 @@
         });
         function age(c) { return typeof c.age === 'number' ? c.age : -1; }
         function gender(c) { return String(c.gender||'').toLowerCase(); }
-        couples.forEach(function(pair) { pair.sort(function(a,b){return age(b)-age(a);}); });
+        couples.forEach(function(pair) { pair.sort(function(a,b) { var ga=gender(a)==='male'?0:gender(a)==='female'?1:2, gb=gender(b)==='male'?0:gender(b)==='female'?1:2; return ga-gb || age(b)-age(a); }); });
         couples.sort(function(a,b) { return Math.max(age(b[0]),age(b[1]))-Math.max(age(a[0]),age(a[1])); });
         function pairAids(pair) {
             var aids = [], a=pair[0], b=pair[1];
