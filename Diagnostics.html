@@ -21,6 +21,17 @@
         .tab-strip { display:flex; gap:6px; border-bottom:1px solid var(--line); margin-bottom:20px; }
         .tab-button { border:0; border-bottom:2px solid transparent; background:transparent; color:var(--fg-2); padding:11px 15px; font:600 .9rem var(--f-body,system-ui); cursor:pointer; }
         .tab-button[aria-selected="true"] { color:var(--accent); border-bottom-color:var(--accent); }
+        .audit-groups { display:grid; gap:18px; }
+        .audit-group { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius,6px); overflow:hidden; }
+        .audit-group h2 { margin:0; padding:14px 16px; border-bottom:1px solid var(--line); color:var(--fg); font:600 1rem var(--f-body,system-ui); }
+        .audit-group h2 span { float:right; color:var(--fg-2); font:600 .8rem var(--f-mono,monospace); }
+        .audit-issue { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:11px 16px; border-bottom:1px solid var(--line); }
+        .audit-issue:last-child { border-bottom:0; }
+        .audit-issue-name { color:var(--fg); font-weight:600; }
+        .audit-issue-meta { color:var(--fg-2); font-size:.8rem; margin-top:3px; }
+        .audit-open { flex:0 0 auto; border:1px solid var(--line-strong); border-radius:var(--radius,6px); background:transparent; color:var(--accent); padding:7px 10px; font:600 .8rem var(--f-body,system-ui); cursor:pointer; }
+        .audit-open:hover { background:var(--surface-2,var(--bg)); }
+        .audit-empty { padding:15px 16px; color:var(--fg-2); font-size:.88rem; }
         .wipe-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
         .wipe-card { min-width:0; display:flex; flex-direction:column; gap:10px; padding:17px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius,6px); }
         .wipe-card h2 { margin:0; color:var(--fg); font:600 1.05rem var(--f-body,system-ui); }
@@ -73,7 +84,7 @@
     <main class="diagnostics-main">
         <section class="diagnostics-intro">
             <h1>Diagnostics &amp; Repair</h1>
-            <p>Integrity tools and controlled maintenance for the current world save. The first module is Data Wipe. Each action targets a defined collection, saves immediately, and requires a typed confirmation.</p>
+            <p>Integrity tools and controlled maintenance for the current world save. Data Audit identifies incomplete records and links directly to the relevant manager and record. Data Wipe provides controlled maintenance actions.</p>
         </section>
 
         <section class="warning-panel" aria-label="Destructive actions warning">
@@ -82,10 +93,16 @@
         </section>
 
         <nav class="tab-strip" aria-label="Diagnostics sections">
-            <button class="tab-button" type="button" aria-selected="true" data-tab="data-wipe">Data Wipe</button>
+            <button class="tab-button" type="button" aria-selected="true" data-tab="data-audit">Data Audit</button>
+            <button class="tab-button" type="button" aria-selected="false" data-tab="data-wipe">Data Wipe</button>
         </nav>
 
-        <section id="dataWipePanel" aria-label="Data Wipe">
+        <section id="dataAuditPanel" aria-label="Data Audit">
+            <div class="audit-groups" id="auditGroups"><div class="audit-group"><h2>Loading audit…</h2></div></div>
+            <p class="diagnostics-status" id="auditStatus" role="status" aria-live="polite"></p>
+        </section>
+
+        <section id="dataWipePanel" aria-label="Data Wipe" hidden>
             <div class="wipe-grid" id="wipeGrid">
                 <div class="wipe-card"><h2>Loading data…</h2><p>Reading the current master data.</p></div>
             </div>
@@ -110,6 +127,7 @@
     <script src="js/core/time.js"></script>
     <script src="js/core/storage-schema.js"></script>
     <script src="js/core/storage.js"></script>
+    <script src="js/diagnostics/data-audit.js"></script>
     <script src="js/diagnostics/data-wipe.js"></script>
     <script>
     (function () {
@@ -128,6 +146,7 @@
         menu.addEventListener('click',function(e){var b=e.target.closest('[data-theme-id]');if(!b)return;apply(b.dataset.themeId);menu.hidden=true;btn.setAttribute('aria-expanded','false');});
         document.addEventListener('click',function(e){if(!menu.hidden&&!menu.contains(e.target)&&e.target!==btn){menu.hidden=true;btn.setAttribute('aria-expanded','false');}});
         var saved=null;try{saved=localStorage.getItem(key);}catch(e){};apply(saved||((window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark'));
+        document.querySelector('.tab-strip').addEventListener('click',function(e){var b=e.target.closest('[data-tab]');if(!b)return;var audit=b.dataset.tab==='data-audit';document.querySelectorAll('.tab-button').forEach(function(x){x.setAttribute('aria-selected',String(x===b));});document.getElementById('dataAuditPanel').hidden=!audit;document.getElementById('dataWipePanel').hidden=audit;});
         document.getElementById('menuToggle').addEventListener('click',function(){document.querySelector('.tab-strip').scrollIntoView({behavior:'smooth',block:'nearest'});});
     })();
     </script>
