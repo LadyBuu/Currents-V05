@@ -634,8 +634,7 @@
 
         return '<div class="edu-manager-filters">' +
             '<label for="eduAppRoleSelect" ' +
-                'style="font-family:var(--f-display);font-size:0.65rem;' +
-                'text-transform:uppercase;letter-spacing:0.06em;color:var(--dim);">' +
+                'class="edu-apprenticeship-role-label">' +
                 'Role' +
             '</label>' +
             '<select id="eduAppRoleSelect" aria-label="Select role to display">' +
