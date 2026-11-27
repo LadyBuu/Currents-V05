@@ -263,7 +263,7 @@
                 : gender === 'female' ? (window.Icons.FEMALE || '')
                 : (window.Icons.GENDER_NEUTRAL || window.Icons.CIRCLE || '');
         }
-        return '<span class="character-row__gender-icon" role="img" aria-label="Gender: '
+        return '<span class="character-row__gender-icon character-card__gender-icon" role="img" aria-label="Gender: '
             + _esc(gender || 'unknown') + '" title="' + _esc(gender || 'unknown') + '">'
             + icon + '</span>';
     }
