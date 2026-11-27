@@ -500,44 +500,44 @@
             resolvedLocationId, '— No location —');
 
         var content =
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
                     'Creating a new residence in <strong>' +
                     _esc(resolvedLocationName) + '</strong>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Residence Name *</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Residence Name *</label>' +
                     '<input type="text" data-field="name" placeholder="e.g., Thornwood Manor" ' +
-                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                        'class="modal-field modal-field-roomy">' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Residence Type</label>' +
-                    '<select data-field="typeId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Residence Type</label>' +
+                    '<select data-field="typeId" class="modal-field modal-field-compact">' +
                         typeOptions +
                     '</select>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
-                    '<select data-field="locationId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Location</label>' +
+                    '<select data-field="locationId" class="modal-field modal-field-compact">' +
                         locationOptions +
                     '</select>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Condition</label>' +
-                    '<select data-field="condition" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Condition</label>' +
+                    '<select data-field="condition" class="modal-field modal-field-compact">' +
                         conditionOptions +
                     '</select>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Built Year</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Built Year</label>' +
                     '<input type="number" data-field="builtYear" value="' +
                         (currentYear !== null ? currentYear : '') +
-                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                        '" min="1" class="modal-field modal-field-roomy">' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Notes (optional)</label>' +
                     '<textarea data-field="notes" rows="2" placeholder="Historical notes..." ' +
-                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;"></textarea>' +
+                        'class="modal-field modal-field-compact"></textarea>' +
                 '</div>' +
             '</div>';
 
@@ -642,15 +642,15 @@
             residence.locationId, '— No location —');
 
         var content =
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
                     'Editing <strong>' + _esc(residence.name) + '</strong>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Residence Name *</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Residence Name *</label>' +
                     '<input type="text" data-field="name" value="' +
                         _esc(residence.name) +
-                        '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                        '" class="modal-field modal-field-roomy">' +
                 '</div>' +
                 '<div style="margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
                     '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.65rem;">' +
@@ -673,33 +673,33 @@
                         '</div>' +
                     '</div>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Residence Type</label>' +
-                    '<select data-field="typeId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Residence Type</label>' +
+                    '<select data-field="typeId" class="modal-field modal-field-compact">' +
                         typeOptions +
                     '</select>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
-                    '<select data-field="locationId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Location</label>' +
+                    '<select data-field="locationId" class="modal-field modal-field-compact">' +
                         locationOptions +
                     '</select>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Condition</label>' +
-                    '<select data-field="condition" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Condition</label>' +
+                    '<select data-field="condition" class="modal-field modal-field-compact">' +
                         conditionOptions +
                     '</select>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Built Year</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Built Year</label>' +
                     '<input type="number" data-field="builtYear" value="' +
                         (residence.builtYear !== null ? residence.builtYear : '') +
-                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                        '" min="1" class="modal-field modal-field-roomy">' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes</label>' +
-                    '<textarea data-field="notes" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Notes</label>' +
+                    '<textarea data-field="notes" rows="2" class="modal-field modal-field-compact">' +
                         _esc(residence.notes || '') +
                     '</textarea>' +
                 '</div>' +
@@ -801,7 +801,7 @@
         var unitStats = _residence.getUnitStats(residenceId);
 
         var content =
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
                 '<div style="background:rgba(244,67,54,0.1);border-radius:8px;padding:16px;border-left:3px solid #f44336;margin-bottom:16px;">' +
                     '<div style="font-size:0.9rem;color:#f44336;">Warning: This action cannot be undone</div>' +
                     '<div style="font-size:0.65rem;color:var(--dim);margin-top:4px;">' +
@@ -837,12 +837,12 @@
                     'Are you sure you want to delete this residence?' +
                 '</div>' +
                 '<div style="margin-top:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">' +
+                    '<label class="modal-field-label">' +
                         'Type "<strong>' + _esc(residence.name) +
                         '</strong>" to confirm' +
                     '</label>' +
                     '<input type="text" data-field="confirmName" placeholder="Enter residence name" ' +
-                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                        'class="modal-field modal-field-roomy">' +
                 '</div>' +
             '</div>';
 
@@ -946,39 +946,39 @@
             household.locationId, '— No location —');
 
         var content =
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
                     'Creating a residence for <strong>' +
                     _esc(household.name) + '</strong>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Residence Name *</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Residence Name *</label>' +
                     '<input type="text" data-field="name" placeholder="e.g., Thornwood Manor" ' +
-                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;" autocomplete="off">' +
+                        'class="modal-field modal-field-roomy" autocomplete="off">' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Residence Type</label>' +
-                    '<select data-field="typeId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Residence Type</label>' +
+                    '<select data-field="typeId" class="modal-field modal-field-compact">' +
                         typeOptions +
                     '</select>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
-                    '<select data-field="locationId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Location</label>' +
+                    '<select data-field="locationId" class="modal-field modal-field-compact">' +
                         locationOptions +
                     '</select>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Condition</label>' +
-                    '<select data-field="condition" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Condition</label>' +
+                    '<select data-field="condition" class="modal-field modal-field-compact">' +
                         conditionOptions +
                     '</select>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Built Year</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Built Year</label>' +
                     '<input type="number" data-field="builtYear" value="' +
                         (currentYear !== null ? currentYear : '') +
-                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                        '" min="1" class="modal-field modal-field-roomy">' +
                 '</div>' +
                 '<div style="margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
                     '<label class="character-tab-checkbox" style="display:flex;align-items:center;gap:6px;cursor:pointer;">' +
@@ -987,10 +987,10 @@
                             _esc(household.name) + ' to this residence on create</span>' +
                     '</label>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Notes (optional)</label>' +
                     '<textarea data-field="notes" rows="2" ' +
-                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;"></textarea>' +
+                        'class="modal-field modal-field-compact"></textarea>' +
                 '</div>' +
             '</div>';
 
@@ -1191,28 +1191,28 @@
         }
 
         var content =
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
                     'Assign a vacant residence to <strong>' +
                     _esc(household.name) + '</strong>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Residence</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Residence</label>' +
                     _buildResidencePickerHtml({
                         listId: 'arh-list',
                         searchId: 'arh-search'
                     }) +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Assignment Year</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Assignment Year</label>' +
                     '<input type="number" data-field="year" value="' +
                         (currentYear !== null ? currentYear : '') + '" ' +
-                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;" min="1">' +
+                        'class="modal-field modal-field-compact" min="1">' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Notes (optional)</label>' +
                     '<textarea data-field="notes" rows="2" ' +
-                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;"></textarea>' +
+                        'class="modal-field modal-field-compact"></textarea>' +
                 '</div>' +
             '</div>';
 
@@ -1331,16 +1331,16 @@
         }
 
         var content =
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
                     'Current name: <strong>' +
                     _esc(residence.name) + '</strong>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">New Name *</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">New Name *</label>' +
                     '<input type="text" data-field="newName" value="' +
                         _esc(residence.name) +
-                        '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                        '" class="modal-field modal-field-roomy">' +
                 '</div>' +
                 '<div style="margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
                     '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.65rem;">' +
@@ -1471,7 +1471,7 @@
         var statusText = isDemolished ? 'Demolished' : (isVacant ? 'Vacant' : 'Occupied');
         var statusColor = isDemolished ? '#8a2020' : (isVacant ? '#c87040' : '#4a9e6a');
 
-        var html = '<div style="margin-bottom:16px;">';
+        var html = '<div class="modal-mb-16">';
 
         html += '<div style="background:var(--bg2);border-radius:8px;padding:12px;margin-bottom:12px;">';
         html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">';
@@ -1925,7 +1925,7 @@
         var year = _currentYear();
 
         var content =
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:12px;margin-bottom:12px;">' +
                     '<div style="font-size:0.7rem;"><strong>' +
                         _esc(residence.name) + '</strong></div>' +
@@ -1933,15 +1933,15 @@
                         'This will vacate all occupied units and disassociate every household currently living here.' +
                     '</div>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Vacancy Year</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Vacancy Year</label>' +
                     '<input type="number" data-field="year" value="' +
                         (year !== null ? year : '') +
-                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                        '" min="1" class="modal-field modal-field-roomy">' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
-                    '<select data-field="reason" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Reason</label>' +
+                    '<select data-field="reason" class="modal-field modal-field-compact">' +
                         _VM.getVacancyReasonOptions() +
                     '</select>' +
                 '</div>' +
@@ -2017,7 +2017,7 @@
         var year = _currentYear();
 
         var content =
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:12px;margin-bottom:12px;">' +
                     '<div style="font-size:0.7rem;"><strong>Residence:</strong> ' +
                         _esc(residence.name) + '</div>' +
@@ -2031,17 +2031,17 @@
                         'Since ' + current.year +
                     '</div>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">End Year</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">End Year</label>' +
                     '<input type="number" data-field="year" value="' +
                         (year !== null ? year : '') +
                         '" min="' + current.year +
                         '" style="width:100px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Reason</label>' +
                     '<input type="text" data-field="reason" placeholder="e.g., Moved out, Eviction..." ' +
-                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                        'class="modal-field modal-field-compact">' +
                 '</div>' +
             '</div>';
 
@@ -2114,23 +2114,23 @@
         }
 
         var content =
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
                     'Adding a unit to <strong>' +
                         _esc(residence.name) + '</strong>' +
                     '<div style="margin-top:4px;">' + residence.unitCount +
                     ' of ' + maxUnits + ' units currently exist</div>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Unit Number (auto if blank)</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Unit Number (auto if blank)</label>' +
                     '<input type="number" data-field="unitNumber" min="1" max="' + maxUnits +
                         '" placeholder="Leave blank for auto-assign" ' +
-                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                        'class="modal-field modal-field-roomy">' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Notes (optional)</label>' +
                     '<textarea data-field="notes" rows="2" placeholder="e.g., Ground floor unit..." ' +
-                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;"></textarea>' +
+                        'class="modal-field modal-field-compact"></textarea>' +
                 '</div>' +
             '</div>';
 
@@ -2196,7 +2196,7 @@
         var isOccupied = !unit.isVacant && !unit.isDemolished;
 
         var content =
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
                 '<div style="background:rgba(200,68,68,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
                     '<strong>Remove Unit ' + unitNumber + '</strong>' +
                     (isOccupied
@@ -2204,10 +2204,10 @@
                             _esc(unit.householdName || 'Unknown') + '.</div>'
                         : '') +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason (optional)</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Reason (optional)</label>' +
                     '<input type="text" data-field="reason" placeholder="e.g., Renovation, Condemned..." ' +
-                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                        'class="modal-field modal-field-roomy">' +
                 '</div>' +
             '</div>';
 
@@ -2328,7 +2328,7 @@
         var year = _currentYear();
 
         var content =
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
                 '<div style="background:rgba(200,112,64,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
                     '<div style="font-size:0.7rem;"><strong>Unit ' + unitNumber +
                         ' of ' + _esc(residence.name) + '</strong></div>' +
@@ -2337,15 +2337,15 @@
                         _esc(unit.householdName || 'Unknown') +
                     '</div>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Vacancy Year</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Vacancy Year</label>' +
                     '<input type="number" data-field="year" value="' +
                         (year !== null ? year : '') +
-                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                        '" min="1" class="modal-field modal-field-roomy">' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
-                    '<select data-field="reason" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Reason</label>' +
+                    '<select data-field="reason" class="modal-field modal-field-compact">' +
                         _VM.getVacancyReasonOptions() +
                     '</select>' +
                 '</div>' +
@@ -2553,7 +2553,7 @@
         }
 
         var content =
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:12px;margin-bottom:12px;">' +
                     '<div style="font-size:0.7rem;"><strong>' +
                         _esc(residence.name) + '</strong></div>' +
@@ -2566,17 +2566,17 @@
                             (residence.lastRenovated || 'Never') + '</div>' +
                     '</div>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Target Condition</label>' +
-                    '<select data-field="targetCondition" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Target Condition</label>' +
+                    '<select data-field="targetCondition" class="modal-field modal-field-compact">' +
                         conditionOptions +
                     '</select>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Year of Renovation</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Year of Renovation</label>' +
                     '<input type="number" data-field="year" value="' +
                         (year !== null ? year : '') +
-                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                        '" min="1" class="modal-field modal-field-roomy">' +
                 '</div>' +
                 '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;">' +
                     'Estimated cost: <strong data-role="cost-display">' + currentCost + '</strong> gold' +
@@ -2658,7 +2658,7 @@
         var year = _currentYear();
 
         var content =
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
                 '<div style="background:rgba(200,68,68,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
                     '<strong>Demolish Residence: ' +
                         _esc(residence.name) + '</strong>' +
@@ -2677,22 +2677,22 @@
                             unitStats.usable + '</span>' +
                     '</div>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Year of Demolition</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Year of Demolition</label>' +
                     '<input type="number" data-field="year" value="' +
                         (year !== null ? year : '') +
-                        '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+                        '" min="1" class="modal-field modal-field-roomy">' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
-                    '<select data-field="reason" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Reason</label>' +
+                    '<select data-field="reason" class="modal-field modal-field-compact">' +
                         _VM.getDemolitionReasonOptions() +
                     '</select>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Notes (optional)</label>' +
                     '<textarea data-field="notes" rows="2" placeholder="Additional details..." ' +
-                        'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;"></textarea>' +
+                        'class="modal-field modal-field-compact"></textarea>' +
                 '</div>' +
             '</div>';
 
@@ -2772,7 +2772,7 @@
     }
 
     function _buildHistoryContent(residence, nameHistory, timeline, associations) {
-        var html = '<div style="margin-bottom:16px;">';
+        var html = '<div class="modal-mb-16">';
 
         html += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
         html += '<div><strong>' + _esc(residence.name) + '</strong></div>';
@@ -2881,7 +2881,7 @@
 
         var nameHistory = _residence.getResidenceNameHistory(residenceId);
 
-        var content = '<div style="margin-bottom:16px;">';
+        var content = '<div class="modal-mb-16">';
 
         content += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
         content += '<div><strong>' + _esc(residence.name) + '</strong></div>';
@@ -2924,7 +2924,7 @@
 
         var timeline = _residence.getResidenceTimeline(residenceId, 200);
 
-        var content = '<div style="margin-bottom:16px;">';
+        var content = '<div class="modal-mb-16">';
         content += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
         content += '<div><strong>' + _esc(residence.name) + '</strong></div>';
         content += '<div style="font-size:0.65rem;color:var(--dim);">Total events: ' +
@@ -2968,7 +2968,7 @@
 
         var associations = _residence.getResidenceAssociationHistory(residenceId);
 
-        var content = '<div style="margin-bottom:16px;">';
+        var content = '<div class="modal-mb-16">';
         content += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
         content += '<div><strong>' + _esc(residence.name) + '</strong></div>';
         content += '<div style="font-size:0.65rem;color:var(--dim);">Total associations: ' +
@@ -3079,10 +3079,10 @@
         }
 
         var content =
-            '<div style="margin-bottom:16px;">' +
-                '<div style="margin-bottom:12px;">' +
-                    '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Select Residence</label>' +
-                    '<select data-field="residenceId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
+            '<div class="modal-mb-16">' +
+                '<div class="modal-mb-12">' +
+                    '<label class="modal-field-label">Select Residence</label>' +
+                    '<select data-field="residenceId" class="modal-field modal-field-roomy">' +
                         '<option value="">— Select a residence —</option>' +
                         optionsHtml +
                     '</select>' +
