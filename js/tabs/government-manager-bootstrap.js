@@ -856,7 +856,6 @@
 
     function init() {
         if (_initialized) return;
-        _initialized = true;
 
         // --- Dependency check: loud failure, visible to the user ---
         var TabManager, uiState;
@@ -976,6 +975,7 @@
         uiState.setActiveTabId(initialTab);
         _syncTabStrip(initialTab);
         TabManager.renderActive(SCOPE);
+        _initialized = true;
     }
 
     // =========================================================================
