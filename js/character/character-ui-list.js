@@ -347,9 +347,10 @@
         if (options && options.showLocation === false) return '';
         if (!summary) return '';
 
-        // CharacterQueries exposes this field as currentLocationId.
-        // summary.locationId belongs to move records, not the character summary.
-        var locationId = summary.currentLocationId || character.currentLocationId;
+        // CharacterQueries deliberately exposes the character's current
+        // location under locationId (mapped from projection.currentLocationId).
+        // Keep the summary contract here; currentLocationId is the source field.
+        var locationId = summary.locationId || character.currentLocationId;
         if (!_hasId(locationId)) return 'No location';
 
         // world.js is an optional resolver. If it is absent, the location
