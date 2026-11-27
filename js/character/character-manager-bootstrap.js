@@ -414,20 +414,18 @@
         var life=(_byId('characterLifeStatusFilter')||{}).value||'', romance=(_byId('characterRelationshipFilter')||{}).value||'';
         var locs=['characterLocation1','characterLocation2','characterLocation3'].map(function(id){return (_byId(id)||{}).value||'';}).filter(Boolean);
         var chosen=locs.length?locs[locs.length-1]:'', L=window.LocationQueries, desc=chosen&&L&&L.getAllSubLocationIds?L.getAllSubLocationIds(chosen):[], descSet=Object.create(null);
+        // Include the selected place itself as well as its descendants.
+        if (chosen) descSet[chosen]=true;
         desc.forEach(function(id){descSet[id]=true;});
         characters=characters.filter(function(c){
             if(!includeDeceased&&c.isDeceased)return false;
             if(gender&&String(c.gender||'')!==gender)return false;
             if(life==='living'&&c.isDeceased)return false;if(life==='deceased'&&!c.isDeceased)return false;
             if(chosen){
-                var currentLocationId = c.currentLocationId || null;
+                var currentLocationId = null;
                 if (typeof window.getCurrentLocationId === 'function') {
-                    try {
-                        var semanticLocationId = window.getCurrentLocationId(c);
-                        if (typeof semanticLocationId === 'string' && semanticLocationId) {
-                            currentLocationId = semanticLocationId;
-                        }
-                    } catch (e) { /* use the explicit field */ }
+                    try { currentLocationId = window.getCurrentLocationId(c); }
+                    catch (e) { currentLocationId = null; }
                 }
                 if (!descSet[currentLocationId]) return false;
             }
