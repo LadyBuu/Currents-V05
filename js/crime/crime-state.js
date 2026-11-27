@@ -637,6 +637,9 @@
             if (record.solved === true && (typeof record.solvedAt !== 'number' || !isFinite(record.solvedAt))) warnings.push('crime ' + record.id + ' is solved but has invalid solvedAt');
             if (record.solved === false && record.solvedAt != null) warnings.push('crime ' + record.id + ' has solvedAt but is not solved');
             if (record.year != null && record.solvedAt != null && record.solvedAt < record.year) warnings.push('crime ' + record.id + ' solved before recorded');
+            if (record.perpetratorId && !window.getCharacterById(record.perpetratorId)) warnings.push('crime ' + record.id + ' references missing perpetrator ' + record.perpetratorId);
+            if (record.victimId && !window.getCharacterById(record.victimId)) warnings.push('crime ' + record.id + ' references missing victim ' + record.victimId);
+            if (record.locationId && typeof window.getPlaceById === 'function' && !window.getPlaceById(record.locationId)) warnings.push('crime ' + record.id + ' references missing location ' + record.locationId);
             if (!_indexCrimeInto(expectedCrimes, record)) warnings.push('crime index contains duplicate id ' + record.id);
         });
 
@@ -654,6 +657,13 @@
             deaths.forEach(function(death, deathIndex) {
                 if (!death || typeof death !== 'object') warnings.push('vendetta ' + v.id + ' has invalid death at index ' + deathIndex);
                 else if (death.year != null && (typeof death.year !== 'number' || !isFinite(death.year))) warnings.push('vendetta ' + v.id + ' has invalid death year at index ' + deathIndex);
+            });
+            if (v.characterAId && !window.getCharacterById(v.characterAId)) warnings.push('vendetta ' + v.id + ' references missing characterA ' + v.characterAId);
+            if (v.characterBId && !window.getCharacterById(v.characterBId)) warnings.push('vendetta ' + v.id + ' references missing characterB ' + v.characterBId);
+            deaths.forEach(function(death, deathIndex) {
+                if (!death || typeof death !== 'object') return;
+                if (death.victimId && !window.getCharacterById(death.victimId)) warnings.push('vendetta ' + v.id + ' death ' + deathIndex + ' references missing victim ' + death.victimId);
+                if (death.killerId && !window.getCharacterById(death.killerId)) warnings.push('vendetta ' + v.id + ' death ' + deathIndex + ' references missing killer ' + death.killerId);
             });
             if (v.householdAId && !window.getHouseholdById(v.householdAId)) warnings.push('vendetta ' + v.id + ' references missing householdA ' + v.householdAId);
             if (v.householdBId && !window.getHouseholdById(v.householdBId)) warnings.push('vendetta ' + v.id + ' references missing householdB ' + v.householdBId);
