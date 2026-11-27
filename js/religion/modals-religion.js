@@ -462,62 +462,62 @@
         }
 
         var content =
-            '<div class="religion-form" style="display:flex;flex-direction:column;gap:12px;">' +
+            '<div class="religion-form" class="religion-inline-1">' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Religion Name *</label>' +
-            '<input type="text" id="religionName" placeholder="e.g., The Old Gods" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Religion Name *</label>' +
+            '<input type="text" id="religionName" placeholder="e.g., The Old Gods" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Display Name</label>' +
-            '<input type="text" id="religionDisplayName" placeholder="e.g., The Old Gods of the North" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Display Name</label>' +
+            '<input type="text" id="religionDisplayName" placeholder="e.g., The Old Gods of the North" class="religion-inline-4">' +
             '</div>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description (Lore)</label>' +
-            '<textarea id="religionDescription" rows="3" placeholder="Describe the religion\'s beliefs, origins, and practices..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;"></textarea>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Trait</label>' +
-            '<select id="religionTrait" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Description (Lore)</label>' +
+            '<textarea id="religionDescription" rows="3" placeholder="Describe the religion\'s beliefs, origins, and practices..." class="religion-inline-5"></textarea>' +
+            '</div>' +
+
+            '<div class="religion-inline-6">' +
+            '<div class="form-group">' +
+            '<label class="religion-inline-3">Trait</label>' +
+            '<select id="religionTrait" class="religion-inline-7">' +
             traitOptions +
             '</select>' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Inheritance Rule</label>' +
-            '<select id="religionInheritance" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Inheritance Rule</label>' +
+            '<select id="religionInheritance" class="religion-inline-7">' +
             inheritanceOptions +
             '</select>' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Icon</label>' +
-            '<input type="text" id="religionIcon" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Icon</label>' +
+            '<input type="text" id="religionIcon" class="religion-inline-4">' +
             '</div>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-            '<input type="checkbox" id="religionOrganized" style="width:16px;height:16px;">' +
-            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Organized Religion (has hierarchy/clergy)</label>' +
+            '<div class="religion-inline-2">' +
+            '<div class="form-group" class="religion-inline-8">' +
+            '<input type="checkbox" id="religionOrganized" class="religion-inline-9">' +
+            '<label class="religion-inline-10">Organized Religion (has hierarchy/clergy)</label>' +
             '</div>' +
-            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-            '<input type="checkbox" id="religionAllowsConversion" checked style="width:16px;height:16px;">' +
-            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Allows Conversion</label>' +
+            '<div class="form-group" class="religion-inline-8">' +
+            '<input type="checkbox" id="religionAllowsConversion" checked class="religion-inline-9">' +
+            '<label class="religion-inline-10">Allows Conversion</label>' +
             '</div>' +
             '</div>' +
 
-            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-            '<input type="checkbox" id="religionProselytizes" style="width:16px;height:16px;">' +
-            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Proselytizes (actively seeks converts)</label>' +
+            '<div class="form-group" class="religion-inline-8">' +
+            '<input type="checkbox" id="religionProselytizes" class="religion-inline-9">' +
+            '<label class="religion-inline-10">Proselytizes (actively seeks converts)</label>' +
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-            '<input type="text" id="religionNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Notes</label>' +
+            '<input type="text" id="religionNotes" placeholder="Additional notes..." class="religion-inline-7">' +
             '</div>' +
 
             '</div>';
@@ -597,64 +597,64 @@
         var isDeprecated = religion.isDeprecated || false;
 
         var content =
-            '<div class="religion-form" style="display:flex;flex-direction:column;gap:12px;">' +
+            '<div class="religion-form" class="religion-inline-1">' +
 
-            (isDeprecated ? '<div style="padding:8px 12px;background:rgba(181,74,74,0.1);border:1px solid #b54a4a;border-radius:4px;font-size:0.65rem;color:#b54a4a;">This religion is deprecated. Edit is limited.</div>' : '') +
+            (isDeprecated ? '<div class="religion-inline-11">This religion is deprecated. Edit is limited.</div>' : '') +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Religion Name *</label>' +
-            '<input type="text" id="religionName" value="' + _escapeHtml(religion.name) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Religion Name *</label>' +
+            '<input type="text" id="religionName" value="' + _escapeHtml(religion.name) + '" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Display Name</label>' +
-            '<input type="text" id="religionDisplayName" value="' + _escapeHtml(religion.displayName || religion.name) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Display Name</label>' +
+            '<input type="text" id="religionDisplayName" value="' + _escapeHtml(religion.displayName || religion.name) + '" class="religion-inline-4">' +
             '</div>' +
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description (Lore)</label>' +
-            '<textarea id="religionDescription" rows="3" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;">' + _escapeHtml(religion.description || '') + '</textarea>' +
+            '<label class="religion-inline-3">Description (Lore)</label>' +
+            '<textarea id="religionDescription" rows="3" class="religion-inline-5">' + _escapeHtml(religion.description || '') + '</textarea>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-6">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Trait</label>' +
-            '<select id="religionTrait" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Trait</label>' +
+            '<select id="religionTrait" class="religion-inline-7">' +
             traitOptions +
             '</select>' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Inheritance Rule</label>' +
-            '<select id="religionInheritance" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Inheritance Rule</label>' +
+            '<select id="religionInheritance" class="religion-inline-7">' +
             inheritanceOptions +
             '</select>' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Icon</label>' +
-            '<input type="text" id="religionIcon" value="' + _escapeHtml(religion.icon || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Icon</label>' +
+            '<input type="text" id="religionIcon" value="' + _escapeHtml(religion.icon || '') + '" class="religion-inline-4">' +
             '</div>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-            '<input type="checkbox" id="religionOrganized" ' + (religion.isOrganized ? 'checked' : '') + ' style="width:16px;height:16px;">' +
-            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Organized Religion</label>' +
+            '<div class="religion-inline-2">' +
+            '<div class="form-group" class="religion-inline-8">' +
+            '<input type="checkbox" id="religionOrganized" ' + (religion.isOrganized ? 'checked' : '') + ' class="religion-inline-9">' +
+            '<label class="religion-inline-10">Organized Religion</label>' +
             '</div>' +
-            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-            '<input type="checkbox" id="religionAllowsConversion" ' + (religion.allowsConversion ? 'checked' : '') + ' style="width:16px;height:16px;">' +
-            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Allows Conversion</label>' +
+            '<div class="form-group" class="religion-inline-8">' +
+            '<input type="checkbox" id="religionAllowsConversion" ' + (religion.allowsConversion ? 'checked' : '') + ' class="religion-inline-9">' +
+            '<label class="religion-inline-10">Allows Conversion</label>' +
             '</div>' +
             '</div>' +
 
-            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-            '<input type="checkbox" id="religionProselytizes" ' + (religion.proselytizes ? 'checked' : '') + ' style="width:16px;height:16px;">' +
-            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Proselytizes</label>' +
+            '<div class="form-group" class="religion-inline-8">' +
+            '<input type="checkbox" id="religionProselytizes" ' + (religion.proselytizes ? 'checked' : '') + ' class="religion-inline-9">' +
+            '<label class="religion-inline-10">Proselytizes</label>' +
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-            '<input type="text" id="religionNotes" value="' + _escapeHtml(religion.notes || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Notes</label>' +
+            '<input type="text" id="religionNotes" value="' + _escapeHtml(religion.notes || '') + '" class="religion-inline-7">' +
             '</div>' +
 
             '</div>';
@@ -716,17 +716,17 @@
         var followerCount = _getFollowerCount(religionId);
 
         var content =
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<p style="font-size:0.75rem;">Are you sure you want to delete <strong>' + _escapeHtml(religion.name) + '</strong>?</p>';
+            '<div class="religion-inline-1">' +
+            '<p class="religion-inline-12">Are you sure you want to delete <strong>' + _escapeHtml(religion.name) + '</strong>?</p>';
 
         if (followerCount > 0) {
             content +=
-                '<div style="padding:8px 12px;background:rgba(181,74,74,0.1);border:1px solid #b54a4a;border-radius:4px;font-size:0.65rem;color:#b54a4a;">' +
+                '<div class="religion-inline-11">' +
                 'This religion has ' + followerCount + ' followers. It cannot be deleted while it has followers. Consider deprecating it instead.' +
                 '</div>';
         } else {
             content +=
-                '<p style="font-size:0.65rem;color:var(--dim);">This action cannot be undone. All gods, laws, and places of worship associated with this religion will also be removed.</p>';
+                '<p class="religion-inline-13">This action cannot be undone. All gods, laws, and places of worship associated with this religion will also be removed.</p>';
         }
 
         content += '</div>';
@@ -775,12 +775,12 @@
         }
 
         var content =
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<p style="font-size:0.75rem;">Deprecate <strong>' + _escapeHtml(religion.name) + '</strong>?</p>' +
-            '<p style="font-size:0.65rem;color:var(--dim);">Deprecating a religion marks it as no longer active. Existing followers will keep it, but new followers cannot be assigned.</p>' +
+            '<div class="religion-inline-1">' +
+            '<p class="religion-inline-12">Deprecate <strong>' + _escapeHtml(religion.name) + '</strong>?</p>' +
+            '<p class="religion-inline-13">Deprecating a religion marks it as no longer active. Existing followers will keep it, but new followers cannot be assigned.</p>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Year of Deprecation</label>' +
-            '<input type="number" id="deprecateYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Year of Deprecation</label>' +
+            '<input type="number" id="deprecateYear" value="' + _getCurrentYear() + '" class="religion-inline-4">' +
             '</div>' +
             '</div>';
 
@@ -841,71 +841,71 @@
         var iconDisplay = religion.icon || '';
 
         var content =
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+            '<div class="religion-inline-1">' +
 
-            '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-            '<div style="display:flex;align-items:center;gap:10px;">' +
-            (iconDisplay ? '<span style="font-size:1.5rem;">' + _escapeHtml(iconDisplay) + '</span>' : '') +
+            '<div class="religion-inline-14">' +
+            '<div class="religion-inline-15">' +
+            (iconDisplay ? '<span class="religion-inline-16">' + _escapeHtml(iconDisplay) + '</span>' : '') +
             '<div>' +
-            '<div style="font-size:1rem;font-weight:bold;">' + _escapeHtml(religion.displayName || religion.name) + '</div>' +
-            '<div style="font-size:0.6rem;color:var(--dim);">' + _escapeHtml(religion.name) + '</div>' +
+            '<div class="religion-inline-17">' + _escapeHtml(religion.displayName || religion.name) + '</div>' +
+            '<div class="religion-inline-18">' + _escapeHtml(religion.name) + '</div>' +
             '</div>' +
             '</div>' +
-            '<div style="display:flex;gap:4px;">' +
+            '<div class="religion-inline-19">' +
             (isDeprecated ? '<span class="religion-status religion-status--deprecated">Deprecated</span>' : '<span class="religion-status religion-status--active">Active</span>') +
             '</div>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:10px;background:var(--bg);border-radius:4px;">' +
-            '<div style="text-align:center;"><div style="font-size:0.55rem;color:var(--dim);">Followers</div><div style="font-size:0.9rem;font-weight:bold;">' + followerCount + '</div></div>' +
-            '<div style="text-align:center;"><div style="font-size:0.55rem;color:var(--dim);">Gods</div><div style="font-size:0.9rem;font-weight:bold;">' + gods.length + '</div></div>' +
-            '<div style="text-align:center;"><div style="font-size:0.55rem;color:var(--dim);">Laws</div><div style="font-size:0.9rem;font-weight:bold;">' + laws.length + '</div></div>' +
-            '<div style="text-align:center;"><div style="font-size:0.55rem;color:var(--dim);">Places</div><div style="font-size:0.9rem;font-weight:bold;">' + places.length + '</div></div>' +
+            '<div class="religion-inline-20">' +
+            '<div class="religion-inline-21"><div class="religion-inline-22">Followers</div><div class="religion-inline-23">' + followerCount + '</div></div>' +
+            '<div class="religion-inline-21"><div class="religion-inline-22">Gods</div><div class="religion-inline-23">' + gods.length + '</div></div>' +
+            '<div class="religion-inline-21"><div class="religion-inline-22">Laws</div><div class="religion-inline-23">' + laws.length + '</div></div>' +
+            '<div class="religion-inline-21"><div class="religion-inline-22">Places</div><div class="religion-inline-23">' + places.length + '</div></div>' +
             '</div>' +
 
-            (religion.description ? '<div style="font-size:0.7rem;color:var(--dim);padding:6px 0;">' + _escapeHtml(religion.description) + '</div>' : '') +
+            (religion.description ? '<div class="religion-inline-24">' + _escapeHtml(religion.description) + '</div>' : '') +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:0.65rem;">' +
-            '<div><span style="color:var(--dim);">Trait:</span> ' + _escapeHtml(traitName) + '</div>' +
-            '<div><span style="color:var(--dim);">Inheritance:</span> ' + _escapeHtml(inheritanceName) + '</div>' +
-            '<div><span style="color:var(--dim);">Organized:</span> ' + (religion.isOrganized ? 'Yes' : 'No') + '</div>' +
-            '<div><span style="color:var(--dim);">Allows Conversion:</span> ' + (religion.allowsConversion ? 'Yes' : 'No') + '</div>' +
-            '<div><span style="color:var(--dim);">Proselytizes:</span> ' + (religion.proselytizes ? 'Yes' : 'No') + '</div>' +
-            '<div><span style="color:var(--dim);">Leader:</span> ' + _escapeHtml(leaderName) + (leaderTitle ? ' (' + _escapeHtml(leaderTitle) + ')' : '') + '</div>' +
+            '<div class="religion-inline-25">' +
+            '<div><span class="religion-inline-26">Trait:</span> ' + _escapeHtml(traitName) + '</div>' +
+            '<div><span class="religion-inline-26">Inheritance:</span> ' + _escapeHtml(inheritanceName) + '</div>' +
+            '<div><span class="religion-inline-26">Organized:</span> ' + (religion.isOrganized ? 'Yes' : 'No') + '</div>' +
+            '<div><span class="religion-inline-26">Allows Conversion:</span> ' + (religion.allowsConversion ? 'Yes' : 'No') + '</div>' +
+            '<div><span class="religion-inline-26">Proselytizes:</span> ' + (religion.proselytizes ? 'Yes' : 'No') + '</div>' +
+            '<div><span class="religion-inline-26">Leader:</span> ' + _escapeHtml(leaderName) + (leaderTitle ? ' (' + _escapeHtml(leaderTitle) + ')' : '') + '</div>' +
             '</div>' +
 
-            (locationNames.length > 0 ? '<div style="font-size:0.65rem;color:var(--dim);">Explicit presence associations: ' + locationNames.join(', ') + '</div>' : '') +
+            (locationNames.length > 0 ? '<div class="religion-inline-13">Explicit presence associations: ' + locationNames.join(', ') + '</div>' : '') +
 
-            '<div style="display:flex;flex-wrap:wrap;gap:6px;padding-top:8px;border-top:1px solid var(--border-light);">';
+            '<div class="religion-inline-27">';
 
         if (!isDeprecated) {
             content +=
-                '<button class="btn edit-religion-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Edit Religion</button>' +
-                '<button class="btn set-leader-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Set Leader</button>' +
-                '<button class="btn add-god-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Add God</button>' +
-                '<button class="btn add-law-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Add Law</button>' +
-                '<button class="btn create-place-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Create Place of Worship</button>';
+                '<button class="btn edit-religion-btn" data-religion-id="' + religionId + '" class="religion-inline-28">Edit Religion</button>' +
+                '<button class="btn set-leader-btn" data-religion-id="' + religionId + '" class="religion-inline-28">Set Leader</button>' +
+                '<button class="btn add-god-btn" data-religion-id="' + religionId + '" class="religion-inline-28">Add God</button>' +
+                '<button class="btn add-law-btn" data-religion-id="' + religionId + '" class="religion-inline-28">Add Law</button>' +
+                '<button class="btn create-place-btn" data-religion-id="' + religionId + '" class="religion-inline-28">Create Place of Worship</button>';
         }
 
         content +=
-            '<button class="btn deprecate-religion-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">' + (isDeprecated ? 'Reactivate' : 'Deprecate') + '</button>' +
-            '<button class="btn delete-religion-btn" data-religion-id="' + religionId + '" style="background:var(--bg3);border:1px solid #b54a4a;color:#b54a4a;padding:4px 12px;border-radius:4px;font-size:0.6rem;cursor:pointer;">Delete</button>' +
+            '<button class="btn deprecate-religion-btn" data-religion-id="' + religionId + '" class="religion-inline-28">' + (isDeprecated ? 'Reactivate' : 'Deprecate') + '</button>' +
+            '<button class="btn delete-religion-btn" data-religion-id="' + religionId + '" class="religion-inline-29">Delete</button>' +
             '</div>' +
 
-            (gods.length > 0 ? '<div style="font-size:0.65rem;margin-top:8px;"><div style="font-weight:bold;margin-bottom:4px;">Gods:</div><ul style="margin:0;padding-left:16px;list-style:none;">' +
+            (gods.length > 0 ? '<div class="religion-inline-30"><div class="religion-inline-31">Gods:</div><ul class="religion-inline-32">' +
             gods.map(function(g) {
                 var symbolPart = g.symbol ? _escapeHtml(g.symbol) + ' ' : '';
-                return '<li style="padding:2px 0;">' + symbolPart + _escapeHtml(g.displayName || g.name) + ' (' + _escapeHtml(g.domain) + ')</li>';
+                return '<li class="religion-inline-33">' + symbolPart + _escapeHtml(g.displayName || g.name) + ' (' + _escapeHtml(g.domain) + ')</li>';
             }).join('') +
             '</ul></div>' : '') +
 
-            (laws.length > 0 ? '<div style="font-size:0.65rem;margin-top:8px;"><div style="font-weight:bold;margin-bottom:4px;">Laws:</div><ul style="margin:0;padding-left:16px;list-style:none;">' +
+            (laws.length > 0 ? '<div class="religion-inline-30"><div class="religion-inline-31">Laws:</div><ul class="religion-inline-32">' +
             laws.map(function(l) {
-                return '<li style="padding:2px 0;">' + _escapeHtml(l.name) + ' (' + _escapeHtml(l.type) + ', ' + _escapeHtml(l.domain) + ')</li>';
+                return '<li class="religion-inline-33">' + _escapeHtml(l.name) + ' (' + _escapeHtml(l.type) + ', ' + _escapeHtml(l.domain) + ')</li>';
             }).join('') +
             '</ul></div>' : '') +
 
-            (religion.notes ? '<div style="font-size:0.55rem;color:var(--dim);margin-top:8px;">Notes: ' + _escapeHtml(religion.notes) + '</div>' : '') +
+            (religion.notes ? '<div class="religion-inline-34">Notes: ' + _escapeHtml(religion.notes) + '</div>' : '') +
 
             '</div>';
 
@@ -1040,21 +1040,21 @@
         var currentName = currentLeader ? _getCharacterName(currentLeader.characterId) : 'None';
 
         var content =
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<p style="font-size:0.7rem;">Current Leader: <strong>' + _escapeHtml(currentName) + '</strong></p>' +
-            '<button id="selectLeaderBtn" class="btn" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:4px;font-size:0.65rem;cursor:pointer;width:100%;">Select Character</button>' +
-            '<div id="selectedLeaderDisplay" style="font-size:0.65rem;color:var(--dim);text-align:center;">No character selected</div>' +
+            '<div class="religion-inline-1">' +
+            '<p class="religion-inline-35">Current Leader: <strong>' + _escapeHtml(currentName) + '</strong></p>' +
+            '<button id="selectLeaderBtn" class="btn" class="religion-inline-36">Select Character</button>' +
+            '<div id="selectedLeaderDisplay" class="religion-inline-37">No character selected</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Title</label>' +
-            '<input type="text" id="leaderTitle" placeholder="e.g., High Priest, Archbishop" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Title</label>' +
+            '<input type="text" id="leaderTitle" placeholder="e.g., High Priest, Archbishop" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Start Year</label>' +
-            '<input type="number" id="leaderStartYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Start Year</label>' +
+            '<input type="number" id="leaderStartYear" value="' + _getCurrentYear() + '" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-            '<input type="text" id="leaderNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Notes</label>' +
+            '<input type="text" id="leaderNotes" placeholder="Additional notes..." class="religion-inline-7">' +
             '</div>' +
             '</div>';
 
@@ -1139,15 +1139,15 @@
         var leaderName = _getCharacterName(religion.leader.characterId);
 
         var content =
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<p style="font-size:0.75rem;">End the term of <strong>' + _escapeHtml(leaderName) + '</strong> as leader of ' + _escapeHtml(religion.name) + '?</p>' +
+            '<div class="religion-inline-1">' +
+            '<p class="religion-inline-12">End the term of <strong>' + _escapeHtml(leaderName) + '</strong> as leader of ' + _escapeHtml(religion.name) + '?</p>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">End Year</label>' +
-            '<input type="number" id="endYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">End Year</label>' +
+            '<input type="number" id="endYear" value="' + _getCurrentYear() + '" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Reason</label>' +
-            '<input type="text" id="endReason" placeholder="e.g., Resignation, Death, Removal" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Reason</label>' +
+            '<input type="text" id="endReason" placeholder="e.g., Resignation, Death, Removal" class="religion-inline-7">' +
             '</div>' +
             '</div>';
 
@@ -1214,52 +1214,52 @@
         var parentOptions = _buildGodOptions(religionId, null, null);
 
         var content =
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-1">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">God Name *</label>' +
-            '<input type="text" id="godName" placeholder="e.g., Thor" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">God Name *</label>' +
+            '<input type="text" id="godName" placeholder="e.g., Thor" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Display Name</label>' +
-            '<input type="text" id="godDisplayName" placeholder="e.g., Thor, God of Thunder" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Display Name</label>' +
+            '<input type="text" id="godDisplayName" placeholder="e.g., Thor, God of Thunder" class="religion-inline-4">' +
             '</div>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description</label>' +
-            '<textarea id="godDescription" rows="2" placeholder="Describe the god..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;"></textarea>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Domain</label>' +
-            '<select id="godDomain" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Description</label>' +
+            '<textarea id="godDescription" rows="2" placeholder="Describe the god..." class="religion-inline-5"></textarea>' +
+            '</div>' +
+
+            '<div class="religion-inline-6">' +
+            '<div class="form-group">' +
+            '<label class="religion-inline-3">Domain</label>' +
+            '<select id="godDomain" class="religion-inline-7">' +
             domainOptions +
             '</select>' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Symbol</label>' +
-            '<input type="text" id="godSymbol" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Symbol</label>' +
+            '<input type="text" id="godSymbol" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Gender</label>' +
-            '<select id="godGender" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Gender</label>' +
+            '<select id="godGender" class="religion-inline-7">' +
             genderOptions +
             '</select>' +
             '</div>' +
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Alignment</label>' +
-            '<select id="godAlignment" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Alignment</label>' +
+            '<select id="godAlignment" class="religion-inline-7">' +
             alignmentOptions +
             '</select>' +
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Parent God (optional)</label>' +
-            '<select id="godParent" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Parent God (optional)</label>' +
+            '<select id="godParent" class="religion-inline-7">' +
             parentOptions +
             '</select>' +
             '</div>' +
@@ -1366,52 +1366,52 @@
         var parentOptions = _buildGodOptions(religionId, god.parentGodId || '', godId);
 
         var content =
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-1">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">God Name *</label>' +
-            '<input type="text" id="godName" value="' + _escapeHtml(god.name || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">God Name *</label>' +
+            '<input type="text" id="godName" value="' + _escapeHtml(god.name || '') + '" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Display Name</label>' +
-            '<input type="text" id="godDisplayName" value="' + _escapeHtml(god.displayName || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Display Name</label>' +
+            '<input type="text" id="godDisplayName" value="' + _escapeHtml(god.displayName || '') + '" class="religion-inline-4">' +
             '</div>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description</label>' +
-            '<textarea id="godDescription" rows="2" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;">' + _escapeHtml(god.description || '') + '</textarea>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Domain</label>' +
-            '<select id="godDomain" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Description</label>' +
+            '<textarea id="godDescription" rows="2" class="religion-inline-5">' + _escapeHtml(god.description || '') + '</textarea>' +
+            '</div>' +
+
+            '<div class="religion-inline-6">' +
+            '<div class="form-group">' +
+            '<label class="religion-inline-3">Domain</label>' +
+            '<select id="godDomain" class="religion-inline-7">' +
             domainOptions +
             '</select>' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Symbol</label>' +
-            '<input type="text" id="godSymbol" value="' + _escapeHtml(god.symbol || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Symbol</label>' +
+            '<input type="text" id="godSymbol" value="' + _escapeHtml(god.symbol || '') + '" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Gender</label>' +
-            '<select id="godGender" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Gender</label>' +
+            '<select id="godGender" class="religion-inline-7">' +
             genderOptions +
             '</select>' +
             '</div>' +
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Alignment</label>' +
-            '<select id="godAlignment" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Alignment</label>' +
+            '<select id="godAlignment" class="religion-inline-7">' +
             alignmentOptions +
             '</select>' +
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Parent God (optional)</label>' +
-            '<select id="godParent" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Parent God (optional)</label>' +
+            '<select id="godParent" class="religion-inline-7">' +
             parentOptions +
             '</select>' +
             '</div>' +
@@ -1483,10 +1483,10 @@
         var godName = god.displayName || god.name || godId;
 
         var content =
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<p style="font-size:0.75rem;">Remove <strong>' + _escapeHtml(godName) +
+            '<div class="religion-inline-1">' +
+            '<p class="religion-inline-12">Remove <strong>' + _escapeHtml(godName) +
             '</strong> from the pantheon of ' + _escapeHtml(religion.name) + '?</p>' +
-            '<p style="font-size:0.65rem;color:var(--dim);">This cannot be undone.</p>' +
+            '<p class="religion-inline-13">This cannot be undone.</p>' +
             '</div>';
 
         var modal = _openModal({
@@ -1594,69 +1594,69 @@
             + _buildOptionsFromEnum(enums.crimeTypes, null, '');
 
         var content =
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-1">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Law Name *</label>' +
-            '<input type="text" id="lawName" placeholder="e.g., No Marriage Outside Faith" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Law Name *</label>' +
+            '<input type="text" id="lawName" placeholder="e.g., No Marriage Outside Faith" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Type</label>' +
-            '<select id="lawType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Type</label>' +
+            '<select id="lawType" class="religion-inline-7">' +
             typeOptions +
             '</select>' +
             '</div>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Category</label>' +
-            '<select id="lawCategory" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Category</label>' +
+            '<select id="lawCategory" class="religion-inline-7">' +
             categoryOptions +
             '</select>' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Domain</label>' +
-            '<select id="lawDomain" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Domain</label>' +
+            '<select id="lawDomain" class="religion-inline-7">' +
             domainOptions +
             '</select>' +
             '</div>' +
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description</label>' +
-            '<textarea id="lawDescription" rows="2" placeholder="Describe the law or taboo..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;"></textarea>' +
+            '<label class="religion-inline-3">Description</label>' +
+            '<textarea id="lawDescription" rows="2" placeholder="Describe the law or taboo..." class="religion-inline-5"></textarea>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Severity</label>' +
-            '<select id="lawSeverity" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Severity</label>' +
+            '<select id="lawSeverity" class="religion-inline-7">' +
             severityOptions +
             '</select>' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Crime Type (for enforcement)</label>' +
-            '<select id="lawCrimeType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Crime Type (for enforcement)</label>' +
+            '<select id="lawCrimeType" class="religion-inline-7">' +
             crimeTypeOptions +
             '</select>' +
             '</div>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-            '<input type="checkbox" id="lawEnforced" style="width:16px;height:16px;">' +
-            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Is Enforced</label>' +
+            '<div class="religion-inline-2">' +
+            '<div class="form-group" class="religion-inline-8">' +
+            '<input type="checkbox" id="lawEnforced" class="religion-inline-9">' +
+            '<label class="religion-inline-10">Is Enforced</label>' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Default Punishment</label>' +
-            '<input type="text" id="lawPunishment" placeholder="e.g., Excommunication, Fine, Execution" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Default Punishment</label>' +
+            '<input type="text" id="lawPunishment" placeholder="e.g., Excommunication, Fine, Execution" class="religion-inline-7">' +
             '</div>' +
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-            '<input type="text" id="lawNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Notes</label>' +
+            '<input type="text" id="lawNotes" placeholder="Additional notes..." class="religion-inline-7">' +
             '</div>' +
             '</div>';
 
@@ -1808,74 +1808,74 @@
         }
 
         var content =
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-1">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Law Name *</label>' +
-            '<input type="text" id="lawName" value="' + _escapeHtml(law.name || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Law Name *</label>' +
+            '<input type="text" id="lawName" value="' + _escapeHtml(law.name || '') + '" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Type</label>' +
-            '<select id="lawType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Type</label>' +
+            '<select id="lawType" class="religion-inline-7">' +
             typeOptions +
             '</select>' +
             '</div>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Category</label>' +
-            '<select id="lawCategory" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Category</label>' +
+            '<select id="lawCategory" class="religion-inline-7">' +
             categoryOptions +
             '</select>' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Domain</label>' +
-            '<select id="lawDomain" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Domain</label>' +
+            '<select id="lawDomain" class="religion-inline-7">' +
             domainOptions +
             '</select>' +
             '</div>' +
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description</label>' +
-            '<textarea id="lawDescription" rows="2" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;resize:vertical;">' + _escapeHtml(law.description || '') + '</textarea>' +
+            '<label class="religion-inline-3">Description</label>' +
+            '<textarea id="lawDescription" rows="2" class="religion-inline-5">' + _escapeHtml(law.description || '') + '</textarea>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Severity</label>' +
-            '<select id="lawSeverity" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Severity</label>' +
+            '<select id="lawSeverity" class="religion-inline-7">' +
             severityOptions +
             '</select>' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Crime Type (for enforcement)</label>' +
-            '<select id="lawCrimeType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Crime Type (for enforcement)</label>' +
+            '<select id="lawCrimeType" class="religion-inline-7">' +
             crimeTypeOptions +
             '</select>' +
             '</div>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-            '<input type="checkbox" id="lawEnforced" ' + (currentEnforced ? 'checked' : '') + ' style="width:16px;height:16px;">' +
-            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Is Enforced</label>' +
+            '<div class="religion-inline-2">' +
+            '<div class="form-group" class="religion-inline-8">' +
+            '<input type="checkbox" id="lawEnforced" ' + (currentEnforced ? 'checked' : '') + ' class="religion-inline-9">' +
+            '<label class="religion-inline-10">Is Enforced</label>' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Default Punishment</label>' +
-            '<input type="text" id="lawPunishment" value="' + _escapeHtml(currentPunishment) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Default Punishment</label>' +
+            '<input type="text" id="lawPunishment" value="' + _escapeHtml(currentPunishment) + '" class="religion-inline-7">' +
             '</div>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Crime Severity Override (1-10, optional)</label>' +
-            '<input type="number" id="lawCrimeSeverity" min="1" max="10" value="' + _escapeHtml(currentCrimeSeverity) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Crime Severity Override (1-10, optional)</label>' +
+            '<input type="number" id="lawCrimeSeverity" min="1" max="10" value="' + _escapeHtml(currentCrimeSeverity) + '" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-            '<input type="text" id="lawNotes" value="' + _escapeHtml(law.notes || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Notes</label>' +
+            '<input type="text" id="lawNotes" value="' + _escapeHtml(law.notes || '') + '" class="religion-inline-7">' +
             '</div>' +
             '</div>' +
             '</div>';
@@ -1959,10 +1959,10 @@
         var lawName = law.name || lawId;
 
         var content =
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<p style="font-size:0.75rem;">Remove <strong>' + _escapeHtml(lawName) +
+            '<div class="religion-inline-1">' +
+            '<p class="religion-inline-12">Remove <strong>' + _escapeHtml(lawName) +
             '</strong> from the laws of ' + _escapeHtml(religion.name) + '?</p>' +
-            '<p style="font-size:0.65rem;color:var(--dim);">This cannot be undone.</p>' +
+            '<p class="religion-inline-13">This cannot be undone.</p>' +
             '</div>';
 
         var modal = _openModal({
@@ -2011,46 +2011,46 @@
         var locationOptions = _getLocationOptions(null);
 
         var content =
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-1">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Place Name *</label>' +
-            '<input type="text" id="placeName" placeholder="e.g., The Great Temple" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Place Name *</label>' +
+            '<input type="text" id="placeName" placeholder="e.g., The Great Temple" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Type</label>' +
-            '<select id="placeType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Type</label>' +
+            '<select id="placeType" class="religion-inline-7">' +
             typeOptions +
             '</select>' +
             '</div>' +
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Location</label>' +
-            '<select id="placeLocation" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Location</label>' +
+            '<select id="placeLocation" class="religion-inline-7">' +
             locationOptions +
             '</select>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Base Tithe (per follower)</label>' +
-            '<input type="number" id="placeTithe" value="1" min="0" step="0.5" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Base Tithe (per follower)</label>' +
+            '<input type="number" id="placeTithe" value="1" min="0" step="0.5" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Founded Year</label>' +
-            '<input type="number" id="placeFoundedYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Founded Year</label>' +
+            '<input type="number" id="placeFoundedYear" value="' + _getCurrentYear() + '" class="religion-inline-4">' +
             '</div>' +
             '</div>' +
 
-            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-            '<input type="checkbox" id="placeProducesIncome" checked style="width:16px;height:16px;">' +
-            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Produces Income (Collects Tithes)</label>' +
+            '<div class="form-group" class="religion-inline-8">' +
+            '<input type="checkbox" id="placeProducesIncome" checked class="religion-inline-9">' +
+            '<label class="religion-inline-10">Produces Income (Collects Tithes)</label>' +
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-            '<input type="text" id="placeNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Notes</label>' +
+            '<input type="text" id="placeNotes" placeholder="Additional notes..." class="religion-inline-7">' +
             '</div>' +
             '</div>';
 
@@ -2141,50 +2141,50 @@
         var locationOptions = _getLocationOptions(place.locationId || null);
 
         var content =
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-1">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Place Name *</label>' +
-            '<input type="text" id="placeName" value="' + _escapeHtml(place.name || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Place Name *</label>' +
+            '<input type="text" id="placeName" value="' + _escapeHtml(place.name || '') + '" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Type</label>' +
-            '<select id="placeType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Type</label>' +
+            '<select id="placeType" class="religion-inline-7">' +
             typeOptions +
             '</select>' +
             '</div>' +
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Location</label>' +
-            '<select id="placeLocation" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Location</label>' +
+            '<select id="placeLocation" class="religion-inline-7">' +
             locationOptions +
             '</select>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Base Tithe (per follower)</label>' +
-            '<input type="number" id="placeTithe" min="0" step="0.5" value="' + (typeof place.baseTithe === 'number' ? place.baseTithe : 1) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Base Tithe (per follower)</label>' +
+            '<input type="number" id="placeTithe" min="0" step="0.5" value="' + (typeof place.baseTithe === 'number' ? place.baseTithe : 1) + '" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Founded Year</label>' +
-            '<input type="number" id="placeFoundedYear" value="' + (typeof place.foundedYear === 'number' ? place.foundedYear : _getCurrentYear()) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Founded Year</label>' +
+            '<input type="number" id="placeFoundedYear" value="' + (typeof place.foundedYear === 'number' ? place.foundedYear : _getCurrentYear()) + '" class="religion-inline-4">' +
             '</div>' +
             '</div>' +
 
-            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-            '<input type="checkbox" id="placeProducesIncome" ' + (place.producesIncome !== false ? 'checked' : '') + ' style="width:16px;height:16px;">' +
-            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Produces Income (Collects Tithes)</label>' +
+            '<div class="form-group" class="religion-inline-8">' +
+            '<input type="checkbox" id="placeProducesIncome" ' + (place.producesIncome !== false ? 'checked' : '') + ' class="religion-inline-9">' +
+            '<label class="religion-inline-10">Produces Income (Collects Tithes)</label>' +
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-            '<input type="text" id="placeNotes" value="' + _escapeHtml(place.notes || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Notes</label>' +
+            '<input type="text" id="placeNotes" value="' + _escapeHtml(place.notes || '') + '" class="religion-inline-7">' +
             '</div>' +
 
             (place.legacyUnresolved === true
-                ? '<div style="padding:8px 12px;background:rgba(181,164,74,0.1);border:1px solid #c87040;border-radius:4px;font-size:0.6rem;color:#c87040;">' +
+                ? '<div class="religion-inline-38">' +
                   'Legacy record: only its ID was saved by the previous version. Its original details cannot be recovered. Supply a verified name, type and location to complete this record.' +
                   '</div>'
                 : '') +
@@ -2254,10 +2254,10 @@
             : placeId;
 
         var content =
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<p style="font-size:0.75rem;">Remove <strong>' + _escapeHtml(placeName) +
+            '<div class="religion-inline-1">' +
+            '<p class="religion-inline-12">Remove <strong>' + _escapeHtml(placeName) +
             '</strong> from the places of worship of ' + _escapeHtml(religion.name) + '?</p>' +
-            '<p style="font-size:0.65rem;color:var(--dim);">This cannot be undone.</p>' +
+            '<p class="religion-inline-13">This cannot be undone.</p>' +
             '</div>';
 
         var modal = _openModal({
@@ -2321,35 +2321,35 @@
         var charName = character.name + (character.surname ? ' ' + character.surname : '');
 
         var content =
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<p style="font-size:0.7rem;">Assign a religion to <strong>' + _escapeHtml(charName) + '</strong></p>' +
-            '<p style="font-size:0.6rem;color:var(--dim);">Current: ' + _escapeHtml(currentName) + '</p>' +
+            '<div class="religion-inline-1">' +
+            '<p class="religion-inline-35">Assign a religion to <strong>' + _escapeHtml(charName) + '</strong></p>' +
+            '<p class="religion-inline-18">Current: ' + _escapeHtml(currentName) + '</p>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Religion</label>' +
-            '<select id="assignReligion" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Religion</label>' +
+            '<select id="assignReligion" class="religion-inline-7">' +
             religionOptions +
             '</select>' +
             '</div>' +
 
-            (currentReligion ? '<div style="padding:8px 12px;background:rgba(181,164,74,0.1);border:1px solid #c87040;border-radius:4px;font-size:0.6rem;color:#c87040;">This will record a conversion in the character\'s history.</div>' : '') +
+            (currentReligion ? '<div class="religion-inline-38">This will record a conversion in the character\'s history.</div>' : '') +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+            '<div class="religion-inline-2">' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Year</label>' +
-            '<input type="number" id="assignYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.75rem;">' +
+            '<label class="religion-inline-3">Year</label>' +
+            '<input type="number" id="assignYear" value="' + _getCurrentYear() + '" class="religion-inline-4">' +
             '</div>' +
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Reason</label>' +
-            '<select id="assignReason" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Reason</label>' +
+            '<select id="assignReason" class="religion-inline-7">' +
             reasonOptions +
             '</select>' +
             '</div>' +
             '</div>' +
 
             '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-            '<input type="text" id="assignNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
+            '<label class="religion-inline-3">Notes</label>' +
+            '<input type="text" id="assignNotes" placeholder="Additional notes..." class="religion-inline-7">' +
             '</div>' +
             '</div>';
 
