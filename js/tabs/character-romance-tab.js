@@ -632,12 +632,12 @@
                 bits.push('by ' + rel.discovererName);
             }
             return '<div class="character-romance-status is-widowed" ' +
-                'style="margin-top:4px;">' +
+                'class="mt-4">' +
                 _icon('WARNING') + ' Discovered' +
                 (bits.length > 0 ? ' — ' + _esc(bits.join(' · ')) : '') +
             '</div>';
         }
-        return '<div class="character-romance-status" style="margin-top:4px;color:var(--dim);">' +
+        return '<div class="character-romance-status character-romance-status--spaced">' +
             _icon('CIRCLE_DOT') + ' Not yet discovered' +
         '</div>';
     }
