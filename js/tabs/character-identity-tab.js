@@ -220,10 +220,15 @@
     }
 
     function _refresh() {
-        if (window.CharacterManagerBootstrap
-            && typeof window.CharacterManagerBootstrap.renderActive === 'function') {
-            try { window.CharacterManagerBootstrap.renderActive(); }
-            catch (e) { /* non-fatal */ }
+        if (window.CharacterManagerBootstrap) {
+            if (typeof window.CharacterManagerBootstrap.refreshSidebar === 'function') {
+                try { window.CharacterManagerBootstrap.refreshSidebar(); }
+                catch (e) { /* non-fatal */ }
+            }
+            if (typeof window.CharacterManagerBootstrap.renderActive === 'function') {
+                try { window.CharacterManagerBootstrap.renderActive(); }
+                catch (e) { /* non-fatal */ }
+            }
         }
     }
 
@@ -1871,6 +1876,13 @@
                             if (!traitResult || traitResult.success !== true) {
                                 errors.push('Save traits: ' +
                                     (traitResult && traitResult.reason ? traitResult.reason : 'unknown'));
+                            } else if (typeof CC.getTraits === 'function') {
+                                var savedTraits = CC.getTraits(characterId);
+                                var expectedTraits = newTraits.slice().sort();
+                                var actualTraits = Array.isArray(savedTraits) ? savedTraits.slice().sort() : [];
+                                if (JSON.stringify(actualTraits) !== JSON.stringify(expectedTraits)) {
+                                    errors.push('Save traits: the character state did not retain the selected traits.');
+                                }
                             }
                         }
                     }
