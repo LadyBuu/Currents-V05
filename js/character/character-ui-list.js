@@ -253,6 +253,33 @@
     /**
      * Returns a display string for age, or the fallback string when null.
      */
+    function _genderIconHtml(gender) {
+        var icon = '';
+        if (typeof window.getGenderIcon === 'function') {
+            try { icon = window.getGenderIcon(gender) || ''; } catch (e) { icon = ''; }
+        }
+        if (!icon && window.Icons) {
+            icon = gender === 'male' ? (window.Icons.MALE || '')
+                : gender === 'female' ? (window.Icons.FEMALE || '')
+                : (window.Icons.GENDER_NEUTRAL || window.Icons.CIRCLE || '');
+        }
+        return '<span class="character-row__gender-icon" role="img" aria-label="Gender: '
+            + _esc(gender || 'unknown') + '" title="' + _esc(gender || 'unknown') + '">'
+            + icon + '</span>';
+    }
+
+    function _resolveHouseholdName(character, summary) {
+        var id = summary && (summary.householdId || summary.household)
+            || character && (character.householdId || character.household);
+        if (!_hasId(id)) return '';
+        var queries = window.HouseholdQueries;
+        if (!queries || typeof queries.getHousehold !== 'function') return '';
+        try {
+            var household = queries.getHousehold(id);
+            return household && typeof household.name === 'string' ? household.name : '';
+        } catch (e) { return ''; }
+    }
+
     function _formatAge(age) {
         if (age === null || age === undefined) return 'Unknown age';
         if (typeof age !== 'number' || !Number.isFinite(age) || age < 0) return 'Unknown age';
@@ -327,11 +354,13 @@
         // exists (locationId is non-null) but we cannot resolve the
         // display string. Return the dangling-state text rather than
         // fabricating a name.
-        if (typeof window.getCurrentPlace !== 'function') {
-            return 'Unknown location';
-        }
+        var resolver = typeof window.getCurrentPlace === 'function'
+            ? window.getCurrentPlace
+            : (window.world && typeof window.world.getCurrentPlace === 'function'
+                ? window.world.getCurrentPlace.bind(window.world) : null);
+        if (!resolver) return 'Unknown location';
 
-        var place = window.getCurrentPlace(character);
+        var place = resolver(character);
         if (!place) return 'Unknown location';
         if (typeof place.displayName !== 'string' || place.displayName.length === 0) {
             return 'Unknown location';
@@ -395,13 +424,15 @@
             if (locationText) details.push(locationText);
         }
 
-        if (_hasId(character.household)) details.push(character.household);
+        var householdName = _resolveHouseholdName(character, summary);
+        if (householdName) details.push(householdName);
+        details.push(_genderIconHtml(summary.gender || character.gender || 'unknown'));
 
         if (details.length > 0) {
             html += '<span class="character-row__details">';
             for (var i = 0; i < details.length; i++) {
                 if (i > 0) html += ' &middot; ';
-                html += _esc(details[i]);
+                html += details[i].indexOf('<span class=\"character-row__gender-icon\"') === 0 ? details[i] : _esc(details[i]);
             }
             html += '</span>';
         }
@@ -665,7 +696,7 @@
         html += '<div class="character-card__field">'
              + '<div class="character-card__field-label">Gender</div>'
              + '<div class="character-card__field-value">'
-             + _esc(summary.gender || 'Unknown')
+             + _genderIconHtml(summary.gender || 'unknown')
              + '</div></div>';
 
         // Location field. showLocation === false omits the field entirely
