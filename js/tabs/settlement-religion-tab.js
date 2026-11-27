@@ -576,7 +576,7 @@
             '<div class="st-section__title">' +
             icon('LOCATION') + ' Places of Worship (' +
             fmtNum(places.length) + ')' +
-            '<span style="flex:1;"></span>' + createBtn +
+            '<span class="settlement-action-spacer"></span>' + createBtn +
             '</div>';
 
         if (!canCreate) {
