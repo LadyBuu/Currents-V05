@@ -445,39 +445,65 @@
             households: /household(id)?$/i,
             characters: /(character|person|perpetrator|victim|killer|parent|child|master|apprentice|adoptee|adopter|pregnant|surrogate)(id)?$/i,
             locations: /(place|location|parentPlace|settlementLocation)(id)?$/i,
-            settlements: /(settlement)(id)?$/i,
+            settlements: /settlement(id)?$/i,
             governments: /(government|department|leader)(id)?$/i,
             residences: /(residence|unit)(id)?$/i,
-            roles: /(role)(id)?$/i,
-            cultures: /(culture)(id)?$/i,
+            roles: /role(id)?$/i,
+            cultures: /culture(id)?$/i,
             religions: /(religion|worship)(id)?$/i,
-            ranks: /(rank)(id)?$/i,
+            ranks: /rank(id)?$/i,
             schools: /(school|institution|subject)(id)?$/i,
             industries: /(enterprise|industry)(id)?$/i
         };
         return keys[configId];
     }
 
-    // Clear references to every deleted record throughout canonical data,
-    // including nested historical records. Reference fields are set to null;
-    // arrays that directly contain deleted IDs have those IDs removed.
+    function referenceArrayKeyFor(configId) {
+        var keys = {
+            households: /households$/i,
+            characters: /(character|people|children|parents|perpetrators|victims|masters|apprentices)Ids?$/i,
+            locations: /(places|locations)Ids?$/i,
+            settlements: /settlementsIds?$/i,
+            governments: /(governments|departments)Ids?$/i,
+            residences: /(residences|units)Ids?$/i,
+            roles: /rolesIds?$/i,
+            cultures: /culturesIds?$/i,
+            religions: /(religions|worship)Ids?$/i,
+            ranks: /ranksIds?$/i,
+            schools: /(schools|institutions|subjects)Ids?$/i,
+            industries: /(enterprises|industries)Ids?$/i
+        };
+        return keys[configId];
+    }
+
+    // Clear matching typed references throughout canonical data, including
+    // nested historical records. Scalar references become null; reference
+    // arrays lose only matching IDs. Snapshot names/text are intentionally
+    // preserved because they are not foreign keys.
     function clearReferencesToWipedRecords(data, configId, deletedIds) {
         if (!deletedIds.size) return;
         var referenceKey = referenceKeysFor(configId);
-        if (!referenceKey) return;
+        var referenceArrayKey = referenceArrayKeyFor(configId);
+        if (!referenceKey || !referenceArrayKey) return;
 
-        function visit(value) {
+        function visit(value, key) {
             if (!value || typeof value !== 'object') return;
             if (Array.isArray(value)) {
-                value.forEach(visit);
+                if (referenceArrayKey.test(key || '')) {
+                    for (var i = value.length - 1; i >= 0; i--) {
+                        if (deletedIds.has(value[i])) value.splice(i, 1);
+                    }
+                } else {
+                    value.forEach(function (item) { visit(item, ''); });
+                }
                 return;
             }
-            Object.keys(value).forEach(function (key) {
-                var child = value[key];
-                if (referenceKey.test(key) && deletedIds.has(child)) {
-                    value[key] = null;
+            Object.keys(value).forEach(function (childKey) {
+                var child = value[childKey];
+                if (referenceKey.test(childKey) && deletedIds.has(child)) {
+                    value[childKey] = null;
                 } else {
-                    visit(child);
+                    visit(child, childKey);
                 }
             });
         }
@@ -485,7 +511,7 @@
             if (configId === 'households' &&
                 (field === 'households' || field === 'householdPositions' ||
                  field === 'householdAssignments')) return;
-            visit(data[field]);
+            visit(data[field], field);
         });
     }
 
