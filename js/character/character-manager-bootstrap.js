@@ -437,9 +437,41 @@
         var selectedId = uiState.getSelectedCharacterId();
 
         var groups=null, stages=window.LIFE_STAGES;
-        if(stages){var stageList=Object.keys(stages).map(function(k){return stages[k];}).sort(function(a,b){return (b.min||0)-(a.min||0);}), buckets={};stageList.forEach(function(s){buckets[s.group]=[];});buckets['Unknown age']=[];
-            characters.forEach(function(c){var sum=queries.getCharacterSummary(c.id),age=sum&&typeof sum.age==='number'?sum.age:null,stage=stageList.find(function(s){return age!==null&&age>=s.min&&(s.max===null||age<=s.max);});(stage?buckets[stage.group]:buckets['Unknown age']).push(c);});
-            groups=stageList.map(function(s){return {label:s.name+' · '+s.group,characters:buckets[s.group]};}).filter(function(g){return g.characters.length;});if(buckets['Unknown age'].length)groups.push({label:'Unknown age',characters:buckets['Unknown age']});
+        if(stages){
+            var stageList=Object.keys(stages).map(function(k){return stages[k];}).filter(function(s){
+                return s && typeof s.group==='string' && typeof s.min==='number';
+            }).sort(function(a,b){return b.min-a.min;});
+            var groupMap=Object.create(null), groupList=[];
+            stageList.forEach(function(stage){
+                var key=stage.group;
+                if(!groupMap[key]){
+                    groupMap[key]={label:key,stages:[],characters:[],min:Infinity,max:-Infinity};
+                    groupList.push(groupMap[key]);
+                }
+                var group=groupMap[key];
+                group.stages.push(stage);
+                group.min=Math.min(group.min,stage.min);
+                group.max=Math.max(group.max,stage.max===null?Infinity:(typeof stage.max==='number'?stage.max:stage.min));
+            });
+            // Sort groups by their actual age bounds, oldest range first.
+            groupList.sort(function(a,b){
+                if(a.max!==b.max)return b.max-a.max;
+                return b.min-a.min;
+            });
+            var unknownGroup={label:'Unknown age',characters:[]};
+            characters.forEach(function(c){
+                var sum=queries.getCharacterSummary(c.id);
+                var age=sum&&typeof sum.age==='number'?sum.age:null;
+                var stage=age===null?null:stageList.find(function(s){
+                    return age>=s.min&&(s.max===null||age<=s.max);
+                });
+                var group=stage&&groupMap[stage.group];
+                (group?group.characters:unknownGroup.characters).push(c);
+            });
+            groups=groupList.filter(function(group){return group.characters.length;}).map(function(group){
+                return {label:group.label,characters:group.characters};
+            });
+            if(unknownGroup.characters.length)groups.push(unknownGroup);
         }
         uiList.renderCharacterList(container, {
             groups: groups,
