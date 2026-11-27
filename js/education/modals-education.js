@@ -370,14 +370,14 @@
         var content =
             '<div style="max-height:520px;overflow-y:auto;padding:4px;">' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Name *</label>' +
             '<input type="text" id="createInstName" value="' +
             _escapeHtml(defaultData.name || '') +
             '" placeholder="e.g., Oxford Academy" autofocus class="modal-field">' +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Type *</label>' +
             '<select id="createInstType" class="modal-field">' +
             _buildTypeOptions(defaultData.typeId || firstTypeId) +
@@ -385,14 +385,14 @@
             '<small id="createInstTypeHint" style="font-size:0.5rem;color:var(--dim);"></small>' +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Location *</label>' +
             '<select id="createInstLocation" class="modal-field">' +
             _buildPlaceOptions(defaultData.locationId) +
             '</select>' +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Ownership</label>' +
             '<select id="createInstOwnership" class="modal-field">' +
             '<option value="public">Public (Free)</option>' +
@@ -423,7 +423,7 @@
             '<small style="font-size:0.5rem;color:var(--dim);">Private institutions must have an owner</small>' +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Description</label>' +
             '<textarea id="createInstDescription" rows="2" class="modal-field">' +
             _escapeHtml(defaultData.description || '') + '</textarea>' +
@@ -585,34 +585,34 @@
             'Editing <strong>' + _escapeHtml(s.name) + '</strong>' +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Name *</label>' +
             '<input type="text" id="editInstName" value="' +
             _escapeHtml(s.name) +
             '" class="modal-field">' +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Type</label>' +
             '<select id="editInstType" class="modal-field">' +
             _buildTypeOptions(s.type) +
             '</select>' +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Location</label>' +
             '<select id="editInstLocation" class="modal-field">' +
             _buildPlaceOptions(s.locationId) +
             '</select>' +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Description</label>' +
             '<textarea id="editInstDescription" rows="2" class="modal-field">' +
             _escapeHtml(details.description || '') + '</textarea>' +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Max Students</label>' +
             '<input type="number" id="editInstMaxStudents" value="' +
             s.maxStudents +
@@ -1196,12 +1196,12 @@
             _escapeHtml(tuitionLine) + '</div>' +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Student</label>' +
             '<select id="enrollStudentSelect" class="modal-field">' +
             studentOptions + '</select></div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Enrollment Year</label>' +
             '<input type="number" id="enrollYear" value="' + year +
             '" min="1" max="' + (year + 5) +
@@ -1308,12 +1308,12 @@
             teachers.length + ' teachers currently</div>' +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Teacher</label>' +
             '<select id="hireTeacherSelect" class="modal-field">' +
             teacherOptions + '</select></div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Subject</label>' +
             '<select id="hireSubjectSelect" class="modal-field">' +
             subjectOptions + '</select></div>';
@@ -1396,17 +1396,17 @@
             currentLine +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Headmaster</label>' +
             '<select id="headmasterSelect" class="modal-field">' +
             options + '</select></div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Title</label>' +
             '<input type="text" id="headmasterTitle" value="Headmaster" class="modal-field">' +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Start Year</label>' +
             '<input type="number" id="headmasterStartYear" value="' + year +
             '" min="1" class="modal-field">' +
@@ -1521,7 +1521,7 @@
                     _escapeHtml(role ? role.name : roleId) + '</option>';
             }
             roleSelectHtml =
-                '<div class="form-group" class="modal-mb-12">' +
+                '<div class="form-group modal-mb-12">' +
                 '<label class="modal-field-label">Role to Grant</label>' +
                 '<select id="graduateRoleSelect" class="modal-field">' +
                 roleOptions +
@@ -1535,14 +1535,14 @@
             'Graduate a student from <strong>' + _escapeHtml(s.name) + '</strong>' +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Student</label>' +
             '<select id="graduateStudentSelect" class="modal-field">' +
             studentOptions + '</select></div>' +
 
             roleSelectHtml +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Graduation Year</label>' +
             '<input type="number" id="graduateYear" value="' + year +
             '" min="1" class="modal-field">' +
@@ -1627,13 +1627,13 @@
             cascadeNote +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Type "<strong>' +
             _escapeHtml(s.name) + '</strong>" to confirm</label>' +
             '<input type="text" id="confirmDeleteInstName" class="modal-field">' +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label style="display:flex;align-items:center;gap:8px;font-size:0.65rem;">' +
             '<input type="checkbox" id="deleteCascade"> Cascade delete associated records' +
             '</label>' +
@@ -1714,21 +1714,21 @@
 
             (isPublic ? '' :
                 '<div>' +
-                '<div class="form-group" class="modal-mb-12">' +
+                '<div class="form-group modal-mb-12">' +
                 '<label class="modal-field-label">Base Tuition (gold/year)</label>' +
                 '<input type="number" id="tuitionBase" value="' +
                 (s.baseTuition || 0) +
                 '" min="0" max="200" class="modal-field">' +
                 '</div>' +
-                '<div class="form-group" class="modal-mb-12">' +
+                '<div class="form-group modal-mb-12">' +
                 '<label class="modal-field-label">Manual Override</label>' +
                 '<input type="number" id="tuitionOverride" min="0" max="200" placeholder="Leave empty for calculated" class="modal-field">' +
                 '</div>' +
-                '<div class="form-group" class="modal-mb-12">' +
+                '<div class="form-group modal-mb-12">' +
                 '<label style="display:flex;align-items:center;gap:8px;font-size:0.65rem;">' +
                 '<input type="checkbox" id="tuitionWaive"> Waive tuition for all students</label>' +
                 '</div>' +
-                '<div class="form-group" class="modal-mb-12">' +
+                '<div class="form-group modal-mb-12">' +
                 '<label class="modal-field-label">Reason</label>' +
                 '<input type="text" id="tuitionReason" placeholder="e.g., Inflation, Scholarship" class="modal-field">' +
                 '</div>' +
@@ -1835,7 +1835,7 @@
                 : '') +
             '</div>' +
 
-            '<div class="form-group" class="modal-mb-12">' +
+            '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Ownership Type</label>' +
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
             '<label style="display:flex;align-items:center;gap:6px;font-size:0.65rem;cursor:pointer;">' +
