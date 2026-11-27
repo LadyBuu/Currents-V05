@@ -38,7 +38,7 @@
     function _iconSpan(name) {
         var i = _icon(name);
         return i
-            ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;">' + i + '</span>'
+            ? '<span class="gov-inline-1">' + i + '</span>'
             : '';
     }
 
@@ -71,7 +71,7 @@
         var html = '<div class="government-department-list">';
 
         if (items.length === 0) {
-            html += '<div style="text-align:center;padding:40px;color:var(--dim);font-size:0.65rem;">No departments found</div>';
+            html += '<div class="gov-inline-82">No departments found</div>';
         } else {
             for (var i = 0; i < items.length; i++) {
                 var d = items[i];
@@ -79,7 +79,7 @@
 
                 var statsHtml = '';
                 if (showStats) {
-                    statsHtml = '<div style="font-size:0.5rem;color:var(--dim);margin-top:4px;display:flex;gap:12px;flex-wrap:wrap;">' +
+                    statsHtml = '<div class="gov-inline-83">' +
                         '<span>Role positions: ' + d.stats.rolePositionCount + '</span>' +
                         '<span>Active: ' + d.stats.activeAssignmentCount + '</span>' +
                         '<span>Total: ' + d.stats.assignmentCount + '</span>' +
@@ -89,9 +89,9 @@
                 var actionsHtml = '';
                 if (showActions) {
                     actionsHtml =
-                        '<div style="display:flex;gap:4px;flex-shrink:0;">' +
-                        '<button type="button" class="dept-edit-btn" data-dept-id="' + _attr(d.id) + '" style="background:none;border:none;cursor:pointer;color:var(--accent);padding:2px 4px;font-size:0.6rem;">' + editIcon + '</button>' +
-                        '<button type="button" class="dept-delete-btn" data-dept-id="' + _attr(d.id) + '" style="background:none;border:none;cursor:pointer;color:var(--dim);padding:2px 4px;font-size:0.6rem;">' + deleteIcon + '</button>' +
+                        '<div class="gov-inline-84">' +
+                        '<button type="button" class="dept-edit-btn" data-dept-id="' + _attr(d.id) + '" class="gov-inline-85">' + editIcon + '</button>' +
+                        '<button type="button" class="dept-delete-btn" data-dept-id="' + _attr(d.id) + '" class="gov-inline-86">' + deleteIcon + '</button>' +
                         '</div>';
                 }
 
@@ -100,23 +100,23 @@
                     'background:' + (d.isSelected ? 'rgba(var(--accent-rgb),0.12)' : 'var(--bg3)') + ';' +
                     'border:1px solid ' + (d.isSelected ? 'var(--accent)' : 'var(--border)') + ';' +
                     'border-radius:6px;padding:10px 14px;margin-bottom:6px;cursor:pointer;transition:all 0.1s;">' +
-                    '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px;">' +
-                    '<div style="flex:1;min-width:0;">' +
-                    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
-                    '<strong style="font-size:0.85rem;">' + homeIcon + ' ' + _escapeHtml(d.name) + '</strong>' +
-                    (d.parentDepartmentLabel ? '<span style="font-size:0.55rem;color:var(--dim);">(Child of ' + _escapeHtml(d.parentDepartmentLabel) + ')</span>' : '') +
-                    (d.isSelected ? '<span style="font-size:0.55rem;background:var(--accent);padding:2px 8px;border-radius:12px;color:white;">Selected</span>' : '') +
+                    '<div class="gov-inline-87">' +
+                    '<div class="gov-inline-88">' +
+                    '<div class="gov-inline-89">' +
+                    '<strong class="gov-inline-90">' + homeIcon + ' ' + _escapeHtml(d.name) + '</strong>' +
+                    (d.parentDepartmentLabel ? '<span class="gov-inline-6">(Child of ' + _escapeHtml(d.parentDepartmentLabel) + ')</span>' : '') +
+                    (d.isSelected ? '<span class="gov-inline-91">Selected</span>' : '') +
                     '</div>' +
-                    (d.description ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' + _escapeHtml(d.description) + '</div>' : '') +
-                    '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;display:flex;gap:12px;flex-wrap:wrap;">' +
+                    (d.description ? '<div class="gov-inline-92">' + _escapeHtml(d.description) + '</div>' : '') +
+                    '<div class="gov-inline-93">' +
                     '<span>' + locationIcon + ' ' + _escapeHtml(d.locationLabel) + '</span>' +
                     '<span>' + personIcon + ' ' + d.stats.positionCount + ' positions (' + d.stats.rolePositionCount + ' with role)</span>' +
                     '<span>' + d.stats.activeAssignmentCount + ' active / ' + d.stats.assignmentCount + ' total</span>' +
                     '</div>' +
                     statsHtml +
                     '</div>' +
-                    '<div style="text-align:right;flex-shrink:0;display:flex;align-items:center;gap:8px;">' +
-                    '<span style="font-size:0.55rem;color:var(--accent);">View</span>' +
+                    '<div class="gov-inline-94">' +
+                    '<span class="gov-inline-95">View</span>' +
                     actionsHtml +
                     '</div>' +
                     '</div>' +
@@ -179,7 +179,7 @@
         var html = '<div class="government-position-list">';
 
         if (items.length === 0) {
-            html += '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.6rem;">No positions found</div>';
+            html += '<div class="gov-inline-96">No positions found</div>';
         } else {
             for (var i = 0; i < items.length; i++) {
                 var p = items[i];
@@ -187,16 +187,16 @@
 
                 var roleInfoHtml = '';
                 if (showRoleInfo && p.hasRoleRequirement) {
-                    roleInfoHtml = '<span style="font-size:0.5rem;color:var(--accent);margin-left:6px;">Role: ' + _escapeHtml(p.requiredRoleLabel || 'Unknown') +
+                    roleInfoHtml = '<span class="gov-inline-97">Role: ' + _escapeHtml(p.requiredRoleLabel || 'Unknown') +
                         (p.minSkillLevel != null && p.minSkillLevel > 0 ? ' (Min: ' + p.minSkillLevel + ')' : '') + '</span>';
                 }
 
                 var actionsHtml = '';
                 if (showActions) {
                     actionsHtml =
-                        '<div style="display:flex;gap:4px;">' +
-                        '<button type="button" class="pos-edit-btn" data-pos-id="' + _attr(p.id) + '" data-dept-id="' + _attr(p.departmentId) + '" style="background:none;border:none;cursor:pointer;color:var(--accent);padding:2px 4px;font-size:0.5rem;">' + editIcon + '</button>' +
-                        '<button type="button" class="pos-delete-btn" data-pos-id="' + _attr(p.id) + '" data-dept-id="' + _attr(p.departmentId) + '" style="background:none;border:none;cursor:pointer;color:var(--dim);padding:2px 4px;font-size:0.5rem;">' + deleteIcon + '</button>' +
+                        '<div class="gov-inline-98">' +
+                        '<button type="button" class="pos-edit-btn" data-pos-id="' + _attr(p.id) + '" data-dept-id="' + _attr(p.departmentId) + '" class="gov-inline-99">' + editIcon + '</button>' +
+                        '<button type="button" class="pos-delete-btn" data-pos-id="' + _attr(p.id) + '" data-dept-id="' + _attr(p.departmentId) + '" class="gov-inline-100">' + deleteIcon + '</button>' +
                         '</div>';
                 }
 
@@ -206,19 +206,19 @@
                     'border:1px solid ' + (p.isSelected ? 'var(--accent)' : 'var(--border)') + ';' +
                     'border-left:3px solid ' + (p.hasRoleRequirement ? 'var(--accent)' : 'var(--border)') + ';' +
                     'border-radius:4px;padding:8px 12px;margin-bottom:4px;cursor:pointer;transition:all 0.1s;">' +
-                    '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">' +
+                    '<div class="gov-inline-101">' +
                     '<div>' +
-                    '<span style="font-size:0.7rem;">' + personIcon + ' ' + _escapeHtml(p.name) + '</span>' +
+                    '<span class="gov-inline-19">' + personIcon + ' ' + _escapeHtml(p.name) + '</span>' +
                     roleInfoHtml +
-                    (p.hasParent ? ' <span style="font-size:0.5rem;color:var(--dim);">(Child)</span>' : '') +
+                    (p.hasParent ? ' <span class="gov-inline-20">(Child)</span>' : '') +
                     '</div>' +
-                    '<div style="font-size:0.55rem;color:var(--dim);display:flex;gap:8px;align-items:center;">' +
+                    '<div class="gov-inline-102">' +
                     '<span>Priority: ' + p.priority + '</span>' +
                     '<span>' + p.assignmentCount + ' assigned</span>' +
                     actionsHtml +
                     '</div>' +
                     '</div>' +
-                    (p.description ? '<div style="font-size:0.5rem;color:var(--dim);margin-top:2px;">' + _escapeHtml(p.description) + '</div>' : '') +
+                    (p.description ? '<div class="gov-inline-72">' + _escapeHtml(p.description) + '</div>' : '') +
                     '</div>';
             }
         }
@@ -277,7 +277,7 @@
         var html = '<div class="government-assignment-list">';
 
         if (items.length === 0) {
-            html += '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.6rem;">No assignments found</div>';
+            html += '<div class="gov-inline-96">No assignments found</div>';
         } else {
             for (var i = 0; i < items.length; i++) {
                 var a = items[i];
@@ -285,13 +285,13 @@
 
                 var roleInfoHtml = '';
                 if (showRoleInfo && a.roleLabel) {
-                    roleInfoHtml = '<span style="font-size:0.45rem;color:var(--accent);margin-left:6px;">Role: ' + _escapeHtml(a.roleLabel) +
+                    roleInfoHtml = '<span class="gov-inline-103">Role: ' + _escapeHtml(a.roleLabel) +
                         (a.skillLevel != null && a.skillLevel > 0 ? ' (Skill: ' + a.skillLevel + ')' : '') + '</span>';
                 }
 
                 var endBtnHtml = '';
                 if (showEndButton && a.isActive) {
-                    endBtnHtml = '<button type="button" class="assign-end-btn" data-assign-id="' + _attr(a.id) + '" style="background:none;border:none;cursor:pointer;color:var(--warn);padding:2px 4px;font-size:0.45rem;">End</button>';
+                    endBtnHtml = '<button type="button" class="assign-end-btn" data-assign-id="' + _attr(a.id) + '" class="gov-inline-104">End</button>';
                 }
 
                 html +=
@@ -299,19 +299,19 @@
                     'background:' + (a.isSelected ? 'rgba(var(--accent-rgb),0.12)' : (a.isActive ? 'rgba(74,158,106,0.08)' : 'var(--bg3)')) + ';' +
                     'border-left:3px solid ' + (a.isActive ? 'var(--success)' : 'var(--dim)') + ';' +
                     'padding:6px 12px;margin-bottom:4px;cursor:pointer;transition:all 0.1s;">' +
-                    '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">' +
+                    '<div class="gov-inline-101">' +
                     '<div>' +
-                    '<span style="font-size:0.65rem;">' + personIcon + ' ' + _escapeHtml(a.characterName) + '</span>' +
-                    (a.title ? ' <span style="font-size:0.5rem;color:var(--dim);">(' + _escapeHtml(a.title) + ')</span>' : '') +
+                    '<span class="gov-inline-105">' + personIcon + ' ' + _escapeHtml(a.characterName) + '</span>' +
+                    (a.title ? ' <span class="gov-inline-20">(' + _escapeHtml(a.title) + ')</span>' : '') +
                     roleInfoHtml +
                     '</div>' +
-                    '<div style="font-size:0.5rem;color:var(--dim);display:flex;gap:8px;align-items:center;">' +
+                    '<div class="gov-inline-106">' +
                     '<span>' + a.startYear + ' - ' + a.endLabel + '</span>' +
-                    (a.isActive ? '<span style="color:var(--success);">Active</span>' : '<span style="color:var(--dim);">Ended</span>') +
+                    (a.isActive ? '<span class="gov-inline-28">Active</span>' : '<span class="gov-inline-27">Ended</span>') +
                     endBtnHtml +
                     '</div>' +
                     '</div>' +
-                    (a.notes ? '<div style="font-size:0.5rem;color:var(--dim);margin-top:2px;">' + _escapeHtml(a.notes) + '</div>' : '') +
+                    (a.notes ? '<div class="gov-inline-72">' + _escapeHtml(a.notes) + '</div>' : '') +
                     '</div>';
             }
         }
@@ -350,27 +350,27 @@
         var el = _resolveContainer(container);
         if (!el) return;
         if (!vm) {
-            el.innerHTML = '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">No position data</div>';
+            el.innerHTML = '<div class="gov-inline-107">No position data</div>';
             return;
         }
         var personIcon = _iconSpan('PERSON');
         var html =
             '<div style="background:var(--bg2);border-radius:8px;padding:12px;border-left:3px solid ' + (vm.hasRoleRequirement ? 'var(--accent)' : 'var(--border)') + ';">' +
-            '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">' +
+            '<div class="gov-inline-45">' +
             '<div>' +
-            '<div style="font-size:0.9rem;font-weight:bold;">' + personIcon + ' ' + _escapeHtml(vm.name) + '</div>' +
-            '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
+            '<div class="gov-inline-46">' + personIcon + ' ' + _escapeHtml(vm.name) + '</div>' +
+            '<div class="gov-inline-92">' +
             'Priority: ' + vm.priority +
             (vm.parentLabel ? ' · Parent: ' + _escapeHtml(vm.parentLabel) : '') +
             '</div>' +
             '</div>' +
-            '<div style="text-align:right;font-size:0.55rem;color:var(--accent);">' +
+            '<div class="gov-inline-108">' +
             '<div>Required Role: ' + _escapeHtml(vm.requiredRoleLabel || 'None') + '</div>' +
             (vm.minSkillLevel != null && vm.minSkillLevel > 0 ? '<div>Min Skill: ' + vm.minSkillLevel + '</div>' : '') +
             (vm.genderRestriction && vm.genderRestriction !== 'either' ? '<div>Gender: ' + _escapeHtml(vm.genderLabel) + '</div>' : '') +
             '</div>' +
             '</div>' +
-            (vm.description ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(vm.description) + '</div>' : '') +
+            (vm.description ? '<div class="gov-inline-49">' + _escapeHtml(vm.description) + '</div>' : '') +
             '</div>';
         el.innerHTML = html;
     }
@@ -379,28 +379,28 @@
         var el = _resolveContainer(container);
         if (!el) return;
         if (!vm) {
-            el.innerHTML = '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">No department data</div>';
+            el.innerHTML = '<div class="gov-inline-107">No department data</div>';
             return;
         }
         var locationIcon = _iconSpan('LOCATION');
         var personIcon = _iconSpan('PERSON');
         var html =
-            '<div style="background:var(--bg2);border-radius:8px;padding:12px;border-left:3px solid var(--accent);">' +
-            '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">' +
+            '<div class="gov-inline-109">' +
+            '<div class="gov-inline-45">' +
             '<div>' +
-            '<div style="font-size:0.9rem;font-weight:bold;">' + _escapeHtml(vm.name) + '</div>' +
-            '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
+            '<div class="gov-inline-46">' + _escapeHtml(vm.name) + '</div>' +
+            '<div class="gov-inline-92">' +
             locationIcon + ' ' + _escapeHtml(vm.locationLabel) +
             (vm.parentLabel ? ' · Parent: ' + _escapeHtml(vm.parentLabel) : '') +
             '</div>' +
             '</div>' +
-            '<div style="text-align:right;font-size:0.55rem;color:var(--accent);">' +
+            '<div class="gov-inline-108">' +
             '<div>' + personIcon + ' ' + vm.positionCount + ' positions</div>' +
             '<div>Role positions: ' + vm.rolePositionCount + '</div>' +
             '<div>Active: ' + vm.activeAssignmentCount + ' / ' + vm.assignmentCount + '</div>' +
             '</div>' +
             '</div>' +
-            (vm.description ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(vm.description) + '</div>' : '') +
+            (vm.description ? '<div class="gov-inline-49">' + _escapeHtml(vm.description) + '</div>' : '') +
             '</div>';
         el.innerHTML = html;
     }
@@ -409,16 +409,16 @@
         var el = _resolveContainer(container);
         if (!el) return;
         if (!vm) {
-            el.innerHTML = '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">No assignment data</div>';
+            el.innerHTML = '<div class="gov-inline-107">No assignment data</div>';
             return;
         }
         var personIcon = _iconSpan('PERSON');
         var html =
             '<div style="background:var(--bg2);border-radius:8px;padding:12px;border-left:3px solid ' + (vm.isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
-            '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">' +
+            '<div class="gov-inline-45">' +
             '<div>' +
-            '<div style="font-size:0.9rem;font-weight:bold;">' + personIcon + ' ' + _escapeHtml(vm.characterName) + '</div>' +
-            '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
+            '<div class="gov-inline-46">' + personIcon + ' ' + _escapeHtml(vm.characterName) + '</div>' +
+            '<div class="gov-inline-92">' +
             'Title: ' + _escapeHtml(vm.title) +
             (vm.roleLabel ? ' · Role: ' + _escapeHtml(vm.roleLabel) : '') +
             (vm.skillLevel != null ? ' · Skill: ' + vm.skillLevel : '') +
@@ -427,10 +427,10 @@
             '<div style="text-align:right;font-size:0.55rem;color:' + (vm.isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
             '<div>' + vm.startYear + ' - ' + vm.endLabel + '</div>' +
             '<div>' + (vm.isActive ? 'Active' : 'Ended') + '</div>' +
-            (vm.endReason ? '<div style="font-size:0.5rem;">' + _escapeHtml(vm.endReason) + '</div>' : '') +
+            (vm.endReason ? '<div class="gov-inline-110">' + _escapeHtml(vm.endReason) + '</div>' : '') +
             '</div>' +
             '</div>' +
-            (vm.notes ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(vm.notes) + '</div>' : '') +
+            (vm.notes ? '<div class="gov-inline-49">' + _escapeHtml(vm.notes) + '</div>' : '') +
             '</div>';
         el.innerHTML = html;
     }
@@ -445,7 +445,7 @@
         var personIcon = _iconSpan('PERSON');
 
         if (items.length === 0) {
-            el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim);">No qualified candidates found</div>';
+            el.innerHTML = '<div class="gov-inline-111">No qualified candidates found</div>';
             return;
         }
 
@@ -457,14 +457,14 @@
                 'display:flex;align-items:center;gap:8px;' +
                 'background:var(--bg3);border:1px solid var(--border);border-radius:4px;' +
                 'padding:6px 10px;margin-bottom:4px;cursor:pointer;transition:all 0.1s;">' +
-                '<input type="checkbox" class="candidate-checkbox" value="' + _attr(c.characterId) + '" style="cursor:pointer;">' +
-                '<div style="flex:1;min-width:0;">' +
-                '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">' +
-                '<span style="font-size:0.7rem;">' + personIcon + ' ' + _escapeHtml(c.characterName) + '</span>' +
-                '<div style="font-size:0.55rem;color:var(--dim);display:flex;gap:8px;">' +
+                '<input type="checkbox" class="candidate-checkbox" value="' + _attr(c.characterId) + '" class="gov-inline-112">' +
+                '<div class="gov-inline-88">' +
+                '<div class="gov-inline-101">' +
+                '<span class="gov-inline-19">' + personIcon + ' ' + _escapeHtml(c.characterName) + '</span>' +
+                '<div class="gov-inline-113">' +
                 '<span>Age: ' + c.age + '</span>' +
                 '<span>Exp: ' + c.experience + 'y</span>' +
-                (c.rankLabel ? '<span style="color:var(--accent);">' + _escapeHtml(c.rankLabel) + '</span>' : '') +
+                (c.rankLabel ? '<span class="gov-inline-42">' + _escapeHtml(c.rankLabel) + '</span>' : '') +
                 '</div>' +
                 '</div>' +
                 '</div>' +
