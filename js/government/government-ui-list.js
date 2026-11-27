@@ -355,7 +355,7 @@
         }
         var personIcon = _iconSpan('PERSON');
         var html =
-            '<div style="background:var(--bg2);border-radius:8px;padding:12px;border-left:3px solid ' + (vm.hasRoleRequirement ? 'var(--accent)' : 'var(--border)') + ';">' +
+            '<div class="gov-list-summary ' + (vm.hasRoleRequirement ? 'gov-border-accent' : 'gov-border-neutral') + '">' +
             '<div class="gov-inline-45">' +
             '<div>' +
             '<div class="gov-inline-46">' + personIcon + ' ' + _escapeHtml(vm.name) + '</div>' +
@@ -414,7 +414,7 @@
         }
         var personIcon = _iconSpan('PERSON');
         var html =
-            '<div style="background:var(--bg2);border-radius:8px;padding:12px;border-left:3px solid ' + (vm.isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
+            '<div class="gov-list-summary ' + (vm.isActive ? 'gov-border-success' : 'gov-border-muted') + '">' +
             '<div class="gov-inline-45">' +
             '<div>' +
             '<div class="gov-inline-46">' + personIcon + ' ' + _escapeHtml(vm.characterName) + '</div>' +
@@ -424,7 +424,7 @@
             (vm.skillLevel != null ? ' · Skill: ' + vm.skillLevel : '') +
             '</div>' +
             '</div>' +
-            '<div style="text-align:right;font-size:0.55rem;color:' + (vm.isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
+            '<div class="gov-list-status ' + (vm.isActive ? 'gov-status-active' : 'gov-status-inactive') + '">' +
             '<div>' + vm.startYear + ' - ' + vm.endLabel + '</div>' +
             '<div>' + (vm.isActive ? 'Active' : 'Ended') + '</div>' +
             (vm.endReason ? '<div class="gov-inline-110">' + _escapeHtml(vm.endReason) + '</div>' : '') +
