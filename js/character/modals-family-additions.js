@@ -182,6 +182,18 @@
                 _esc(listId) + '">No character selected</div>';
     }
 
+    function _canonicalLocationId(characterId) {
+        if (!characterId || typeof window.getCurrentLocationId !== 'function') return null;
+        var full = null;
+        try {
+            if (CQ && typeof CQ.getCharacter === 'function') full = CQ.getCharacter(characterId);
+            if (!full && CQ && typeof CQ.getCharacterById === 'function') full = CQ.getCharacterById(characterId);
+        } catch (e) { full = null; }
+        if (!full) return null;
+        try { return window.getCurrentLocationId(full) || null; }
+        catch (e) { return null; }
+    }
+
     function _renderCharacterPickerRows(listEl, candidates, targetLocationId) {
         if (!listEl) return;
         if (!Array.isArray(candidates) || candidates.length === 0) {
@@ -197,7 +209,7 @@
             if (!name) name = c.id;
             var meta = [];
             if (typeof c.age === 'number') meta.push(c.age + 'y');
-            var locationId = c.currentLocationId || c.locationId || null;
+            var locationId = _canonicalLocationId(c.id);
             var locationName = '';
             if (locationId && typeof window.getPlaceById === 'function') {
                 var place = window.getPlaceById(locationId);
@@ -284,13 +296,13 @@
         if (targetNode && targetNode.getAttribute('data-target-character-id')) {
             try { targetSummary = CQ.getCharacterSummary(targetNode.getAttribute('data-target-character-id')); } catch (e) {}
         }
-        var targetLocationId = targetSummary && (targetSummary.currentLocationId || targetSummary.locationId);
+        var targetLocationId = targetSummary ? _canonicalLocationId(targetSummary.id) : null;
 
         function places() {
             try { return typeof window.getPlaces === 'function' ? window.getPlaces() || [] : []; } catch (e) { return []; }
         }
         function childrenOf(parentId) {
-            return places().filter(function (p) { return p && (parentId ? p.parentId === parentId : !p.parentId); })
+            return places().filter(function (p) { return p && (parentId ? p.parentId === parentId : (p.parentId === null || p.parentId === undefined || p.parentId === '')); })
                 .sort(function (a,b) { return String(a.displayName || a.name || a.id).localeCompare(String(b.displayName || b.name || b.id)); });
         }
         function addLocationLevel(parentId, level) {
@@ -333,21 +345,7 @@
         }
         function isWithinLocation(char, locationId) {
             if (!locationId) return true;
-            // Picker rows are summaries. Resolve the full projection so the canonical
-            // world query can use move history rather than stale summary fields.
-            var fullCharacter = null;
-            try {
-                if (CQ && typeof CQ.getCharacter === 'function') {
-                    fullCharacter = CQ.getCharacter(char.id);
-                } else if (CQ && typeof CQ.getCharacterById === 'function') {
-                    fullCharacter = CQ.getCharacterById(char.id);
-                }
-            } catch (e) { fullCharacter = null; }
-            var id = null;
-            if (fullCharacter && typeof window.getCurrentLocationId === 'function') {
-                try { id = window.getCurrentLocationId(fullCharacter); }
-                catch (e) { id = null; }
-            }
+            var id = _canonicalLocationId(char.id);
             var guard = 0;
             while (id && guard++ < 100) {
                 if (id === locationId) return true;
