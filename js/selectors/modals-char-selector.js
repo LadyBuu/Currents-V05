@@ -280,7 +280,7 @@
     // =========================================================================
 
     var FILTER_PRESETS = {
-        'partner':    { status: 'single', ageGroup: '21-30', peers: true, showDeceased: false },
+        'partner':    { status: 'single', peers: true, showDeceased: false },
         'father':     { gender: 'male', ageGroup: '31-40', hasChildren: true, showDeceased: false },
         'mother':     { gender: 'female', ageGroup: '31-40', hasChildren: true, showDeceased: false },
         'child':      { ageGroup: '0-10', showDeceased: false },
@@ -325,7 +325,12 @@
     function CharacterSelector(options) {
         _SelectorBase.call(this, options);
 
-        this.targetId = options.targetId || null;
+        this.targetId = options.targetId || options.targetCharacterId
+            || options.sourceCharacterId || options.characterId || null;
+        if (!this.targetId && window.CharacterUIState
+            && typeof window.CharacterUIState.getSelectedCharacterId === 'function') {
+            this.targetId = window.CharacterUIState.getSelectedCharacterId() || null;
+        }
         this.excludeIds = options.excludeIds || [];
         this.allowedIds = Array.isArray(options.allowedIds) ? options.allowedIds : null;
         this.preset = options.preset || null;
@@ -457,6 +462,7 @@
 
         for (var i = 0; i < characters.length; i++) {
             var char = characters[i];
+            if (this.targetId && char.id === this.targetId) continue;
             var isDeceased = char.isDeceased === true;
 
             if (!filters.showDeceased && isDeceased) continue;
