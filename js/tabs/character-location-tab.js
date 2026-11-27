@@ -550,15 +550,15 @@
         // Header card.
         html += '<div class="character-tab-section" style="margin-bottom:0.75rem;">' +
             '<div class="character-tab-section__body">' +
-                '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">' +
+                '<div class="character-location-heading-row">' +
                     '<div>' +
-                        '<div style="font-size:0.85rem;font-weight:600;">' +
+                        '<div class="character-location-heading">' +
                             _esc(h.householdName || '(unknown household)') +
                             (h.danglingReference
                                 ? ' <span class="character-tab-note">(deleted)</span>'
                                 : '') +
                         '</div>' +
-                        '<div style="font-size:0.6rem;color:var(--dim);margin-top:0.125rem;">' +
+                        '<div class="character-location-subheading">' +
                             (h.role ? _esc(h.role) : 'Member') +
                             (h.isHead
                                 ? ' · <strong style="color:var(--accent);">Head</strong>'
@@ -640,7 +640,7 @@
                 nameLink +
                 headChip +
                 (meta.length > 0
-                    ? '<div class="character-tab-note" style="margin-top:0.125rem;">' +
+                    ? '<div class="character-tab-note character-location-note-spaced">' +
                         _esc(meta.join(' · ')) +
                       '</div>'
                     : '') +
@@ -793,7 +793,7 @@
             '<div class="character-family-row__main">' +
                 '<strong>' + _esc(entry.name) + '</strong>' +
                 (meta.length > 0
-                    ? '<div class="character-tab-note" style="margin-top:0.125rem;">' +
+                    ? '<div class="character-tab-note character-location-note-spaced">' +
                         _esc(meta.join(' · ')) +
                       '</div>'
                     : '') +
@@ -879,7 +879,7 @@
         if (move.isBirthMove) meta.push('birth');
 
         var noteHtml = move.note
-            ? '<div class="character-tab-note" style="margin-top:0.125rem;">' +
+            ? '<div class="character-tab-note character-location-note-spaced">' +
                 _esc(move.note) +
               '</div>'
             : '';
@@ -888,7 +888,7 @@
                 'data-move-index="' + move.index + '">' +
             '<div class="character-family-row__main">' +
                 '<strong>' + _esc(locationText) + '</strong>' +
-                '<div class="character-tab-note" style="margin-top:0.125rem;">' +
+                '<div class="character-tab-note character-location-note-spaced">' +
                     _esc(meta.join(' · ')) +
                 '</div>' +
                 noteHtml +
