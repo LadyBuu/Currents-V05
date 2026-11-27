@@ -2377,3 +2377,11 @@ Runtime verification checklist
 - Open Government Manager and verify stylesheet loading, default and named themes, and responsive layout.
 - Exercise government/department/position CRUD, assignments and removals, laws, economy actions, validation, persistence/reload, and modal open/close/focus behavior.
 - Check generated modal content at narrow and wide viewport sizes and confirm no console/network errors.
+
+
+GOVERNMENT MANAGER STYLE REWRITE (2026-11-27)
+
+- Moved static inline style declarations from government modal and list HTML templates into css/government-manager.css using reusable generated component classes.
+- Preserved declaration values and order during extraction. This pass is a stylesheet consolidation, not a visual redesign.
+- Inline style attributes whose values contain dynamic JavaScript expressions or quoted fragments were left in place rather than rewritten unsafely; these require targeted handling.
+- Runtime visual and interaction verification remains pending, including modal content, list rendering, themes, and responsive layouts.
