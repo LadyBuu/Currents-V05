@@ -275,7 +275,7 @@
             for (var i = 0; i < vm.positions.length; i++) {
                 var p = vm.positions[i];
                 positionsHtml +=
-                    '<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg2);border-radius:4px;font-size:0.55rem;border-left:3px solid ' + (p.isRoleBound ? 'var(--accent)' : 'var(--border)') + ';">' +
+                    '<div class="gov-history-row ' + (p.isRoleBound ? 'gov-border-accent' : 'gov-border-neutral') + '">' +
                     '<span>' + _escapeHtml(p.name) +
                     (p.isRoleBound ? ' <span class="gov-inline-42">(Role: ' + _escapeHtml(p.requiredRoleLabel || '') + ')</span>' : '') +
                     '</span>' +
@@ -296,12 +296,12 @@
             for (var j = 0; j < vm.assignments.length; j++) {
                 var a = vm.assignments[j];
                 assignmentsHtml +=
-                    '<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg2);border-radius:4px;font-size:0.55rem;border-left:3px solid ' + (a.isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
+                    '<div class="gov-history-row ' + (a.isActive ? 'gov-border-success' : 'gov-border-muted') + '">' +
                     '<span>' + _escapeHtml(a.characterName) +
                     (a.title ? ' (' + _escapeHtml(a.title) + ')' : '') +
                     (a.roleLabel ? ' <span class="gov-inline-42">(Role: ' + _escapeHtml(a.roleLabel) + ')</span>' : '') +
                     '</span>' +
-                    '<span style="color:' + (a.isActive ? 'var(--success)' : 'var(--dim)') + ';">' + a.startYear + ' - ' + a.endLabel + '</span>' +
+                    '<span class="gov-status-text ' + (a.isActive ? 'gov-status-active' : 'gov-status-inactive') + '">' + a.startYear + ' - ' + a.endLabel + '</span>' +
                     '</div>';
             }
             if (vm.assignmentsOverflow > 0) {
