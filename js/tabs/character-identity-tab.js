@@ -565,6 +565,26 @@
         '</div>';
     }
 
+    function _genderField(currentGender) {
+        var icon = '';
+        if (typeof window.getGenderIcon === 'function') {
+            try { icon = window.getGenderIcon(currentGender || 'unknown') || ''; }
+            catch (e) { icon = ''; }
+        }
+        return '<div class="character-tab-field">' +
+            '<label class="character-tab-field__label character-tab-field__label--icon" aria-label="Gender" title="Gender">' +
+                icon +
+            '</label>' +
+            '<div class="character-tab-field__value">' +
+                '<select data-field="gender" class="character-tab-input">' +
+                    '<option value="male"' + (currentGender === 'male' ? ' selected' : '') + '>Male</option>' +
+                    '<option value="female"' + (currentGender === 'female' ? ' selected' : '') + '>Female</option>' +
+                    '<option value="unknown"' + (!currentGender || currentGender === 'unknown' ? ' selected' : '') + '>Unknown</option>' +
+                '</select>' +
+            '</div>' +
+        '</div>';
+    }
+
     function _fieldReadonly(label, valueHtml) {
         return '<div class="character-tab-field">' +
             '<div class="character-tab-field__label">' + _esc(label) + '</div>' +
@@ -680,19 +700,7 @@
                         'data-action="random-epithet">Random</button>' +
                 '</div>'
             ) +
-            _field('Gender',
-                '<select data-field="gender" class="character-tab-input">' +
-                    '<option value="male"' +
-                        (id.gender === 'male' ? ' selected' : '') +
-                        '>Male</option>' +
-                    '<option value="female"' +
-                        (id.gender === 'female' ? ' selected' : '') +
-                        '>Female</option>' +
-                    '<option value="unknown"' +
-                        (id.gender === 'unknown' ? ' selected' : '') +
-                        '>Unknown</option>' +
-                '</select>'
-            );
+            _genderField(id.gender);
 
         var cultureField;
         if (cultureOptions !== null) {
