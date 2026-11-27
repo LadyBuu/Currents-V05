@@ -206,12 +206,20 @@
             if (!Array.isArray(residence.units)) return;
 
             residence.units.forEach(function (unit) {
-                if (!unit || typeof unit !== 'object' || !unit.householdId) return;
+                if (!unit || typeof unit !== 'object') return;
+                var householdId = unit.householdId || null;
+                var needsVacating = !!householdId || unit.isVacant === false;
+                if (!needsVacating) return;
 
-                var householdId = unit.householdId;
                 var householdName = unit.householdName || 'Unknown';
                 var unitNumber = unit.unitNumber;
 
+                if (unit.associationHistory !== undefined &&
+                    unit.associationHistory !== null &&
+                    !Array.isArray(unit.associationHistory)) {
+                    throw new Error('Residence unit ' + unitNumber +
+                        ' has malformed associationHistory.');
+                }
                 if (Array.isArray(unit.associationHistory)) {
                     unit.associationHistory.forEach(function (entry) {
                         if (entry && entry.householdId === householdId &&
@@ -223,7 +231,13 @@
                     });
                 }
 
-                if (Array.isArray(residence.associationHistory)) {
+                if (residence.associationHistory !== undefined &&
+                    residence.associationHistory !== null &&
+                    !Array.isArray(residence.associationHistory)) {
+                    throw new Error('Residence ' + (residence.id || '(unknown)') +
+                        ' has malformed associationHistory.');
+                }
+                if (Array.isArray(residence.associationHistory) && householdId) {
                     residence.associationHistory.forEach(function (entry) {
                         if (entry && entry.householdId === householdId &&
                             entry.unitNumber === unitNumber && !entry.endedYear) {
@@ -242,6 +256,13 @@
                     unit.assignedYear = null;
                     unit.vacantYear = year;
 
+                    ['vacancyHistory', 'history', 'timeline'].forEach(function (field) {
+                        if (residence[field] !== undefined && residence[field] !== null &&
+                            !Array.isArray(residence[field])) {
+                            throw new Error('Residence ' + (residence.id || '(unknown)') +
+                                ' has malformed ' + field + '.');
+                        }
+                    });
                     if (!Array.isArray(residence.vacancyHistory)) {
                         residence.vacancyHistory = [];
                     }
@@ -251,11 +272,11 @@
                         endedVacantYear: null,
                         endedByHouseholdId: null,
                         endedByHouseholdName: null,
-                        affectedHouseholds: [{
+                        affectedHouseholds: householdId ? [{
                             householdId: householdId,
                             householdName: householdName,
                             unitNumber: unitNumber
-                        }]
+                        }] : []
                     });
 
                     if (!Array.isArray(residence.history)) residence.history = [];
