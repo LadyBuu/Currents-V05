@@ -112,6 +112,26 @@ test('after-commit exceptions are reported without undoing committed state', () 
     assert.equal(log.some(x => x.endsWith(':rollback')), false);
 });
 
+test('afterCommit runs after the active mutation window closes', () => {
+    const tx = loadCoordinator();
+    const log = [];
+    const p = participant('A', log);
+    let activeDuringAfterCommit = null;
+    p.afterCommit = () => {
+        activeDuringAfterCommit = tx.isActive();
+        log.push('A:afterCommit');
+    };
+
+    const result = tx.execute({
+        participants: [p],
+        persist() { return true; }
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(activeDuringAfterCommit, false);
+    assert.equal(log.includes('A:afterCommit'), true);
+});
+
 test('failure cases are exercised across one-, two-, and three-participant combinations', () => {
     for (const count of [1, 2, 3]) {
         const tx = loadCoordinator();
