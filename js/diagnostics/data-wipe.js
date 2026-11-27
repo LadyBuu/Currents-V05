@@ -288,6 +288,9 @@
                         actorId: null,
                         timestamp: now
                     });
+                    if (residence.history.length > 500) {
+                        residence.history = residence.history.slice(-500);
+                    }
 
                     if (!Array.isArray(residence.timeline)) residence.timeline = [];
                     residence.timeline.push({
