@@ -1253,6 +1253,18 @@
                         failures.push(error && error.message ? error.message : String(error));
                     }
                 });
+                // Deferred change/event queues are outside the canonical snapshots.
+                // Discard them explicitly so a failed deletion cannot publish stale
+                // notifications during a later, unrelated transaction.
+                if (window.CharacterState && window.CharacterState._transactionDiscardChanges) {
+                    window.CharacterState._transactionDiscardChanges();
+                }
+                if (window.HouseholdCommands && window.HouseholdCommands._transactionDiscardSideEffects) {
+                    window.HouseholdCommands._transactionDiscardSideEffects();
+                }
+                if (window.ReligionCommands && window.ReligionCommands._transactionDiscardEvents) {
+                    window.ReligionCommands._transactionDiscardEvents();
+                }
                 return failures.length
                     ? { success: false, reason: failures.join('; ') }
                     : { success: true };
@@ -1279,12 +1291,22 @@
                         removedAssociations: outcomes.culture.removedAssociations
                     });
                 }
-                if (outcomes.character.reconciled > 0 && window.CharacterState &&
-                    typeof window.CharacterState.notifyTransactionUpdate === 'function') {
-                    window.CharacterState.notifyTransactionUpdate(outcomes.character.characterIds || []);
+                if (window.CharacterState &&
+                    typeof window.CharacterState._transactionFlushChanges === 'function') {
+                    window.CharacterState._transactionFlushChanges();
                 }
                 if (outcomes.household.status === 'applied' && window.HouseholdCommands) {
-                    window.HouseholdCommands.commitTransactionLocationCleanup(locationIds, outcomes.household);
+                    if (typeof window.HouseholdCommands._transactionFlushSideEffects === 'function') {
+                        window.HouseholdCommands._transactionFlushSideEffects();
+                    }
+                    var householdCommit = window.HouseholdCommands.commitTransactionLocationCleanup(
+                        locationIds, outcomes.household
+                    );
+                    if (!householdCommit || householdCommit.success !== true) {
+                        throw new Error(householdCommit && householdCommit.reason
+                            ? householdCommit.reason
+                            : 'Household location cleanup notification failed.');
+                    }
                 }
                 if (outcomes.settlement.event && window.SettlementState) {
                     window.SettlementState.publish(outcomes.settlement.event);
