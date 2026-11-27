@@ -112,8 +112,11 @@
  *   - getCharacterById, getCurrentLocationId
  *   - SettlementState.getSettlementData
  *
- * MISSING DEPENDENCIES FAIL LOUDLY. No fabricated laws, no empty results
- * pretending to be "no laws exist".
+ * MISSING DEPENDENCIES FAIL LOUDLY. A location with no settlement record
+ * explicitly has no settlement-level civil laws; follower religious laws
+ * remain applicable. If a settlement exists but its civil-law query returns
+ * null or another non-array value, evaluation fails loudly. No fabricated
+ * laws and no silent suppression of broken law data.
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -157,7 +160,10 @@
         if (typeof window.getSettlementData === 'function') {
             return window.getSettlementData(locationId);
         }
-        return null;
+        throw new Error(
+            '[CrimeLawIntegration] Settlement data query is unavailable. ' +
+            'Cannot distinguish a location without a settlement from a missing dependency.'
+        );
     }
 
     function _getReligionLaws(religionId) {
@@ -176,22 +182,37 @@
     }
 
     function _getCivilLaws(locationId) {
-        // Canonical source first. SettlementLawQueries is verified by
-        // crime-bootstrap.js as a required module. GovernmentLaws is
-        // accepted as an alternative during migration.
-        //
-        // The previous version also probed SettlementState.getCivilLaws
-        // and SettlementQueries.getCivilLaws. Neither method exists on
-        // those modules; both probes were dead code. Removed.
+        // A location without a settlement has no settlement-level civil
+        // jurisdiction. This is a valid empty result, not a missing module.
+        // Personal religious laws are resolved separately below and remain
+        // applicable when the character belongs to a religion.
+        var settlement = _getSettlementData(locationId);
+        if (!settlement) return [];
+
+        // Canonical source first. GovernmentLaws is accepted as an
+        // alternative during migration, but null is not a valid law list
+        // once a settlement record exists. It signals incomplete/broken
+        // settlement law data and must fail explicitly rather than silently
+        // treating the settlement as lawless.
+        var laws = null;
         if (typeof window.SettlementLawQueries !== 'undefined' &&
             typeof window.SettlementLawQueries.getCivilLaws === 'function') {
-            return window.SettlementLawQueries.getCivilLaws(locationId);
-        }
-        if (typeof window.GovernmentLaws !== 'undefined' &&
+            laws = window.SettlementLawQueries.getCivilLaws(locationId);
+        } else if (typeof window.GovernmentLaws !== 'undefined' &&
             typeof window.GovernmentLaws.getCivilLaws === 'function') {
-            return window.GovernmentLaws.getCivilLaws(locationId);
+            laws = window.GovernmentLaws.getCivilLaws(locationId);
+        } else {
+            throw new Error('[CrimeLawIntegration] No source for civil laws is available.');
         }
-        throw new Error('[CrimeLawIntegration] No source for civil laws is available.');
+
+        if (!Array.isArray(laws)) {
+            throw new Error(
+                '[CrimeLawIntegration] Civil law data is unavailable for existing settlement ' +
+                locationId + '. Expected an array; received ' +
+                (laws === null ? 'null' : typeof laws) + '.'
+            );
+        }
+        return laws;
     }
 
     function _getDominantReligion(locationId) {
