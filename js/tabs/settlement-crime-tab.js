@@ -125,73 +125,139 @@
     // Household enumeration + vendetta reads
     // -------------------------------------------------------------------
 
-    function _getSettlementHouseholds(locationId) {
+    function _getSettlementHouseholdResult(locationId) {
         var LQ = _getLocationQueries();
         var HQ = _getHouseholdQueries();
-        if (!LQ || !HQ) return [];
+        var result = { households: [], partial: false, warnings: [] };
+
+        if (!LQ) {
+            result.partial = true;
+            result.warnings.push('Location lookup is unavailable');
+        }
+        if (!HQ) {
+            result.partial = true;
+            result.warnings.push('Household lookup is unavailable');
+        }
+        if (!LQ || !HQ) return result;
 
         var subtreeIds;
-        try { subtreeIds = LQ.getAllSubLocationIds(locationId); }
-        catch (e) { subtreeIds = null; }
-        if (!Array.isArray(subtreeIds) || subtreeIds.length === 0) {
-            subtreeIds = [locationId];
-        } else if (subtreeIds.indexOf(locationId) === -1) {
-            subtreeIds = subtreeIds.slice();
-            subtreeIds.push(locationId);
+        try {
+            subtreeIds = LQ.getAllSubLocationIds(locationId);
+        } catch (e) {
+            subtreeIds = null;
+            result.partial = true;
+            result.warnings.push('Descendant-location lookup failed');
         }
 
-        var seen = Object.create(null);
-        var out = [];
-        for (var i = 0; i < subtreeIds.length; i++) {
-            var households;
-            try { households = HQ.getHouseholdsByLocation(subtreeIds[i]); }
-            catch (e) { households = null; }
-            if (!Array.isArray(households)) continue;
-            for (var j = 0; j < households.length; j++) {
-                var h = households[j];
-                if (!h || !h.id) continue;
-                if (seen[h.id]) continue;
-                seen[h.id] = true;
-                out.push(h);
+        // An empty array is a valid result: the selected location has no
+        // descendants. Null or any other non-array value is a failed lookup.
+        if (Array.isArray(subtreeIds)) {
+            subtreeIds = subtreeIds.slice();
+        } else {
+            if (!result.partial) {
+                result.partial = true;
+                result.warnings.push('Descendant-location lookup returned invalid data');
+            }
+            subtreeIds = [];
+        }
+
+        var usableIds = [];
+        for (var k = 0; k < subtreeIds.length; k++) {
+            if (subtreeIds[k] === null || subtreeIds[k] === undefined
+                || subtreeIds[k] === '') {
+                result.partial = true;
+                result.warnings.push('Descendant-location lookup returned an unusable location ID');
+                continue;
+            }
+            if (usableIds.indexOf(subtreeIds[k]) === -1) {
+                usableIds.push(subtreeIds[k]);
             }
         }
-        out.sort(function (a, b) {
+        if (usableIds.indexOf(locationId) === -1) usableIds.push(locationId);
+
+        var seen = Object.create(null);
+        for (var i = 0; i < usableIds.length; i++) {
+            var households;
+            try {
+                households = HQ.getHouseholdsByLocation(usableIds[i]);
+            } catch (e) {
+                households = null;
+            }
+            if (!Array.isArray(households)) {
+                result.partial = true;
+                result.warnings.push('Household lookup failed for one or more locations');
+                continue;
+            }
+            for (var j = 0; j < households.length; j++) {
+                var h = households[j];
+                if (!h || !h.id) {
+                    result.partial = true;
+                    result.warnings.push('Some household records were unusable');
+                    continue;
+                }
+                if (seen[h.id]) continue;
+                seen[h.id] = true;
+                result.households.push(h);
+            }
+        }
+
+        result.households.sort(function (a, b) {
             var an = (a.name || '').toLowerCase();
             var bn = (b.name || '').toLowerCase();
             return an.localeCompare(bn);
         });
-        return out;
+        result.warnings = result.warnings.filter(function (warning, index, list) {
+            return list.indexOf(warning) === index;
+        });
+        return result;
     }
 
     function _getSettlementVendettas(locationId) {
         var CQ = _getCrimeQueries();
-        if (!CQ) return [];
-        var households = _getSettlementHouseholds(locationId);
-        if (households.length === 0) return [];
+        var householdResult = _getSettlementHouseholdResult(locationId);
+        var result = {
+            vendettas: [],
+            partial: householdResult.partial,
+            warnings: householdResult.warnings.slice()
+        };
+        if (!CQ) {
+            result.partial = true;
+            result.warnings.push('Vendetta query is unavailable');
+            return result;
+        }
 
         var seen = Object.create(null);
-        var out = [];
-        for (var i = 0; i < households.length; i++) {
+        for (var i = 0; i < householdResult.households.length; i++) {
             var list;
             try {
-                list = CQ.getVendettasByHousehold(households[i].id, {
-                    includeResolved: false
-                });
-            } catch (e) { list = null; }
-            if (!Array.isArray(list)) continue;
+                list = CQ.getVendettasByHousehold(
+                    householdResult.households[i].id,
+                    { includeResolved: false }
+                );
+            } catch (e) {
+                list = null;
+            }
+            if (!Array.isArray(list)) {
+                result.partial = true;
+                result.warnings.push('Vendetta lookup failed for one or more households');
+                continue;
+            }
             for (var j = 0; j < list.length; j++) {
                 var v = list[j];
                 if (!v || !v.id) continue;
                 if (seen[v.id]) continue;
                 seen[v.id] = true;
-                out.push(v);
+                result.vendettas.push(v);
             }
         }
-        return out;
+        result.warnings = result.warnings.filter(function (warning, index, all) {
+            return all.indexOf(warning) === index;
+        });
+        return result;
     }
 
     function _getSettlementHouseholdIds(locationId) {
-        var households = _getSettlementHouseholds(locationId);
+        var households = _getSettlementHouseholdResult(locationId).households;
         var out = [];
         for (var i = 0; i < households.length; i++) {
             if (households[i] && households[i].id) out.push(households[i].id);
@@ -497,7 +563,8 @@
             '</div></div>';
     }
 
-    function _buildListsSections(crimes, vendettas) {
+    function _buildListsSections(crimes, vendettaResult) {
+        var vendettas = vendettaResult.vendettas || [];
         var crimeListHtml = '';
         var vendettaListHtml = '';
         var UI = _getCrimeStatsUI();
@@ -541,6 +608,14 @@
                 'CrimeStatsUI is not available.</div>';
         }
 
+        var partialWarning = vendettaResult.partial
+            ? '<div class="st-section__empty" role="status">' +
+                'Partial vendetta results: ' +
+                esc((vendettaResult.warnings || []).join('; ') ||
+                    'Some household or location data could not be loaded') +
+                '. The list may omit vendettas from affected locations or households.</div>'
+            : '';
+
         return '<div class="st-section">' +
             '<div class="st-section__title">' +
             icon('WARNING') + ' Recorded Crimes ' +
@@ -551,7 +626,8 @@
             '<div class="st-section__title">' +
             icon('FLAG') + ' Active Vendettas ' +
             '<span class="st-section__scope">(Households in this location and its sublocations; includes outside counterparts)</span></div>' +
-            '<div class="st-section__body">' + vendettaListHtml + '</div>' +
+            '<div class="st-section__body">' + partialWarning +
+            vendettaListHtml + '</div>' +
             '</div>';
     }
 
@@ -653,9 +729,15 @@
             catch (e) { crimes = []; }
         }
 
-        var vendettas = [];
-        try { vendettas = _getSettlementVendettas(locationId); }
-        catch (e) { vendettas = []; }
+        var vendettaResult;
+        try { vendettaResult = _getSettlementVendettas(locationId); }
+        catch (e) {
+            vendettaResult = {
+                vendettas: [],
+                partial: true,
+                warnings: ['Vendetta data could not be loaded']
+            };
+        }
 
         var solved = 0;
         for (var i = 0; i < crimes.length; i++) {
@@ -677,7 +759,7 @@
             _buildActionButtons(locationId, canCreateVendetta) +
             _buildCrimeRateSection(crimeRateView) +
             _buildOverviewCard(overviewStats) +
-            _buildListsSections(crimes, vendettas) +
+            _buildListsSections(crimes, vendettaResult) +
             _buildFooter() +
             '</div>';
 
