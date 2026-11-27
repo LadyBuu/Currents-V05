@@ -1886,3 +1886,23 @@ button, input, select, textarea, a,
 .gov-inline-112 { cursor:pointer; }
 
 .gov-inline-113 { font-size:0.55rem; color:var(--dim); display:flex; gap:8px; }
+
+
+/* Semantic classes for the final Government Manager inline-style migration. */
+.gov-history-date { font-size:0.55rem; }
+.gov-history-row { display:flex; justify-content:space-between; padding:4px 8px; background:var(--bg2); border-radius:4px; font-size:0.55rem; border-left:3px solid var(--border); }
+.gov-position-summary { margin-bottom:16px; padding:12px; background:var(--bg2); border-radius:8px; border-left:3px solid var(--border); }
+.gov-list-summary { background:var(--bg2); border-radius:8px; padding:12px; border-left:3px solid var(--border); }
+.gov-border-accent { border-left-color:var(--accent); }
+.gov-border-neutral { border-left-color:var(--border); }
+.gov-border-success { border-left-color:var(--success); }
+.gov-border-muted { border-left-color:var(--dim); }
+.gov-status-text { color:var(--dim); }
+.gov-status-small { font-size:0.5rem; }
+.gov-status-active { color:var(--success); }
+.gov-status-inactive { color:var(--dim); }
+.gov-status-current { color:var(--accent); }
+.gov-status-muted { color:var(--dim); }
+.gov-status-sufficient { color:var(--success); }
+.gov-status-warning { color:var(--warn); }
+.gov-list-status { text-align:right; font-size:0.55rem; }
