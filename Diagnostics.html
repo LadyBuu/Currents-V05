@@ -43,8 +43,16 @@
         .tab-button[aria-selected="true"] { color:var(--accent); border-bottom-color:var(--accent); }
         .audit-groups { display:grid; gap:18px; }
         .audit-group { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius,6px); overflow:hidden; }
-        .audit-group h2 { margin:0; padding:14px 16px; border-bottom:1px solid var(--line); color:var(--fg); font:600 1rem var(--f-body,system-ui); }
-        .audit-group h2 span { float:right; color:var(--fg-2); font:600 .8rem var(--f-mono,monospace); }
+        .audit-group { min-width:0; }
+        .audit-group-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; color:var(--fg); font:600 1rem var(--f-body,system-ui); cursor:pointer; list-style:none; }
+        .audit-group-heading::-webkit-details-marker { display:none; }
+        .audit-group-heading::before { content:"▸"; flex:0 0 auto; color:var(--fg-2); transition:transform .15s ease; }
+        .audit-group[open] > .audit-group-heading::before { transform:rotate(90deg); }
+        .audit-group-heading > span:first-of-type { flex:1 1 auto; }
+        .audit-group-count { flex:0 0 auto; color:var(--fg-2); font:600 .8rem var(--f-mono,monospace); }
+        .audit-issues { max-height: min(42vh, 360px); overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; border-top:1px solid var(--line); }
+        .audit-issues .audit-issue { min-width:0; }
+        .audit-issues .audit-empty { padding:15px 16px; color:var(--fg-2); font-size:.88rem; }
         .audit-issue { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:11px 16px; border-bottom:1px solid var(--line); }
         .audit-issue:last-child { border-bottom:0; }
         .audit-issue-name { color:var(--fg); font-weight:600; }
