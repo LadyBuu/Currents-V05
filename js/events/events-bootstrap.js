@@ -261,12 +261,18 @@
         var adoptionQueryReady = hasMethods(window.ChildrenQueries, [
             'getAdoptionsForAdopter'
         ]);
+        var adoptionActionsReady = hasMethods(window, [
+            'openCreateAdoptionModal',
+            'openEditAdoptionModal',
+            'openEndAdoptionModal'
+        ]);
         if (!characterReadReady ||
-            (!adoptionStateReady && !(adoptionQueryReady && characterScanReady))) {
-            absent.push('adoption (ChildrenState/ChildrenQueries + CharacterQueries)');
+            (!adoptionStateReady && !(adoptionQueryReady && characterScanReady)) ||
+            !adoptionActionsReady) {
+            absent.push('adoption (read path, CharacterQueries enrichment, or action modals)');
             _warnOnce('facet-adoption',
-                'Adoption record readers or CharacterQueries enrichment methods ' +
-                'are incomplete -- the adoption facet will render as unavailable.'
+                'Adoption record readers, CharacterQueries enrichment, or create/edit/end modals ' +
+                'are incomplete -- the facet is not fully action-ready.'
             );
         }
 
@@ -277,12 +283,18 @@
         var surrogacyQueryReady = hasMethods(window.ChildrenQueries, [
             'getSurrogacyArrangementsForIntendedParent'
         ]);
+        var surrogacyActionsReady = hasMethods(window, [
+            'openSurrogacyArrangementModal',
+            'openCompleteSurrogacyModal',
+            'openCancelSurrogacyModal'
+        ]);
         if (!characterReadReady ||
-            (!surrogacyStateReady && !(surrogacyQueryReady && characterScanReady))) {
-            absent.push('surrogacy (ChildrenState/ChildrenQueries + CharacterQueries)');
+            (!surrogacyStateReady && !(surrogacyQueryReady && characterScanReady)) ||
+            !surrogacyActionsReady) {
+            absent.push('surrogacy (read path, CharacterQueries enrichment, or action modals)');
             _warnOnce('facet-surrogacy',
-                'Surrogacy record readers or CharacterQueries enrichment methods ' +
-                'are incomplete -- the surrogacy facet will render as unavailable.'
+                'Surrogacy record readers, CharacterQueries enrichment, or create/complete/cancel modals ' +
+                'are incomplete -- the facet is not fully action-ready.'
             );
         }
 
