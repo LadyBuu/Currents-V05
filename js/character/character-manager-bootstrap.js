@@ -563,6 +563,7 @@
     }
 
     function _wireSidebarSearch() {
+        _wireSidebarFilterCollapse();
         var input=_byId('characterSearchInput');
         if(input&&!input.__characterBootstrapWired){input.__characterBootstrapWired=true;input.addEventListener('input',function(){if(_searchDebounceTimer)clearTimeout(_searchDebounceTimer);_searchDebounceTimer=setTimeout(function(){_searchDebounceTimer=null;_renderSidebarList();},200);});}
         ['characterLocation1','characterLocation2','characterLocation3','characterGenderFilter','characterRoleFilter','characterLifeStatusFilter','characterRelationshipFilter','characterIncludeDeceased'].forEach(function(id){var el=_byId(id);if(el&&!el.__characterFilterWired){el.__characterFilterWired=true;el.addEventListener('change',function(){if(id.indexOf('characterLocation')===0)_populateLocationFilters(id);_renderSidebarList();});}});
