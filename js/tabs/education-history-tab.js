@@ -605,7 +605,7 @@
             }
             if (metaPieces.length > 0) {
                 metaPart =
-                    '<div style="font-size:0.5rem;color:var(--dim);margin-top:2px;">' +
+                    '<div class="edu-history-meta-tiny">' +
                         metaPieces.join(' · ') +
                     '</div>';
             }
@@ -615,7 +615,7 @@
         if (ev.previousValue !== null && ev.previousValue !== undefined
             && ev.newValue !== null && ev.newValue !== undefined) {
             valuePart =
-                '<div style="font-size:0.55rem;color:var(--dim);margin-top:2px;">' +
+                '<div class="edu-history-value-change">' +
                     _esc(String(ev.previousValue)) + ' → ' +
                     _esc(String(ev.newValue)) +
                 '</div>';
@@ -636,7 +636,7 @@
                     detailsPart +
                     reasonPart +
                 '</div>' +
-                '<div class="edu-manager-row-meta" style="margin-top:2px;">' +
+                '<div class="edu-manager-row-meta edu-history-row-meta-spaced">' +
                     '<span style="color:var(--dim);">' +
                         _esc(mergedItem.institutionName) +
                     '</span>' +
