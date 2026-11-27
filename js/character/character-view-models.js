@@ -1821,7 +1821,7 @@
             groups[category].push({
                 id: id, name: other.fullName || [other.name, other.surname].filter(Boolean).join(' ') || id,
                 age: typeof other.age === 'number' ? other.age : _computeAgeFromBirthYear(other.birthYear, other.isDeceased === true, other.deathYear, _getCurrentYear()),
-                gender: _genderLabel(other.gender), rank: resolveRankDisplay(other.rankId),
+                gender: other.gender || 'unknown', rank: resolveRankDisplay(other.rankId),
                 relationship: label, status: status || ''
             });
         }
