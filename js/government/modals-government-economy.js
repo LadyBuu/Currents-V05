@@ -52,7 +52,7 @@
     }
     function _iconSpan(name) {
         var i = _getIcon(name);
-        return i ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;">' + i + '</span>' : '';
+        return i ? '<span class="gov-inline-1">' + i + '</span>' : '';
     }
 
     function _commitAndPersist() {
@@ -88,13 +88,13 @@
 
         var historyHtml = '';
         if (vm.history.length === 0) {
-            historyHtml = '<div style="font-size:0.55rem;color:var(--dim);text-align:center;">No history</div>';
+            historyHtml = '<div class="gov-inline-31">No history</div>';
         } else {
             for (var i = 0; i < vm.history.length; i++) {
                 var h = vm.history[i];
                 var color = h.isCurrent ? 'var(--accent)' : 'var(--dim)';
                 historyHtml +=
-                    '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.55rem;border-bottom:1px solid var(--border);">' +
+                    '<div class="gov-inline-32">' +
                     '<span style="color:' + color + ';">' + _escapeHtml(h.yearLabel) +
                     (h.source === 'override' ? ' (override)' : '') +
                     (h.reason ? ' — ' + _escapeHtml(h.reason) : '') +
@@ -105,38 +105,38 @@
         }
 
         var html =
-            '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;">' +
+            '<div class="gov-inline-11">' +
             '<strong>Department:</strong> ' + _escapeHtml(dept.name) + '<br>' +
             '<strong>Position:</strong> ' + _escapeHtml(position.name) +
             '</div>' +
-            '<div style="background:var(--bg3);padding:12px;border-radius:6px;margin-bottom:12px;">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
+            '<div class="gov-inline-56">' +
+            '<div class="gov-inline-57">' +
             '<div>' +
-            '<div style="font-size:0.55rem;color:var(--dim);">Current Salary</div>' +
-            '<div style="font-size:1.2rem;font-weight:bold;color:var(--accent);">' + vm.currentSalary + ' gold/year</div>' +
+            '<div class="gov-inline-6">Current Salary</div>' +
+            '<div class="gov-inline-58">' + vm.currentSalary + ' gold/year</div>' +
             '</div>' +
-            '<div style="text-align:right;">' +
-            '<div style="font-size:0.55rem;color:var(--dim);">Tier</div>' +
-            '<div style="font-size:0.8rem;">' + _escapeHtml(vm.tierName || '') + '</div>' +
+            '<div class="gov-inline-59">' +
+            '<div class="gov-inline-6">Tier</div>' +
+            '<div class="gov-inline-60">' + _escapeHtml(vm.tierName || '') + '</div>' +
             '</div>' +
             '</div>' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Override Salary</label>' +
-            '<div style="display:flex;gap:8px;align-items:center;">' +
-            '<input type="number" id="salaryOverride" value="' + vm.currentSalary + '" min="' + C.MIN_SALARY + '" max="' + C.MAX_SALARY + '" style="width:150px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-            '<span style="font-size:0.55rem;color:var(--dim);">gold/year</span>' +
-            '<button type="button" id="applySalaryOverrideBtn" class="btn primary" style="padding:4px 12px;font-size:0.6rem;background:var(--accent);border:1px solid var(--accent);color:white;border-radius:4px;cursor:pointer;">Apply Override</button>' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Override Salary</label>' +
+            '<div class="gov-inline-61">' +
+            '<input type="number" id="salaryOverride" value="' + vm.currentSalary + '" min="' + C.MIN_SALARY + '" max="' + C.MAX_SALARY + '" class="gov-inline-62">' +
+            '<span class="gov-inline-6">gold/year</span>' +
+            '<button type="button" id="applySalaryOverrideBtn" class="btn primary" class="gov-inline-63">Apply Override</button>' +
             '</div>' +
-            '<small style="font-size:0.5rem;color:var(--dim);">Override appends to history. Calculated salary is used until an override exists.</small>' +
+            '<small class="gov-inline-20">Override appends to history. Calculated salary is used until an override exists.</small>' +
             '</div>' +
-            (historyHtml ? '<div style="margin-bottom:12px;">' +
-                '<div style="font-size:0.6rem;color:var(--dim);margin-bottom:4px;">Salary History</div>' +
-                '<div style="max-height:120px;overflow-y:auto;background:var(--bg3);padding:8px;border-radius:4px;">' +
+            (historyHtml ? '<div class="gov-inline-3">' +
+                '<div class="gov-inline-64">Salary History</div>' +
+                '<div class="gov-inline-65">' +
                 historyHtml +
                 '</div>' +
                 '</div>' : '') +
-            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            '<div class="gov-inline-8">' +
             infoIcon + ' Salary is calculated from tier, location prosperity, and current holder experience. Overrides take precedence.' +
             '</div>';
 
@@ -196,12 +196,12 @@
 
         var rowsHtml = '';
         if (vm.departments.length === 0) {
-            rowsHtml = '<div style="text-align:center;padding:12px;color:var(--dim);font-size:0.6rem;">No departments found</div>';
+            rowsHtml = '<div class="gov-inline-25">No departments found</div>';
         } else {
             for (var j = 0; j < vm.departments.length; j++) {
                 var r = vm.departments[j];
                 rowsHtml +=
-                    '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:0.55rem;">' +
+                    '<div class="gov-inline-66">' +
                     '<span>' + _escapeHtml(r.departmentName) + '</span>' +
                     '<span>' + r.filledPositions + '/' + r.totalPositions + ' filled · ' + r.totalSalaryRequirement + ' gold</span>' +
                     '</div>';
@@ -209,32 +209,32 @@
         }
 
         var html =
-            '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
-            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
+            '<div class="gov-inline-2">' +
+            '<div class="gov-inline-44">' +
             '<strong>' + coinIcon + ' Salary Budget</strong>' +
-            '<div style="font-size:0.65rem;color:var(--dim);">' + _escapeHtml(vm.locationName) + '</div>' +
+            '<div class="gov-inline-10">' + _escapeHtml(vm.locationName) + '</div>' +
             '</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:8px;text-align:center;">' +
-            '<div style="font-size:0.55rem;color:var(--dim);">Total Salary Requirement</div>' +
-            '<div style="font-size:1.2rem;font-weight:bold;color:var(--accent);">' + vm.summary.totalSalaryRequirement + ' gold</div>' +
+            '<div class="gov-inline-33">' +
+            '<div class="gov-inline-34">' +
+            '<div class="gov-inline-6">Total Salary Requirement</div>' +
+            '<div class="gov-inline-58">' + vm.summary.totalSalaryRequirement + ' gold</div>' +
             '</div>' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:8px;text-align:center;">' +
-            '<div style="font-size:0.55rem;color:var(--dim);">Filled Positions</div>' +
-            '<div style="font-size:1.2rem;font-weight:bold;">' + vm.summary.filledPositions + '</div>' +
+            '<div class="gov-inline-34">' +
+            '<div class="gov-inline-6">Filled Positions</div>' +
+            '<div class="gov-inline-35">' + vm.summary.filledPositions + '</div>' +
             '</div>' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:8px;text-align:center;">' +
-            '<div style="font-size:0.55rem;color:var(--dim);">Departments</div>' +
-            '<div style="font-size:1.2rem;font-weight:bold;">' + vm.summary.departmentCount + '</div>' +
+            '<div class="gov-inline-34">' +
+            '<div class="gov-inline-6">Departments</div>' +
+            '<div class="gov-inline-35">' + vm.summary.departmentCount + '</div>' +
             '</div>' +
             '</div>' +
-            '<div style="margin-bottom:12px;">' +
-            '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:8px;">Department Breakdown</div>' +
-            '<div style="max-height:200px;overflow-y:auto;background:var(--bg3);padding:8px;border-radius:4px;">' +
+            '<div class="gov-inline-3">' +
+            '<div class="gov-inline-12">Department Breakdown</div>' +
+            '<div class="gov-inline-67">' +
             rowsHtml +
             '</div>' +
             '</div>' +
-            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            '<div class="gov-inline-8">' +
             infoIcon + ' Total salary requirement is what Settlement needs to allocate to cover all filled positions.' +
             '</div>' +
             '</div>';
@@ -267,50 +267,50 @@
         var coinIcon = _iconSpan('COIN');
 
         var html =
-            '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
-            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
+            '<div class="gov-inline-2">' +
+            '<div class="gov-inline-44">' +
             '<strong>' + coinIcon + ' Industry Tax Revenue</strong>' +
-            '<div style="font-size:0.65rem;color:var(--dim);">' + _escapeHtml(vm.locationName) + '</div>' +
+            '<div class="gov-inline-10">' + _escapeHtml(vm.locationName) + '</div>' +
             '</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:8px;text-align:center;">' +
-            '<div style="font-size:0.55rem;color:var(--dim);">Tax Revenue</div>' +
-            '<div style="font-size:1.2rem;font-weight:bold;color:var(--success);">' + vm.taxRevenue + ' gold</div>' +
+            '<div class="gov-inline-33">' +
+            '<div class="gov-inline-34">' +
+            '<div class="gov-inline-6">Tax Revenue</div>' +
+            '<div class="gov-inline-36">' + vm.taxRevenue + ' gold</div>' +
             '</div>' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:8px;text-align:center;">' +
-            '<div style="font-size:0.55rem;color:var(--dim);">Enterprises</div>' +
-            '<div style="font-size:1.2rem;font-weight:bold;">' + (vm.enterpriseStats ? vm.enterpriseStats.totalEnterprises : 0) + '</div>' +
+            '<div class="gov-inline-34">' +
+            '<div class="gov-inline-6">Enterprises</div>' +
+            '<div class="gov-inline-35">' + (vm.enterpriseStats ? vm.enterpriseStats.totalEnterprises : 0) + '</div>' +
             '</div>' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:8px;text-align:center;">' +
-            '<div style="font-size:0.55rem;color:var(--dim);">Health Score</div>' +
-            '<div style="font-size:1.2rem;font-weight:bold;">' + (vm.enterpriseStats ? vm.enterpriseStats.healthScore : '—') + '</div>' +
+            '<div class="gov-inline-34">' +
+            '<div class="gov-inline-6">Health Score</div>' +
+            '<div class="gov-inline-35">' + (vm.enterpriseStats ? vm.enterpriseStats.healthScore : '—') + '</div>' +
             '</div>' +
             '</div>' +
             (vm.enterpriseStats ? (
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
-                '<div style="background:var(--bg3);padding:12px;border-radius:6px;">' +
-                '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Profitability</div>' +
-                '<div style="font-size:0.55rem;">' +
-                '<div style="display:flex;justify-content:space-between;padding:2px 0;">' +
-                '<span style="color:var(--dim);">Profitable</span><span>' + vm.enterpriseStats.profitable + '</span></div>' +
-                '<div style="display:flex;justify-content:space-between;padding:2px 0;">' +
-                '<span style="color:var(--dim);">Unprofitable</span><span>' + vm.enterpriseStats.unprofitable + '</span></div>' +
-                '<div style="display:flex;justify-content:space-between;padding:2px 0;">' +
-                '<span style="color:var(--dim);">Avg Profit</span><span>' + vm.enterpriseStats.averageProfit + '</span></div>' +
+                '<div class="gov-inline-68">' +
+                '<div class="gov-inline-38">' +
+                '<div class="gov-inline-39">Profitability</div>' +
+                '<div class="gov-inline-69">' +
+                '<div class="gov-inline-70">' +
+                '<span class="gov-inline-27">Profitable</span><span>' + vm.enterpriseStats.profitable + '</span></div>' +
+                '<div class="gov-inline-70">' +
+                '<span class="gov-inline-27">Unprofitable</span><span>' + vm.enterpriseStats.unprofitable + '</span></div>' +
+                '<div class="gov-inline-70">' +
+                '<span class="gov-inline-27">Avg Profit</span><span>' + vm.enterpriseStats.averageProfit + '</span></div>' +
                 '</div>' +
                 '</div>' +
-                '<div style="background:var(--bg3);padding:12px;border-radius:6px;">' +
-                '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Rates</div>' +
-                '<div style="font-size:0.55rem;">' +
-                '<div style="display:flex;justify-content:space-between;padding:2px 0;">' +
-                '<span style="color:var(--dim);">Industry Tax</span><span>' + _escapeHtml(vm.taxRateLabel) + '</span></div>' +
-                '<div style="display:flex;justify-content:space-between;padding:2px 0;">' +
-                '<span style="color:var(--dim);">Total Workers</span><span>' + vm.enterpriseStats.totalWorkers + '</span></div>' +
+                '<div class="gov-inline-38">' +
+                '<div class="gov-inline-39">Rates</div>' +
+                '<div class="gov-inline-69">' +
+                '<div class="gov-inline-70">' +
+                '<span class="gov-inline-27">Industry Tax</span><span>' + _escapeHtml(vm.taxRateLabel) + '</span></div>' +
+                '<div class="gov-inline-70">' +
+                '<span class="gov-inline-27">Total Workers</span><span>' + vm.enterpriseStats.totalWorkers + '</span></div>' +
                 '</div>' +
                 '</div>' +
                 '</div>'
             ) : '') +
-            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            '<div class="gov-inline-8">' +
             infoIcon + ' Tax revenue is calculated from profitable enterprise profits and the configured industry tax rate.' +
             '</div>' +
             '</div>';
@@ -359,44 +359,44 @@
             var pct = Math.round(vm.sufficiency.ratio * 100);
             var color = vm.sufficiency.isSufficient ? 'var(--success)' : 'var(--warn)';
             sufficiencyHtml =
-                '<div style="background:var(--bg3);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.6rem;">' +
-                '<div style="display:flex;justify-content:space-between;">' +
-                '<span style="color:var(--dim);">Budget sufficiency</span>' +
+                '<div class="gov-inline-30">' +
+                '<div class="gov-inline-71">' +
+                '<span class="gov-inline-27">Budget sufficiency</span>' +
                 '<span style="color:' + color + ';">' + pct + '%</span>' +
                 '</div>' +
-                '<div style="font-size:0.5rem;color:var(--dim);margin-top:2px;">' +
+                '<div class="gov-inline-72">' +
                 vm.sufficiency.allocated + ' allocated vs ' + vm.sufficiency.required + ' required' +
                 '</div>' +
                 '</div>';
         }
 
         var html =
-            '<div style="padding:12px;">' +
-            '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;">' +
+            '<div class="gov-inline-73">' +
+            '<div class="gov-inline-11">' +
             '<strong>Government Summary:</strong> ' + _escapeHtml(vm.locationName) +
             '</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:6px;text-align:center;">' +
-            '<div style="font-size:0.55rem;color:var(--dim);">Total Salary Requirement</div>' +
-            '<div style="font-size:1rem;font-weight:bold;">' + (vm.totalSalaryRequirement != null ? vm.totalSalaryRequirement : 0) + ' gold</div>' +
+            '<div class="gov-inline-68">' +
+            '<div class="gov-inline-74">' +
+            '<div class="gov-inline-6">Total Salary Requirement</div>' +
+            '<div class="gov-inline-75">' + (vm.totalSalaryRequirement != null ? vm.totalSalaryRequirement : 0) + ' gold</div>' +
             '</div>' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:6px;text-align:center;">' +
-            '<div style="font-size:0.55rem;color:var(--dim);">Industry Tax Revenue</div>' +
-            '<div style="font-size:1rem;font-weight:bold;color:var(--success);">' + vm.taxRevenue + ' gold</div>' +
+            '<div class="gov-inline-74">' +
+            '<div class="gov-inline-6">Industry Tax Revenue</div>' +
+            '<div class="gov-inline-76">' + vm.taxRevenue + ' gold</div>' +
             '</div>' +
             '</div>' +
             sufficiencyHtml +
             (vm.enterpriseStats ? (
-                '<div style="background:var(--bg3);padding:8px;border-radius:4px;font-size:0.55rem;margin-bottom:12px;">' +
-                '<div style="display:flex;justify-content:space-between;padding:2px 0;">' +
-                '<span style="color:var(--dim);">Enterprises</span><span>' + vm.enterpriseStats.totalEnterprises + '</span></div>' +
-                '<div style="display:flex;justify-content:space-between;padding:2px 0;">' +
-                '<span style="color:var(--dim);">Total annual profit</span><span>' + vm.enterpriseStats.totalAnnualProfit + '</span></div>' +
-                '<div style="display:flex;justify-content:space-between;padding:2px 0;">' +
-                '<span style="color:var(--dim);">Health score</span><span>' + vm.enterpriseStats.healthScore + '</span></div>' +
+                '<div class="gov-inline-77">' +
+                '<div class="gov-inline-70">' +
+                '<span class="gov-inline-27">Enterprises</span><span>' + vm.enterpriseStats.totalEnterprises + '</span></div>' +
+                '<div class="gov-inline-70">' +
+                '<span class="gov-inline-27">Total annual profit</span><span>' + vm.enterpriseStats.totalAnnualProfit + '</span></div>' +
+                '<div class="gov-inline-70">' +
+                '<span class="gov-inline-27">Health score</span><span>' + vm.enterpriseStats.healthScore + '</span></div>' +
                 '</div>'
             ) : '') +
-            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            '<div class="gov-inline-8">' +
             infoIcon + ' A formal efficiency score is not available in this build. The above shows current totals and budget sufficiency.' +
             '</div>' +
             '</div>';
