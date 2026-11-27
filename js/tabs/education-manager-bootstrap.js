@@ -771,7 +771,9 @@
                 _setupSidebar();
             }
             if (tabId) {
-                window.TabManager.activate(SCOPE, tabId);
+                ui.setActiveTabId(tabId);
+                _syncTabStrip(tabId);
+                window.TabManager.renderActive(SCOPE);
             } else {
                 window.TabManager.renderActive(SCOPE);
             }
