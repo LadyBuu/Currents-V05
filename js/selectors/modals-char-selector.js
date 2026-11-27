@@ -366,8 +366,8 @@
         this._targetLocationId = this._targetChar
             ? this._targetChar.locationId
             : null;
-        this._targetBirthYear = this._targetChar
-            ? this._targetChar.birthYear
+        this._targetAge = this._targetChar
+            ? window.calculateAge(this._targetChar.birthYear, this._targetChar.isDeceased === true, this._targetChar.deathYear)
             : null;
 
         // Root element (modal element) cached during _cacheElements.
@@ -429,7 +429,7 @@
 
     CharacterSelector.prototype._applyFilters = function(characters) {
         var filters = this.state.filters;
-        var targetBirthYear = this._targetBirthYear;
+        var targetAge = this._targetAge;
         var targetLocationId = this._targetLocationId;
         var result = [];
         var searchLower = filters.search ? filters.search.toLowerCase() : '';
@@ -451,9 +451,10 @@
                 char.deathYear
             );
 
-            if (filters.peers && targetBirthYear && char.birthYear) {
-                var ageDiff = Math.abs(targetBirthYear - char.birthYear);
-                if (ageDiff > 10) continue;
+            if (filters.peers) {
+                if (typeof targetAge !== 'number' || !Number.isFinite(targetAge)
+                    || typeof age !== 'number' || !Number.isFinite(age)) continue;
+                if (Math.abs(targetAge - age) > 10) continue;
             }
 
             if (filters.gender !== 'all' && char.gender !== filters.gender) continue;
