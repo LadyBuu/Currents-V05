@@ -501,7 +501,7 @@
 
         var content =
             '<div class="modal-mb-16">' +
-                '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
+                '<div class="residence-note">' +
                     'Creating a new residence in <strong>' +
                     _esc(resolvedLocationName) + '</strong>' +
                 '</div>' +
@@ -643,7 +643,7 @@
 
         var content =
             '<div class="modal-mb-16">' +
-                '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
+                '<div class="residence-note">' +
                     'Editing <strong>' + _esc(residence.name) + '</strong>' +
                 '</div>' +
                 '<div class="modal-mb-12">' +
@@ -652,21 +652,21 @@
                         _esc(residence.name) +
                         '" class="modal-field modal-field-roomy">' +
                 '</div>' +
-                '<div style="margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
+                '<div class="residence-callout">' +
                     '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.65rem;">' +
                         '<input type="checkbox" data-field="recordNameHistory" checked>' +
                         '<span>Record this name change in history</span>' +
                     '</label>' +
-                    '<div style="margin-top:8px;padding-left:24px;">' +
+                    '<div class="residence-detail-indent">' +
                         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
                             '<div>' +
-                                '<label style="font-size:0.55rem;color:var(--dim);">Year</label>' +
+                                '<label class="text-muted text-xs">Year</label>' +
                                 '<input type="number" data-field="renameYear" value="' +
                                     (currentYear !== null ? currentYear : '') +
                                     '" min="1" style="width:100%;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;color:var(--text);">' +
                             '</div>' +
                             '<div>' +
-                                '<label style="font-size:0.55rem;color:var(--dim);">Reason</label>' +
+                                '<label class="text-muted text-xs">Reason</label>' +
                                 '<input type="text" data-field="renameReason" placeholder="e.g., Inheritance..." ' +
                                     'style="width:100%;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;color:var(--text);">' +
                             '</div>' +
@@ -816,18 +816,18 @@
                     '</div>' +
                 '</div>' +
                 '<div style="background:var(--bg3);border-radius:8px;padding:12px;margin-bottom:12px;">' +
-                    '<div style="display:flex;justify-content:space-between;font-size:0.7rem;">' +
+                    '<div class="residence-stat-row">' +
                         '<span>Name:</span>' +
                         '<span style="font-weight:bold;">' +
                             _esc(residence.name) + '</span>' +
                     '</div>' +
-                    '<div style="display:flex;justify-content:space-between;font-size:0.7rem;margin-top:4px;">' +
+                    '<div class="residence-stat-row residence-stat-row-spaced">' +
                         '<span>Type:</span>' +
                         '<span>' +
                             _esc(residence.typeName || residence.typeId || 'Unknown') +
                         '</span>' +
                     '</div>' +
-                    '<div style="display:flex;justify-content:space-between;font-size:0.7rem;margin-top:4px;">' +
+                    '<div class="residence-stat-row residence-stat-row-spaced">' +
                         '<span>Units:</span>' +
                         '<span>' + unitStats.total + ' (' +
                             unitStats.occupied + ' occupied)</span>' +
@@ -947,7 +947,7 @@
 
         var content =
             '<div class="modal-mb-16">' +
-                '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
+                '<div class="residence-note">' +
                     'Creating a residence for <strong>' +
                     _esc(household.name) + '</strong>' +
                 '</div>' +
@@ -980,7 +980,7 @@
                         (currentYear !== null ? currentYear : '') +
                         '" min="1" class="modal-field modal-field-roomy">' +
                 '</div>' +
-                '<div style="margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
+                '<div class="residence-callout">' +
                     '<label class="character-tab-checkbox" style="display:flex;align-items:center;gap:6px;cursor:pointer;">' +
                         '<input type="checkbox" data-field="assignOnCreate" checked>' +
                         '<span style="font-size:0.65rem;">Assign ' +
@@ -1192,7 +1192,7 @@
 
         var content =
             '<div class="modal-mb-16">' +
-                '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
+                '<div class="residence-note">' +
                     'Assign a vacant residence to <strong>' +
                     _esc(household.name) + '</strong>' +
                 '</div>' +
@@ -1308,14 +1308,14 @@
                 return (b.year || 0) - (a.year || 0);
             });
             historyHtml =
-                '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">' +
+                '<div class="residence-section-divider">' +
                     '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:8px;">Name Change History</div>' +
                     '<div style="max-height:150px;overflow-y:auto;background:var(--bg3);border-radius:6px;padding:8px;">';
             var limit = Math.min(sorted.length, 10);
             for (var i = 0; i < limit; i++) {
                 var h = sorted[i];
                 historyHtml +=
-                    '<div style="font-size:0.55rem;padding:4px 0;border-bottom:1px solid var(--border-light);">' +
+                    '<div class="residence-list-row">' +
                         '<strong>' + h.year + ':</strong> ' +
                         _esc(h.oldName || '—') + ' -> ' +
                         _esc(h.newName) +
@@ -1323,7 +1323,7 @@
                     '</div>';
             }
             if (sorted.length > 10) {
-                historyHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;padding-top:4px;">' +
+                historyHtml += '<div class="education-help-text">' +
                     '... and ' + (sorted.length - 10) + ' more' +
                 '</div>';
             }
@@ -1332,7 +1332,7 @@
 
         var content =
             '<div class="modal-mb-16">' +
-                '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
+                '<div class="residence-note">' +
                     'Current name: <strong>' +
                     _esc(residence.name) + '</strong>' +
                 '</div>' +
@@ -1342,21 +1342,21 @@
                         _esc(residence.name) +
                         '" class="modal-field modal-field-roomy">' +
                 '</div>' +
-                '<div style="margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
+                '<div class="residence-callout">' +
                     '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.65rem;">' +
                         '<input type="checkbox" data-field="recordHistory" checked>' +
                         '<span>Record this name change in history</span>' +
                     '</label>' +
-                    '<div style="margin-top:8px;padding-left:24px;">' +
+                    '<div class="residence-detail-indent">' +
                         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
                             '<div>' +
-                                '<label style="font-size:0.55rem;color:var(--dim);">Year</label>' +
+                                '<label class="text-muted text-xs">Year</label>' +
                                 '<input type="number" data-field="year" value="' +
                                     (currentYear !== null ? currentYear : '') +
                                     '" min="1" style="width:100%;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;color:var(--text);">' +
                             '</div>' +
                             '<div>' +
-                                '<label style="font-size:0.55rem;color:var(--dim);">Reason</label>' +
+                                '<label class="text-muted text-xs">Reason</label>' +
                                 '<input type="text" data-field="reason" placeholder="e.g., Succession" ' +
                                     'style="width:100%;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;color:var(--text);">' +
                             '</div>' +
@@ -1504,8 +1504,8 @@
         if (residence.isMultiUnit && units.length > 0) {
             html += _buildUnitsSection(residenceId, units, unitStats);
         } else if (residence.isMultiUnit) {
-            html += '<div style="background:var(--bg3);padding:10px;border-radius:8px;margin-bottom:12px;">' +
-                '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Units</div>' +
+            html += '<div class="residence-card">' +
+                '<div class="education-section-label">Units</div>' +
                 '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:12px;">No units created yet</div>' +
                 '<div style="margin-top:6px;text-align:center;">' +
                     '<button data-action="add-unit" style="padding:3px 10px;font-size:0.5rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Add Unit</button>' +
@@ -1537,11 +1537,11 @@
     }
 
     function _buildUnitsSection(residenceId, units, unitStats) {
-        var html = '<div style="background:var(--bg3);padding:10px;border-radius:8px;margin-bottom:12px;">';
+        var html = '<div class="residence-card">';
         html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
         html += '<div style="font-size:0.6rem;color:var(--accent);">Units (' +
             units.length + ')</div>';
-        html += '<span style="font-size:0.5rem;color:var(--dim);">' +
+        html += '<span class="text-muted text-2xs">' +
             unitStats.occupied + ' occupied · ' + unitStats.vacant + ' vacant' +
             (unitStats.demolished > 0 ? ' · ' + unitStats.demolished + ' demolished' : '') +
         '</span></div>';
@@ -1601,10 +1601,10 @@
     }
 
     function _buildAssociationSection(associationHistory) {
-        var html = '<div style="background:var(--bg3);padding:10px;border-radius:8px;margin-bottom:12px;">';
+        var html = '<div class="residence-card">';
         html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
         html += '<div style="font-size:0.6rem;color:var(--accent);">Historical Associations</div>';
-        html += '<span style="font-size:0.5rem;color:var(--dim);">' +
+        html += '<span class="text-muted text-2xs">' +
             associationHistory.length + ' records</span>';
         html += '</div>';
         html += '<div style="max-height:150px;overflow-y:auto;font-size:0.55rem;">';
@@ -1630,7 +1630,7 @@
                     a.unitNumber + '</span>';
             }
             if (a.reason) {
-                html += '<div style="font-size:0.5rem;color:var(--dim);">' +
+                html += '<div class="text-muted text-2xs">' +
                     _esc(a.reason) + '</div>';
             }
             html += '</div>';
@@ -1651,7 +1651,7 @@
             var priorityColor = r.priority === 'high'
                 ? '#c87040'
                 : (r.priority === 'medium' ? '#c8a844' : '#4a9e6a');
-            html += '<div style="font-size:0.55rem;padding:4px 0;border-bottom:1px solid var(--border-light);">' +
+            html += '<div class="residence-list-row">' +
                 '<span style="color:' + priorityColor + ';">' + r.priority + ':</span> ' +
                 _esc(r.message) +
                 (r.estimatedCost
@@ -1663,10 +1663,10 @@
     }
 
     function _buildActionButtons(residence, isVacant, isDemolished) {
-        var html = '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">';
+        var html = '<div class="residence-section-divider">';
 
         if (!isDemolished) {
-            html += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">';
+            html += '<div class="residence-inline-actions">';
             html += '<button data-action="edit" style="padding:3px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">Edit</button>';
             html += '<button data-action="rename" style="padding:3px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;">Rename</button>';
             html += '<button data-action="history" style="padding:3px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;">History</button>';
@@ -1674,26 +1674,26 @@
         }
 
         if (!isVacant && !isDemolished) {
-            html += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">';
+            html += '<div class="residence-inline-actions">';
             html += '<button data-action="vacate" style="padding:3px 10px;font-size:0.55rem;background:#8a5a20;border:none;color:white;border-radius:3px;cursor:pointer;">Mark Vacant</button>';
             html += '</div>';
         }
 
         if (isVacant && !isDemolished) {
-            html += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">';
+            html += '<div class="residence-inline-actions">';
             html += '<button data-action="assign" style="padding:3px 10px;font-size:0.55rem;background:var(--accent);border:none;color:white;border-radius:3px;cursor:pointer;">Assign Household</button>';
             html += '<button data-action="find-heirs" style="padding:3px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">Find Heirs</button>';
             html += '</div>';
         }
 
         if (!isDemolished && residence.condition !== 'pristine') {
-            html += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">';
+            html += '<div class="residence-inline-actions">';
             html += '<button data-action="rehabilitate" style="padding:3px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;">Rehabilitate</button>';
             html += '</div>';
         }
 
         if (!isDemolished) {
-            html += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;">';
+            html += '<div class="residence-inline-actions">';
             html += '<button data-action="demolish" style="padding:3px 10px;font-size:0.55rem;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;">Demolish</button>';
             html += '</div>';
         }
@@ -1926,8 +1926,8 @@
 
         var content =
             '<div class="modal-mb-16">' +
-                '<div style="background:var(--bg3);border-radius:6px;padding:12px;margin-bottom:12px;">' +
-                    '<div style="font-size:0.7rem;"><strong>' +
+                '<div class="residence-panel">' +
+                    '<div class="text-sm"><strong>' +
                         _esc(residence.name) + '</strong></div>' +
                     '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">' +
                         'This will vacate all occupied units and disassociate every household currently living here.' +
@@ -2018,8 +2018,8 @@
 
         var content =
             '<div class="modal-mb-16">' +
-                '<div style="background:var(--bg3);border-radius:6px;padding:12px;margin-bottom:12px;">' +
-                    '<div style="font-size:0.7rem;"><strong>Residence:</strong> ' +
+                '<div class="residence-panel">' +
+                    '<div class="text-sm"><strong>Residence:</strong> ' +
                         _esc(residence.name) + '</div>' +
                     '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">' +
                         '<strong>Household:</strong> ' +
@@ -2115,10 +2115,10 @@
 
         var content =
             '<div class="modal-mb-16">' +
-                '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
+                '<div class="residence-note">' +
                     'Adding a unit to <strong>' +
                         _esc(residence.name) + '</strong>' +
-                    '<div style="margin-top:4px;">' + residence.unitCount +
+                    '<div class="mt-4">' + residence.unitCount +
                     ' of ' + maxUnits + ' units currently exist</div>' +
                 '</div>' +
                 '<div class="modal-mb-12">' +
@@ -2330,7 +2330,7 @@
         var content =
             '<div class="modal-mb-16">' +
                 '<div style="background:rgba(200,112,64,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
-                    '<div style="font-size:0.7rem;"><strong>Unit ' + unitNumber +
+                    '<div class="text-sm"><strong>Unit ' + unitNumber +
                         ' of ' + _esc(residence.name) + '</strong></div>' +
                     '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">' +
                         'Current Household: ' +
@@ -2425,7 +2425,7 @@
             for (var i = limit - 1; i >= 0; i--) {
                 var a = sorted[i];
                 var isCurrentAssoc = !a.endedYear;
-                associationHtml += '<div style="font-size:0.55rem;padding:4px 0;border-bottom:1px solid var(--border-light);">' +
+                associationHtml += '<div class="residence-list-row">' +
                     '<span>' + _esc(a.householdName || 'Unknown') + '</span>' +
                     (isCurrentAssoc
                         ? ' <span style="color:var(--accent);font-size:0.5rem;">(Current)</span>'
@@ -2445,7 +2445,7 @@
                         '<div>' +
                             '<div style="font-size:1rem;font-weight:bold;">Unit ' +
                                 unitNumber + '</div>' +
-                            '<div style="font-size:0.65rem;color:var(--dim);">' +
+                            '<div class="text-muted text-sm">' +
                                 _esc(residence.name) + '</div>' +
                         '</div>' +
                         '<span style="background:' + statusColor +
@@ -2453,17 +2453,17 @@
                             statusText + '</span>' +
                     '</div>' +
                     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:0.6rem;margin-top:8px;">' +
-                        '<div><span style="color:var(--dim);">Household:</span> ' +
+                        '<div><span class="text-muted">Household:</span> ' +
                             _esc(unit.householdName || 'Vacant') + '</div>' +
-                        '<div><span style="color:var(--dim);">Assigned:</span> ' +
+                        '<div><span class="text-muted">Assigned:</span> ' +
                             (unit.assignedYear !== null ? unit.assignedYear : 'N/A') +
                         '</div>' +
                         (isVacant && unit.vacantYear
-                            ? '<div><span style="color:var(--dim);">Vacant since:</span> ' +
+                            ? '<div><span class="text-muted">Vacant since:</span> ' +
                                 unit.vacantYear + ' (' + vacantDuration + 'y)</div>'
                             : '') +
                         (unit.notes
-                            ? '<div style="grid-column:span 2;"><span style="color:var(--dim);">Notes:</span> ' +
+                            ? '<div style="grid-column:span 2;"><span class="text-muted">Notes:</span> ' +
                                 _esc(unit.notes) + '</div>'
                             : '') +
                     '</div>' +
@@ -2554,15 +2554,15 @@
 
         var content =
             '<div class="modal-mb-16">' +
-                '<div style="background:var(--bg3);border-radius:6px;padding:12px;margin-bottom:12px;">' +
-                    '<div style="font-size:0.7rem;"><strong>' +
+                '<div class="residence-panel">' +
+                    '<div class="text-sm"><strong>' +
                         _esc(residence.name) + '</strong></div>' +
                     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.6rem;">' +
-                        '<div><span style="color:var(--dim);">Current Condition:</span> ' +
+                        '<div><span class="text-muted">Current Condition:</span> ' +
                             _esc(residence.condition || 'unknown') + '</div>' +
-                        '<div><span style="color:var(--dim);">Estimated Value:</span> ' +
+                        '<div><span class="text-muted">Estimated Value:</span> ' +
                             (residence.estimatedValue || 0) + ' gold</div>' +
-                        '<div><span style="color:var(--dim);">Last Renovated:</span> ' +
+                        '<div><span class="text-muted">Last Renovated:</span> ' +
                             (residence.lastRenovated || 'Never') + '</div>' +
                     '</div>' +
                 '</div>' +
@@ -2670,8 +2670,8 @@
                         'Warning: This action cannot be undone.' +
                     '</div>' +
                 '</div>' +
-                '<div style="background:var(--bg3);border-radius:6px;padding:12px;margin-bottom:12px;">' +
-                    '<div style="display:flex;justify-content:space-between;font-size:0.7rem;">' +
+                '<div class="residence-panel">' +
+                    '<div class="residence-stat-row">' +
                         '<span>Occupied units:</span>' +
                         '<span>' + unitStats.occupied + ' of ' +
                             unitStats.usable + '</span>' +
@@ -2774,9 +2774,9 @@
     function _buildHistoryContent(residence, nameHistory, timeline, associations) {
         var html = '<div class="modal-mb-16">';
 
-        html += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
+        html += '<div class="residence-summary">';
         html += '<div><strong>' + _esc(residence.name) + '</strong></div>';
-        html += '<div style="font-size:0.65rem;color:var(--dim);">Name changes: ' +
+        html += '<div class="text-muted text-sm">Name changes: ' +
             nameHistory.length + ' · Timeline events: ' + timeline.length +
             ' · Associations: ' + associations.length + '</div>';
         html += '</div>';
@@ -2833,7 +2833,7 @@
             for (var k = 0; k < recentA.length; k++) {
                 var a = recentA[k];
                 var isCurrent = !a.endedYear;
-                html += '<div style="font-size:0.55rem;padding:4px 0;border-bottom:1px solid var(--border-light);">' +
+                html += '<div class="residence-list-row">' +
                     '<strong>' + _esc(a.householdName || 'Unknown') + '</strong>' +
                     (a.unitNumber ? ' (Unit ' + a.unitNumber + ')' : '') +
                     '<span style="float:right;color:' +
@@ -2883,9 +2883,9 @@
 
         var content = '<div class="modal-mb-16">';
 
-        content += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
+        content += '<div class="residence-summary">';
         content += '<div><strong>' + _esc(residence.name) + '</strong></div>';
-        content += '<div style="font-size:0.65rem;color:var(--dim);">Total name changes: ' +
+        content += '<div class="text-muted text-sm">Total name changes: ' +
             nameHistory.length + '</div>';
         content += '</div>';
 
@@ -2925,9 +2925,9 @@
         var timeline = _residence.getResidenceTimeline(residenceId, 200);
 
         var content = '<div class="modal-mb-16">';
-        content += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
+        content += '<div class="residence-summary">';
         content += '<div><strong>' + _esc(residence.name) + '</strong></div>';
-        content += '<div style="font-size:0.65rem;color:var(--dim);">Total events: ' +
+        content += '<div class="text-muted text-sm">Total events: ' +
             timeline.length + '</div>';
         content += '</div>';
 
@@ -2969,9 +2969,9 @@
         var associations = _residence.getResidenceAssociationHistory(residenceId);
 
         var content = '<div class="modal-mb-16">';
-        content += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
+        content += '<div class="residence-summary">';
         content += '<div><strong>' + _esc(residence.name) + '</strong></div>';
-        content += '<div style="font-size:0.65rem;color:var(--dim);">Total associations: ' +
+        content += '<div class="text-muted text-sm">Total associations: ' +
             associations.length + '</div>';
         content += '</div>';
 
@@ -2997,7 +2997,7 @@
                             (isCurrent ? 'Current' : 'Ended') +
                         '</span>' +
                     '</div>' +
-                    '<div style="font-size:0.55rem;color:var(--dim);">' +
+                    '<div class="text-muted text-xs">' +
                         a.year + (a.endedYear ? ' - ' + a.endedYear : ' - present') +
                         (a.reason ? ' · ' + _esc(a.reason) : '') +
                     '</div>' +
