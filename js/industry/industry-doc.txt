@@ -2541,3 +2541,20 @@ that saves after a successful ordinary command must handle a later save
 failure according to its own batch contract.
 
 ================================================================================
+
+
+INDUSTRY MODULE AUDIT — 2026-11-27 (STATIC)
+
+Scope reviewed: industry domain JavaScript modules (state, constants, rules, queries, commands, type registry/defaults/init/type commands, migration, economics, processor, view models, UI list, bootstrap, and industry modals), settlement-industry-tab.js, SettlementManager.html styling conventions, and this domain documentation.
+
+Architecture observations:
+- The domain has explicit read/write boundaries: IndustryState owns runtime catalogue state; IndustryQueries reads and enriches; IndustryCommands owns enterprise mutations and persistence; IndustryTypeCommands owns type mutations; IndustryRules validates/normalises; IndustryEconomics calculates annual transitions; IndustryProcessor orchestrates processing and delegates commits.
+- Settlement industry UI reads through IndustryQueries and delegates mutations to IndustryModals, consistent with the documented renderer contract.
+- Migration is a dedicated one-time path and strips derived fields from canonical enterprise records.
+- The settlement tab uses the Settlement Manager's st-* class system and contains no inline style attributes in its renderer. Industry modal code contains inline style assignments, so presentation is not fully class/token-driven.
+- SettlementManager.html embeds the shared settlement tab class system in a large page-level style block. This is a manager-wide styling concern, not industry-only; the industry tab currently consumes those classes.
+
+Audit result and limits:
+- No confirmed source-level defect was established during this static pass. This is not a runtime correctness guarantee.
+- No CSS migration was made for Industry: extracting or rewriting the settlement-wide class system would affect other tabs and needs a broader visual regression pass. Industry modal inline styles remain styling debt.
+- Runtime checks remain outstanding for type initialization/hydration, enterprise create/edit/delete and ownership transfers, annual processing persistence/rollback, location-scoped batches, modal validation/focus/stacking, and theme/responsive rendering.
