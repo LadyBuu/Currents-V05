@@ -681,14 +681,14 @@
 
         var masterDisplay = row.master
             ? _esc(proj.masterName || 'Unknown')
-            : '<span style="color:var(--danger-lt);">(missing)</span>';
+            : '<span class="edu-apprenticeship-missing">(missing)</span>';
         var apprenticeDisplay = row.apprentice
             ? _esc(proj.apprenticeName || 'Unknown')
             : '<span style="color:var(--danger-lt);">(missing)</span>';
 
         var titleHtml =
             masterDisplay +
-            ' <span style="color:var(--dim);">→</span> ' +
+            ' <span class="edu-apprenticeship-arrow">→</span> ' +
             apprenticeDisplay;
 
         var metaParts = [];
