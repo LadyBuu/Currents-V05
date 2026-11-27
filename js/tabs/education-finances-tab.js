@@ -616,7 +616,7 @@
         if (ownershipType === 'public')    label = 'Public';
         else if (ownershipType === 'private')   label = 'Private';
         else if (ownershipType === 'religious') label = 'Religious';
-        return '<span style="font-size:0.55rem;color:var(--dim);">' +
+        return '<span class="edu-finances-ownership-badge">' +
             _esc(label) + '</span>';
     }
 
@@ -634,7 +634,7 @@
                 if (typeof row.funding === 'number') {
                     metaParts.push('Funding: ' + _formatCurrency(row.funding));
                 } else {
-                    metaParts.push('<span style="color:var(--danger-lt);">Funding: —</span>');
+                    metaParts.push('<span class="edu-finances-danger">Funding: —</span>');
                 }
             } else if (row.ownershipType === 'private') {
                 if (typeof row.profit === 'number') {
@@ -644,7 +644,7 @@
                         _formatSigned(row.profit) +
                         '</span>');
                 } else {
-                    metaParts.push('<span style="color:var(--danger-lt);">Profit: —</span>');
+                    metaParts.push('<span class="edu-finances-danger">Profit: —</span>');
                 }
                 if (typeof row.tuition === 'number') {
                     metaParts.push('Tuition: ' + _formatCurrency(row.tuition) + '/yr');
@@ -657,7 +657,7 @@
         }
 
         if (isDemolished) {
-            metaParts.push('<span style="color:var(--danger-lt);">Demolished</span>');
+            metaParts.push('<span class="edu-finances-danger">Demolished</span>');
         }
 
         // Detail line: income − expenses breakdown for private, funding
