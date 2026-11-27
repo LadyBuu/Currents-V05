@@ -781,7 +781,7 @@
             '</div>' +
             '<div class="education-panel">' +
             '<div class="text-muted text-sm">Headmaster</div>' +
-            '<div class="text-sm">' + headmasterLine + '</div>' +
+            '<div class="text-md">' + headmasterLine + '</div>' +
             '</div>' +
             '</div>' +
 
@@ -1703,7 +1703,7 @@
 
         var content =
             '<div class="education-panel education-panel-spaced">' +
-            '<div class="text-sm"><strong>' +
+            '<div class="text-md"><strong>' +
             _escapeHtml(s.name) + '</strong></div>' +
             '<div class="text-muted text-sm mt-4">Current: <strong>' +
             _escapeHtml(tuitionDisplay) + '</strong></div>' +
@@ -1821,7 +1821,7 @@
 
         var content =
             '<div class="education-panel education-panel-spaced">' +
-            '<div class="text-sm"><strong>' +
+            '<div class="text-md"><strong>' +
             _escapeHtml(s.name) + '</strong></div>' +
             '<div class="text-muted text-sm mt-4">Current: <strong>' +
             _escapeHtml(s.ownershipType || 'public') + '</strong></div>' +
