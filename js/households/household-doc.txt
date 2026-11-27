@@ -3255,3 +3255,8 @@ This is a stylesheet-source consolidation, not a full conversion of generated
 inline styles in household/residence tabs and modals. Those remain follow-up
 styling debt and require visual regression checks across themes and viewport
 sizes.
+
+
+CSS MIGRATION — HOUSEHOLD MANAGER
+
+The Household Manager page-level stylesheet has been extracted from the inline <style> block into css/household-manager.css. HouseholdManager.html continues to load css/themes.css and css/common.css first, then the page stylesheet. This is a stylesheet-ownership migration only: selectors, declarations, legacy theme aliases, and component-specific rules were preserved rather than consolidated or renamed. Runtime visual regression testing is still required across themes, responsive widths, and modal stacking before further token/class consolidation.
