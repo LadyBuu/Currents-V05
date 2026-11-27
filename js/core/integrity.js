@@ -890,6 +890,53 @@
     }
 
     // =========================================================================
+    // 5C. CRIME / VENDETTA LIVE REFERENCES
+    // =========================================================================
+
+    function findBrokenCrimeReferences() {
+        _requireDependencies();
+        var data = window.masterData && window.masterData.data || {};
+        var crimes = Array.isArray(data.crimes) ? data.crimes : [];
+        var vendettas = Array.isArray(data.vendettas) ? data.vendettas : [];
+        var broken = [];
+
+        crimes.forEach(function(crime, index) {
+            if (!crime || typeof crime !== 'object') return;
+            ['perpetratorId', 'victimId'].forEach(function(field) {
+                if (_hasId(crime[field]) && !window.getCharacterById(crime[field])) {
+                    broken.push({ domain: 'crime', index: index, id: crime.id || null, issue: 'Missing ' + field, refId: crime[field] });
+                }
+            });
+            if (_hasId(crime.locationId) && !window.getPlaceById(crime.locationId)) {
+                broken.push({ domain: 'crime', index: index, id: crime.id || null, issue: 'Missing locationId', refId: crime.locationId });
+            }
+        });
+
+        vendettas.forEach(function(v, index) {
+            if (!v || typeof v !== 'object') return;
+            ['characterAId', 'characterBId'].forEach(function(field) {
+                if (_hasId(v[field]) && !window.getCharacterById(v[field])) {
+                    broken.push({ domain: 'vendetta', index: index, id: v.id || null, issue: 'Missing ' + field, refId: v[field] });
+                }
+            });
+            ['householdAId', 'householdBId'].forEach(function(field) {
+                if (_hasId(v[field]) && !window.getHouseholdById(v[field])) {
+                    broken.push({ domain: 'vendetta', index: index, id: v.id || null, issue: 'Missing ' + field, refId: v[field] });
+                }
+            });
+            (Array.isArray(v.deaths) ? v.deaths : []).forEach(function(death, deathIndex) {
+                if (!death || typeof death !== 'object') return;
+                ['victimId', 'killerId'].forEach(function(field) {
+                    if (_hasId(death[field]) && !window.getCharacterById(death[field])) {
+                        broken.push({ domain: 'vendetta', index: index, id: v.id || null, issue: 'Missing death ' + field, deathIndex: deathIndex, refId: death[field] });
+                    }
+                });
+            });
+        });
+        return broken;
+    }
+
+    // =========================================================================
     // 6. COMPREHENSIVE AUDIT — PURE
     // =========================================================================
 
@@ -910,6 +957,7 @@
         var brokenRoleAssignments = findBrokenRoleAssignments();
         var brokenApprenticeships = findBrokenApprenticeships();
         var brokenFamilyEdges = findBrokenFamilyEdges();
+        var brokenCrimeReferences = findBrokenCrimeReferences();
 
         var total = brokenPlaces.length
             + brokenRelationships.length
@@ -918,7 +966,8 @@
             + brokenRankAssignments.length
             + brokenRoleAssignments.length
             + brokenApprenticeships.length
-            + brokenFamilyEdges.length;
+            + brokenFamilyEdges.length
+            + brokenCrimeReferences.length;
 
         return {
             ok: true,
@@ -930,7 +979,8 @@
                 brokenRankAssignments: brokenRankAssignments.length,
                 brokenRoleAssignments: brokenRoleAssignments.length,
                 brokenApprenticeships: brokenApprenticeships.length,
-                brokenFamilyEdges: brokenFamilyEdges.length
+                brokenFamilyEdges: brokenFamilyEdges.length,
+                brokenCrimeReferences: brokenCrimeReferences.length
             },
             totalIssues: total,
             totalCharacters: window.getCharacters().length,
@@ -1006,6 +1056,7 @@
     window.findBrokenRoleAssignments = findBrokenRoleAssignments;
     window.findBrokenApprenticeships = findBrokenApprenticeships;
     window.findBrokenFamilyEdges = findBrokenFamilyEdges;
+    window.findBrokenCrimeReferences = findBrokenCrimeReferences;
 
     // Repairers (mutate memory; caller persists)
     window.repairBrokenPlaceHierarchy = repairBrokenPlaceHierarchy;
