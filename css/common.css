@@ -2149,3 +2149,5 @@ svg {
 .events-empty__icon--muted { color:var(--dim); }
 .character-location-head-label { color:var(--accent); }
 .character-skills-chip-row--full { width:100%; }
+
+.edu-analytics-danger-message { color:var(--danger-lt); font-size:0.65rem; }
