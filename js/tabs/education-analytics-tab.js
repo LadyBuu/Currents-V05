@@ -354,8 +354,8 @@
     function _unavailableCard(label, reason) {
         return '<div class="edu-manager-stat">' +
             '<div class="edu-manager-stat-label">' + _esc(label) + '</div>' +
-            '<div class="edu-manager-stat-value" style="color:var(--tmut);">—</div>' +
-            '<div class="edu-manager-stat-hint" style="color:var(--danger-lt);">' +
+            '<div class="edu-manager-stat-value edu-analytics-muted-value">—</div>' +
+            '<div class="edu-manager-stat-hint edu-analytics-danger-hint">' +
                 _esc(reason || 'Unavailable') +
             '</div>' +
         '</div>';
@@ -415,11 +415,11 @@
 
         // ---- Local control: min school-age pop ----
         html += '<div class="edu-manager-filters edu-analytics-filter-spaced">' +
-            '<label style="display:flex;align-items:center;gap:6px;font-size:0.65rem;color:var(--dim);">' +
+            '<label class="edu-analytics-filter-label">' +
                 'Min school-age pop:' +
                 '<input type="number" id="eduAnalyticsMinPop" ' +
                     'value="' + _esc(String(minPop)) + '" min="0" step="10" ' +
-                    'style="width:80px;padding:4px 8px;background:var(--bg);' +
+                    'class="edu-analytics-width-field"' +
                     'border:1px solid var(--border);border-radius:var(--radius);' +
                     'color:var(--text);font-family:var(--f-body);font-size:0.65rem;">' +
             '</label>' +
@@ -429,7 +429,7 @@
         '</div>';
 
         if (!recsRead.ok) {
-            html += '<div class="edu-manager-empty" style="padding:20px 12px;">' +
+            html += '<div class="edu-manager-empty edu-analytics-empty-roomy">' +
                 '<div style="color:var(--danger-lt);font-size:0.65rem;">' +
                     'Could not compute recommendations. ' +
                     _esc(recsRead.reason || 'Unknown reason.') +
@@ -443,7 +443,7 @@
         if (!Array.isArray(recs)) recs = [];
 
         if (recs.length === 0) {
-            html += '<div class="edu-manager-empty" style="padding:24px 12px;">' +
+            html += '<div class="edu-manager-empty edu-analytics-empty-large">' +
                 '<div class="edu-manager-empty-hint">' +
                     'No settlements currently need new schools at this threshold.' +
                 '</div>' +
