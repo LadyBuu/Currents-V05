@@ -356,7 +356,7 @@
 
         // Body of filters (collapses)
         html += '<div class="events-filters__body"' +
-            (collapsed ? ' style="display:none;"' : '') + '>';
+            (collapsed ? ' hidden' : '') + '>';
 
         // Search
         html += '<input type="search" class="ev-stork-input events-filters__search" ' +
