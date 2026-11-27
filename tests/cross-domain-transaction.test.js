@@ -117,8 +117,10 @@ test('afterCommit runs after the active mutation window closes', () => {
     const log = [];
     const p = participant('A', log);
     let activeDuringAfterCommit = null;
+    let phaseDuringAfterCommit = null;
     p.afterCommit = () => {
         activeDuringAfterCommit = tx.isActive();
+        phaseDuringAfterCommit = tx.isAfterCommit();
         log.push('A:afterCommit');
     };
 
@@ -129,6 +131,8 @@ test('afterCommit runs after the active mutation window closes', () => {
 
     assert.equal(result.success, true);
     assert.equal(activeDuringAfterCommit, false);
+    assert.equal(phaseDuringAfterCommit, true);
+    assert.equal(tx.isAfterCommit(), false);
     assert.equal(log.includes('A:afterCommit'), true);
 });
 
