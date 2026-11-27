@@ -469,10 +469,7 @@
         function visit(value) {
             if (!value || typeof value !== 'object') return;
             if (Array.isArray(value)) {
-                for (var i = value.length - 1; i >= 0; i--) {
-                    if (deletedIds.has(value[i])) value.splice(i, 1);
-                    else visit(value[i]);
-                }
+                value.forEach(visit);
                 return;
             }
             Object.keys(value).forEach(function (key) {
