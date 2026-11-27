@@ -690,7 +690,7 @@
         return (
             '<div class="rasg-warn">' +
                 '<strong>' + _esc(explanation.title) + '</strong>' +
-                '<div style="margin-top:0.25rem;">' +
+                '<div class="role-assignment-detail">' +
                     _esc(explanation.hint) +
                 '</div>' +
             '</div>'
