@@ -126,6 +126,7 @@
  *     .character-card__field
  *     .character-card__field-label
  *     .character-card__field-value
+ *     .character-card__gender-icon
  *     .character-card__appearance
  *     .character-card__notes
  *
