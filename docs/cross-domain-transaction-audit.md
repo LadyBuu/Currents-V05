@@ -45,7 +45,7 @@ The coordinator deliberately sets `isActive()` to false before calling `afterCom
 - `commitTransactionEnterpriseOwnership`
 - `commitTransactionLocationCleanup`
 
-Industry and location participants invoked these methods from `afterCommit`, so the guard rejected the very phase in which they were meant to publish. Some callers ignored the returned failure; others converted it into a notification error. The coordinator now exposes \`isAfterCommit()\`, and these publishers require that post-commit phase rather than the active mutation window. This preserves the restriction against calling them outside a successful transaction while matching the coordinator's actual lifecycle. Deferred mutation APIs still require an active transaction.
+Industry and location participants invoked these methods from `afterCommit`, so the guard rejected the very phase in which they were meant to publish. Some callers ignored the returned failure; others converted it into a notification error. The coordinator now exposes `isAfterCommit()`, and these publishers require that post-commit phase rather than the active mutation window. This preserves the restriction against calling them outside a successful transaction while matching the coordinator's actual lifecycle. Deferred mutation APIs still require an active transaction.
 
 ### Fixed: Location deletion did not flush or discard deferred character notifications
 
