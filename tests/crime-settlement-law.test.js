@@ -117,8 +117,8 @@ test('recordCrime succeeds at a valid location with no settlement record', () =>
     assert.equal(result.success, true, result.reason);
     assert.equal(result.data.crime.locationId, 'unsettled-location');
     assert.equal(result.data.legalEvaluation.lawful, true);
-    assert.deepEqual(result.data.legalEvaluation.civil, []);
-    assert.deepEqual(result.data.legalEvaluation.religious, []);
+    assert.equal(result.data.legalEvaluation.civil.length, 0);
+    assert.equal(result.data.legalEvaluation.religious.length, 0);
     assert.equal(harness.recorded.length, 1);
     assert.equal(harness.options.civilLawQueryCalls || 0, 0);
 });
