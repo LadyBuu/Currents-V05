@@ -625,8 +625,7 @@
                 'class="edu-history-event-row" style="border-left:3px solid ' + color + ';">' +
             '<div class="edu-manager-row-main">' +
                 '<div class="edu-manager-row-title">' +
-                    '<span style="color:var(--dim);font-family:var(--f-mono);' +
-                    'font-size:0.65rem;margin-right:8px;">' +
+                    '<span class="edu-history-year">' +
                         _esc(yearDisplay) +
                     '</span>' +
                     '<span style="color:' + color + ';font-weight:600;">' +
