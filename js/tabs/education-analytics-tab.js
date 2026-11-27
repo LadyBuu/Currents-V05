@@ -409,12 +409,12 @@
     }
 
     function _renderRecommendationsSection(recsRead, minPop) {
-        var html = '<div class="edu-manager-card" style="margin-top:16px;">';
+        var html = '<div class="edu-manager-card" class="edu-analytics-card-spaced">';
         html += '<h3 class="edu-manager-card-title">Recommended new school locations</h3>';
         html += '<div class="edu-manager-card-body">';
 
         // ---- Local control: min school-age pop ----
-        html += '<div class="edu-manager-filters" style="margin-bottom:12px;">' +
+        html += '<div class="edu-manager-filters" class="edu-analytics-filter-spaced">' +
             '<label style="display:flex;align-items:center;gap:6px;font-size:0.65rem;color:var(--dim);">' +
                 'Min school-age pop:' +
                 '<input type="number" id="eduAnalyticsMinPop" ' +
@@ -452,7 +452,7 @@
             return html;
         }
 
-        html += '<div id="eduAnalyticsRecList" style="display:flex;flex-direction:column;gap:4px;">';
+        html += '<div id="eduAnalyticsRecList" class="edu-analytics-recommendation-list">';
         for (var i = 0; i < recs.length; i++) {
             var rec = recs[i];
             if (!rec || !rec.locationId) continue;
