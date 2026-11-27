@@ -3196,3 +3196,48 @@ runtime integrity report was executed during this audit. In particular, test
 cross-domain rollback and persistence for household deletion, residence
 vacancy/demolition, unit reassignment, and location deletion before treating
 those workflows as runtime-verified.
+
+
+FULL HOUSEHOLD / RESIDENCE MODULE AUDIT (2026-11-27)
+
+Scope expanded to the household/residence inventory in structure.txt: domain
+modules, manager HTML/bootstrap/runtime, household tabs, residence tab, modal
+implementations and compatibility shims, selector integration, and this document.
+The manager presentation/loading approach was compared with EducationManager
+and shared manager conventions.
+
+CODE REVIEW
+- Household tabs use HouseholdTabRuntime and the shared TabManager contract;
+  the residence tab uses shared runtime helpers and delegated container events.
+  No confirmed source-level defect was established in this pass.
+- The domain separates policy, state, queries, commands, orchestration, and
+  presentation. Mutations must preserve reverse-index and persistence
+  contracts; diagnostics detect corruption but do not repair it.
+- Compatibility/deprecated modal files are shims or stubs, not behavior owners.
+  Callers should target canonical modal implementations.
+- This was not execution of every command path. Cross-domain rollback, save
+  boundaries, event-driven rerendering, and import/export remain runtime checks.
+
+STYLING / PRESENTATION FINDINGS
+- HouseholdManager.html embeds theme definitions and compatibility aliases in
+  a large inline style block, while EducationManager loads shared
+  css/themes.css and css/common.css. This creates a second source of theme
+  tokens and a concrete consistency/drift risk.
+- Household/residence modal renderers and several tab renderers contain
+  substantial inline presentation styles. Shared classes/tokens are used less
+  consistently than in neighboring manager patterns, complicating uniform
+  spacing, typography, responsive behavior, and theme updates.
+- Legacy aliases (--bg2/--bg3/--text/--dim/--border) appear intentional for
+  compatibility. Do not remove them until household renderers and themes are
+  migrated together.
+- No CSS migration was made: moving the theme layer or converting generated
+  inline styles without visual regression coverage could alter every theme
+  and modal. This is identified styling debt, not a verified screen defect.
+
+NEXT VERIFICATION
+Run desktop and narrow-width checks across representative light/dark and
+accent themes. Exercise every household/residence tab, modal, empty/error
+state, and shim entrypoint; check keyboard focus, overflow, modal stacking,
+and contrast. Then migrate theme definitions to the shared stylesheet and
+replace repeated inline declarations with shared classes in visually checked
+batches.
