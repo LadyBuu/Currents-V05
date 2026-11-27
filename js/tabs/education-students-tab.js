@@ -539,9 +539,9 @@
                 opt('enrollment', 'Sort: Enrollment year', filters.sortBy) +
                 opt('readiness',  'Sort: Ready first',    filters.sortBy) +
             '</select>' +
-            '<label class="edu-manager-btn" style="cursor:pointer;">' +
+            '<label class="edu-manager-btn edu-students-label">' +
                 '<input type="checkbox" id="eduStudentsFilterReady"' +
-                (filters.readyOnly ? ' checked' : '') + ' style="margin:0 4px 0 0;">' +
+                (filters.readyOnly ? ' checked' : '') + ' class="edu-students-checkbox">' +
                 'Ready only' +
             '</label>' +
             '<button type="button" id="eduStudentsFilterClear" class="edu-manager-btn">' +
