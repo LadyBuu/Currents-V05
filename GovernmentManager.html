@@ -174,7 +174,12 @@
         @media (max-width: 768px) {
     
     
-            .locations-sidebar.visible { transform: translateX(0); }
+            .locations-sidebar.visible { transform: translateX(0); .world-app { flex-direction:column; }
+.locations-sidebar { position:fixed; top:0; bottom:0; left:0; height:100vh; width:85%; max-width:280px; z-index:1000; transform:translateX(-100%); transition:transform 0.3s ease; }
+.locations-sidebar.visible { transform:translateX(0); }
+.manager-subtabs { padding-left:16px; padding-right:16px; }
+.manager-subtab { flex:1 1 auto; min-width:0; padding:10px 14px; font-size:0.72rem; }
+}
     
     
     
