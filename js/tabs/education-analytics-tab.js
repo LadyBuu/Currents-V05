@@ -409,7 +409,7 @@
     }
 
     function _renderRecommendationsSection(recsRead, minPop) {
-        var html = '<div class="edu-manager-card" class="edu-analytics-card-spaced">';
+        var html = '<div class="edu-manager-card edu-analytics-card-spaced">';
         html += '<h3 class="edu-manager-card-title">Recommended new school locations</h3>';
         html += '<div class="edu-manager-card-body">';
 
