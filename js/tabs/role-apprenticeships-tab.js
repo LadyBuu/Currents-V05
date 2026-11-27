@@ -709,13 +709,13 @@
         if (!createAvailable) {
             var min = _minMasterSkill();
             masterHint =
-                '<div class="rap__subtitle" style="color:var(--dim);margin-top:0.25rem;">' +
+                '<div class="rap__subtitle" class="rap__subtitle rap__subtitle--muted">' +
                     'No eligible masters: need a living holder with skill ' +
                     min + '+ to teach.' +
                 '</div>';
         } else if (masterCount > 0) {
             masterHint =
-                '<div class="rap__subtitle" style="color:var(--dim);margin-top:0.25rem;">' +
+                '<div class="rap__subtitle" class="rap__subtitle rap__subtitle--muted">' +
                     masterCount + ' eligible master' + (masterCount === 1 ? '' : 's') +
                     ' available.' +
                 '</div>';
