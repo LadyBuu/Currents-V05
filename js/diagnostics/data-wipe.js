@@ -170,15 +170,9 @@
         data.characters.forEach(function (character) {
             if (!character || typeof character !== 'object') return;
 
-            if (Array.isArray(character.householdHistory)) {
-                character.householdHistory.forEach(function (entry) {
-                    if (!entry || typeof entry !== 'object' ||
-                        !entry.householdId || entry.leftYear) return;
-                    entry.leftYear = year;
-                    entry.leftReason = 'Household data wiped';
-                });
-            } else if (character.householdHistory !== undefined &&
-                       character.householdHistory !== null) {
+            if (character.householdHistory !== undefined &&
+                character.householdHistory !== null &&
+                !Array.isArray(character.householdHistory)) {
                 throw new Error(
                     'Cannot clear household references: Character ' +
                     (character.id || '(unknown)') +
@@ -186,10 +180,13 @@
                 );
             }
 
-            if (character.household || character.householdId) {
-                character.household = '';
-                character.householdId = '';
-            }
+            // This is a full household-data wipe, not a household departure.
+            // Retaining householdHistory would leave deleted household IDs
+            // embedded in character records, which can be mistaken for live
+            // links by downstream code and audits.
+            character.householdHistory = [];
+            character.household = '';
+            character.householdId = '';
         });
 
         // Residence occupancy is a live reverse reference. Keep the
