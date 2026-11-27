@@ -668,7 +668,7 @@
                 && typeof row.income === 'number'
                 && typeof row.expenses === 'number') {
                 detailHtml = '<div class="edu-manager-row-meta" ' +
-                    'style="margin-top:2px;color:var(--dim);">' +
+                    'class="edu-finances-meta-spaced">' +
                     'Income ' + _formatCurrency(row.income) +
                     ' − Expenses ' + _formatCurrency(row.expenses) +
                 '</div>';
@@ -687,7 +687,7 @@
         return '<div class="edu-manager-row' +
                 (isDemolished ? ' edu-manager-row--selected' : '') + '" ' +
                 'data-institution-id="' + _esc(row.id) + '"' +
-                (isDemolished ? ' style="opacity:0.6;"' : '') + '>' +
+                (isDemolished ? ' class="edu-finances-demolished"' : '') + '>' +
             '<div class="edu-manager-row-main">' +
                 '<div class="edu-manager-row-title">' + _esc(row.name) + '</div>' +
                 '<div class="edu-manager-row-meta">' +
