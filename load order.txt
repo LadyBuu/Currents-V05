@@ -648,3 +648,60 @@
        js/government/government-laws.js
        js/households/modals-residence-snapshot.js
      ============================================================ -->
+
+
+================================================================================
+PART 8 — CURRENT PAGE-SPECIFIC SCRIPT ORDERS (VERIFIED)
+================================================================================
+
+This file's flat sequence describes the canonical index.html application.
+It is not a universal script list for every standalone manager page. Those
+pages have their own script tags and may omit or reorder modules.
+
+EventsManager.html currently loads its event feature in this order:
+
+  js/events/events-constants.js
+  js/events/events-queries.js
+  js/events/events-view-models.js
+  js/events/events-ui-list.js
+  js/events/events-bootstrap.js
+  js/tabs/events-deaths-tab.js
+  js/tabs/events-stork-tab.js
+  js/tabs/events-adoption-tab.js
+  js/tabs/events-surrogacy-tab.js
+  js/tabs/events-disaster-tab.js
+  js/tabs/events-crime-tab.js
+  js/tabs/events-social-tab.js
+  js/tabs/events-manager-bootstrap.js
+
+The Crime domain itself is loaded earlier on EventsManager.html, after
+settlement query modules and before education, in this order:
+
+  crime-constants.js
+  crime-state.js
+  crime-law-integration.js
+  crime-queries.js
+  crime-commands.js
+  crime-view-models.js
+  modals-crime.js
+  crime-ui-stats.js
+  vendetta-system.js
+  crime-bootstrap.js
+
+Use the complete script tags in the target HTML as the source of truth when
+changing a page. Do not infer a manager's dependencies from index.html alone.
+
+================================================================================
+PART 9 — DOCUMENTATION MAINTENANCE
+================================================================================
+
+- structure.txt is a generated path inventory. Refresh it from the repository
+  tree after file additions, removals, or moves; it is not an architecture map.
+- Domain documentation files describe subsystem contracts and may contain
+  historical audits. Verify any claimed export, dependency, or load order
+  against current source before relying on it.
+- docs/semantics.md defines cross-project conventions; domain docs may add
+  specifics but must not contradict it.
+- The current repository includes standalone manager pages beyond index.html,
+  including EventsManager.html, Diagnostics.html, and Matchmaker.html. Treat
+  each page's own script tags as its actual load order.
