@@ -343,7 +343,7 @@
             return '<article class="wipe-card" data-wipe-card="' + config.id + '">' +
                 '<h2>' + escapeHtml(config.label) + '</h2>' +
                 '<p>' + escapeHtml(config.description) + '</p>' +
-                '<div class="wipe-meta"><span>Records in scope</span><span class="wipe-count">' + count + '</span></div>' +
+                '<div class="wipe-meta"><span>Records / links in scope</span><span class="wipe-count">' + count + '</span></div>' +
                 '<button class="wipe-button" type="button" data-wipe="' + config.id + '"' + (count === 0 ? ' disabled' : '') + '>Delete all ' + escapeHtml(config.label.toLowerCase()) + '</button>' +
                 '</article>';
         }).join('');
@@ -358,8 +358,9 @@
     function openConfirm(config) {
         currentConfig = config;
         document.getElementById('wipeModalTitle').textContent = 'Delete all ' + config.label.toLowerCase() + '?';
-        document.getElementById('wipeModalDescription').textContent =
-            'This will permanently remove ' + countFor(config) + ' record(s) across the collections listed below. This action cannot be undone.';
+        document.getElementById('wipeModalDescription').textContent = config.id === 'households'
+            ? 'This permanently deletes household records and clears their live cross-domain links. Historical membership and residence records are retained. The wipe is blocked if a school is still household-owned.'
+            : 'This will permanently remove ' + countFor(config) + ' record(s) across the collections listed below. This action cannot be undone.';
         document.getElementById('wipeModalScope').textContent = scopeSummary(config);
         document.getElementById('wipePhrase').textContent = config.phrase;
         input.value = '';
