@@ -358,14 +358,25 @@
             ? window.getCurrentPlace
             : (window.world && typeof window.world.getCurrentPlace === 'function'
                 ? window.world.getCurrentPlace.bind(window.world) : null);
-        if (!resolver) return 'Unknown location';
-
-        var place = resolver(character);
-        if (!place) return 'Unknown location';
-        if (typeof place.displayName !== 'string' || place.displayName.length === 0) {
-            return 'Unknown location';
+        var place = null;
+        if (resolver) {
+            try { place = resolver(character); } catch (e) { place = null; }
         }
-        return place.displayName;
+        // A direct place lookup is a safe fallback when world.js is not
+        // exposed on window. It still resolves the character's recorded
+        // currentLocationId rather than displaying the raw identifier.
+        if (!place && typeof window.getPlaceById === 'function') {
+            try { place = window.getPlaceById(locationId); } catch (e) { place = null; }
+        }
+        if (!place && window.LocationQueries
+            && typeof window.LocationQueries.getPlace === 'function') {
+            try { place = window.LocationQueries.getPlace(locationId); } catch (e) { place = null; }
+        }
+        if (!place) return 'Unknown location';
+        var displayName = typeof place.displayName === 'string' && place.displayName.length
+            ? place.displayName
+            : (typeof place.name === 'string' ? place.name : '');
+        return displayName || 'Unknown location';
     }
 
     // =========================================================================
