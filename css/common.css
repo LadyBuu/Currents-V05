@@ -2050,7 +2050,8 @@ svg {
 /* Domain modal classes extracted from generated markup. */
 .text-muted { color: var(--dim); }
 .text-xs { font-size: 0.55rem; }
-.text-sm { font-size: 0.7rem; }
+.text-sm { font-size: 0.6rem; }
+.text-md { font-size: 0.7rem; }
 .text-2xs { font-size: 0.5rem; }
 .mt-4 { margin-top: 4px; }
 .residence-detail-indent { margin-top: 8px; padding-left: 24px; }
