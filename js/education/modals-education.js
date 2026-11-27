@@ -370,31 +370,31 @@
         var content =
             '<div style="max-height:520px;overflow-y:auto;padding:4px;">' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Name *</label>' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Name *</label>' +
             '<input type="text" id="createInstName" value="' +
             _escapeHtml(defaultData.name || '') +
-            '" placeholder="e.g., Oxford Academy" autofocus style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '" placeholder="e.g., Oxford Academy" autofocus class="modal-field">' +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Type *</label>' +
-            '<select id="createInstType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Type *</label>' +
+            '<select id="createInstType" class="modal-field">' +
             _buildTypeOptions(defaultData.typeId || firstTypeId) +
             '</select>' +
             '<small id="createInstTypeHint" style="font-size:0.5rem;color:var(--dim);"></small>' +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location *</label>' +
-            '<select id="createInstLocation" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Location *</label>' +
+            '<select id="createInstLocation" class="modal-field">' +
             _buildPlaceOptions(defaultData.locationId) +
             '</select>' +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Ownership</label>' +
-            '<select id="createInstOwnership" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Ownership</label>' +
+            '<select id="createInstOwnership" class="modal-field">' +
             '<option value="public">Public (Free)</option>' +
             '<option value="private">Private (Tuition)</option>' +
             (hasReligions ? '<option value="religious">Religious</option>' : '') +
@@ -423,9 +423,9 @@
             '<small style="font-size:0.5rem;color:var(--dim);">Private institutions must have an owner</small>' +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
-            '<textarea id="createInstDescription" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Description</label>' +
+            '<textarea id="createInstDescription" rows="2" class="modal-field">' +
             _escapeHtml(defaultData.description || '') + '</textarea>' +
             '</div>' +
 
@@ -585,38 +585,38 @@
             'Editing <strong>' + _escapeHtml(s.name) + '</strong>' +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Name *</label>' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Name *</label>' +
             '<input type="text" id="editInstName" value="' +
             _escapeHtml(s.name) +
-            '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '" class="modal-field">' +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Type</label>' +
-            '<select id="editInstType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Type</label>' +
+            '<select id="editInstType" class="modal-field">' +
             _buildTypeOptions(s.type) +
             '</select>' +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Location</label>' +
-            '<select id="editInstLocation" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Location</label>' +
+            '<select id="editInstLocation" class="modal-field">' +
             _buildPlaceOptions(s.locationId) +
             '</select>' +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
-            '<textarea id="editInstDescription" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Description</label>' +
+            '<textarea id="editInstDescription" rows="2" class="modal-field">' +
             _escapeHtml(details.description || '') + '</textarea>' +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Max Students</label>' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Max Students</label>' +
             '<input type="number" id="editInstMaxStudents" value="' +
             s.maxStudents +
-            '" min="1" max="5000" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '" min="1" max="5000" class="modal-field">' +
             '</div>' +
 
             '</div>';
@@ -785,7 +785,7 @@
             '</div>' +
             '</div>' +
 
-            '<div style="margin-bottom:12px;">' +
+            '<div class="modal-mb-12">' +
             '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Curriculum</div>' +
             '<div style="background:var(--bg3);padding:8px;border-radius:6px;min-height:30px;">' +
             curriculumHtml + '</div>' +
@@ -991,17 +991,17 @@
             '</div>' +
             specWarning +
 
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
             '<div style="font-size:0.65rem;font-weight:bold;color:var(--accent);margin-bottom:8px;">Roles (Professions)</div>' +
             '<div style="background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--border);max-height:150px;overflow-y:auto;">' +
             roleHtml + '</div></div>' +
 
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
             '<div style="font-size:0.65rem;font-weight:bold;color:var(--accent);margin-bottom:8px;">Subjects</div>' +
             '<div style="background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--border);max-height:250px;overflow-y:auto;">' +
             subjectHtml + '</div></div>' +
 
-            '<div style="margin-bottom:16px;">' +
+            '<div class="modal-mb-16">' +
             '<div style="font-size:0.65rem;font-weight:bold;color:var(--accent);margin-bottom:8px;">Custom Subjects</div>' +
             '<div style="display:flex;gap:8px;margin-bottom:8px;">' +
             '<input type="text" id="customSubjectInput" placeholder="Custom subject name..." style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;color:var(--text);">' +
@@ -1196,16 +1196,16 @@
             _escapeHtml(tuitionLine) + '</div>' +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Student</label>' +
-            '<select id="enrollStudentSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Student</label>' +
+            '<select id="enrollStudentSelect" class="modal-field">' +
             studentOptions + '</select></div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Enrollment Year</label>' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Enrollment Year</label>' +
             '<input type="number" id="enrollYear" value="' + year +
             '" min="1" max="' + (year + 5) +
-            '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '" class="modal-field">' +
             '</div>';
 
         _openModal({
@@ -1308,14 +1308,14 @@
             teachers.length + ' teachers currently</div>' +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Teacher</label>' +
-            '<select id="hireTeacherSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Teacher</label>' +
+            '<select id="hireTeacherSelect" class="modal-field">' +
             teacherOptions + '</select></div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Subject</label>' +
-            '<select id="hireSubjectSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Subject</label>' +
+            '<select id="hireSubjectSelect" class="modal-field">' +
             subjectOptions + '</select></div>';
 
         _openModal({
@@ -1396,20 +1396,20 @@
             currentLine +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Headmaster</label>' +
-            '<select id="headmasterSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Headmaster</label>' +
+            '<select id="headmasterSelect" class="modal-field">' +
             options + '</select></div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Title</label>' +
-            '<input type="text" id="headmasterTitle" value="Headmaster" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Title</label>' +
+            '<input type="text" id="headmasterTitle" value="Headmaster" class="modal-field">' +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Start Year</label>' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Start Year</label>' +
             '<input type="number" id="headmasterStartYear" value="' + year +
-            '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '" min="1" class="modal-field">' +
             '</div>' +
 
             (current
@@ -1521,9 +1521,9 @@
                     _escapeHtml(role ? role.name : roleId) + '</option>';
             }
             roleSelectHtml =
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Role to Grant</label>' +
-                '<select id="graduateRoleSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '<div class="form-group" class="modal-mb-12">' +
+                '<label class="modal-field-label">Role to Grant</label>' +
+                '<select id="graduateRoleSelect" class="modal-field">' +
                 roleOptions +
                 '</select>' +
                 '<small style="font-size:0.5rem;color:var(--dim);">This institution teaches multiple roles. Choose which to grant.</small>' +
@@ -1535,17 +1535,17 @@
             'Graduate a student from <strong>' + _escapeHtml(s.name) + '</strong>' +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Student</label>' +
-            '<select id="graduateStudentSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Student</label>' +
+            '<select id="graduateStudentSelect" class="modal-field">' +
             studentOptions + '</select></div>' +
 
             roleSelectHtml +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Graduation Year</label>' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Graduation Year</label>' +
             '<input type="number" id="graduateYear" value="' + year +
-            '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '" min="1" class="modal-field">' +
             '</div>';
 
         _openModal({
@@ -1627,13 +1627,13 @@
             cascadeNote +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Type "<strong>' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Type "<strong>' +
             _escapeHtml(s.name) + '</strong>" to confirm</label>' +
-            '<input type="text" id="confirmDeleteInstName" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<input type="text" id="confirmDeleteInstName" class="modal-field">' +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
+            '<div class="form-group" class="modal-mb-12">' +
             '<label style="display:flex;align-items:center;gap:8px;font-size:0.65rem;">' +
             '<input type="checkbox" id="deleteCascade"> Cascade delete associated records' +
             '</label>' +
@@ -1714,23 +1714,23 @@
 
             (isPublic ? '' :
                 '<div>' +
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Base Tuition (gold/year)</label>' +
+                '<div class="form-group" class="modal-mb-12">' +
+                '<label class="modal-field-label">Base Tuition (gold/year)</label>' +
                 '<input type="number" id="tuitionBase" value="' +
                 (s.baseTuition || 0) +
-                '" min="0" max="200" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '" min="0" max="200" class="modal-field">' +
                 '</div>' +
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Manual Override</label>' +
-                '<input type="number" id="tuitionOverride" min="0" max="200" placeholder="Leave empty for calculated" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '<div class="form-group" class="modal-mb-12">' +
+                '<label class="modal-field-label">Manual Override</label>' +
+                '<input type="number" id="tuitionOverride" min="0" max="200" placeholder="Leave empty for calculated" class="modal-field">' +
                 '</div>' +
-                '<div class="form-group" style="margin-bottom:12px;">' +
+                '<div class="form-group" class="modal-mb-12">' +
                 '<label style="display:flex;align-items:center;gap:8px;font-size:0.65rem;">' +
                 '<input type="checkbox" id="tuitionWaive"> Waive tuition for all students</label>' +
                 '</div>' +
-                '<div class="form-group" style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
-                '<input type="text" id="tuitionReason" placeholder="e.g., Inflation, Scholarship" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '<div class="form-group" class="modal-mb-12">' +
+                '<label class="modal-field-label">Reason</label>' +
+                '<input type="text" id="tuitionReason" placeholder="e.g., Inflation, Scholarship" class="modal-field">' +
                 '</div>' +
                 (historyHtml
                     ? '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">' +
@@ -1835,8 +1835,8 @@
                 : '') +
             '</div>' +
 
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Ownership Type</label>' +
+            '<div class="form-group" class="modal-mb-12">' +
+            '<label class="modal-field-label">Ownership Type</label>' +
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
             '<label style="display:flex;align-items:center;gap:6px;font-size:0.65rem;cursor:pointer;">' +
             '<input type="radio" name="mgmtOwnershipType" value="public"' +
