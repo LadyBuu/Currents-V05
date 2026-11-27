@@ -26,11 +26,11 @@ test('Government Manager preserves the complete expected tab set', () => {
     };
     for (const [tabId, filename] of Object.entries(registrations)) {
         const source = fs.readFileSync(path.join(root, 'js/tabs', filename), 'utf8');
-        assert.match(source, /var SCOPE\\s*=\\s*['"]government['"]/,
+        assert.match(source, /var SCOPE\s*=\s*['"]government['"]/,
             `${filename} must register in the Government scope`);
-        assert.match(source, new RegExp(`var TAB_ID\\s*=\\s*['"]${tabId}['"]`),
+        assert.match(source, new RegExp(`var TAB_ID\s*=\s*['"]${tabId}['"]`),
             `${filename} must declare the expected tab ID`);
-        assert.match(source, /\\b(?:TM|TabManager)\\.register\\(SCOPE,\\s*TAB_ID,/,
+        assert.match(source, /\b(?:TM|TabManager)\\.register\(SCOPE,\s*TAB_ID,/,
             `${filename} must register its renderer with TabManager`);
     }
 });
