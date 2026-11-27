@@ -206,7 +206,7 @@
         return '<div class="st-section">' +
             '<div class="st-section__title">' +
             icon('GEAR') + ' Fiscal Policy' +
-            '<span style="flex:1;"></span>' + editBtn +
+            '<span class="settlement-action-spacer"></span>' + editBtn +
             '</div>' +
             '<div class="st-section__body">' +
             row('Tax Rate', fmtPercent(s.taxRate),
@@ -267,7 +267,7 @@
         return '<div class="st-section">' +
             '<div class="st-section__title">' +
             icon('COIN') + ' Annual Budget' +
-            '<span style="flex:1;"></span>' + openBtn +
+            '<span class="settlement-action-spacer"></span>' + openBtn +
             '</div>' +
             '<div class="st-stats st-stats--3">' +
             stat('Total Income', fmtGold(totalIncome), 'st-stat__value st-stat__value--pos') +
@@ -361,7 +361,7 @@
         return '<div class="st-section">' +
             '<div class="st-section__title">' +
             icon('PERSON') + ' Employment' +
-            '<span style="flex:1;"></span>' + detailsBtn +
+            '<span class="settlement-action-spacer"></span>' + detailsBtn +
             '</div>' +
             '<div class="st-stats">' +
             stat('Workers', fmtNum(employment.totalEmployed), 'st-stat__value') +
