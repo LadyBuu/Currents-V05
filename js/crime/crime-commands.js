@@ -120,20 +120,15 @@
  *   - SettlementGovernmentCommands.recordCrimeImpact (optional; absence
  *     warns once and skips settlement effects)
  *
- * KNOWN HAZARD (external, not fixable from this file):
- *   CrimeLawIntegration._getCivilLaws resolves through
- *   SettlementLawQueries.getCivilLaws(locationId). That function
- *   returns null when the settlement record does not exist (see
- *   settlement-law-queries.js::_getLawsArray →
- *   SettlementQueries.getSettlementData → null → getCivilLaws
- *   returns null). CrimeLawIntegration.getApplicableLaws does
- *   civilLaws.length without a null guard, so evaluateAction throws
- *   TypeError when the locationId resolves to a place that has no
- *   settlement record. The try/catch that wraps every command here
- *   catches that, and the command returns { success: false, reason:
- *   'Cannot read ...' }. The fix belongs in crime-law-integration.js
- *   (return [] instead of null, or guard the caller) and is out of
- *   scope for this file.
+ * MISSING-SETTLEMENT LAW POLICY:
+ *   A valid location without a SettlementState record has no
+ *   settlement-level civil laws. CrimeLawIntegration explicitly returns
+ *   an empty civil-law list for that case; follower religious laws still
+ *   apply independently. If a settlement record exists but its civil-law
+ *   query returns null or a non-array value, law evaluation fails with an
+ *   explicit data-availability error rather than treating broken data as
+ *   a lawless settlement. See crime-law-integration.js and
+ *   tests/crime-settlement-law.test.js.
  *
  * ICON POLICY: No emojis. No icons.
  *
