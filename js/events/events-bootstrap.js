@@ -468,13 +468,15 @@
                             available = hasMethods(window.CharacterQueries, ['getCharacterSummary']) &&
                                 (hasMethods(window.ChildrenState, ['allAdoptionIds', 'getAdoptionCopy']) ||
                                  (hasMethods(window.ChildrenQueries, ['getAdoptionsForAdopter']) &&
-                                  hasMethods(window.CharacterQueries, ['getAllCharacters'])));
+                                  hasMethods(window.CharacterQueries, ['getAllCharacters']))) &&
+                                hasMethods(window, ['openCreateAdoptionModal', 'openEditAdoptionModal', 'openEndAdoptionModal']);
                             break;
                         case 'surrogacy':
                             available = hasMethods(window.CharacterQueries, ['getCharacterSummary']) &&
                                 (hasMethods(window.ChildrenState, ['allSurrogacyIds', 'getSurrogacyCopy']) ||
                                  (hasMethods(window.ChildrenQueries, ['getSurrogacyArrangementsForIntendedParent']) &&
-                                  hasMethods(window.CharacterQueries, ['getAllCharacters'])));
+                                  hasMethods(window.CharacterQueries, ['getAllCharacters']))) &&
+                                hasMethods(window, ['openSurrogacyArrangementModal', 'openCompleteSurrogacyModal', 'openCancelSurrogacyModal']);
                             break;
                         case 'disasters':   available = typeof window.DisasterQueries !== 'undefined'; break;
                         case 'social':      available = typeof window.RelationshipQueries !== 'undefined'; break;
