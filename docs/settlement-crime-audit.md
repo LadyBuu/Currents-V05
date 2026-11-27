@@ -97,31 +97,8 @@ Recommendation: retain the current behavior if intended; label the scope in
 the UI. If changing it, aggregate descendant IDs and de-duplicate incident
 IDs explicitly.
 
-C3 — Crime-law integration distinguishes absent settlements from broken law data.
-Severity: resolved at source level; runtime test execution pending.
-Confirmed: SettlementLawQueries.getCivilLaws returns null when no settlement
-record exists, while CrimeLawIntegration.getApplicableLaws previously
-iterated civilLaws.length without a null guard. This caused recordCrime to
-return a TypeError-derived failure for a valid location without a settlement.
+The former C3 null-law hazard has been removed from the findings because source inspection confirms the fix is implemented. Its regression tests are present but have not been run; this is a source-level closure only.
 
-Implemented policy:
-- No SettlementState record for a valid location means there is no
-  settlement-level civil jurisdiction, so CrimeLawIntegration uses an empty
-  civil-law list. The crime can still be recorded.
-- Character-specific follower religious laws remain applicable without a
-  settlement record; settlement-wide theocratic law cannot apply without a
-  settlement record.
-- If a settlement record exists but its civil-law query returns null or a
-  non-array value, evaluation fails explicitly. Broken law data is not
-  silently reclassified as a lawless settlement.
-- If the settlement-data query dependency itself is unavailable, evaluation
-  fails explicitly rather than confusing a missing dependency with an absent
-  settlement.
-
-Regression coverage was added in tests/crime-settlement-law.test.js for
-recording at a location without a settlement, preserving follower religious
-laws, and rejecting null civil-law data for an existing settlement. The test
-file has been added but has not been executed in this environment.
 
 5. DATA-LIFECYCLE NOTES
 
@@ -147,5 +124,5 @@ tab/helpers/bootstrap, settlement crime query, crime state/commands/queries,
 vendetta compatibility shim, and the existing settlement/crime subsystem
 documentation.
 
-No browser interaction or automated test suite was run as part of this source review. The source-level regression tests now cover the no-settlement crime-recording policy and its failure boundary; they still need execution in the project's test environment. The other conditional risks above should be confirmed with populated-data tests using a settlement with nested locations, a missing descendant query, and deleted character/location references.
+No browser interaction or automated test suite was run as part of this source review. The source-level regression tests for the no-settlement crime-recording policy and its failure boundary remain unexecuted. The remaining conditional risks should be confirmed with populated-data tests using a settlement with nested locations, a missing descendant query, and deleted character/location references.
 ================================================================================
