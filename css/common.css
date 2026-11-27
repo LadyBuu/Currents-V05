@@ -2155,3 +2155,13 @@ svg {
 .edu-history-meta-tiny { font-size:0.5rem; color:var(--dim); margin-top:2px; }
 .edu-history-value-change { font-size:0.55rem; color:var(--dim); margin-top:2px; }
 .edu-history-row-meta-spaced { margin-top:2px; }
+
+/* Education roster and history presentation. */
+.edu-students-skill-chip { font-size:0.5rem; background:var(--bg3); border:1px solid var(--border-light); border-radius:10px; padding:1px 7px; }
+.edu-students-ready { color:var(--ok); font-weight:600; }
+.edu-finances-ownership-badge { font-size:0.55rem; color:var(--dim); }
+.edu-finances-danger { color:var(--danger-lt); }
+.edu-apprenticeship-role-label { font-family:var(--f-display); font-size:0.65rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--dim); }
+.edu-history-reason, .edu-history-institution { color:var(--dim); }
+.edu-history-year { color:var(--dim); font-family:var(--f-mono); font-size:0.65rem; margin-right:8px; }
+.edu-history-truncation-note { text-align:center; padding:8px; }
