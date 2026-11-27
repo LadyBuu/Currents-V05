@@ -2107,3 +2107,13 @@ svg {
 .romance-attribute-label { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:0.65rem; cursor:pointer; }
 .romance-delete-row { display:flex; justify-content:flex-end; margin-top:12px; }
 .romance-delete-button { background:#8a3020; color:white; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.65rem; }
+
+/* Education tab presentation extracted from generated markup. */
+.edu-overview-card-spaced { margin-bottom:1rem; }
+.edu-overview-score-row { display:flex; align-items:baseline; gap:0.75rem; flex-wrap:wrap; }
+.edu-overview-score-denominator { color:var(--dim); font-size:0.65rem; }
+.edu-analytics-card-spaced { margin-top:16px; }
+.edu-analytics-filter-spaced { margin-bottom:12px; }
+.edu-analytics-recommendation-list { display:flex; flex-direction:column; gap:4px; }
+.edu-student-chip-row { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }
+.edu-history-tiny-muted { font-size:0.5rem; color:var(--dim); }
