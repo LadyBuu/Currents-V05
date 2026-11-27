@@ -522,7 +522,7 @@
 
         var content =
             '<div class="hh-modal-form">' +
-                '<div class="hh-econ-grid hh-econ-grid-3" style="margin-bottom:12px;">' +
+                '<div class="hh-econ-grid hh-econ-grid-3 hh-econ-grid--spaced">' +
                     T.statCell('Wealth', wealth + 'g',
                         wealth >= 0 ? 'var(--success)' : 'var(--danger)') +
                     T.statCell('Debt', debt + 'g',
@@ -817,7 +817,7 @@
 
         var content =
             '<div class="hh-modal-form">' +
-                '<div class="hh-econ-grid hh-econ-grid-2" style="margin-bottom:12px;">' +
+                '<div class="hh-econ-grid hh-econ-grid-2 hh-econ-grid--spaced">' +
                     T.statCell('Annual Income', d.income + 'g', 'var(--success)') +
                     T.statCell('Year', d.year) +
                 '</div>' +
@@ -868,7 +868,7 @@
 
         var content =
             '<div class="hh-modal-form">' +
-                '<div class="hh-econ-grid hh-econ-grid-2" style="margin-bottom:12px;">' +
+                '<div class="hh-econ-grid hh-econ-grid-2 hh-econ-grid--spaced">' +
                     T.statCell('Annual Expenses', d.expenses + 'g', 'var(--warn)') +
                     T.statCell('Year', d.year) +
                 '</div>' +
@@ -925,7 +925,7 @@
 
         var content =
             '<div class="hh-modal-form">' +
-                '<div class="hh-econ-grid hh-econ-grid-3" style="margin-bottom:12px;">' +
+                '<div class="hh-econ-grid hh-econ-grid-3 hh-econ-grid--spaced">' +
                     T.statCell('Current Wealth', d.wealth + 'g') +
                     T.statCell('Income', '+' + d.income + 'g', 'var(--success)') +
                     T.statCell('Expenses', '−' + d.expenses + 'g', 'var(--warn)') +
