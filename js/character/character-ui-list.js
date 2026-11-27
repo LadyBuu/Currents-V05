@@ -268,24 +268,6 @@
             + icon + '</span>';
     }
 
-    function _resolveHouseholdName(character, summary) {
-        var id = summary && (summary.householdId || summary.household)
-            || character && (character.householdId || character.household);
-        if (!_hasId(id)) return '';
-        var queries = window.HouseholdQueries;
-        if (!queries || typeof queries.getHousehold !== 'function') return '';
-        try {
-            var household = queries.getHousehold(id);
-            return household && typeof household.name === 'string' ? household.name : '';
-        } catch (e) { return ''; }
-    }
-
-    function _formatAge(age) {
-        if (age === null || age === undefined) return 'Unknown age';
-        if (typeof age !== 'number' || !Number.isFinite(age) || age < 0) return 'Unknown age';
-        if (age === 0) return '<1y';
-        return age + 'y';
-    }
 
     /**
      * Resolves the culture badge text for a character, or ''.
@@ -401,7 +383,7 @@
      * Builds one row's HTML.
      *
      * @param {Object} character
-     * @param {Object} options - { showStatus, showLocation, showAge, showCulture }
+     * @param {Object} options - { showLocation, showAge, showCulture }
      * @returns {string}
      */
     function _renderRow(character, options) {
@@ -487,7 +469,6 @@
      * @param {Function} [options.onSelect] - called with the character
      *   projection on click. See CALLBACK CONTRACT in the header.
      * @param {string} [options.emptyMessage] - default 'No characters found'
-     * @param {boolean} [options.showStatus] - default true
      * @param {boolean} [options.showLocation] - default true
      * @param {boolean} [options.showAge] - default true
      * @param {boolean} [options.showCulture] - default true
@@ -506,7 +487,6 @@
 
         if (!container) return false;
 
-        var showStatus = options.showStatus !== false;
         var showLocation = options.showLocation !== false;
         var showAge = options.showAge !== false;
         var showCulture = options.showCulture !== false;
@@ -554,7 +534,6 @@
         var sorted = characters.slice().sort(compareOldestFirst);
 
         var rowOptions = {
-            showStatus: showStatus,
             showLocation: showLocation,
             showAge: showAge,
             showCulture: showCulture,
