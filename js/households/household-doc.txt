@@ -3241,3 +3241,17 @@ state, and shim entrypoint; check keyboard focus, overflow, modal stacking,
 and contrast. Then migrate theme definitions to the shared stylesheet and
 replace repeated inline declarations with shared classes in visually checked
 batches.
+
+
+HOUSEHOLD MANAGER THEME CSS MIGRATION (2026-11-27)
+
+HouseholdManager.html now loads css/themes.css before css/common.css, matching
+EducationManager's shared theme setup. The duplicated inline theme-system
+block was removed; the remaining inline stylesheet is page-specific layout
+and household/residence presentation CSS. Legacy token aliases remain in the
+shared theme stylesheet for compatibility with existing renderers.
+
+This is a stylesheet-source consolidation, not a full conversion of generated
+inline styles in household/residence tabs and modals. Those remain follow-up
+styling debt and require visual regression checks across themes and viewport
+sizes.
