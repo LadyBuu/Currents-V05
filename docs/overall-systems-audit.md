@@ -74,11 +74,6 @@ The coordinator is synchronous, rolls participants back in reverse order, and re
 
 **Recommended fix:** add tests for partial apply failure, rollback failure, persistence failure, and after-commit exceptions for every transaction participant combination.
 
-### P2 — Settlement crime-law path has a documented null-data hazard requiring confirmation
-**Location:** Crime/Settlement integration; details in `docs/settlement-crime-audit.md` and `js/crime/crime-commands.js` header.
-
-The crime command documentation identifies a path where missing settlement law data may yield null and be dereferenced by law integration. Confirm the current implementation and add a test for crime recording at a location without a settlement record. Missing law data should have an explicit policy rather than an accidental TypeError.
-
 ### P3 — Settlement crime reporting uses different geographic scopes for incidents and vendettas
 **Location:** `js/tabs/settlement-crime-tab.js`.
 
@@ -141,3 +136,12 @@ The cross-domain transaction caller audit, including all 16 production call site
 ## Follow-up CSS and visual consistency audit
 
 The presentation-layer review, including theme loading, duplicated manager shell rules, JavaScript-owned styling, generated class names, and the recommended standardisation sequence, is documented in [CSS and visual consistency audit](css-styling-audit.md).
+
+
+## Re-audit comparison — 2026-11-27
+
+Compared this baseline with the current source and the focused settlement/crime audit. The previously listed settlement crime-law null-data hazard is **fixed at source level**: `CrimeLawIntegration` treats a valid location without a settlement as having no settlement-level civil laws, while malformed law data for an existing settlement fails explicitly. Regression cases are present in `tests/crime-settlement-law.test.js`; execution remains unverified. The obsolete finding has been removed from the open findings and work order.
+
+The validation source also now accepts lowercase hyphens in variable keys (`VARIABLE_KEY_REGEX: /^[a-z0-9_-]+$/`), resolving the reported `k-*` key rejection. This was checked against source; no runtime validation was performed.
+
+No other prior open finding was removed: the current inspection did not establish that the remaining data-wipe, integrity-coverage, storage-conflict, transaction-test, or settlement-reporting items are fixed. The CSS audit and maintenance backlog remain source-review baselines; their reported items were not individually revalidated in this pass. This was a targeted re-audit, not a fresh exhaustive scan of every module.
