@@ -1927,7 +1927,7 @@
         var content =
             '<div class="modal-mb-16">' +
                 '<div class="residence-panel">' +
-                    '<div class="text-sm"><strong>' +
+                    '<div class="text-md"><strong>' +
                         _esc(residence.name) + '</strong></div>' +
                     '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">' +
                         'This will vacate all occupied units and disassociate every household currently living here.' +
@@ -2019,7 +2019,7 @@
         var content =
             '<div class="modal-mb-16">' +
                 '<div class="residence-panel">' +
-                    '<div class="text-sm"><strong>Residence:</strong> ' +
+                    '<div class="text-md"><strong>Residence:</strong> ' +
                         _esc(residence.name) + '</div>' +
                     '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">' +
                         '<strong>Household:</strong> ' +
@@ -2330,7 +2330,7 @@
         var content =
             '<div class="modal-mb-16">' +
                 '<div style="background:rgba(200,112,64,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
-                    '<div class="text-sm"><strong>Unit ' + unitNumber +
+                    '<div class="text-md"><strong>Unit ' + unitNumber +
                         ' of ' + _esc(residence.name) + '</strong></div>' +
                     '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">' +
                         'Current Household: ' +
@@ -2555,7 +2555,7 @@
         var content =
             '<div class="modal-mb-16">' +
                 '<div class="residence-panel">' +
-                    '<div class="text-sm"><strong>' +
+                    '<div class="text-md"><strong>' +
                         _esc(residence.name) + '</strong></div>' +
                     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.6rem;">' +
                         '<div><span class="text-muted">Current Condition:</span> ' +
