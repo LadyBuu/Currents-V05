@@ -440,9 +440,72 @@
         }
     }
 
+    function referenceKeysFor(configId) {
+        var keys = {
+            households: /household(id)?$/i,
+            characters: /(character|person|perpetrator|victim|killer|parent|child|master|apprentice|adoptee|adopter|pregnant|surrogate)(id)?$/i,
+            locations: /(place|location|parentPlace|settlementLocation)(id)?$/i,
+            settlements: /(settlement)(id)?$/i,
+            governments: /(government|department|leader)(id)?$/i,
+            residences: /(residence|unit)(id)?$/i,
+            roles: /(role)(id)?$/i,
+            cultures: /(culture)(id)?$/i,
+            religions: /(religion|worship)(id)?$/i,
+            ranks: /(rank)(id)?$/i,
+            schools: /(school|institution|subject)(id)?$/i,
+            industries: /(enterprise|industry)(id)?$/i
+        };
+        return keys[configId];
+    }
+
+    // Clear references to every deleted record throughout canonical data,
+    // including nested historical records. Reference fields are set to null;
+    // arrays that directly contain deleted IDs have those IDs removed.
+    function clearReferencesToWipedRecords(data, configId, deletedIds) {
+        if (!deletedIds.size) return;
+        var referenceKey = referenceKeysFor(configId);
+        if (!referenceKey) return;
+
+        function visit(value) {
+            if (!value || typeof value !== 'object') return;
+            if (Array.isArray(value)) {
+                for (var i = value.length - 1; i >= 0; i--) {
+                    if (deletedIds.has(value[i])) value.splice(i, 1);
+                    else visit(value[i]);
+                }
+                return;
+            }
+            Object.keys(value).forEach(function (key) {
+                var child = value[key];
+                if (referenceKey.test(key) && deletedIds.has(child)) {
+                    value[key] = null;
+                } else {
+                    visit(child);
+                }
+            });
+        }
+        Object.keys(data).forEach(function (field) {
+            if (configId === 'households' &&
+                (field === 'households' || field === 'householdPositions' ||
+                 field === 'householdAssignments')) return;
+            visit(data[field]);
+        });
+    }
+
     function wipe(config) {
         var data = getData();
         var snapshots = {};
+        var deletedIds = new Set();
+        Object.keys(config.fields).forEach(function (field) {
+            var records = data[field];
+            if (Array.isArray(records)) {
+                records.forEach(function (record) {
+                    if (record && typeof record.id === 'string') deletedIds.add(record.id);
+                });
+            } else if (records && typeof records === 'object') {
+                Object.keys(records).forEach(function (id) { deletedIds.add(id); });
+            }
+        });
         if (config.id === 'households') {
             preflightHouseholdWipe(data);
             snapshots.characters = clone(data.characters);
@@ -478,6 +541,8 @@
             if (config.id === 'households') {
                 clearHouseholdReferences(data);
             }
+
+            clearReferencesToWipedRecords(data, config.id, deletedIds);
 
             if (config.clearRelationshipState && window.RelationshipState) {
                 if (typeof window.RelationshipState.replaceAll === 'function') {
