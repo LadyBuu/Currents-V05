@@ -95,11 +95,11 @@
                 var color = h.isCurrent ? 'var(--accent)' : 'var(--dim)';
                 historyHtml +=
                     '<div class="gov-inline-32">' +
-                    '<span style="color:' + color + ';">' + _escapeHtml(h.yearLabel) +
+                    '<span class="gov-dynamic-color" data-color="' + color + '">' + _escapeHtml(h.yearLabel) +
                     (h.source === 'override' ? ' (override)' : '') +
                     (h.reason ? ' — ' + _escapeHtml(h.reason) : '') +
                     '</span>' +
-                    '<span style="color:' + color + ';">' + h.salary + ' gold</span>' +
+                    '<span class="gov-dynamic-color" data-color="' + color + '">' + h.salary + ' gold</span>' +
                     '</div>';
             }
         }
@@ -362,7 +362,7 @@
                 '<div class="gov-inline-30">' +
                 '<div class="gov-inline-71">' +
                 '<span class="gov-inline-27">Budget sufficiency</span>' +
-                '<span style="color:' + color + ';">' + pct + '%</span>' +
+                '<span class="gov-dynamic-color" data-color="' + color + '">' + pct + '%</span>' +
                 '</div>' +
                 '<div class="gov-inline-72">' +
                 vm.sufficiency.allocated + ' allocated vs ' + vm.sufficiency.required + ' required' +
