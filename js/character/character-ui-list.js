@@ -694,7 +694,7 @@
              + '</div></div>';
 
         html += '<div class="character-card__field">'
-             + '<div class="character-card__field-label">Gender</div>'
+             + '<div class="character-card__field-label" aria-label="Gender"></div>'
              + '<div class="character-card__field-value">'
              + _genderIconHtml(summary.gender || 'unknown')
              + '</div></div>';
