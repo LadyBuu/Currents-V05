@@ -597,17 +597,9 @@
     }
 
     // Publishes the Household side of a successfully committed cross-domain
-    // transaction. The transaction coordinator calls this only after the
-    // shared persistence operation succeeds.
+    // transaction. The coordinator closes its mutation window before running
+    // afterCommit callbacks, so these publisher methods must run post-commit.
     function commitTransactionUpdate(householdId, changed) {
-        if (!window.CrossDomainTransaction ||
-            typeof window.CrossDomainTransaction.isActive !== 'function' ||
-            window.CrossDomainTransaction.isActive() !== true) {
-            return _fail(
-                'TRANSACTION_REQUIRED',
-                'Transaction notifications must run inside CrossDomainTransaction.'
-            );
-        }
         if (typeof householdId !== 'string' || householdId === '') {
             return _fail('INVALID_ID', 'Household id is required');
         }
@@ -2770,12 +2762,6 @@
     // Publish Household ownership events only after the coordinating
     // cross-domain transaction has committed all canonical mutations.
     function commitTransactionEnterpriseIndexRepair(householdIds, enterpriseCount) {
-        if (!window.CrossDomainTransaction ||
-            typeof window.CrossDomainTransaction.isActive !== 'function' ||
-            window.CrossDomainTransaction.isActive() !== true) {
-            return _fail('TRANSACTION_REQUIRED',
-                'Enterprise index repair notifications require an active CrossDomainTransaction.');
-        }
         if (!Array.isArray(householdIds) ||
             typeof enterpriseCount !== 'number' ||
             !Number.isInteger(enterpriseCount) || enterpriseCount < 0) {
@@ -2790,12 +2776,6 @@
     }
 
     function commitTransactionEnterpriseOwnership(changes) {
-        if (!window.CrossDomainTransaction ||
-            typeof window.CrossDomainTransaction.isActive !== 'function' ||
-            window.CrossDomainTransaction.isActive() !== true) {
-            return _fail('TRANSACTION_REQUIRED',
-                'Enterprise ownership notifications require an active CrossDomainTransaction.');
-        }
         if (!Array.isArray(changes)) {
             return _fail('INVALID_INPUT', 'Ownership changes must be an array.');
         }
@@ -3771,7 +3751,6 @@
         clearLocationReferences: clearLocationReferences,
         clearLocationReferencesMany: clearLocationReferencesMany,
         commitTransactionLocationCleanup: function (locationIds, data) {
-            if (!window.CrossDomainTransaction || typeof window.CrossDomainTransaction.isActive !== 'function' || window.CrossDomainTransaction.isActive() !== true) return _fail('TRANSACTION_REQUIRED', 'Location cleanup notifications require an active CrossDomainTransaction.');
             data = data || {};
             _commit('householdsLocationCleared', { locationIds: Array.isArray(locationIds) ? locationIds.slice() : [], clearedCount: Number(data.clearedCount) || 0, households: Array.isArray(data.households) ? data.households : [], year: _getCurrentYear(), transaction: true });
             return _ok(null);
