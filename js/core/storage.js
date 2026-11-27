@@ -45,8 +45,9 @@
  *   - reset: does not delete the storage key before attempting to save
  *     defaults.
  *
- *   - cross-tab: does not silently overwrite unsaved local changes, but
- *     also does not prevent a later overwrite.
+ *   - cross-tab: detects remote writes while local data is dirty, exposes
+ *     a conflict event/state, and requires explicit reload or keep-local
+ *     resolution. This is not a versioned compare-and-swap guarantee.
  *
  * DOMAIN STATE PULLING (NEW):
  *
@@ -409,6 +410,41 @@
 
     var _isDirty = false;
     var _lastSaveError = null;
+    var _crossTabConflict = false;
+
+    function _setCrossTabConflict(conflicted) {
+        _crossTabConflict = conflicted === true;
+        try {
+            window.dispatchEvent(new CustomEvent('masterDataConflict', {
+                detail: { conflicted: _crossTabConflict, dirty: _isDirty === true }
+            }));
+        } catch (e) { /* Conflict notification must never break persistence. */ }
+    }
+
+    function hasCrossTabConflict() {
+        return _crossTabConflict === true;
+    }
+
+    // Explicitly choose which copy to keep.
+    function resolveCrossTabConflict(choice) {
+        if (!_crossTabConflict) return { ok: true, resolved: false };
+        if (choice === 'reload') {
+            var reloaded = reloadMasterData(true);
+            if (reloaded && reloaded.ok) {
+                _setCrossTabConflict(false);
+                return { ok: true, resolved: true, choice: choice };
+            }
+            return { ok: false, error: reloaded && reloaded.error ? reloaded.error : 'reload-failed' };
+        }
+        if (choice === 'keep-local') {
+            if (saveMasterData() !== true) {
+                return { ok: false, error: _lastSaveError && _lastSaveError.message ? _lastSaveError.message : 'save-failed' };
+            }
+            _setCrossTabConflict(false);
+            return { ok: true, resolved: true, choice: choice };
+        }
+        return { ok: false, error: 'invalid-choice' };
+    }
 
     function _emitSaveStatus(status, error) {
         try {
@@ -1152,10 +1188,10 @@
                 _syncTimeout = null;
 
                 if (_isDirty) {
+                    _setCrossTabConflict(true);
                     console.warn(
-                        'storage.js: another tab updated storage while this tab ' +
-                        'has unsaved changes. Skipping auto-reload to prevent ' +
-                        'data loss. Call reloadMasterData(true) to force.'
+                        'storage.js: another tab updated storage while this tab has unsaved changes. ' +
+                        'Conflict recorded; choose reload or keep-local to resolve.'
                     );
                     return;
                 }
@@ -1170,6 +1206,7 @@
                     _lastSaveError = null;
 
                     try {
+                        _setCrossTabConflict(false);
                         window.dispatchEvent(new CustomEvent('masterDataUpdated', {
                             detail: {
                                 source: 'cross-tab',
@@ -1225,6 +1262,8 @@
     // Dirty state
     window.markDataDirty = markDataDirty;
     window.hasUnsavedChanges = hasUnsavedChanges;
+    window.hasCrossTabConflict = hasCrossTabConflict;
+    window.resolveCrossTabConflict = resolveCrossTabConflict;
     window.getLastSaveError = getLastSaveError;
 
     // Import / reset
