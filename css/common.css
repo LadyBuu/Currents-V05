@@ -2151,3 +2151,7 @@ svg {
 .character-skills-chip-row--full { width:100%; }
 
 .edu-analytics-danger-message { color:var(--danger-lt); font-size:0.65rem; }
+
+.edu-history-meta-tiny { font-size:0.5rem; color:var(--dim); margin-top:2px; }
+.edu-history-value-change { font-size:0.55rem; color:var(--dim); margin-top:2px; }
+.edu-history-row-meta-spaced { margin-top:2px; }
