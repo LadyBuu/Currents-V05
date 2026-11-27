@@ -132,3 +132,8 @@ The repository tree includes the following system families, all included in the 
 - Names, selectors, matchmaker, UI managers and diagnostics
 
 A true exhaustive audit requires executable tests with representative populated data and failure injection. This report is the static review baseline, not a certification that every listed system is defect-free.
+
+
+## Follow-up transaction audit
+
+The cross-domain transaction caller audit, including all 16 production call sites, the post-commit notification fixes, and remaining runtime-test limitations, is documented in [Cross-domain transaction audit](cross-domain-transaction-audit.md).
