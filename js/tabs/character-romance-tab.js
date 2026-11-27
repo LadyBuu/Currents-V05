@@ -1112,27 +1112,27 @@
         }
 
         var content = '' +
-            '<div style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Affair Type</label>' +
-                '<select id="affCreateType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="modal-mb-12">' +
+                '<label class="modal-field-label">Affair Type</label>' +
+                '<select id="affCreateType" class="modal-field">' +
                     typeOptions +
                 '</select>' +
-                '<small style="font-size:0.55rem;color:var(--dim);">' + infoIcon +
+                '<small class="text-xs text-muted">' + infoIcon +
                     ' The relationship will be marked SECRET regardless of the label; the type is metadata for UI display.</small>' +
             '</div>' +
-            '<div style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Start Year</label>' +
+            '<div class="modal-mb-12">' +
+                '<label class="modal-field-label">Start Year</label>' +
                 '<input type="number" id="affCreateYear" value="' + currentYear + '" ' +
                     'min="1" max="' + (currentYear + 10) + '" ' +
-                    'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                    'class="modal-field">' +
             '</div>' +
-            '<div style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+            '<div class="modal-mb-12">' +
+                '<label class="modal-field-label">Notes (optional)</label>' +
                 '<textarea id="affCreateNotes" rows="2" ' +
-                    'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);"></textarea>' +
+                    'class="modal-field"></textarea>' +
             '</div>' +
-            '<div style="margin-bottom:12px;">' +
-                '<label style="display:flex;align-items:center;gap:8px;font-size:0.65rem;cursor:pointer;">' +
+            '<div class="modal-mb-12">' +
+                '<label class="romance-checkbox-label">' +
                     '<input type="checkbox" id="affCreateScandalous">' +
                     'Scandalous if discovered' +
                 '</label>' +
@@ -1461,16 +1461,16 @@
 
         // Start year + notes
         html +=
-            '<div style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Start Year</label>' +
+            '<div class="modal-mb-12">' +
+                '<label class="modal-field-label">Start Year</label>' +
                 '<input type="number" id="romEditYear" value="' + startYear + '" ' +
                     'min="1" max="' + (currentYear + 10) + '" ' +
-                    'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                    'class="modal-field">' +
             '</div>' +
-            '<div style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes (optional)</label>' +
+            '<div class="modal-mb-12">' +
+                '<label class="modal-field-label">Notes (optional)</label>' +
                 '<textarea id="romEditNotes" rows="2" ' +
-                    'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                    'class="modal-field">' +
                     _esc(notes) +
                 '</textarea>' +
             '</div>';
@@ -1488,14 +1488,14 @@
                 '</option>';
             }
 
-            html += '<div style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Affair Type</label>' +
-                '<select id="romEditAffairType" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            html += '<div class="modal-mb-12">' +
+                '<label class="modal-field-label">Affair Type</label>' +
+                '<select id="romEditAffairType" class="modal-field">' +
                     typeOptions +
                 '</select>' +
             '</div>' +
-            '<div style="margin-bottom:12px;">' +
-                '<label style="display:flex;align-items:center;gap:8px;font-size:0.65rem;cursor:pointer;">' +
+            '<div class="modal-mb-12">' +
+                '<label class="romance-checkbox-label">' +
                     '<input type="checkbox" id="romEditPublicBehavior"' +
                         (currentPublicBehavior ? ' checked' : '') + '>' +
                     'Public behavior' +
@@ -1503,20 +1503,20 @@
             '</div>';
 
             // Discovery state — read-only
-            html += '<div style="background:var(--bg2);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.65rem;">' +
-                '<div style="color:var(--accent);font-weight:600;margin-bottom:4px;">' + infoIcon + ' Discovery State</div>';
+            html += '<div class="romance-discovery-panel">' +
+                '<div class="romance-discovery-title">' + infoIcon + ' Discovery State</div>';
             if (discovered) {
                 html += '<div>' + warningIcon + ' Discovered' +
                     (discoveryYear !== null ? ' in ' + _year(discoveryYear) : '') +
                     (discoveryCircumstances ? ' — ' + _esc(discoveryCircumstances) : '') +
                     (discovererId ? ' (by ' + _esc(discovererId) + ')' : '') +
                 '</div>' +
-                '<div style="color:var(--dim);margin-top:4px;">' +
+                '<div class="romance-discovery-detail">' +
                     'Discovery state cannot be edited. It is written only by the discovery roll.' +
                 '</div>';
             } else {
                 html += '<div>Not yet discovered.</div>' +
-                '<div style="color:var(--dim);margin-top:4px;">' +
+                '<div class="romance-discovery-detail">' +
                     'Use the Reveal button on the row to attempt discovery.' +
                 '</div>';
             }
@@ -1525,16 +1525,16 @@
 
         // Attributes (committed only)
         if (isCommitted) {
-            html += '<div style="margin-bottom:12px;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Attributes</label>' +
-                '<div style="background:var(--bg2);padding:12px;border-radius:8px;max-height:220px;overflow-y:auto;">';
+            html += '<div class="modal-mb-12">' +
+                '<label class="modal-field-label">Attributes</label>' +
+                '<div class="romance-attributes-panel">';
             for (var i = 0; i < EDIT_ATTRIBUTE_ORDER.length; i++) {
                 var attr = EDIT_ATTRIBUTE_ORDER[i];
                 var checked = currentAttributes.indexOf(attr) !== -1;
                 var label = _attributeDisplayName(attr);
                 var iconName = _attributeIconName(attr);
                 var iconSvg = iconName ? _icon(iconName) : '';
-                html += '<label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:0.65rem;cursor:pointer;">' +
+                html += '<label class="romance-attribute-label">' +
                     '<input type="checkbox" class="rom-edit-attr-checkbox" value="' + _esc(attr) + '"' +
                         (checked ? ' checked' : '') + '>' +
                     (iconSvg ? iconSvg + ' ' : '') +
@@ -1542,16 +1542,16 @@
                 '</label>';
             }
             html += '</div>' +
-                '<small style="font-size:0.55rem;color:var(--dim);">' + infoIcon +
+                '<small class="text-xs text-muted">' + infoIcon +
                     ' Attributes are validated by the romance rules; invalid combinations are rejected with a reason.</small>' +
             '</div>';
         }
 
         // End relationship / End affair secondary button
         var endLabel = isAffair ? 'End Affair' : 'End Relationship';
-        html += '<div style="display:flex;justify-content:flex-end;margin-top:12px;">' +
+        html += '<div class="romance-delete-row">' +
             '<button id="romEditEndBtn" type="button" ' +
-                'style="background:#8a3020;color:white;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:0.65rem;">' +
+                'class="romance-delete-button">' +
                 (crossIcon ? crossIcon + ' ' : '') + _esc(endLabel) +
             '</button>' +
         '</div>';
