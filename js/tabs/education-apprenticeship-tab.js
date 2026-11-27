@@ -663,10 +663,10 @@
                 opt('ended',     'Ended') +
                 opt('cancelled', 'Cancelled') +
             '</select>' +
-            '<label class="edu-manager-btn" style="cursor:pointer;">' +
+            '<label class="edu-manager-btn edu-apprenticeship-label">' +
                 '<input type="checkbox" id="eduAppFilterOngoingOnly"' +
                 (filters.ongoingOnly ? ' checked' : '') +
-                ' style="margin:0 0.25rem 0 0;">' +
+                ' class="edu-apprenticeship-checkbox">' +
                 'Ongoing only' +
             '</label>' +
             '<button type="button" id="eduAppFilterClear" class="edu-manager-btn">' +
