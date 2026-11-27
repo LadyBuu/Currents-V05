@@ -167,7 +167,7 @@ var VALIDATION_CONSTANTS = {
     // names, including Samoan glottal-stop spelling (Saofa’i / Saofaʻi / Saofa‘i) and parenthetical annotations.
     // Preserve the original spelling; validation must not rewrite names.
     NAME_REGEX: /^[\p{L}\p{M}\s\-'’‘ʻʼ().]+$/u,
-    VARIABLE_KEY_REGEX: /^[a-z0-9_]+$/
+    VARIABLE_KEY_REGEX: /^[a-z0-9_-]+$/
 };
 
 function _getPlaceStatuses() {
@@ -559,7 +559,7 @@ function validatePlace(place, context) {
         if (typeof place.variableKey !== 'string') {
             errors.push('Variable key must be a string');
         } else if (place.variableKey && !VALIDATION_CONSTANTS.VARIABLE_KEY_REGEX.test(place.variableKey)) {
-            errors.push('Variable key "' + place.variableKey + '" should be lowercase with underscores only');
+            errors.push('Variable key "' + place.variableKey + '" should contain only lowercase letters, numbers, underscores, or hyphens');
         }
     }
 
