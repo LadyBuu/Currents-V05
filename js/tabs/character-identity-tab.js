@@ -38,8 +38,8 @@
  *
  * SAVE SEMANTICS:
  *   One "Save changes" button at the bottom, dirty-aware. On click:
- *     a. Trait delta (add/remove against the loaded model) is applied
- *        via addTrait / removeTrait.
+ *     a. Trait changes are committed as one complete selected set through
+ *        CharacterCommands.replaceTraits.
  *     b. Religion change (if the select differs from the model) is
  *        applied via assignCharacterReligion (which appends history).
  *     c. Character-owned field patch (name, surname, surnameSource,
@@ -50,6 +50,11 @@
  *        validates the resulting record with MortalityRules.
  *   Steps run in fixed order; failures accumulate; if any fail the form
  *   stays dirty so the user can retry the failed portion.
+ *
+ *   After a successful save, the tab refreshes and reads the committed
+ *   trait set through CharacterCommands.getTraits(characterId). It syncs
+ *   the visible checkboxes and the initial/reset baseline to that set so
+ *   a stale view projection cannot visually undo a successful trait save.
  *
  * ATOMIC-ACTION BUTTONS (outside the bulk Save):
  *   - Add Change           — recordCharacterSurnameChange
