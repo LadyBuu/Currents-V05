@@ -543,6 +543,25 @@
         }
     }
 
+    function _wireSidebarFilterCollapse() {
+        var toggle = _byId('characterFiltersToggle');
+        var filters = _byId('characterFilters');
+        if (!toggle || !filters || toggle.__characterCollapseWired) return;
+        toggle.__characterCollapseWired = true;
+        var collapsed = false;
+        try { collapsed = window.localStorage.getItem('characterSidebarFiltersCollapsed') === 'true'; }
+        catch (e) { collapsed = false; }
+        filters.hidden = collapsed;
+        toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        toggle.addEventListener('click', function () {
+            var nextCollapsed = !filters.hidden;
+            filters.hidden = nextCollapsed;
+            toggle.setAttribute('aria-expanded', nextCollapsed ? 'false' : 'true');
+            try { window.localStorage.setItem('characterSidebarFiltersCollapsed', nextCollapsed ? 'true' : 'false'); }
+            catch (e) { /* private browsing/storage restrictions must not break filters */ }
+        });
+    }
+
     function _wireSidebarSearch() {
         var input=_byId('characterSearchInput');
         if(input&&!input.__characterBootstrapWired){input.__characterBootstrapWired=true;input.addEventListener('input',function(){if(_searchDebounceTimer)clearTimeout(_searchDebounceTimer);_searchDebounceTimer=setTimeout(function(){_searchDebounceTimer=null;_renderSidebarList();},200);});}
