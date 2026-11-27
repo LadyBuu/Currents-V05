@@ -375,10 +375,21 @@
             && typeof window.LocationQueries.getPlace === 'function') {
             try { place = window.LocationQueries.getPlace(locationId); } catch (e) { place = null; }
         }
-        if (!place) return 'Unknown location';
-        var displayName = typeof place.displayName === 'string' && place.displayName.length
+
+        // LocationQueries exposes the canonical display projection. Use it
+        // as a final lookup because some place records have no plain name
+        // field; their display name is supplied by the location query layer.
+        var placeSummary = null;
+        if (window.LocationQueries
+            && typeof window.LocationQueries.getPlaceSummary === 'function') {
+            try { placeSummary = window.LocationQueries.getPlaceSummary(locationId); }
+            catch (e) { placeSummary = null; }
+        }
+        var displayName = place && typeof place.displayName === 'string' && place.displayName.length
             ? place.displayName
-            : (typeof place.name === 'string' ? place.name : '');
+            : (placeSummary && typeof placeSummary.displayName === 'string'
+                ? placeSummary.displayName
+                : (place && typeof place.name === 'string' ? place.name : ''));
         return displayName || 'Unknown location';
     }
 
