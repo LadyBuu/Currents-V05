@@ -2385,3 +2385,18 @@ GOVERNMENT MANAGER STYLE REWRITE (2026-11-27)
 - Preserved declaration values and order during extraction. This pass is a stylesheet consolidation, not a visual redesign.
 - Inline style attributes whose values contain dynamic JavaScript expressions or quoted fragments were left in place rather than rewritten unsafely; these require targeted handling.
 - Runtime visual and interaction verification remains pending, including modal content, list rendering, themes, and responsive layouts.
+
+
+GOVERNMENT MANAGER INLINE-STYLE CLEANUP (2026-11-27)
+
+- Converted the remaining conditional presentation styles in assignment history,
+  department/position detail rows, economy history and budget sufficiency, and
+  government list summaries to semantic CSS classes in
+  css/government-manager.css.
+- The six modal/list source files were checked after the migration. The modal
+  files no longer contain style attributes. government-ui-list.js retains four
+  dynamically assembled style attributes for selected-state rows and candidate
+  checkbox items; these depend on runtime selection state and remain deferred
+  for a targeted behavior-preserving conversion.
+- The new classes preserve the prior status colors and layout declarations.
+  Browser-level visual and interaction verification is still pending.
