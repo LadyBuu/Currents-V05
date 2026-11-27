@@ -520,8 +520,34 @@
             if (typeof window.invalidateAccessorCaches === 'function') {
                 window.invalidateAccessorCaches();
             }
-            if (typeof window.markDataDirty === 'function') {
-                try { window.markDataDirty(); } catch (dirtyError) {}
+            // Restore memory first, then synchronously attempt to persist that
+            // restored state. markDataDirty() alone only schedules a future
+            // write and cannot establish durable rollback.
+            var durableRollback = false;
+            var rollbackError = null;
+            if (typeof window.markDataDirty === 'function' &&
+                typeof window.saveMasterData === 'function') {
+                try {
+                    window.markDataDirty();
+                    durableRollback = window.saveMasterData() === true;
+                    if (!durableRollback && typeof window.getLastSaveError === 'function') {
+                        rollbackError = window.getLastSaveError();
+                    }
+                } catch (saveError) {
+                    rollbackError = saveError;
+                }
+            }
+
+            if (!durableRollback) {
+                var rollbackMessage = ' In-memory rollback completed, but durable restoration could not be confirmed.';
+                if (rollbackError && rollbackError.message) {
+                    rollbackMessage += ' Storage error: ' + rollbackError.message;
+                }
+                error = new Error((error && error.message ? error.message : String(error)) +
+                    rollbackMessage);
+            } else {
+                error = new Error((error && error.message ? error.message : String(error)) +
+                    ' The pre-wipe state was restored in memory and its save was confirmed.');
             }
             throw error;
         }
