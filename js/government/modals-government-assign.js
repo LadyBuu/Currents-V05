@@ -244,7 +244,7 @@
                 (h.title ? ' <span class="gov-inline-20">(' + _escapeHtml(h.title) + ')</span>' : '') +
                 (h.roleLabel ? ' <span class="gov-inline-21">Role: ' + _escapeHtml(h.roleLabel) + '</span>' : '') +
                 '</div>' +
-                '<div style="font-size:0.55rem;color:' + (h.isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
+                '<div class="gov-history-date ' + (h.isActive ? 'gov-status-active' : 'gov-status-inactive') + '">' +
                 h.startYear + ' - ' + h.endLabel + durationPart + reasonPart +
                 '</div>' +
                 '</div>';
