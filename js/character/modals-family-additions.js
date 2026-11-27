@@ -333,7 +333,21 @@
         }
         function isWithinLocation(char, locationId) {
             if (!locationId) return true;
-            var id = char.currentLocationId || char.locationId;
+            // Picker rows are summaries. Resolve the full projection so the canonical
+            // world query can use move history rather than stale summary fields.
+            var fullCharacter = null;
+            try {
+                if (CQ && typeof CQ.getCharacter === 'function') {
+                    fullCharacter = CQ.getCharacter(char.id);
+                } else if (CQ && typeof CQ.getCharacterById === 'function') {
+                    fullCharacter = CQ.getCharacterById(char.id);
+                }
+            } catch (e) { fullCharacter = null; }
+            var id = null;
+            if (fullCharacter && typeof window.getCurrentLocationId === 'function') {
+                try { id = window.getCurrentLocationId(fullCharacter); }
+                catch (e) { id = null; }
+            }
             var guard = 0;
             while (id && guard++ < 100) {
                 if (id === locationId) return true;
