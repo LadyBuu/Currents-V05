@@ -296,7 +296,7 @@
                     _esc(lit.literacyLevel + '% literacy') +
                     ' (' + _esc(lit.tierLabel) + ')' +
                     (lit.canTeach
-                        ? ' &middot; <span style="color:var(--accent);">can teach</span>'
+                        ? ' &middot; <span class="character-skills-teaching">can teach</span>'
                         : '') +
                 '</div>' +
             '</div>' +
