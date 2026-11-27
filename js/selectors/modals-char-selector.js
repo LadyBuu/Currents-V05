@@ -380,7 +380,7 @@
             ? window.CharacterQueries.getCharacterSummary(this.targetId)
             : null;
         this._targetLocationId = this._targetChar
-            ? this._targetChar.locationId
+            ? _getCharacterLocationId(this._targetChar)
             : null;
         this._targetAge = this._targetChar
             ? window.calculateAge(this._targetChar.birthYear, this._targetChar.isDeceased === true, this._targetChar.deathYear)
