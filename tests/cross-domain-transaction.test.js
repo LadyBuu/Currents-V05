@@ -109,6 +109,7 @@ test('after-commit exceptions are reported without undoing committed state', () 
     assert.equal(result.notificationErrors[0].participant, 'A');
     assert.equal(a.value, 1);
     assert.equal(b.value, 1);
+    assert.equal(tx.isAfterCommit(), false);
     assert.equal(log.some(x => x.endsWith(':rollback')), false);
 });
 
