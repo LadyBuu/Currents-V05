@@ -94,7 +94,7 @@
             data.residences.forEach(function (residence) {
                 if (!residence || !Array.isArray(residence.units)) return;
                 residence.units.forEach(function (unit) {
-                    if (unit && typeof unit === 'object' && unit.householdId) {
+                    if (unit && typeof unit === 'object' && (unit.householdId || unit.isVacant === false)) {
                         counts.residenceUnits++;
                     }
                 });
@@ -220,7 +220,7 @@
                     throw new Error('Residence unit ' + unitNumber +
                         ' has malformed associationHistory.');
                 }
-                if (Array.isArray(unit.associationHistory)) {
+                if (Array.isArray(unit.associationHistory) && householdId) {
                     unit.associationHistory.forEach(function (entry) {
                         if (entry && entry.householdId === householdId &&
                             !entry.endedYear) {
