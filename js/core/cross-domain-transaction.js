@@ -40,6 +40,7 @@
     'use strict';
 
     var _active = false;
+    var _afterCommitDepth = 0;
     var _sequence = 0;
 
     function _result(success, code, details) {
@@ -238,19 +239,24 @@
             _active = false;
 
             var notificationErrors = [];
-            for (var n = 0; n < participants.length; n++) {
-                if (!participants[n].afterCommit) continue;
-                try {
-                    participants[n].afterCommit(context);
-                } catch (notificationError) {
-                    notificationErrors.push({
-                        participant: participants[n].name,
-                        reason: _errorMessage(
-                            notificationError,
-                            'Post-commit notification failed.'
-                        )
-                    });
+            _afterCommitDepth++;
+            try {
+                for (var n = 0; n < participants.length; n++) {
+                    if (!participants[n].afterCommit) continue;
+                    try {
+                        participants[n].afterCommit(context);
+                    } catch (notificationError) {
+                        notificationErrors.push({
+                            participant: participants[n].name,
+                            reason: _errorMessage(
+                                notificationError,
+                                'Post-commit notification failed.'
+                            )
+                        });
+                    }
                 }
+            } finally {
+                _afterCommitDepth--;
             }
 
             return _result(true, 'COMMITTED', {
@@ -330,7 +336,8 @@
 
     window.CrossDomainTransaction = Object.freeze({
         execute: execute,
-        isActive: function () { return _active; }
+        isActive: function () { return _active; },
+        isAfterCommit: function () { return _afterCommitDepth > 0; }
     });
 
     if (typeof module !== 'undefined' && module.exports) {
