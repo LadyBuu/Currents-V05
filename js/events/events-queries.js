@@ -1414,12 +1414,14 @@
                     return _unavailable('CharacterQueries returned a non-array.');
                 }
                 var locationSet = _locationIdSetForFilter(locationId) || {};
+                var lq = _requireModule('LocationQueries', ['getCurrentLocationId']);
+                if (!lq.ok) return _unavailable(lq.reason);
                 var characterLocations = {};
                 for (var ci = 0; ci < characters.length; ci++) {
                     var character = characters[ci];
                     if (!character || !_hasId(character.id) || character.isDeleted === true) continue;
                     characterLocations[character.id] =
-                        character.currentLocationId || character.locationId || null;
+                        lq.module.getCurrentLocationId(character.id) || null;
                 }
 
                 list = list.filter(function(record) {
