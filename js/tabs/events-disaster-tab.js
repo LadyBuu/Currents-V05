@@ -413,7 +413,7 @@
         html += '</div>';
 
         html += '<div class="events-filters__body"' +
-            (collapsed ? ' style="display:none;"' : '') + '>';
+            (collapsed ? ' hidden' : '') + '>';
         html += '<select class="ev-disasters-input events-filters__select" data-input="type">' +
             typeOptions + '</select>';
         html += '<input type="number" class="ev-disasters-input events-filters__year" ' +
@@ -804,7 +804,7 @@
             : 'No disasters match your filters. Try clearing them.';
 
         return '<div class="events-empty">' +
-            '<div class="events-empty__icon" style="color:var(--dim);">' +
+            '<div class="events-empty__icon events-empty__icon--muted">' +
             _icon('EVENTS') +
             '</div>' +
             '<div class="events-empty__message">' + _esc(message) + '</div>' +
