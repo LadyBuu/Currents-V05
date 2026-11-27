@@ -368,7 +368,7 @@
         };
 
         var content =
-            '<div style="max-height:520px;overflow-y:auto;padding:4px;">' +
+            '<div class="education-scroll-list">' +
 
             '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Name *</label>' +
@@ -382,7 +382,7 @@
             '<select id="createInstType" class="modal-field">' +
             _buildTypeOptions(defaultData.typeId || firstTypeId) +
             '</select>' +
-            '<small id="createInstTypeHint" style="font-size:0.5rem;color:var(--dim);"></small>' +
+            '<small id="createInstTypeHint" class="text-muted text-2xs"></small>' +
             '</div>' +
 
             '<div class="form-group modal-mb-12">' +
@@ -402,25 +402,25 @@
             '</div>' +
 
             '<div id="createInstReligionSection" style="display:none;margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
-            '<label style="display:block;font-size:0.65rem;color:var(--accent);margin-bottom:4px;">Religion</label>' +
+            '<label class="education-field-label">Religion</label>' +
             '<select id="createInstReligion" style="width:100%;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;color:var(--text);">' +
             _buildReligionOptions(null) +
             '</select>' +
             '</div>' +
 
             '<div id="createInstOwnerSection" style="display:none;margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
-            '<div style="display:flex;gap:8px;margin-bottom:6px;">' +
-            '<label style="display:flex;align-items:center;gap:6px;font-size:0.6rem;cursor:pointer;">' +
+            '<div class="education-action-row">' +
+            '<label class="education-inline-control">' +
             '<input type="radio" name="createInstOwnerType" value="character" checked> Character</label>' +
-            '<label style="display:flex;align-items:center;gap:6px;font-size:0.6rem;cursor:pointer;">' +
+            '<label class="education-inline-control">' +
             '<input type="radio" name="createInstOwnerType" value="household"> Household</label>' +
             '</div>' +
-            '<div style="display:flex;gap:8px;">' +
+            '<div class="education-action-row">' +
             '<input type="text" id="createInstOwnerName" placeholder="Select owner..." readonly style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;color:var(--text);cursor:pointer;">' +
-            '<button type="button" id="createInstSelectOwnerBtn" class="btn" style="padding:4px 10px;font-size:0.6rem;">Select</button>' +
-            '<button type="button" id="createInstClearOwnerBtn" class="btn" style="padding:4px 10px;font-size:0.6rem;">Clear</button>' +
+            '<button type="button" id="createInstSelectOwnerBtn" class="btn" class="education-button-compact">Select</button>' +
+            '<button type="button" id="createInstClearOwnerBtn" class="btn" class="education-button-compact">Clear</button>' +
             '</div>' +
-            '<small style="font-size:0.5rem;color:var(--dim);">Private institutions must have an owner</small>' +
+            '<small class="text-muted text-2xs">Private institutions must have an owner</small>' +
             '</div>' +
 
             '<div class="form-group modal-mb-12">' +
@@ -580,7 +580,7 @@
         var s = details.summary;
 
         var content =
-            '<div style="max-height:520px;overflow-y:auto;padding:4px;">' +
+            '<div class="education-scroll-list">' +
             '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;font-size:0.6rem;color:var(--dim);">' +
             'Editing <strong>' + _escapeHtml(s.name) + '</strong>' +
             '</div>' +
@@ -681,7 +681,7 @@
         if (details.curriculum.length === 0) {
             curriculumHtml = '<span style="color:var(--dim);font-size:0.55rem;">No curriculum</span>';
         } else {
-            curriculumHtml = '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
+            curriculumHtml = '<div class="education-chip-list">';
             for (var i = 0; i < details.curriculum.length; i++) {
                 var item = details.curriculum[i];
                 curriculumHtml += '<span style="background:var(--bg3);padding:2px 8px;border-radius:12px;font-size:0.5rem;border:1px solid var(--border);">' +
@@ -692,14 +692,14 @@
 
         var studentsHtml = '';
         if (details.students.length === 0) {
-            studentsHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">No students enrolled</div>';
+            studentsHtml = '<div class="education-empty-state">No students enrolled</div>';
         } else {
-            studentsHtml = '<div style="max-height:150px;overflow-y:auto;">';
+            studentsHtml = '<div class="education-scroll-list education-scroll-list-short">';
             for (var i = 0; i < Math.min(details.students.length, 10); i++) {
                 var st = details.students[i];
-                studentsHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-light);font-size:0.55rem;">' +
+                studentsHtml += '<div class="education-detail-row">' +
                     '<span>' + _escapeHtml(st.studentName || 'Unknown') + '</span>' +
-                    '<span style="color:var(--dim);">' +
+                    '<span class="text-muted">' +
                     (st.age !== null ? st.age + 'y' : '?') +
                     ' · Enrolled ' +
                     (st.enrollmentYear !== null ? st.enrollmentYear : '?') +
@@ -707,7 +707,7 @@
                     '</div>';
             }
             if (details.students.length > 10) {
-                studentsHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;padding-top:4px;">... and ' +
+                studentsHtml += '<div class="education-help-text">... and ' +
                     (details.students.length - 10) + ' more</div>';
             }
             studentsHtml += '</div>';
@@ -715,22 +715,22 @@
 
         var teachersHtml = '';
         if (details.teachers.length === 0) {
-            teachersHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">No teachers hired</div>';
+            teachersHtml = '<div class="education-empty-state">No teachers hired</div>';
         } else {
-            teachersHtml = '<div style="max-height:150px;overflow-y:auto;">';
+            teachersHtml = '<div class="education-scroll-list education-scroll-list-short">';
             for (var i = 0; i < Math.min(details.teachers.length, 10); i++) {
                 var t = details.teachers[i];
-                teachersHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-light);font-size:0.55rem;">' +
+                teachersHtml += '<div class="education-detail-row">' +
                     '<span>' + _escapeHtml(t.teacherName || 'Unknown') +
                     ' <span style="color:var(--accent);font-size:0.5rem;">(' +
                     _escapeHtml(t.subjectName || '?') + ')</span></span>' +
-                    '<span style="color:var(--dim);">' +
+                    '<span class="text-muted">' +
                     (t.hiredYear !== null ? t.hiredYear : '?') +
                     '</span>' +
                     '</div>';
             }
             if (details.teachers.length > 10) {
-                teachersHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;padding-top:4px;">... and ' +
+                teachersHtml += '<div class="education-help-text">... and ' +
                     (details.teachers.length - 10) + ' more</div>';
             }
             teachersHtml += '</div>';
@@ -740,23 +740,23 @@
             ? _escapeHtml(details.headmaster.name || 'Unknown') + ' (' +
               _escapeHtml(details.headmaster.title || 'Headmaster') +
               ' since ' + (details.headmaster.startYear || '?') + ')'
-            : '<span style="color:var(--dim);">None</span>';
+            : '<span class="text-muted">None</span>';
 
         var content =
             '<div style="max-height:580px;overflow-y:auto;padding:4px;">' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
-            '<div style="font-size:0.6rem;color:var(--dim);">Institution</div>' +
+            '<div class="education-two-column">' +
+            '<div class="education-panel">' +
+            '<div class="text-muted text-sm">Institution</div>' +
             '<div style="font-size:0.9rem;font-weight:bold;">' +
             _escapeHtml(s.name) + '</div>' +
-            '<div style="font-size:0.65rem;color:var(--dim);">' +
+            '<div class="text-muted text-sm">' +
             _escapeHtml(s.typeName || 'Unknown') + '</div>' +
-            '<div style="font-size:0.65rem;color:var(--dim);">' +
+            '<div class="text-muted text-sm">' +
             _escapeHtml(s.locationName) + '</div>' +
             '</div>' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
-            '<div style="font-size:0.6rem;color:var(--dim);">Statistics</div>' +
+            '<div class="education-panel">' +
+            '<div class="text-muted text-sm">Statistics</div>' +
             '<div style="font-size:0.75rem;">' +
             '<div>' + s.currentStudentCount + ' / ' + s.maxStudents + ' students</div>' +
             '<div>' + s.teacherCount + ' teachers</div>' +
@@ -765,13 +765,13 @@
             '</div></div>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
-            '<div style="font-size:0.6rem;color:var(--dim);">Ownership</div>' +
+            '<div class="education-two-column">' +
+            '<div class="education-panel">' +
+            '<div class="text-muted text-sm">Ownership</div>' +
             '<div style="font-size:0.75rem;font-weight:bold;">' +
             _escapeHtml(s.ownershipType || 'public') + '</div>' +
             (s.ownerName
-                ? '<div style="font-size:0.6rem;color:var(--dim);">Owner: ' +
+                ? '<div class="text-muted text-sm">Owner: ' +
                   _escapeHtml(s.ownerName) + '</div>'
                 : '') +
             (s.religionName
@@ -779,25 +779,25 @@
                   _escapeHtml(s.religionName) + '</div>'
                 : '') +
             '</div>' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
-            '<div style="font-size:0.6rem;color:var(--dim);">Headmaster</div>' +
-            '<div style="font-size:0.7rem;">' + headmasterLine + '</div>' +
+            '<div class="education-panel">' +
+            '<div class="text-muted text-sm">Headmaster</div>' +
+            '<div class="text-sm">' + headmasterLine + '</div>' +
             '</div>' +
             '</div>' +
 
             '<div class="modal-mb-12">' +
-            '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Curriculum</div>' +
+            '<div class="education-section-label">Curriculum</div>' +
             '<div style="background:var(--bg3);padding:8px;border-radius:6px;min-height:30px;">' +
             curriculumHtml + '</div>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
-            '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Students (' +
+            '<div class="education-two-column">' +
+            '<div class="education-panel">' +
+            '<div class="education-section-label">Students (' +
             details.students.length + ')</div>' + studentsHtml +
             '</div>' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
-            '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Teachers (' +
+            '<div class="education-panel">' +
+            '<div class="education-section-label">Teachers (' +
             details.teachers.length + ')</div>' + teachersHtml +
             '</div>' +
             '</div>' +
@@ -808,15 +808,15 @@
                 : '') +
 
             '<div style="display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:12px;">' +
-            '<button type="button" id="instEditBtn" class="btn primary" style="font-size:0.65rem;padding:4px 12px;">Edit</button>' +
-            '<button type="button" id="instCurriculumBtn" class="btn" style="font-size:0.65rem;padding:4px 12px;">Curriculum</button>' +
-            '<button type="button" id="instEnrollBtn" class="btn" style="font-size:0.65rem;padding:4px 12px;">Enroll</button>' +
-            '<button type="button" id="instHireBtn" class="btn" style="font-size:0.65rem;padding:4px 12px;">Hire Teacher</button>' +
-            '<button type="button" id="instHeadmasterBtn" class="btn" style="font-size:0.65rem;padding:4px 12px;">Headmaster</button>' +
-            '<button type="button" id="instTuitionBtn" class="btn" style="font-size:0.65rem;padding:4px 12px;">Tuition</button>' +
-            '<button type="button" id="instOwnershipBtn" class="btn" style="font-size:0.65rem;padding:4px 12px;">Ownership</button>' +
-            '<button type="button" id="instGraduateBtn" class="btn" style="font-size:0.65rem;padding:4px 12px;">Graduate</button>' +
-            '<button type="button" id="instDeleteBtn" class="btn danger" style="font-size:0.65rem;padding:4px 12px;">Delete</button>' +
+            '<button type="button" id="instEditBtn" class="btn primary" class="education-button-label">Edit</button>' +
+            '<button type="button" id="instCurriculumBtn" class="btn" class="education-button-label">Curriculum</button>' +
+            '<button type="button" id="instEnrollBtn" class="btn" class="education-button-label">Enroll</button>' +
+            '<button type="button" id="instHireBtn" class="btn" class="education-button-label">Hire Teacher</button>' +
+            '<button type="button" id="instHeadmasterBtn" class="btn" class="education-button-label">Headmaster</button>' +
+            '<button type="button" id="instTuitionBtn" class="btn" class="education-button-label">Tuition</button>' +
+            '<button type="button" id="instOwnershipBtn" class="btn" class="education-button-label">Ownership</button>' +
+            '<button type="button" id="instGraduateBtn" class="btn" class="education-button-label">Graduate</button>' +
+            '<button type="button" id="instDeleteBtn" class="btn danger" class="education-button-label">Delete</button>' +
             '</div>' +
 
             '</div>';
@@ -909,7 +909,7 @@
 
         var roleHtml = '';
         if (rolePool.length === 0) {
-            roleHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">' +
+            roleHtml = '<div class="education-empty-state">' +
                 (specCat
                     ? 'No roles in category "' + _escapeHtml(specCat) + '"'
                     : 'No roles available') +
@@ -946,7 +946,7 @@
             subjectHtml += '<div style="margin-bottom:8px;">';
             subjectHtml += '<div style="font-size:0.55rem;color:var(--accent);margin-bottom:4px;">' +
                 _escapeHtml(catInfo.name || cat) + '</div>';
-            subjectHtml += '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
+            subjectHtml += '<div class="education-chip-list">';
             for (var i = 0; i < subjectGroups[cat].length; i++) {
                 var sub = subjectGroups[cat][i];
                 var chk = checkedIds[sub.id] ? ' checked' : '';
@@ -986,7 +986,7 @@
             '<div style="margin-bottom:12px;padding:12px;background:var(--bg2);border-radius:8px;">' +
             _getIcon('GEAR') + ' Editing curriculum for <strong>' +
             _escapeHtml(s.name) + '</strong>' +
-            '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
+            '<div class="text-muted text-sm mt-4">' +
             current.length + ' items currently</div>' +
             '</div>' +
             specWarning +
@@ -1188,9 +1188,9 @@
             : 'Not available';
 
         var content =
-            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
+            '<div class="education-panel education-panel-spaced">' +
             'Enroll student in <strong>' + _escapeHtml(s.name) + '</strong>' +
-            '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
+            '<div class="text-muted text-sm mt-4">' +
             s.currentStudentCount + ' of ' + s.maxStudents + ' capacity</div>' +
             '<div style="font-size:0.6rem;color:var(--accent);margin-top:4px;padding:4px 8px;background:var(--bg3);border-radius:4px;">Tuition: ' +
             _escapeHtml(tuitionLine) + '</div>' +
@@ -1302,9 +1302,9 @@
         }
 
         var content =
-            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
+            '<div class="education-panel education-panel-spaced">' +
             'Hire teacher for <strong>' + _escapeHtml(s.name) + '</strong>' +
-            '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
+            '<div class="text-muted text-sm mt-4">' +
             teachers.length + ' teachers currently</div>' +
             '</div>' +
 
@@ -1384,14 +1384,14 @@
         }
 
         var currentLine = current
-            ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">Current: ' +
+            ? '<div class="text-muted text-sm mt-4">Current: ' +
               _escapeHtml(current.name || 'Unknown') + ' (' +
               _escapeHtml(current.title || 'Headmaster') +
               ' since ' + (current.startYear || '?') + ')</div>'
             : '';
 
         var content =
-            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
+            '<div class="education-panel education-panel-spaced">' +
             'Appoint headmaster for <strong>' + _escapeHtml(s.name) + '</strong>' +
             currentLine +
             '</div>' +
@@ -1526,12 +1526,12 @@
                 '<select id="graduateRoleSelect" class="modal-field">' +
                 roleOptions +
                 '</select>' +
-                '<small style="font-size:0.5rem;color:var(--dim);">This institution teaches multiple roles. Choose which to grant.</small>' +
+                '<small class="text-muted text-2xs">This institution teaches multiple roles. Choose which to grant.</small>' +
                 '</div>';
         }
 
         var content =
-            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
+            '<div class="education-panel education-panel-spaced">' +
             'Graduate a student from <strong>' + _escapeHtml(s.name) + '</strong>' +
             '</div>' +
 
@@ -1617,11 +1617,11 @@
             '<div style="margin-top:8px;">Delete <strong>' +
             _escapeHtml(s.name) + '</strong>?</div>' +
             (studentCount > 0
-                ? '<div style="margin-top:4px;">' + studentCount +
+                ? '<div class="mt-4">' + studentCount +
                   ' students enrolled</div>'
                 : '') +
             (teacherCount > 0
-                ? '<div style="margin-top:4px;">' + teacherCount +
+                ? '<div class="mt-4">' + teacherCount +
                   ' teachers hired</div>'
                 : '') +
             cascadeNote +
@@ -1693,19 +1693,19 @@
         var historyHtml = '';
         for (var i = 0; i < history.length; i++) {
             var h = history[i];
-            historyHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-light);font-size:0.55rem;">' +
+            historyHtml += '<div class="education-detail-row">' +
                 '<span>' + _escapeHtml(String(h.year)) + '</span>' +
                 '<span>' + h.oldAmount + ' → ' + h.newAmount + '</span>' +
-                '<span style="color:var(--dim);">' +
+                '<span class="text-muted">' +
                 _escapeHtml(h.reason || '') + '</span>' +
                 '</div>';
         }
 
         var content =
-            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-            '<div style="font-size:0.7rem;"><strong>' +
+            '<div class="education-panel education-panel-spaced">' +
+            '<div class="text-sm"><strong>' +
             _escapeHtml(s.name) + '</strong></div>' +
-            '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">Current: <strong>' +
+            '<div class="text-muted text-sm mt-4">Current: <strong>' +
             _escapeHtml(tuitionDisplay) + '</strong></div>' +
             (isPublic
                 ? '<div style="font-size:0.55rem;color:var(--accent);margin-top:2px;">Public schools are funded by settlement. Change ownership for a private school.</div>'
@@ -1734,7 +1734,7 @@
                 '</div>' +
                 (historyHtml
                     ? '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">' +
-                      '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">History</div>' +
+                      '<div class="education-section-label">History</div>' +
                       '<div style="max-height:150px;overflow-y:auto;background:var(--bg3);padding:8px;border-radius:6px;">' +
                       historyHtml + '</div>' +
                       '</div>'
@@ -1820,10 +1820,10 @@
         };
 
         var content =
-            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-            '<div style="font-size:0.7rem;"><strong>' +
+            '<div class="education-panel education-panel-spaced">' +
+            '<div class="text-sm"><strong>' +
             _escapeHtml(s.name) + '</strong></div>' +
-            '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">Current: <strong>' +
+            '<div class="text-muted text-sm mt-4">Current: <strong>' +
             _escapeHtml(s.ownershipType || 'public') + '</strong></div>' +
             (s.ownerName
                 ? '<div style="font-size:0.55rem;">Owner: ' +
@@ -1838,14 +1838,14 @@
             '<div class="form-group modal-mb-12">' +
             '<label class="modal-field-label">Ownership Type</label>' +
             '<div style="display:flex;flex-direction:column;gap:6px;">' +
-            '<label style="display:flex;align-items:center;gap:6px;font-size:0.65rem;cursor:pointer;">' +
+            '<label class="education-inline-control education-inline-control-roomy">' +
             '<input type="radio" name="mgmtOwnershipType" value="public"' +
             (isPublic ? ' checked' : '') + '> Public (free)</label>' +
-            '<label style="display:flex;align-items:center;gap:6px;font-size:0.65rem;cursor:pointer;">' +
+            '<label class="education-inline-control education-inline-control-roomy">' +
             '<input type="radio" name="mgmtOwnershipType" value="private"' +
             (isPrivate ? ' checked' : '') + '> Private (tuition)</label>' +
             (hasReligions
-                ? '<label style="display:flex;align-items:center;gap:6px;font-size:0.65rem;cursor:pointer;">' +
+                ? '<label class="education-inline-control education-inline-control-roomy">' +
                   '<input type="radio" name="mgmtOwnershipType" value="religious"' +
                   (isReligious ? ' checked' : '') + '> Religious</label>'
                 : '') +
@@ -1854,7 +1854,7 @@
             '<div id="mgmtReligionSection" style="' +
             (isReligious ? 'display:block;' : 'display:none;') +
             'margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
-            '<label style="display:block;font-size:0.65rem;color:var(--accent);margin-bottom:4px;">Religion</label>' +
+            '<label class="education-field-label">Religion</label>' +
             '<select id="mgmtReligionSelect" style="width:100%;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;color:var(--text);">' +
             _buildReligionOptions(s.religionId) +
             '</select></div>' +
@@ -1862,19 +1862,19 @@
             '<div id="mgmtOwnerSection" style="' +
             (isPrivate ? 'display:block;' : 'display:none;') +
             'margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
-            '<div style="display:flex;gap:8px;margin-bottom:6px;">' +
-            '<label style="display:flex;align-items:center;gap:6px;font-size:0.6rem;cursor:pointer;">' +
+            '<div class="education-action-row">' +
+            '<label class="education-inline-control">' +
             '<input type="radio" name="mgmtOwnerType" value="character"' +
             (ownerState.type === 'character' ? ' checked' : '') + '> Character</label>' +
-            '<label style="display:flex;align-items:center;gap:6px;font-size:0.6rem;cursor:pointer;">' +
+            '<label class="education-inline-control">' +
             '<input type="radio" name="mgmtOwnerType" value="household"' +
             (ownerState.type === 'household' ? ' checked' : '') + '> Household</label>' +
             '</div>' +
-            '<div style="display:flex;gap:8px;">' +
+            '<div class="education-action-row">' +
             '<input type="text" id="mgmtOwnerName" value="' +
             _escapeHtml(s.ownerName || '') +
             '" readonly style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;color:var(--text);cursor:pointer;">' +
-            '<button type="button" id="mgmtSelectOwnerBtn" class="btn" style="padding:4px 10px;font-size:0.6rem;">Select</button>' +
+            '<button type="button" id="mgmtSelectOwnerBtn" class="btn" class="education-button-compact">Select</button>' +
             '</div></div>';
 
         _openModal({
