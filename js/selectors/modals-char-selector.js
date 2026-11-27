@@ -201,7 +201,23 @@
     }
 
     function _getCharacterLocationId(char) {
-        if (!char) return null;
+        if (!char || !char.id) return null;
+        if (typeof window.getCurrentLocationId === 'function'
+            && window.CharacterQueries) {
+            var full = null;
+            try {
+                if (typeof window.CharacterQueries.getCharacter === 'function') {
+                    full = window.CharacterQueries.getCharacter(char.id);
+                }
+                if (!full && typeof window.CharacterQueries.getCharacterById === 'function') {
+                    full = window.CharacterQueries.getCharacterById(char.id);
+                }
+            } catch (e) { full = null; }
+            if (full) {
+                try { return window.getCurrentLocationId(full) || null; }
+                catch (e) { return null; }
+            }
+        }
         return typeof char.currentLocationId === 'string' && char.currentLocationId.length > 0
             ? char.currentLocationId
             : null;
