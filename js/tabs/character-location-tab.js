@@ -340,7 +340,7 @@
         var color = _CIRCLE_COLORS[cls];
         if (!color) return '';
         return '<span class="character-location-member-circle" ' +
-            'style="display:inline-block;width:0.5rem;height:0.5rem;' +
+            'class="character-location-dot"' +
             'border-radius:50%;background:' + color + ';margin-right:0.5rem;" ' +
             'title="' + _esc(title) + '"></span>';
     }
@@ -548,7 +548,7 @@
         var html = '';
 
         // Header card.
-        html += '<div class="character-tab-section" style="margin-bottom:0.75rem;">' +
+        html += '<div class="character-tab-section character-location-section-spaced">' +
             '<div class="character-tab-section__body">' +
                 '<div class="character-location-heading-row">' +
                     '<div>' +
