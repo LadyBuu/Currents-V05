@@ -832,6 +832,64 @@
     }
 
     // =========================================================================
+    // 5B. FAMILY EDGES (canonical parentChildEdges)
+    // =========================================================================
+
+    function findBrokenFamilyEdges() {
+        _requireDependencies();
+        var edges = window.FamilyState && typeof window.FamilyState.snapshot === 'function'
+            ? window.FamilyState.snapshot()
+            : (window.masterData && window.masterData.data
+                && Array.isArray(window.masterData.data.parentChildEdges)
+                ? window.masterData.data.parentChildEdges : []);
+        var characters = window.getCharacters();
+        var characterIds = new Set();
+        for (var i = 0; i < characters.length; i++) {
+            if (characters[i] && _hasId(characters[i].id)) characterIds.add(characters[i].id);
+        }
+        var broken = [];
+        var graph = new Map();
+        edges.forEach(function(edge) {
+            if (!edge || typeof edge !== 'object') return;
+            if (!_hasId(edge.parentId) || !characterIds.has(edge.parentId)) {
+                broken.push({ edge: edge, issue: 'Missing parent', refId: edge.parentId || null });
+            }
+            if (!_hasId(edge.childId) || !characterIds.has(edge.childId)) {
+                broken.push({ edge: edge, issue: 'Missing child', refId: edge.childId || null });
+            }
+            if (_hasId(edge.parentId) && _hasId(edge.childId)) {
+                if (!graph.has(edge.parentId)) graph.set(edge.parentId, []);
+                graph.get(edge.parentId).push(edge.childId);
+            }
+        });
+
+        var color = new Map();
+        var reported = new Set();
+        function visit(id, stack) {
+            color.set(id, 1);
+            stack.push(id);
+            (graph.get(id) || []).forEach(function(childId) {
+                if (color.get(childId) === 1) {
+                    var cycle = stack.slice(stack.indexOf(childId)).concat(childId);
+                    var key = cycle.slice().sort().join('|');
+                    if (!reported.has(key)) {
+                        reported.add(key);
+                        broken.push({ issue: 'Genealogy cycle', refId: childId, cycle: cycle });
+                    }
+                } else if (!color.get(childId)) {
+                    visit(childId, stack);
+                }
+            });
+            stack.pop();
+            color.set(id, 2);
+        }
+        graph.forEach(function(_, id) {
+            if (!color.get(id)) visit(id, []);
+        });
+        return broken;
+    }
+
+    // =========================================================================
     // 6. COMPREHENSIVE AUDIT — PURE
     // =========================================================================
 
@@ -851,6 +909,7 @@
         var brokenRankAssignments = findBrokenRankAssignments();
         var brokenRoleAssignments = findBrokenRoleAssignments();
         var brokenApprenticeships = findBrokenApprenticeships();
+        var brokenFamilyEdges = findBrokenFamilyEdges();
 
         var total = brokenPlaces.length
             + brokenRelationships.length
@@ -858,7 +917,8 @@
             + brokenHouseholdMembers.length
             + brokenRankAssignments.length
             + brokenRoleAssignments.length
-            + brokenApprenticeships.length;
+            + brokenApprenticeships.length
+            + brokenFamilyEdges.length;
 
         return {
             ok: true,
@@ -869,7 +929,8 @@
                 brokenHouseholdMembers: brokenHouseholdMembers.length,
                 brokenRankAssignments: brokenRankAssignments.length,
                 brokenRoleAssignments: brokenRoleAssignments.length,
-                brokenApprenticeships: brokenApprenticeships.length
+                brokenApprenticeships: brokenApprenticeships.length,
+                brokenFamilyEdges: brokenFamilyEdges.length
             },
             totalIssues: total,
             totalCharacters: window.getCharacters().length,
@@ -944,6 +1005,7 @@
     window.findBrokenRankAssignments = findBrokenRankAssignments;
     window.findBrokenRoleAssignments = findBrokenRoleAssignments;
     window.findBrokenApprenticeships = findBrokenApprenticeships;
+    window.findBrokenFamilyEdges = findBrokenFamilyEdges;
 
     // Repairers (mutate memory; caller persists)
     window.repairBrokenPlaceHierarchy = repairBrokenPlaceHierarchy;
