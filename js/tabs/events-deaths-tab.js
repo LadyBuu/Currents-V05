@@ -405,7 +405,7 @@
         // Body of filters (collapses)
         var collapsed = _readCollapsed(_panelId(context && context.locationId));
         html += '<div class="events-filters__body"' +
-            (collapsed ? ' style="display:none;"' : '') + '>';
+            (collapsed ? ' hidden' : '') + '>';
 
         // Row 1: search
         html += '<input type="search" class="ev-deaths-input events-filters__search" ' +
