@@ -555,7 +555,7 @@
                         ? _esc(String(filters.yearFrom))
                         : '') + '" ' +
                 'aria-label="Minimum year" ' +
-                'style="width:90px;">' +
+                'class="edu-history-year-field">' +
             '<input type="number" id="eduHistoryFilterYearTo" ' +
                 'placeholder="To year" min="1" ' +
                 'value="' +
@@ -563,7 +563,7 @@
                         ? _esc(String(filters.yearTo))
                         : '') + '" ' +
                 'aria-label="Maximum year" ' +
-                'style="width:90px;">' +
+                'class="edu-history-year-field">' +
             '<button type="button" id="eduHistoryFilterClear" ' +
                 'class="edu-manager-btn">Clear</button>' +
         '</div>';
