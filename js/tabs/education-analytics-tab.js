@@ -414,7 +414,7 @@
         html += '<div class="edu-manager-card-body">';
 
         // ---- Local control: min school-age pop ----
-        html += '<div class="edu-manager-filters" class="edu-analytics-filter-spaced">' +
+        html += '<div class="edu-manager-filters edu-analytics-filter-spaced">' +
             '<label style="display:flex;align-items:center;gap:6px;font-size:0.65rem;color:var(--dim);">' +
                 'Min school-age pop:' +
                 '<input type="number" id="eduAnalyticsMinPop" ' +
