@@ -600,6 +600,12 @@
     // transaction. The coordinator closes its mutation window before running
     // afterCommit callbacks, so these publisher methods must run post-commit.
     function commitTransactionUpdate(householdId, changed) {
+        if (!window.CrossDomainTransaction ||
+            typeof window.CrossDomainTransaction.isAfterCommit !== 'function' ||
+            window.CrossDomainTransaction.isAfterCommit() !== true) {
+            return _fail('TRANSACTION_REQUIRED',
+                'Household transaction notifications are only valid after commit.');
+        }
         if (typeof householdId !== 'string' || householdId === '') {
             return _fail('INVALID_ID', 'Household id is required');
         }
@@ -2762,6 +2768,12 @@
     // Publish Household ownership events only after the coordinating
     // cross-domain transaction has committed all canonical mutations.
     function commitTransactionEnterpriseIndexRepair(householdIds, enterpriseCount) {
+        if (!window.CrossDomainTransaction ||
+            typeof window.CrossDomainTransaction.isAfterCommit !== 'function' ||
+            window.CrossDomainTransaction.isAfterCommit() !== true) {
+            return _fail('TRANSACTION_REQUIRED',
+                'Enterprise index repair notifications are only valid after commit.');
+        }
         if (!Array.isArray(householdIds) ||
             typeof enterpriseCount !== 'number' ||
             !Number.isInteger(enterpriseCount) || enterpriseCount < 0) {
@@ -2776,6 +2788,12 @@
     }
 
     function commitTransactionEnterpriseOwnership(changes) {
+        if (!window.CrossDomainTransaction ||
+            typeof window.CrossDomainTransaction.isAfterCommit !== 'function' ||
+            window.CrossDomainTransaction.isAfterCommit() !== true) {
+            return _fail('TRANSACTION_REQUIRED',
+                'Enterprise ownership notifications are only valid after commit.');
+        }
         if (!Array.isArray(changes)) {
             return _fail('INVALID_INPUT', 'Ownership changes must be an array.');
         }
@@ -3751,6 +3769,9 @@
         clearLocationReferences: clearLocationReferences,
         clearLocationReferencesMany: clearLocationReferencesMany,
         commitTransactionLocationCleanup: function (locationIds, data) {
+            if (!window.CrossDomainTransaction ||
+                typeof window.CrossDomainTransaction.isAfterCommit !== 'function' ||
+                window.CrossDomainTransaction.isAfterCommit() !== true) return _fail('TRANSACTION_REQUIRED', 'Location cleanup notifications are only valid after commit.');
             data = data || {};
             _commit('householdsLocationCleared', { locationIds: Array.isArray(locationIds) ? locationIds.slice() : [], clearedCount: Number(data.clearedCount) || 0, households: Array.isArray(data.households) ? data.households : [], year: _getCurrentYear(), transaction: true });
             return _ok(null);
