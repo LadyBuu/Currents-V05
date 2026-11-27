@@ -65,34 +65,12 @@
             cursor: pointer;
         }
 
-        .tb-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.3125rem;
-            padding: 0.375rem 0.875rem;
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--text);
-            font-family: var(--f-body);
-            font-size: 0.7rem;
-            font-weight: 500;
-            cursor: pointer;
-            line-height: 1.2;
-        }
-        .tb-btn svg { width: 0.9em; height: 0.9em; fill: currentColor; }
-        .tb-btn:hover {
-            border-color: var(--accent);
-            background: var(--accent-dim);
-            color: var(--accent-light);
-        }
-        .tb-btn.primary {
-            background: var(--accent);
-            border-color: var(--accent);
-            color: var(--accent-fg);
-        }
-        .tb-btn.primary:hover { background: var(--accent-dark); }
-        .tb-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+
+
+
+
+
 
         .year-input {
             display: inline-flex;
@@ -166,22 +144,8 @@
             color: var(--accent-light);
         }
 
-        .app-layout {
-            display: flex;
-            flex-direction: row;
-            flex: 1;
-            min-height: 0;
-            overflow: hidden;
-        }
-        .sidebar {
-            flex-shrink: 0;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            background: var(--bg2);
-            border-right: 1px solid var(--border);
-            width: 17.5rem;
-        }
+
+
         .sidebar-header {
             padding: 0.75rem 1rem;
             border-bottom: 1px solid var(--border);
@@ -204,72 +168,16 @@
             padding: 0.5rem;
             min-height: 0;
         }
-        .main-panel {
-            display: flex;
-            flex-direction: column;
-            flex: 1;
-            min-width: 0;
-            min-height: 0;
-            overflow: hidden;
-        }
 
-        .manager-subtabs {
-            position: sticky;
-            top: 0;
-            display: flex;
-            align-items: stretch;
-            gap: 0.25rem;
-            padding: 0.5rem 1.5rem 0;
-            margin: 0 0 1.25rem;
-            background: var(--bg2);
-            border-bottom: 1px solid var(--border);
-            flex-wrap: wrap;
-            z-index: 10;
-        }
-        .manager-subtab {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.75rem 1.125rem 0.6875rem;
-            background: transparent;
-            border: 1px solid transparent;
-            border-bottom: none;
-            border-radius: var(--radius) var(--radius) 0 0;
-            color: var(--dim);
-            font-family: var(--f-display);
-            font-size: 0.78rem;
-            font-weight: 500;
-            cursor: pointer;
-        }
-        .manager-subtab:hover {
-            color: var(--accent-light);
-            background: var(--accent-dim);
-        }
-        .manager-subtab.active {
-            color: var(--accent);
-            background: var(--bg2);
-            border-color: var(--border);
-            font-weight: 600;
-        }
-        .manager-subtab-icon {
-            display: inline-flex;
-            width: 1rem;
-            height: 1rem;
-            align-items: center;
-            justify-content: center;
-            color: currentColor;
-        }
-        .manager-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
 
-        .tab-content-wrapper {
-            flex: 1;
-            min-height: 0;
-            overflow-y: auto;
-            overflow-x: hidden;
-            padding: 1.25rem 1.5rem;
-            background: var(--bg);
-        }
+
+
+
+
+
+
+
+
         .tab-pane { display: none; }
         .tab-pane.active { display: block; }
 
@@ -788,24 +696,12 @@
             .year-input { padding: 0.125rem 0.375rem; }
             .year-input label { display: none; }
             .year-input input { width: 3.25rem; font-size: 0.65rem; }
-            .app-layout { flex-direction: column; }
-            .sidebar {
-                position: fixed;
-                top: 0; bottom: 0; left: 0;
-                height: 100vh;
-                width: 85%;
-                max-width: 17.5rem;
-                z-index: 1000;
-                transform: translateX(-100%);
-                transition: transform 0.3s ease;
-            }
+    
+    
             .sidebar.visible { transform: translateX(0); }
-            .tab-content-wrapper { padding: 1rem; }
-            .manager-subtabs { padding-left: 1rem; padding-right: 1rem; }
-            .manager-subtab {
-                flex: 1 1 auto; min-width: 0;
-                padding: 0.625rem 0.875rem; font-size: 0.72rem;
-            }
+    
+    
+    
             .rt-details__grid { grid-template-columns: 1fr; }
             .rt-form__grid-2,
             .rt-form__grid-3 { grid-template-columns: 1fr; }
