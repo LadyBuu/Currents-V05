@@ -325,7 +325,7 @@
             );
             if (eligibility && eligibility.warning) {
                 html += '<div class="gov-leader-eligibility-warning" role="status" ' +
-                    'style="margin:8px 0;padding:8px;border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-size:0.8rem;">' +
+                    'class="government-details-alert">' +
                     '<strong>Eligibility warning:</strong> ' +
                     _esc(eligibility.warning) +
                     '</div>';
