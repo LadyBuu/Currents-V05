@@ -13,7 +13,7 @@ function render(container,context){
   if(!rows.length)html+='<div class="character-tab-empty">No '+labels[key].toLowerCase()+' relationships recorded.</div>';
   rows.forEach(function(r){
    var age=r.age==null?'Age unknown':esc(r.age),rank=r.rank&&(r.rank.display||r.rank.title||r.rank.name||r.rank);
-   html+='<div class="character-tab-rank-row"><div class="character-tab-rank-main"><button type="button" class="character-tab-link" data-select-character="'+esc(r.id)+'">'+esc(r.name)+'</button><span class="character-tab-note">'+esc(r.relationship)+' · '+esc(r.gender)+' · '+age+(rank?' · '+esc(rank):'')+'</span></div><span class="character-tab-note">'+esc(r.status)+'</span></div>';
+   html+='<div class="character-tab-rank-row"><div class="character-tab-rank-main"><button type="button" class="character-tab-link" data-select-character="'+esc(r.id)+'">'+esc(r.name)+'</button><span class="character-tab-note">'+esc(r.relationship)+' · '+(typeof window.getGenderIcon==='function'?window.getGenderIcon(r.gender):'')+' · '+age+(rank?' · '+esc(rank):'')+'</span></div><span class="character-tab-note">'+esc(r.status)+'</span></div>';
   });
   html+='</div></section>';
  });
