@@ -430,7 +430,7 @@
 
         if (!recsRead.ok) {
             html += '<div class="edu-manager-empty edu-analytics-empty-roomy">' +
-                '<div style="color:var(--danger-lt);font-size:0.65rem;">' +
+                '<div class="edu-analytics-danger-message">' +
                     'Could not compute recommendations. ' +
                     _esc(recsRead.reason || 'Unknown reason.') +
                 '</div>' +
