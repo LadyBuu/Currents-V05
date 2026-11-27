@@ -561,7 +561,7 @@
                         '<div class="character-location-subheading">' +
                             (h.role ? _esc(h.role) : 'Member') +
                             (h.isHead
-                                ? ' · <strong style="color:var(--accent);">Head</strong>'
+                                ? ' · <strong class="character-location-head-label">Head</strong>'
                                 : '') +
                             (typeof h.memberCount === 'number'
                                 ? ' · ' + _count(h.memberCount, 'member', 'members')
