@@ -101,7 +101,7 @@
  *
  * INLINE STYLES: none. All classes are in css/religion-tabs.css (or the
  * shell's inline style block). If this file is edited to add a
- * style="" attribute, that is a regression.
+ * class="religion-inline-39" attribute, that is a regression.
  *
  * =============================================================================
  * REFACTOR HISTORY:
