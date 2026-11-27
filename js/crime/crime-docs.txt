@@ -2327,3 +2327,33 @@ PART 7 — KNOWN HAZARDS
 ================================================================================
 END OF DOCUMENT
 ================================================================================
+
+
+================================================================================
+PART 19 — EVENTS HUB INTEGRATION (CURRENT)
+================================================================================
+
+EventsManager.html loads the Crime domain before the Events tab renderers.
+The Crime tab is registered by js/tabs/events-crime-tab.js after the shared
+Events query/view-model/UI/bootstrap modules and the other event tabs.
+
+The Events Crime tab currently provides:
+  - location-scoped crime list with type and solved/unsolved filters;
+  - crime detail modal access;
+  - location crime statistics modal;
+  - crime recording through the existing Crime modal;
+  - active vendetta listing, details, resolution, escalation, and creation.
+
+Vendettas have household scope, not an intrinsic crime-location scope. The
+Events tab derives the location's relevant vendettas from households found in
+the selected location and its sublocations, then deduplicates by vendetta id.
+This is a UI scope rule, not a new CrimeQueries location API. Do not describe
+these vendettas as crimes recorded at that location.
+
+The tab's controls use CrimeModals and CrimeCommands. CrimeStatsUI's
+showActions option is not a substitute for command wiring; verify its current
+handlers before relying on it for solve/delete actions.
+
+================================================================================
+END OF DOCUMENT
+================================================================================
