@@ -186,7 +186,7 @@
             hint += (hint ? ' · ' : '') + 'Needs more schools';
         }
 
-        return '<div class="edu-manager-card" class="edu-overview-card-spaced">' +
+        return '<div class="edu-manager-card edu-overview-card-spaced">' +
             '<h3 class="edu-manager-card-title">Health</h3>' +
             '<div class="edu-manager-card-body" ' +
                 'class="edu-overview-score-row">' +
