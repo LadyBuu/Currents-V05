@@ -861,3 +861,5 @@
 .religion-inline-37 { font-size:0.65rem;color:var(--dim);text-align:center; }
 .religion-inline-38 { padding:8px 12px;background:rgba(181,164,74,0.1);border:1px solid #c87040;border-radius:4px;font-size:0.6rem;color:#c87040; }
 .religion-inline-39 {  }
+
+.religion-file-input { display:none; }
