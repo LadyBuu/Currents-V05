@@ -412,9 +412,41 @@
     var _lastSaveError = null;
     var _crossTabConflict = false;
 
+    function _ensureConflictBanner() {
+        if (document.getElementById('crossTabConflictBanner')) return;
+        function mount() {
+            if (document.getElementById('crossTabConflictBanner') || !document.body) return;
+            var banner = document.createElement('section');
+            banner.id = 'crossTabConflictBanner';
+            banner.setAttribute('role', 'alert');
+            banner.setAttribute('aria-live', 'assertive');
+            banner.style.cssText = 'display:none;position:sticky;top:0;z-index:10000;padding:12px 16px;background:#5b2b18;color:#fff;border-bottom:2px solid #e6a23c;font:14px/1.45 system-ui,sans-serif;box-shadow:0 3px 12px rgba(0,0,0,.25)';
+            banner.innerHTML = '<strong>Another tab changed this save.</strong> This tab has local edits. Choose which copy to keep. <span id="crossTabConflictStatus" role="status"></span><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button type="button" data-conflict-choice="reload">Reload other tab’s version (discard local edits)</button><button type="button" data-conflict-choice="keep-local">Keep this tab’s edits (overwrite stored version)</button></div>';
+            banner.addEventListener('click', function(event) {
+                var button = event.target.closest('[data-conflict-choice]');
+                if (!button) return;
+                var status = banner.querySelector('#crossTabConflictStatus');
+                var choice = button.getAttribute('data-conflict-choice');
+                var result = resolveCrossTabConflict(choice);
+                if (result.ok) {
+                    banner.style.display = 'none';
+                } else if (status) {
+                    status.textContent = ' Resolution failed: ' + (result.error || 'unknown error') + '. Your local data has not been intentionally discarded.';
+                }
+            });
+            document.body.insertBefore(banner, document.body.firstChild);
+            banner.style.display = _crossTabConflict ? 'block' : 'none';
+        }
+        if (document.body) mount();
+        else document.addEventListener('DOMContentLoaded', mount, { once: true });
+    }
+
     function _setCrossTabConflict(conflicted) {
         _crossTabConflict = conflicted === true;
         try {
+            _ensureConflictBanner();
+            var banner = document.getElementById('crossTabConflictBanner');
+            if (banner) banner.style.display = _crossTabConflict ? 'block' : 'none';
             window.dispatchEvent(new CustomEvent('masterDataConflict', {
                 detail: { conflicted: _crossTabConflict, dirty: _isDirty === true }
             }));
