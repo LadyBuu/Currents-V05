@@ -2123,3 +2123,18 @@ svg {
 .government-details-alert { margin:8px 0; padding:8px; border:1px solid var(--danger); border-radius:6px; color:var(--danger); font-size:0.8rem; }
 .hh-econ-grid--spaced { margin-bottom:12px; }
 .character-romance-status--spaced { margin-top:4px; color:var(--dim); }
+
+.events-social__field--year { flex:0 1 6rem; }
+.government-details-alert { margin:8px 0; padding:8px; border:1px solid var(--danger); border-radius:6px; color:var(--danger); font-size:0.8rem; }
+.hh-econ-grid--spaced { margin-bottom:12px; }
+.character-romance-status--spaced { margin-top:4px; color:var(--dim); }
+.edu-history-year-field { width:90px; }
+.edu-finances-meta-spaced { margin-top:2px; color:var(--dim); }
+.edu-finances-demolished { opacity:0.6; }
+.edu-apprenticeship-label { cursor:pointer; }
+.edu-apprenticeship-checkbox { margin:0 0.25rem 0 0; }
+.edu-students-label { cursor:pointer; }
+.edu-students-checkbox { margin:0 4px 0 0; }
+.character-location-dot { display:inline-block; width:0.5rem; height:0.5rem; }
+.character-location-section-spaced { margin-bottom:0.75rem; }
+.character-skills-teaching { color:var(--accent); }
