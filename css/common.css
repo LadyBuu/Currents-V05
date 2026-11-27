@@ -2138,3 +2138,14 @@ svg {
 .character-location-dot { display:inline-block; width:0.5rem; height:0.5rem; }
 .character-location-section-spaced { margin-bottom:0.75rem; }
 .character-skills-teaching { color:var(--accent); }
+
+/* Education analytics and character tab presentation. */
+.edu-analytics-muted-value { color:var(--tmut); }
+.edu-analytics-danger-hint { color:var(--danger-lt); }
+.edu-analytics-filter-label { display:flex; align-items:center; gap:6px; font-size:0.65rem; color:var(--dim); }
+.edu-analytics-width-field { width:80px; padding:4px 8px; background:var(--bg); }
+.edu-analytics-empty-roomy { padding:20px 12px; }
+.edu-analytics-empty-large { padding:24px 12px; }
+.events-empty__icon--muted { color:var(--dim); }
+.character-location-head-label { color:var(--accent); }
+.character-skills-chip-row--full { width:100%; }
