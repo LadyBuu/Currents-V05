@@ -475,20 +475,6 @@
 
         TabManager.init();
 
-        if (strip) {
-            strip.addEventListener('click', function (event) {
-                var btn = event.target.closest('[data-tab]');
-                if (!btn || !strip.contains(btn)) return;
-                event.preventDefault();
-                var tabId = btn.dataset.tab;
-                if (tabId) {
-                    uiState.setActiveTabId(tabId);
-                    _syncTabStrip(tabId);
-                    TabManager.renderActive(SCOPE);
-                }
-            });
-        }
-
         _wireTopbar();
         _wireCrossDomainRefresh();
 
