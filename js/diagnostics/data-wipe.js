@@ -57,6 +57,24 @@
         }
     ];
 
+    // Explicit policy for data intentionally retained by each destructive operation.
+    // These are not assertions that every cross-domain reference is valid; they
+    // distinguish reusable definitions from historical snapshots and live links.
+    var RETAINED_FIELD_POLICY = {
+        locations: [
+            'location types: reusable definitions',
+            'location-linked records: retained live references; review before deleting places'
+        ],
+        settlements: ['places and location types: reusable records/definitions'],
+        governments: ['government type definitions: reusable definitions'],
+        roles: ['role category definitions: reusable definitions'],
+        characters: [
+            'events, crimes, vendettas: historical records/snapshots retained; live character IDs are not guaranteed valid'
+        ],
+        schools: ['educational subject definitions: reusable definitions', 'character progress: retained records; school linkage policy not yet validated'],
+        industries: ['enterprise type definitions: reusable definitions']
+    };
+
     var currentConfig = null;
     var masterReady = false;
     var grid = document.getElementById('wipeGrid');
@@ -354,6 +372,10 @@
             summary.push('enterprise owners to release: ' + refs.enterpriseOwners);
             summary.push('household-owned schools: ' + refs.educationOwners);
         }
+        var retainedPolicy = RETAINED_FIELD_POLICY[config.id];
+        if (retainedPolicy && retainedPolicy.length) {
+            summary.push('Retained dependency policy: ' + retainedPolicy.join('; '));
+        }
         return summary.join(' · ');
     }
 
@@ -394,6 +416,28 @@
         modal.classList.remove('is-open');
         currentConfig = null;
         input.value = '';
+    }
+
+    function validateWipeResult(config, data) {
+        Object.keys(config.fields).forEach(function (field) {
+            var value = data[field];
+            var remaining = Array.isArray(value) ? value.length
+                : (value && typeof value === 'object' ? Object.keys(value).length : 0);
+            if (remaining !== 0) {
+                throw new Error('Post-wipe validation failed: ' + field +
+                    ' still contains ' + remaining + ' item(s).');
+            }
+        });
+
+        if (config.id === 'households') {
+            var refs = householdReferenceCounts(data);
+            if (refs.characters || refs.residenceUnits || refs.enterpriseOwners || refs.educationOwners) {
+                throw new Error('Post-wipe validation failed: household references remain (' +
+                    'characters ' + refs.characters + ', residence units ' + refs.residenceUnits +
+                    ', enterprise owners ' + refs.enterpriseOwners + ', household-owned schools ' +
+                    refs.educationOwners + ').');
+            }
+        }
     }
 
     function wipe(config) {
@@ -446,6 +490,7 @@
             if (typeof window.invalidateAccessorCaches === 'function') {
                 window.invalidateAccessorCaches();
             }
+            validateWipeResult(config, data);
             if (typeof window.markDataDirty !== 'function' || typeof window.saveMasterData !== 'function') {
                 throw new Error('Storage persistence functions are unavailable. Nothing was saved.');
             }
