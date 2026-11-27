@@ -80,38 +80,29 @@
  *   the character query layer. See character-queries.js's LOCATION
  *   DISPLAY header section for the rationale.
  *
- *   This module therefore resolves location display strings itself,
- *   through world.js:
+ *   This module resolves location display strings through the World
+ *   resolver first, then falls back to the explicit currentLocationId:
  *
- *     summary.locationId           raw currentLocationId (may be dangling)
- *     world.getCurrentPlace(char)  canonical resolution (honors the
- *                                  currentLocationId override and the
- *                                  moves-based fallback)
- *     place.displayName            the display string
+ *     world.getCurrentPlace(char)  latest valid move, then birthplaceId
+ *     getPlaceById(currentLocationId) explicit stored-location fallback
+ *     LocationQueries.getPlace(id)  secondary explicit lookup
+ *     LocationQueries.getPlaceSummary(id) displayName fallback
  *
- *   Three states are distinguished and rendered differently:
+ *   Important: the current World implementation does NOT use
+ *   currentLocationId as its primary source. It derives location from
+ *   the latest valid move and otherwise birthplaceId. The UI's explicit
+ *   currentLocationId lookup is a fallback when World cannot resolve a
+ *   place. Keep this distinction accurate; it is the reason location
+ *   display needs more than a raw summary.locationId check.
  *
- *     no location recorded      summary.locationId === null
- *                               → fallback text ("No location")
- *     recorded but dangling     locationId non-null, resolved place null
- *                               → fallback text ("Unknown location")
- *     resolved                  place non-null
- *                               → place.displayName
+ *   "No location" means no usable place ID was derived or stored.
+ *   "Unknown location" means a location reference exists but cannot be
+ *   resolved to a display name. A resolved place uses displayName first,
+ *   then LocationQueries' display summary, then place.name.
  *
- *   The distinction matters: "this character has no recorded location"
- *   and "this character's recorded location no longer exists" are
- *   different data problems, and a UI that collapses them into
- *   "Unknown" hides the second one.
- *
- *   If world.js is not loaded (bare test harness), resolution returns
- *   null and the fallback text is used. This module does not throw for
- *   a missing optional resolver — the character list still renders, and
- *   location fields simply show the fallback. This is different from
- *   the query layer's culture badge, which is also optional but
- *   resolves to '' (empty string) rather than a fallback text, because
- *   the culture badge is a supplementary piece of decoration while
- *   location is a first-class field in the card grid and the row
- *   details line.
+ *   All location providers are optional at this renderer boundary. A
+ *   missing provider must not prevent the list or card from rendering;
+ *   the relevant fallback text is shown instead.
  *
  * REQUIRED CSS:
  *   This module emits the following classes. The stylesheet must define
@@ -120,10 +111,10 @@
  *     .character-row
  *     .character-row__name
  *     .character-row__details
- *     .character-row__status
  *     .character-row--deceased
  *     .character-row__death-marker
  *     .character-row__culture-badge
+ *     .character-row__gender-icon
  *     .character-empty-message
  *     .character-card
  *     .character-card__header
@@ -146,16 +137,28 @@
  * DEPENDENCIES (OPTIONAL):
  *   - CultureQueries.getCultureDisplay(cultureId) — for culture badges
  *     If absent, culture badges are omitted.
- *   - world.getCurrentPlace(character) — for location display resolution
- *     If absent, location fields render the fallback text
- *     ("No location"/"Unknown location") based on summary.locationId.
+ *   - world.getCurrentPlace(character) — canonical move-history /
+ *     birthplace resolution
+ *   - getPlaceById(currentLocationId) — explicit stored-location fallback
+ *   - LocationQueries.getPlace / getPlaceSummary — secondary lookup and
+ *     display-name fallback
+ *     If all location providers are absent, location fields render fallback
+ *     text without preventing the list or card from rendering.
  *
  * ICON POLICY: Uses SVG from icons.js if available. No emojis. No Unicode
  * gender symbols.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (P2-2):
+ *   Current revision:
+ *     - Location resolution now asks World first (latest valid move, then
+ *       birthplace), then falls back to the explicit currentLocationId via
+ *       getPlaceById / LocationQueries. The old header incorrectly claimed
+ *       World treated currentLocationId as its primary override.
+ *     - Sidebar rows render age, location, and a gender icon; deceased rows
+ *       use a cross marker. Household and textual Living/Deceased details
+ *       are not rendered in sidebar rows. Cards retain textual life status.
+ *     - Restored and retained _formatAge after sidebar refactoring.
  *     - Added CALLBACK CONTRACT — PROJECTIONS, NOT LIVE ENTITIES section
  *       to the header. The onSelect callback receives a projection, not
  *       a live canonical entity; mutating it does not affect canonical
