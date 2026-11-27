@@ -1968,3 +1968,24 @@ That cross-domain transaction remains outstanding.
 LOCATION DELETION TRANSACTION SNAPSHOTS
 
 The Location, Settlement, Government, Religion, Culture, Character and Household state modules now expose internal transaction snapshot/restore adapters for the Location-deletion workflow. These adapters preserve canonical stores and rebuild their derived indexes/caches on restoration. Character snapshots deep-copy records because Character batch updates mutate records in place; other affected workflows replace canonical arrays or delete Settlement map keys, so their snapshots retain the prior canonical containers. These adapters are infrastructure only: LocationCommands.deletePlace has not yet been moved under CrossDomainTransaction, and no global atomicity guarantee should be inferred until the coordinator migration and failure-injection tests are complete.
+
+
+LOCATION MANAGER CSS MIGRATION AND MODULE AUDIT — 2026-11-27 (STATIC)
+
+CSS migration:
+- Extracted the page-level stylesheet from LocationManager.html into css/location-manager.css.
+- LocationManager.html continues to load css/themes.css and css/common.css before the new page stylesheet.
+- Existing selectors and declarations were preserved. This change does not consolidate tokens or redesign components.
+
+Audit scope:
+- Location domain: bootstrap, state, queries, commands, hierarchy, movement, presentation, UI list/state, view models, location modal helpers/modals, and move modals.
+- Location Manager tabs: detail, hierarchy, leadership, movement, population, and type manager.
+- LocationManager.html page-level styling and this domain documentation.
+
+Static findings:
+- Domain code is separated into state/query/command and supporting hierarchy, movement, presentation, and view-model modules.
+- Most reviewed domain and tab modules do not assign inline styles. Exceptions observed: three inline style assignments in modals-moves.js and one in location-leadership-tab.js. These remain localized styling debt.
+- No confirmed source-level defect was established in this static pass. This is not a runtime correctness guarantee.
+- The stylesheet extraction preserves the prior CSS rather than attempting to harmonize Location Manager with other managers; visual consistency and token cleanup remain separate work.
+
+Runtime verification remains outstanding for location creation/edit/deletion, hierarchy changes, movement and occupancy updates, leadership changes, location-type management, persistence/rollback, theme variants, responsive widths, keyboard focus, and modal stacking/overflow.
