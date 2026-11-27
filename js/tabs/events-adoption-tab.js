@@ -552,7 +552,7 @@
 
         // Body of filters (collapses)
         html += '<div class="events-filters__body"' +
-            (collapsed ? ' style="display:none;"' : '') + '>';
+            (collapsed ? ' hidden' : '') + '>';
 
         html += '<input type="search" class="ev-adoption-input events-filters__search" ' +
             'data-input="search" placeholder="Search by name…" ' +
