@@ -1884,7 +1884,7 @@
                             if (!traitResult || traitResult.success !== true) {
                                 errors.push('Save traits: ' +
                                     (traitResult && traitResult.reason ? traitResult.reason : 'unknown'));
-
+                            }
                         }
                     }
 
