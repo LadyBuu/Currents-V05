@@ -81,10 +81,6 @@ Incidents are queried for the selected location only; vendettas are unioned acro
 
 **Recommended fix:** label each scope in the UI or make both views consistently location-only or subtree-wide, as product intent dictates.
 
-### P3 — Settlement vendetta display can degrade to a partial result without clearly signaling it
-**Location:** `js/tabs/settlement-crime-tab.js`.
-
-If descendant-location lookup fails or returns no usable IDs, the code falls back to the selected location. That avoids a crash but may omit households in descendants. Distinguish “there are no descendants” from “the lookup failed,” and indicate partial results.
 
 ## Positive controls observed
 
