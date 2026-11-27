@@ -349,7 +349,7 @@
                         _esc(p.tierLabel) +
                     '</span>' +
                 '</div>' +
-                '<div style="width:100%;display:flex;gap:0.25rem;flex-wrap:wrap;' +
+                '<div class="character-skills-chip-row character-skills-chip-row--full">' +
                     'margin-top:0.375rem;">' +
                     specChips +
                 '</div>' +
