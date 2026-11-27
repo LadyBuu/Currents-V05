@@ -560,10 +560,33 @@
             status.textContent = 'Enter a valid world year (' + window.TIME_CONSTANTS.MIN_YEAR + '–' + window.TIME_CONSTANTS.MAX_YEAR + ').';
             return;
         }
-        getData().currentYear = year;
-        window.markDataDirty();
-        if (window.saveMasterData() !== true) {
-            status.textContent = 'Year change could not be saved.';
+        var data = getData();
+        var previousYear = data.currentYear;
+        data.currentYear = year;
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            window.invalidateAccessorCaches();
+        }
+        try {
+            window.markDataDirty();
+            if (window.saveMasterData() !== true) {
+                data.currentYear = previousYear;
+                if (typeof window.invalidateAccessorCaches === 'function') {
+                    window.invalidateAccessorCaches();
+                }
+                // Keep the in-memory state marked dirty so a later save cannot
+                // silently treat the failed year change as committed.
+                window.markDataDirty();
+                status.textContent = 'Year change could not be saved; the previous year was restored in memory.';
+                return;
+            }
+        } catch (error) {
+            data.currentYear = previousYear;
+            if (typeof window.invalidateAccessorCaches === 'function') {
+                window.invalidateAccessorCaches();
+            }
+            try { window.markDataDirty(); } catch (dirtyError) {}
+            status.textContent = 'Year change failed; the previous year was restored in memory. ' +
+                (error && error.message ? error.message : String(error));
             return;
         }
         status.textContent = 'Current year set to ' + year + '.';
