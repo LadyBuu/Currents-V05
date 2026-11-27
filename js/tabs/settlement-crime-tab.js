@@ -25,13 +25,13 @@
  *     writers, same hidden-host pattern as education)
  *
  * SCOPE OF THE INCIDENT LIST:
- *   Own location only (CrimeQueries.getCrimesByLocation), not the subtree.
- *   This is a deliberate choice, not a bug.
+ *   Selected location only (CrimeQueries.getCrimesByLocation), not the
+ *   subtree. The UI labels this explicitly.
  *
  * SCOPE OF THE VENDETTA LIST:
- *   Union of every settlement household's vendettas, de-duped. Shows
- *   internal feuds AND feuds between a settlement household and an
- *   outside household. The create path is restricted to internal feuds.
+ *   Union of vendettas belonging to households in the selected location
+ *   and its sublocations, de-duped. Includes feuds with outside households.
+ *   The create path is restricted to internal settlement feuds.
  *
  * AUTO-REFRESH ON SETTLEMENT MUTATION:
  *   Modals that mutate settlement state call TabManager.requestRender
@@ -507,7 +507,7 @@
                 crimeListHtml = _adoptHost(function (hostId) {
                     UI.renderCrimeList(hostId, crimes, {
                         showActions: true,
-                        emptyMessage: 'No crimes recorded in this settlement.'
+                        emptyMessage: 'No crimes recorded at this location.'
                     });
                 });
             } catch (err) {
@@ -523,7 +523,7 @@
                 vendettaListHtml = _adoptHost(function (hostId) {
                     UI.renderVendettaList(hostId, vendettas, {
                         showActions: true,
-                        emptyMessage: 'No active vendettas in this settlement.'
+                        emptyMessage: 'No active vendettas involving households in this location or its sublocations.'
                     });
                 });
             } catch (err) {
@@ -543,12 +543,14 @@
 
         return '<div class="st-section">' +
             '<div class="st-section__title">' +
-            icon('WARNING') + ' Recorded Crimes</div>' +
+            icon('WARNING') + ' Recorded Crimes ' +
+            '<span class="st-section__scope">(Selected location only)</span></div>' +
             '<div class="st-section__body">' + crimeListHtml + '</div>' +
             '</div>' +
             '<div class="st-section">' +
             '<div class="st-section__title">' +
-            icon('FLAG') + ' Active Vendettas</div>' +
+            icon('FLAG') + ' Active Vendettas ' +
+            '<span class="st-section__scope">(Households in this location and its sublocations; includes outside counterparts)</span></div>' +
             '<div class="st-section__body">' + vendettaListHtml + '</div>' +
             '</div>';
     }
@@ -559,8 +561,9 @@
             'features, unemployment, military spending, justice severity, ' +
             'religious unity, and places of worship. Justice and watch are ' +
             'settlement fields, edited through the Justice Settings modal. ' +
-            'Incidents and vendettas are recorded through the crime ' +
-            'domain\'s own modals, scoped to this settlement.</span></div>';
+            'Recorded crimes show incidents at this location only. Active ' +
+            'vendettas are gathered from households in this location and its ' +
+            'sublocations, including feuds with outside households.</span></div>';
     }
 
     // -------------------------------------------------------------------
