@@ -432,7 +432,7 @@
             html += '<span class="character-row__details">';
             for (var i = 0; i < details.length; i++) {
                 if (i > 0) html += ' &middot; ';
-                html += details[i].indexOf('<span class=\"character-row__gender-icon\"') === 0 ? details[i] : _esc(details[i]);
+                html += details[i].indexOf('<span class=\"character-row__gender-icon') === 0 ? details[i] : _esc(details[i]);
             }
             html += '</span>';
         }
