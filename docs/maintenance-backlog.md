@@ -52,6 +52,54 @@ This file tracks known issues and follow-up work that should not be lost between
 - **Next step:** Confirm this is an intentional one-time informational startup message. If it is, keep it at an appropriate log level or remove routine console noise; if it accompanies missing or unregistered icons, investigate those separately.
 - **Acceptance criteria:** Normal startup does not produce misleading warnings or unnecessary console noise, and genuine icon-loading failures remain visible.
 
+### Disaster casualty count contradicts the description
+
+- **Area:** Disasters / event generation and display
+- **Status:** Open
+- **Reported example:** Flood `Motu1560`, Minor (severity 8), shows `Deaths: 0 / 229 (0%)`, while its description says the event claimed 18 lives.
+- **Next step:** Trace how disaster casualties are generated, stored, summarized, and interpolated into descriptions. Ensure the description and casualty fields use the same authoritative value. Do not generate a narrative death toll independently from the recorded casualty count.
+- **Acceptance criteria:** A disaster cannot simultaneously report zero deaths in its structured data and claim deaths in its description. Existing records with inconsistent values should be identifiable and repairable.
+
+### Disaster deaths need manual number-or-percentage input
+
+- **Area:** Disasters / event configuration
+- **Status:** Open feature request
+- **Requested behaviour:** Allow the user to set deaths manually, choosing either an absolute number of deaths or a percentage of the affected population.
+- **Next step:** Add an explicit input mode (number or percentage), validate the entered value against the affected population, calculate and store a consistent absolute casualty count, and display the resulting count and percentage. Define rounding and population-change behaviour.
+- **Acceptance criteria:** The user can choose either mode, enter a value, see the resulting casualty count before saving, and the saved disaster description and statistics agree. Values cannot exceed the affected population or fall below zero.
+
+### Disaster location filters stop at type 2
+
+- **Area:** Disasters / location selection
+- **Status:** Open
+- **Reported behaviour:** Cascading location filters currently stop at location type 2.
+- **Next step:** Trace the location hierarchy and filter construction. Make the cascading selector follow the available descendant levels dynamically rather than hard-coding a two-level limit. Preserve parent-child constraints at every level.
+- **Acceptance criteria:** All supported location hierarchy levels can be selected in sequence, and each selection narrows the next level to valid descendants. The selector handles locations with fewer levels without presenting dead-end or invalid options.
+
+### Some tabs still use the no-renderer empty state
+
+- **Area:** Tab registration / renderer coverage
+- **Status:** Open
+- **Reported evidence:** A comment in the HTML says that, until the missing renderer work is completed, corresponding tabs render the `no-renderer` empty state from `_buildEmptyState` in the bootstrap.
+- **Next step:** Identify every affected tab and determine whether its renderer is missing, not registered, or registered under a mismatched ID. Replace placeholder states with working renderers or clearly mark intentionally unavailable tabs. Remove stale comments once the implementation is complete.
+- **Acceptance criteria:** Every tab presented as available has a functioning renderer. No user-facing tab silently falls back to the generic no-renderer state.
+
+### Crime tab click does nothing
+
+- **Area:** Tab interaction / Crime
+- **Status:** Open, blocking
+- **Reported behaviour:** Clicking the Crime tab produces no visible response.
+- **Next step:** Trace the click event from the tab control through navigation state, tab registration, renderer invocation, and any runtime errors. Check whether the tab is disabled, has a stale ID, or is missing its handler/renderer.
+- **Acceptance criteria:** Clicking Crime reliably activates and renders the Crime tab, with errors surfaced if its data cannot load. Add a regression test for tab activation.
+
+### Education tab is not loaded
+
+- **Area:** Tab loading / Education
+- **Status:** Open, blocking
+- **Reported behaviour:** The Education tab is not loaded.
+- **Next step:** Trace its script inclusion, load order, registration name, bootstrap configuration, and renderer availability. Check for script errors that prevent registration.
+- **Acceptance criteria:** Education is included, registered, and rendered on normal startup. Add a regression check that verifies it is present in the expected tab set.
+
 ## Follow-up maintenance
 
 - Continue replacing generated numbered CSS classes (for example, `.gov-inline-N` and `.religion-inline-N`) with descriptive semantic classes, preserving rendered appearance.
