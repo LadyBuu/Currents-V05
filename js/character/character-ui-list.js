@@ -339,13 +339,12 @@
         // CharacterQueries deliberately exposes the character's current
         // location under locationId (mapped from projection.currentLocationId).
         // Keep the summary contract here; currentLocationId is the source field.
-        var locationId = summary.locationId || character.currentLocationId;
-        if (!_hasId(locationId)) return 'No location';
+        // The raw field can be empty even when the character has a valid
+        // location derived from move history or birthplace. Do not return
+        // "No location" until the canonical World resolver has had a chance
+        // to apply that precedence.
+        var locationId = summary.locationId || character.currentLocationId || null;
 
-        // world.js is an optional resolver. If it is absent, the location
-        // exists (locationId is non-null) but we cannot resolve the
-        // display string. Return the dangling-state text rather than
-        // fabricating a name.
         var resolver = typeof window.getCurrentPlace === 'function'
             ? window.getCurrentPlace
             : (window.world && typeof window.world.getCurrentPlace === 'function'
@@ -354,24 +353,26 @@
         if (resolver) {
             try { place = resolver(character); } catch (e) { place = null; }
         }
-        // A direct place lookup is a safe fallback when world.js is not
-        // exposed on window. It still resolves the character's recorded
-        // currentLocationId rather than displaying the raw identifier.
-        if (!place && typeof window.getPlaceById === 'function') {
+
+        // If World is unavailable or cannot resolve a derived location,
+        // fall back to the explicit currentLocationId.
+        if (!place && _hasId(locationId) && typeof window.getPlaceById === 'function') {
             try { place = window.getPlaceById(locationId); } catch (e) { place = null; }
         }
-        if (!place && window.LocationQueries
+        if (!place && _hasId(locationId) && window.LocationQueries
             && typeof window.LocationQueries.getPlace === 'function') {
             try { place = window.LocationQueries.getPlace(locationId); } catch (e) { place = null; }
         }
 
-        // LocationQueries exposes the canonical display projection. Use it
-        // as a final lookup because some place records have no plain name
-        // field; their display name is supplied by the location query layer.
+        // Resolve the display projection from the actual place selected by
+        // World when it supplied a move-history/birthplace fallback.
+        var resolvedLocationId = locationId || (place && place.id) || null;
+        if (!place && !_hasId(resolvedLocationId)) return 'No location';
+
         var placeSummary = null;
-        if (window.LocationQueries
+        if (_hasId(resolvedLocationId) && window.LocationQueries
             && typeof window.LocationQueries.getPlaceSummary === 'function') {
-            try { placeSummary = window.LocationQueries.getPlaceSummary(locationId); }
+            try { placeSummary = window.LocationQueries.getPlaceSummary(resolvedLocationId); }
             catch (e) { placeSummary = null; }
         }
         var displayName = place && typeof place.displayName === 'string' && place.displayName.length
