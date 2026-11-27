@@ -1308,6 +1308,12 @@
 
         var transactionResult = window.CrossDomainTransaction.execute({
             context: transactionContext,
+            // Persistence is part of the transaction boundary. If this fails,
+            // the coordinator must restore every domain snapshot before any
+            // afterCommit notification is published.
+            persist: function () {
+                return persist();
+            },
             participants: [participant]
         });
         if (!transactionResult || transactionResult.success !== true) {
