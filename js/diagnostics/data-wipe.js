@@ -15,7 +15,7 @@
             phrase: 'DELETE GOVERNMENTS', fields: { governmentDepartments: 'array', governments: 'array', governmentHistory: 'array' }
         },
         {
-            id: 'households', label: 'Households', description: 'Removes households and their position and assignment records. Residences are a separate wipe.',
+            id: 'households', label: 'Households', description: 'Removes households, positions and assignments; clears live character and residence links and releases household-owned enterprises. Household-owned private schools must be reassigned first.',
             phrase: 'DELETE HOUSEHOLDS', fields: { households: 'array', householdPositions: 'array', householdAssignments: 'array' }
         },
         {
@@ -69,6 +69,236 @@
         return JSON.parse(JSON.stringify(value));
     }
 
+    function householdReferenceCounts(data) {
+        var counts = {
+            characters: 0,
+            residenceUnits: 0,
+            enterpriseOwners: 0,
+            educationOwners: 0
+        };
+
+        if (Array.isArray(data.characters)) {
+            data.characters.forEach(function (character) {
+                if (!character || typeof character !== 'object') return;
+                var hasCurrent = !!(character.household || character.householdId);
+                var hasOpenHistory = Array.isArray(character.householdHistory) &&
+                    character.householdHistory.some(function (entry) {
+                        return entry && typeof entry === 'object' &&
+                            !!entry.householdId && !entry.leftYear;
+                    });
+                if (hasCurrent || hasOpenHistory) counts.characters++;
+            });
+        }
+
+        if (Array.isArray(data.residences)) {
+            data.residences.forEach(function (residence) {
+                if (!residence || !Array.isArray(residence.units)) return;
+                residence.units.forEach(function (unit) {
+                    if (unit && typeof unit === 'object' && unit.householdId) {
+                        counts.residenceUnits++;
+                    }
+                });
+            });
+        }
+
+        if (Array.isArray(data.enterprises)) {
+            data.enterprises.forEach(function (enterprise) {
+                if (enterprise && enterprise.ownerType === 'household') {
+                    counts.enterpriseOwners++;
+                }
+            });
+        }
+
+        if (Array.isArray(data.educationalInstitutions)) {
+            data.educationalInstitutions.forEach(function (institution) {
+                if (institution && institution.ownerType === 'household') {
+                    counts.educationOwners++;
+                }
+            });
+        }
+
+        return counts;
+    }
+
+    function householdWipeYear(data) {
+        var year = Number(data.currentYear);
+        if (!Number.isInteger(year) || year < 1) {
+            year = typeof window.getCurrentYear === 'function'
+                ? Number(window.getCurrentYear()) : NaN;
+        }
+        if (!Number.isInteger(year) || year < 1) {
+            throw new Error('Cannot clear household references because the current world year is invalid.');
+        }
+        return year;
+    }
+
+    function preflightHouseholdWipe(data) {
+        ['characters', 'residences', 'enterprises', 'educationalInstitutions']
+            .forEach(function (field) {
+                if (!Array.isArray(data[field])) {
+                    throw new Error(
+                        'Cannot wipe households safely: required collection "' +
+                        field + '" is missing or malformed. Nothing was deleted.'
+                    );
+                }
+            });
+
+        var ownedSchools = data.educationalInstitutions.filter(function (institution) {
+            return institution && institution.ownerType === 'household';
+        });
+        if (ownedSchools.length) {
+            var names = ownedSchools.slice(0, 3).map(function (institution) {
+                return institution.name || institution.id || 'Unnamed institution';
+            });
+            throw new Error(
+                'Household wipe blocked: ' + ownedSchools.length +
+                ' educational institution(s) still have household ownership (' +
+                names.join(', ') +
+                '). Reassign or remove that ownership in Education before wiping households.'
+            );
+        }
+
+        householdWipeYear(data);
+    }
+
+    function clearHouseholdReferences(data) {
+        var year = householdWipeYear(data);
+        var now = Date.now();
+
+        // Character fields are the live reverse index. Historical membership
+        // entries are retained, but any open period is closed at the wipe year.
+        data.characters.forEach(function (character) {
+            if (!character || typeof character !== 'object') return;
+
+            if (Array.isArray(character.householdHistory)) {
+                character.householdHistory.forEach(function (entry) {
+                    if (!entry || typeof entry !== 'object' ||
+                        !entry.householdId || entry.leftYear) return;
+                    entry.leftYear = year;
+                    entry.leftReason = 'Household data wiped';
+                });
+            } else if (character.householdHistory !== undefined &&
+                       character.householdHistory !== null) {
+                throw new Error(
+                    'Cannot clear household references: Character ' +
+                    (character.id || '(unknown)') +
+                    ' has a malformed householdHistory collection.'
+                );
+            }
+
+            if (character.household || character.householdId) {
+                character.household = '';
+                character.householdId = '';
+            }
+        });
+
+        // Residence occupancy is a live reverse reference. Keep the
+        // residence and its historical association records, close active
+        // associations, and leave non-demolished units vacant.
+        data.residences.forEach(function (residence) {
+            if (!residence || typeof residence !== 'object') return;
+            if (residence.units !== undefined && !Array.isArray(residence.units)) {
+                throw new Error(
+                    'Cannot clear household references: Residence ' +
+                    (residence.id || '(unknown)') + ' has malformed units.'
+                );
+            }
+            if (!Array.isArray(residence.units)) return;
+
+            residence.units.forEach(function (unit) {
+                if (!unit || typeof unit !== 'object' || !unit.householdId) return;
+
+                var householdId = unit.householdId;
+                var householdName = unit.householdName || 'Unknown';
+                var unitNumber = unit.unitNumber;
+
+                if (Array.isArray(unit.associationHistory)) {
+                    unit.associationHistory.forEach(function (entry) {
+                        if (entry && entry.householdId === householdId &&
+                            !entry.endedYear) {
+                            entry.endedYear = year;
+                            entry.reason = 'Household data wiped';
+                            entry.timestamp = now;
+                        }
+                    });
+                }
+
+                if (Array.isArray(residence.associationHistory)) {
+                    residence.associationHistory.forEach(function (entry) {
+                        if (entry && entry.householdId === householdId &&
+                            entry.unitNumber === unitNumber && !entry.endedYear) {
+                            entry.endedYear = year;
+                            entry.reason = 'Household data wiped';
+                            entry.timestamp = now;
+                        }
+                    });
+                }
+
+                unit.householdId = null;
+                unit.householdName = null;
+
+                if (!unit.isDemolished) {
+                    unit.isVacant = true;
+                    unit.assignedYear = null;
+                    unit.vacantYear = year;
+
+                    if (!Array.isArray(residence.vacancyHistory)) {
+                        residence.vacancyHistory = [];
+                    }
+                    residence.vacancyHistory.push({
+                        startedVacantYear: year,
+                        reason: 'Household data wiped: Unit ' + unitNumber,
+                        endedVacantYear: null,
+                        endedByHouseholdId: null,
+                        endedByHouseholdName: null,
+                        affectedHouseholds: [{
+                            householdId: householdId,
+                            householdName: householdName,
+                            unitNumber: unitNumber
+                        }]
+                    });
+
+                    if (!Array.isArray(residence.history)) residence.history = [];
+                    residence.history.push({
+                        year: year,
+                        action: 'unit_vacated',
+                        details: 'Vacated Unit ' + unitNumber + ' (' +
+                            householdName + '): Household data wiped',
+                        actorId: null,
+                        timestamp: now
+                    });
+
+                    if (!Array.isArray(residence.timeline)) residence.timeline = [];
+                    residence.timeline.push({
+                        year: year,
+                        type: 'unit_vacated',
+                        details: 'Vacated Unit ' + unitNumber + ' (' +
+                            householdName + '): Household data wiped',
+                        householdName: householdName,
+                        unitNumber: unitNumber,
+                        timestamp: now
+                    });
+                    if (residence.timeline.length > 500) {
+                        residence.timeline = residence.timeline.slice(-500);
+                    }
+                }
+
+                residence.lastUpdated = year;
+            });
+        });
+
+        // Enterprise ownership is authoritative on the enterprise record.
+        // Unown household-owned enterprises rather than deleting the
+        // enterprises themselves. Private, unowned enterprises are valid.
+        data.enterprises.forEach(function (enterprise) {
+            if (!enterprise || enterprise.ownerType !== 'household') return;
+            enterprise.ownershipType = 'private';
+            enterprise.ownerType = 'none';
+            enterprise.ownerId = null;
+            enterprise.updatedAt = now;
+        });
+    }
+
     function getData() {
         if (!window.masterData || !window.masterData.data) throw new Error('Master data has not been initialized.');
         return window.masterData.data;
@@ -81,16 +311,29 @@
             if (Array.isArray(value)) total += value.length;
             else if (value && typeof value === 'object') total += Object.keys(value).length;
         });
+        if (config.id === 'households') {
+            var refs = householdReferenceCounts(data);
+            total += refs.characters + refs.residenceUnits +
+                refs.enterpriseOwners + refs.educationOwners;
+        }
         return total;
     }
 
     function scopeSummary(config) {
-        return Object.keys(config.fields).map(function (field) {
+        var summary = Object.keys(config.fields).map(function (field) {
             var value = getData()[field];
             var count = Array.isArray(value) ? value.length
                 : (value && typeof value === 'object' ? Object.keys(value).length : 0);
             return field + ': ' + count;
-        }).join(' · ');
+        });
+        if (config.id === 'households') {
+            var refs = householdReferenceCounts(getData());
+            summary.push('character links: ' + refs.characters);
+            summary.push('occupied residence units: ' + refs.residenceUnits);
+            summary.push('enterprise owners to release: ' + refs.enterpriseOwners);
+            summary.push('household-owned schools: ' + refs.educationOwners);
+        }
+        return summary.join(' · ');
     }
 
     function render() {
@@ -134,6 +377,13 @@
     function wipe(config) {
         var data = getData();
         var snapshots = {};
+        if (config.id === 'households') {
+            preflightHouseholdWipe(data);
+            snapshots.characters = clone(data.characters);
+            snapshots.residences = clone(data.residences);
+            snapshots.enterprises = clone(data.enterprises);
+        }
+
         Object.keys(config.fields).forEach(function (field) {
             if (!Object.prototype.hasOwnProperty.call(data, field)) {
                 throw new Error('Required data collection is missing: ' + field + '. Nothing was deleted.');
@@ -158,6 +408,10 @@
             Object.keys(config.fields).forEach(function (field) {
                 data[field] = config.fields[field] === 'array' ? [] : {};
             });
+
+            if (config.id === 'households') {
+                clearHouseholdReferences(data);
+            }
 
             if (config.clearRelationshipState && window.RelationshipState) {
                 if (typeof window.RelationshipState.replaceAll === 'function') {
