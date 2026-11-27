@@ -11,10 +11,10 @@
 - Adds the currently executing participant to the rollback list before invoking its apply function, because apply may partially mutate and then fail.
 - Rolls attempted participants back in reverse order.
 - Runs optional persistence after all applies and before notifications. A failed persistence triggers rollback and a best-effort compensating save of restored state.
-- Closes the active mutation window before invoking `afterCommit`.
+- Closes the active mutation window before invoking `afterCommit`, and exposes `isAfterCommit()` while those callbacks are running.
 - Treats `afterCommit` failures as notification failures. They do not undo a transaction whose data has already been persisted.
 
-The last two points are important: an `afterCommit` callback must not require `CrossDomainTransaction.isActive()`, and a notification failure must be surfaced rather than misrepresented as a rollback.
+The last two points are important: an `afterCommit` callback must not require `CrossDomainTransaction.isActive()`. Post-commit-only publishers can instead require `CrossDomainTransaction.isAfterCommit()`, which prevents them from being called before a successful commit. A notification failure must be surfaced rather than misrepresented as a rollback.
 
 ## Production call-site inventory
 
@@ -64,6 +64,6 @@ The hard-delete handler registry currently has one production registration, in R
 
 ## Tests and remaining limits
 
-`tests/cross-domain-transaction.test.js` covers partial apply failure, reverse rollback order, rollback failures, persistence failure and compensating persistence, post-commit exceptions, participant-count combinations, and the fact that `afterCommit` runs after the active window closes.
+`tests/cross-domain-transaction.test.js` covers partial apply failure, reverse rollback order, rollback failures, persistence failure and compensating persistence, post-commit exceptions, participant-count combinations, and the fact that `afterCommit` runs after the active window closes while `isAfterCommit()` is true, then resets to false.
 
 The tests have not been executed in this environment. No browser-level storage failure injection, reload verification, or end-to-end domain mutation tests were run. Therefore this closes the source-level caller audit and the concrete post-commit defects found in it, but it does not prove storage durability under real browser failures.
