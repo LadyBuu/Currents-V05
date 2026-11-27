@@ -250,6 +250,13 @@
         return typeof v === 'string' && v.length > 0;
     }
 
+    function _formatAge(age) {
+        if (age === null || age === undefined) return 'Unknown age';
+        if (typeof age !== 'number' || !Number.isFinite(age) || age < 0) return 'Unknown age';
+        if (age === 0) return '<1y';
+        return age + 'y';
+    }
+
     /**
      * Returns a display string for age, or the fallback string when null.
      */
