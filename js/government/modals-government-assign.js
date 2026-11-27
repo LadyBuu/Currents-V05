@@ -51,7 +51,7 @@
     }
     function _iconSpan(name) {
         var i = _getIcon(name);
-        return i ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;">' + i + '</span>' : '';
+        return i ? '<span class="gov-inline-1">' + i + '</span>' : '';
     }
 
     function _commitAndPersist() {
@@ -82,24 +82,24 @@
         var infoIcon = _iconSpan('CIRCLE_DOT');
 
         var html =
-            '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;">' +
+            '<div class="gov-inline-11">' +
             '<strong>Department:</strong> ' + _escapeHtml(dept.name) + '<br>' +
             '<strong>Position:</strong> ' + _escapeHtml(position.name) +
             '</div>' +
-            '<div style="margin-bottom:12px;">' +
-            '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:8px;">Qualified Candidates (' + candidateVms.length + ')</div>' +
-            '<div id="bulkCandidateList" style="max-height:300px;overflow-y:auto;"></div>' +
+            '<div class="gov-inline-3">' +
+            '<div class="gov-inline-12">Qualified Candidates (' + candidateVms.length + ')</div>' +
+            '<div id="bulkCandidateList" class="gov-inline-13"></div>' +
             '</div>' +
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">' +
-            '<button type="button" id="bulkSelectAllBtn" class="btn small" style="padding:4px 12px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Select All</button>' +
-            '<button type="button" id="bulkSelectNoneBtn" class="btn small" style="padding:4px 12px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Select None</button>' +
-            '<span style="font-size:0.55rem;color:var(--dim);margin-left:auto;"><span id="bulkSelectedCount">0</span> selected</span>' +
+            '<div class="gov-inline-14">' +
+            '<button type="button" id="bulkSelectAllBtn" class="btn small" class="gov-inline-15">Select All</button>' +
+            '<button type="button" id="bulkSelectNoneBtn" class="btn small" class="gov-inline-15">Select None</button>' +
+            '<span class="gov-inline-16"><span id="bulkSelectedCount">0</span> selected</span>' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Start Year</label>' +
-            '<input type="number" id="bulkStartYear" value="' + window.getCurrentYearSafe() + '" min="1" style="width:100px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Start Year</label>' +
+            '<input type="number" id="bulkStartYear" value="' + window.getCurrentYearSafe() + '" min="1" class="gov-inline-17">' +
             '</div>' +
-            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            '<div class="gov-inline-8">' +
             infoIcon + ' Selected characters will be assigned with the same start year. Invalid selections are skipped; the command reports failures.' +
             '</div>';
 
@@ -237,12 +237,12 @@
             var reasonPart = h.endReason ? ' - ' + _escapeHtml(h.endReason) : '';
 
             historyHtml +=
-                '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">' +
+                '<div class="gov-inline-18">' +
                 '<div>' +
-                '<span style="font-size:0.7rem;">' + personIcon + ' ' + _escapeHtml(h.characterName) + '</span>' +
-                (h.positionLabel ? ' <span style="font-size:0.55rem;color:var(--dim);">→ ' + _escapeHtml(h.positionLabel) + '</span>' : '') +
-                (h.title ? ' <span style="font-size:0.5rem;color:var(--dim);">(' + _escapeHtml(h.title) + ')</span>' : '') +
-                (h.roleLabel ? ' <span style="font-size:0.5rem;color:var(--accent);">Role: ' + _escapeHtml(h.roleLabel) + '</span>' : '') +
+                '<span class="gov-inline-19">' + personIcon + ' ' + _escapeHtml(h.characterName) + '</span>' +
+                (h.positionLabel ? ' <span class="gov-inline-6">→ ' + _escapeHtml(h.positionLabel) + '</span>' : '') +
+                (h.title ? ' <span class="gov-inline-20">(' + _escapeHtml(h.title) + ')</span>' : '') +
+                (h.roleLabel ? ' <span class="gov-inline-21">Role: ' + _escapeHtml(h.roleLabel) + '</span>' : '') +
                 '</div>' +
                 '<div style="font-size:0.55rem;color:' + (h.isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
                 h.startYear + ' - ' + h.endLabel + durationPart + reasonPart +
@@ -251,11 +251,11 @@
         }
 
         var html =
-            '<div style="max-height:400px;overflow-y:auto;">' +
-            '<div style="font-size:0.65rem;color:var(--dim);margin-bottom:8px;">' + rows.length + ' assignment(s) found</div>' +
+            '<div class="gov-inline-22">' +
+            '<div class="gov-inline-23">' + rows.length + ' assignment(s) found</div>' +
             historyHtml +
             '</div>' +
-            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);margin-top:12px;">' +
+            '<div class="gov-inline-24">' +
             infoIcon + ' Chronological order, most recent first.' +
             '</div>';
 
@@ -282,34 +282,34 @@
 
         var candidatesHtml = '';
         if (vm.candidates.length === 0) {
-            candidatesHtml = '<div style="text-align:center;padding:12px;color:var(--dim);font-size:0.6rem;">No candidates identified</div>';
+            candidatesHtml = '<div class="gov-inline-25">No candidates identified</div>';
         } else {
             for (var i = 0; i < vm.candidates.length; i++) {
                 var c = vm.candidates[i];
                 candidatesHtml +=
-                    '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:0.6rem;">' +
+                    '<div class="gov-inline-26">' +
                     '<span>' + (c.isReady ? '✓' : '•') + ' ' + _escapeHtml(c.characterName) + '</span>' +
-                    '<span style="color:var(--dim);">' +
+                    '<span class="gov-inline-27">' +
                     'Age: ' + c.age + ' · Exp: ' + c.experience + 'y' +
                     (c.rankLabel ? ' · ' + _escapeHtml(c.rankLabel) : '') +
-                    (c.isReady ? ' · <span style="color:var(--success);">Ready</span>' : '') +
+                    (c.isReady ? ' · <span class="gov-inline-28">Ready</span>' : '') +
                     '</span>' +
                     '</div>';
             }
         }
 
         var html =
-            '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;">' +
+            '<div class="gov-inline-11">' +
             '<strong>Position:</strong> ' + _escapeHtml(vm.positionName) + '<br>' +
             '<strong>Current Holder:</strong> ' + _escapeHtml(vm.holderLabel) +
             '</div>' +
-            '<div style="margin-bottom:12px;">' +
-            '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:8px;">' + crownIcon + ' Succession Candidates (' + vm.candidates.length + ')</div>' +
-            '<div style="max-height:250px;overflow-y:auto;background:var(--bg3);padding:8px;border-radius:4px;">' +
+            '<div class="gov-inline-3">' +
+            '<div class="gov-inline-12">' + crownIcon + ' Succession Candidates (' + vm.candidates.length + ')</div>' +
+            '<div class="gov-inline-29">' +
             candidatesHtml +
             '</div>' +
             '</div>' +
-            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            '<div class="gov-inline-8">' +
             infoIcon + ' Candidates are ranked according to current succession policy. "Ready" indicates the candidate meets the policy readiness criteria.' +
             '</div>';
 
@@ -343,20 +343,20 @@
         var infoIcon = _iconSpan('CIRCLE_DOT');
 
         var longestHtml = vm.longestServing
-            ? '<div style="background:var(--bg3);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.6rem;">' +
-              '<span style="color:var(--dim);">Longest completed tenure:</span> ' +
+            ? '<div class="gov-inline-30">' +
+              '<span class="gov-inline-27">Longest completed tenure:</span> ' +
               _escapeHtml(vm.longestServing.label) +
               '</div>'
             : '';
 
         var byPositionHtml = '';
         if (vm.byPosition.length === 0) {
-            byPositionHtml = '<div style="font-size:0.55rem;color:var(--dim);text-align:center;">No positions with assignments</div>';
+            byPositionHtml = '<div class="gov-inline-31">No positions with assignments</div>';
         } else {
             for (var p = 0; p < vm.byPosition.length; p++) {
                 var row = vm.byPosition[p];
                 byPositionHtml +=
-                    '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.55rem;border-bottom:1px solid var(--border);">' +
+                    '<div class="gov-inline-32">' +
                     '<span>' + _escapeHtml(row.positionLabel) + '</span>' +
                     '<span>' + row.count + '</span>' +
                     '</div>';
@@ -365,12 +365,12 @@
 
         var byYearHtml = '';
         if (vm.byYear.length === 0) {
-            byYearHtml = '<div style="font-size:0.55rem;color:var(--dim);text-align:center;">No assignments recorded</div>';
+            byYearHtml = '<div class="gov-inline-31">No assignments recorded</div>';
         } else {
             for (var y = 0; y < vm.byYear.length; y++) {
                 var yRow = vm.byYear[y];
                 byYearHtml +=
-                    '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.55rem;border-bottom:1px solid var(--border);">' +
+                    '<div class="gov-inline-32">' +
                     '<span>' + yRow.year + '</span>' +
                     '<span>' + yRow.count + '</span>' +
                     '</div>';
@@ -378,33 +378,33 @@
         }
 
         var html =
-            '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:8px;text-align:center;">' +
-            '<div style="font-size:0.55rem;color:var(--dim);">Total</div>' +
-            '<div style="font-size:1.2rem;font-weight:bold;">' + vm.summary.totalAssignments + '</div>' +
+            '<div class="gov-inline-2">' +
+            '<div class="gov-inline-33">' +
+            '<div class="gov-inline-34">' +
+            '<div class="gov-inline-6">Total</div>' +
+            '<div class="gov-inline-35">' + vm.summary.totalAssignments + '</div>' +
             '</div>' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:8px;text-align:center;">' +
-            '<div style="font-size:0.55rem;color:var(--dim);">Active</div>' +
-            '<div style="font-size:1.2rem;font-weight:bold;color:var(--success);">' + vm.summary.activeAssignments + '</div>' +
+            '<div class="gov-inline-34">' +
+            '<div class="gov-inline-6">Active</div>' +
+            '<div class="gov-inline-36">' + vm.summary.activeAssignments + '</div>' +
             '</div>' +
-            '<div style="background:var(--bg2);padding:12px;border-radius:8px;text-align:center;">' +
-            '<div style="font-size:0.55rem;color:var(--dim);">Avg Tenure</div>' +
-            '<div style="font-size:1.2rem;font-weight:bold;">' + vm.summary.averageTenure + 'y</div>' +
+            '<div class="gov-inline-34">' +
+            '<div class="gov-inline-6">Avg Tenure</div>' +
+            '<div class="gov-inline-35">' + vm.summary.averageTenure + 'y</div>' +
             '</div>' +
             '</div>' +
             longestHtml +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-            '<div style="background:var(--bg3);padding:12px;border-radius:6px;">' +
-            '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">By Position</div>' +
+            '<div class="gov-inline-37">' +
+            '<div class="gov-inline-38">' +
+            '<div class="gov-inline-39">By Position</div>' +
             byPositionHtml +
             '</div>' +
-            '<div style="background:var(--bg3);padding:12px;border-radius:6px;">' +
-            '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">By Year</div>' +
+            '<div class="gov-inline-38">' +
+            '<div class="gov-inline-39">By Year</div>' +
             byYearHtml +
             '</div>' +
             '</div>' +
-            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);margin-top:12px;">' +
+            '<div class="gov-inline-24">' +
             infoIcon + ' Department: ' + _escapeHtml(vm.departmentName) +
             '</div>' +
             '</div>';
