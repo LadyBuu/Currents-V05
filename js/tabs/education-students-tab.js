@@ -558,9 +558,7 @@
             var shown = Math.min(chips.length, MAX_SKILL_CHIPS);
             for (var i = 0; i < shown; i++) {
                 var c = chips[i];
-                chipsHtml += '<span style="font-size:0.5rem;background:var(--bg3);' +
-                    'border:1px solid var(--border-light);border-radius:10px;' +
-                    'padding:1px 7px;color:' + _skillColor(c.level) + ';">' +
+                chipsHtml += '<span class="edu-students-skill-chip" style="color:' + _skillColor(c.level) + ';">' +
                     _esc(c.name) + ' ' + c.level +
                 '</span>';
             }
@@ -580,7 +578,7 @@
             metaParts.push('Enrolled ' + entry.enrollmentYear);
         }
         if (entry.readyForGraduation) {
-            metaParts.push('<span style="color:var(--ok);font-weight:600;">' +
+            metaParts.push('<span class="edu-students-ready">' +
                 '✓ Ready to graduate' +
             '</span>');
         }
