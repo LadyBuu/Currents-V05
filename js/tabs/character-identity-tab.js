@@ -1884,12 +1884,15 @@
                             if (!traitResult || traitResult.success !== true) {
                                 errors.push('Save traits: ' +
                                     (traitResult && traitResult.reason ? traitResult.reason : 'unknown'));
-                            } else if (typeof CC.getTraits === 'function') {
-                                var savedTraits = CC.getTraits(characterId);
+                            } else if (Array.isArray(traitResult.traits)) {
+                                // replaceTraits returns the canonicalised list that
+                                // CharacterState accepted. Do not immediately read
+                                // through the command query facade here: its cache /
+                                // projection lifecycle can lag the in-transaction write.
                                 var expectedTraits = newTraits.slice().sort();
-                                var actualTraits = Array.isArray(savedTraits) ? savedTraits.slice().sort() : [];
-                                if (JSON.stringify(actualTraits) !== JSON.stringify(expectedTraits)) {
-                                    errors.push('Save traits: the character state did not retain the selected traits.');
+                                var acceptedTraits = traitResult.traits.slice().sort();
+                                if (JSON.stringify(acceptedTraits) !== JSON.stringify(expectedTraits)) {
+                                    errors.push('Save traits: the command accepted a different trait list.');
                                 }
                             }
                         }
