@@ -186,15 +186,15 @@
             hint += (hint ? ' · ' : '') + 'Needs more schools';
         }
 
-        return '<div class="edu-manager-card" style="margin-bottom:1rem;">' +
+        return '<div class="edu-manager-card" class="edu-overview-card-spaced">' +
             '<h3 class="edu-manager-card-title">Health</h3>' +
             '<div class="edu-manager-card-body" ' +
-                'style="display:flex;align-items:baseline;gap:0.75rem;flex-wrap:wrap;">' +
+                'class="edu-overview-score-row">' +
                 '<span style="color:' + colorVar + ';font-family:var(--f-mono);' +
                 'font-size:1.2rem;font-weight:600;">' +
                     _esc(String(health.score)) +
                 '</span>' +
-                '<span style="color:var(--dim);font-size:0.65rem;">/ 100</span>' +
+                '<span class="edu-overview-score-denominator">/ 100</span>' +
                 (hint
                     ? '<span style="color:var(--dim);font-size:0.7rem;' +
                       'line-height:1.5;">' + _esc(hint) + '</span>'
