@@ -2038,3 +2038,11 @@ svg {
 .topbar .tb-btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); }
 .topbar .tb-btn.primary:hover { background:var(--accent-dark); border-color:var(--accent-dark); }
 .topbar .tb-btn:disabled { opacity:0.45; cursor:not-allowed; }
+
+/* Shared modal form primitives. JS supplies semantic classes; CSS owns appearance. */
+.modal-mb-12 { margin-bottom: 12px; }
+.modal-mb-16 { margin-bottom: 16px; }
+.modal-field-label { display: block; font-size: 0.7rem; color: var(--accent); margin-bottom: 4px; }
+.modal-field { width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); }
+.modal-field-compact { font-size: 0.8rem; }
+.modal-field-roomy { font-size: 0.85rem; }
