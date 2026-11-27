@@ -110,7 +110,7 @@
     }
     function _iconSpan(name) {
         var i = _getIcon(name);
-        return i ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;">' + i + '</span>' : '';
+        return i ? '<span class="gov-inline-1">' + i + '</span>' : '';
     }
 
     function _commitAndPersist() {
@@ -183,30 +183,30 @@
         var infoIcon = _iconSpan('CIRCLE_DOT');
 
         var html =
-            '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Government Type Name</label>' +
-            '<input type="text" id="newGovTypeName" placeholder="e.g., Monarchy, Republic, Theocracy" autofocus style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="gov-inline-2">' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Government Type Name</label>' +
+            '<input type="text" id="newGovTypeName" placeholder="e.g., Monarchy, Republic, Theocracy" autofocus class="gov-inline-5">' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
-            '<textarea id="newGovTypeDesc" rows="2" placeholder="Description of this government type..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);"></textarea>' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Description</label>' +
+            '<textarea id="newGovTypeDesc" rows="2" placeholder="Description of this government type..." class="gov-inline-5"></textarea>' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Icon</label>' +
-            '<select id="newGovTypeIcon" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Icon</label>' +
+            '<select id="newGovTypeIcon" class="gov-inline-5">' +
             _buildIconOptions('SHIELD') +
             '</select>' +
-            '<small style="font-size:0.55rem;color:var(--dim);">Optional</small>' +
+            '<small class="gov-inline-6">Optional</small>' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Allowed Ranks</label>' +
-            '<select id="newGovTypeRanks" multiple size="5" style="width:100%;height:120px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Allowed Ranks</label>' +
+            '<select id="newGovTypeRanks" multiple size="5" class="gov-inline-7">' +
             _buildRankOptions([]) +
             '</select>' +
-            '<small style="font-size:0.55rem;color:var(--dim);">Hold Ctrl/Cmd to select multiple. A leader must hold one of these exact active ranks. Empty = all ranks.</small>' +
+            '<small class="gov-inline-6">Hold Ctrl/Cmd to select multiple. A leader must hold one of these exact active ranks. Empty = all ranks.</small>' +
             '</div>' +
-            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            '<div class="gov-inline-8">' +
             infoIcon + ' Government types define the structure of governance for locations.' +
             '</div>' +
             '</div>';
@@ -259,29 +259,29 @@
         var infoIcon = _iconSpan('CIRCLE_DOT');
 
         var html =
-            '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Government Type Name</label>' +
-            '<input type="text" id="editGovTypeName" value="' + _attr(type.name) + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="gov-inline-2">' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Government Type Name</label>' +
+            '<input type="text" id="editGovTypeName" value="' + _attr(type.name) + '" class="gov-inline-5">' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
-            '<textarea id="editGovTypeDesc" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' + _escapeHtml(type.description) + '</textarea>' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Description</label>' +
+            '<textarea id="editGovTypeDesc" rows="2" class="gov-inline-5">' + _escapeHtml(type.description) + '</textarea>' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Icon</label>' +
-            '<select id="editGovTypeIcon" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Icon</label>' +
+            '<select id="editGovTypeIcon" class="gov-inline-5">' +
             _buildIconOptions(type.icon) +
             '</select>' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Allowed Ranks</label>' +
-            '<select id="editGovTypeRanks" multiple size="5" style="width:100%;height:120px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Allowed Ranks</label>' +
+            '<select id="editGovTypeRanks" multiple size="5" class="gov-inline-7">' +
             _buildRankOptions(type.allowedRankIds) +
             '</select>' +
-            '<small style="font-size:0.55rem;color:var(--dim);">A leader must hold one of these exact active ranks. Empty = all ranks. Saving is blocked if it would invalidate a current leader.</small>' +
+            '<small class="gov-inline-6">A leader must hold one of these exact active ranks. Empty = all ranks. Saving is blocked if it would invalidate a current leader.</small>' +
             '</div>' +
-            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            '<div class="gov-inline-8">' +
             infoIcon + ' Edit government type details.' +
             '</div>' +
             '</div>';
@@ -385,19 +385,19 @@
         var locationIcon = _iconSpan('LOCATION');
 
         var html =
-            '<div style="margin-bottom:16px;padding:12px;background:var(--bg3);border-radius:8px;">' +
+            '<div class="gov-inline-9">' +
             '<strong>' + locationIcon + ' ' + _escapeHtml(place.displayName) + '</strong>' +
-            '<div style="font-size:0.65rem;color:var(--dim);">Current: ' +
+            '<div class="gov-inline-10">Current: ' +
             _escapeHtml(current ? current.name : 'None') + '</div>' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Government Type</label>' +
-            '<select id="govTypeId" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Government Type</label>' +
+            '<select id="govTypeId" class="gov-inline-5">' +
             typeOptionsHtml + '</select>' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Government Style</label>' +
-            '<input type="text" id="govStyle" value="' + _attr(place.governmentStyle || '') + '" placeholder="e.g., Absolute, Constitutional, Feudal" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Government Style</label>' +
+            '<input type="text" id="govStyle" value="' + _attr(place.governmentStyle || '') + '" placeholder="e.g., Absolute, Constitutional, Feudal" class="gov-inline-5">' +
             '</div>';
 
         _openModal({
