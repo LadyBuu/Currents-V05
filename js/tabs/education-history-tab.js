@@ -590,7 +590,7 @@
 
         var reasonPart = '';
         if (ev.reason && ev.reason !== ev.details) {
-            reasonPart = ' <span style="color:var(--dim);">(' +
+            reasonPart = ' <span class="edu-history-reason">(' +
                 _esc(ev.reason) + ')</span>';
         }
 
@@ -622,7 +622,7 @@
         }
 
         return '<div class="edu-manager-row" ' +
-                'style="border-left:3px solid ' + color + ';">' +
+                'class="edu-history-event-row" style="border-left:3px solid ' + color + ';">' +
             '<div class="edu-manager-row-main">' +
                 '<div class="edu-manager-row-title">' +
                     '<span style="color:var(--dim);font-family:var(--f-mono);' +
@@ -637,7 +637,7 @@
                     reasonPart +
                 '</div>' +
                 '<div class="edu-manager-row-meta edu-history-row-meta-spaced">' +
-                    '<span style="color:var(--dim);">' +
+                    '<span class="edu-history-institution">' +
                         _esc(mergedItem.institutionName) +
                     '</span>' +
                 '</div>' +
@@ -684,7 +684,7 @@
     function _renderTruncationNote(totalShown, totalAvailable) {
         if (totalShown <= totalAvailable) return '';
         return '<div class="edu-manager-empty-hint" ' +
-            'style="text-align:center;padding:8px;">' +
+            'class="edu-history-truncation-note">' +
             'Showing first ' + MAX_EVENTS_RENDERED + ' of ' +
             totalAvailable + ' events. Narrow the filters to see more.' +
         '</div>';
