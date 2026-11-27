@@ -3,7 +3,7 @@ STILL WATERS — HOUSEHOLD SUBSYSTEM DOCUMENTATION AND LOAD ORDER
 ================================================================================
 
 Scope of this document:
-  - Every household file provided in this batch (24 files):
+  - Every household file provided in this batch (26 files):
       js/households/household-constants.js
       js/households/household-rules.js
       js/households/household-view-models.js
@@ -3165,3 +3165,34 @@ run when Household identity or Enterprise owner references are ambiguous.
 LOCATION DELETION TRANSACTION ADAPTER
 
 HouseholdState now exposes internal snapshot/restore adapters for Location deletion. The snapshot retains the canonical Household, position and assignment arrays; restoration reinstalls them and rebuilds Household indexes/caches. This does not itself coordinate Location deletion.
+
+
+HOUSEHOLD + RESIDENCE AUDIT (2026-11-27)
+
+Scope reviewed: household state, commands, queries, rules, assignment,
+orchestration, bootstrap, and residence-system, alongside this document and
+the canonical index.html script order.
+
+Findings:
+- No confirmed source-level defect was identified in the reviewed core
+  household/residence paths. This is a static audit, not a browser/runtime
+  regression pass.
+- Residence occupancy is canonically stored on residence.units[].householdId;
+  household.residenceId and residenceUnitNumber are reverse indexes. Mutations
+  must continue through ResidenceSystem and HouseholdCommands rather than
+  editing either side directly.
+- HouseholdState diagnostics cover missing/mismatched residence references,
+  multiple active unit occupancy, orphan unit references, and occupied units
+  without household IDs. ResidenceSystem also exposes its own integrity report.
+  Run HouseholdBootstrap's integrity report against seeded and migrated data;
+  diagnostics do not automatically repair corruption.
+- Residence and household duplicate IDs fail hydration. Treat this as a data
+  integrity failure requiring inspection, not as a recoverable UI condition.
+- The document's scope count was stale: its enumerated list contains 26 paths,
+  not 24. Corrected above.
+
+Verification limits: no live browser, seeded-world mutation sequence, or
+runtime integrity report was executed during this audit. In particular, test
+cross-domain rollback and persistence for household deletion, residence
+vacancy/demolition, unit reassignment, and location deletion before treating
+those workflows as runtime-verified.
