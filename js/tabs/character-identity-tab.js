@@ -1972,6 +1972,28 @@
 
         _toast('Saved.', 'success');
         _refresh();
+
+        // Read the committed traits from the canonical command layer after
+        // rendering. This keeps the visible controls and reset baseline in
+        // sync even if a presentation projection is one render behind.
+        if (typeof CC.getTraits === 'function') {
+            var committedTraits = CC.getTraits(characterId);
+            if (Array.isArray(committedTraits)) {
+                var committedSet = Object.create(null);
+                committedTraits.forEach(function (trait) {
+                    committedSet[trait] = true;
+                });
+                var refreshedChecks = container.querySelectorAll('input[data-trait]');
+                for (var ci = 0; ci < refreshedChecks.length; ci++) {
+                    var traitId = refreshedChecks[ci].getAttribute('data-trait');
+                    refreshedChecks[ci].checked = committedSet[traitId] === true;
+                }
+                if (container.__characterTabInitial) {
+                    container.__characterTabInitial.__traits = committedTraits.join(',');
+                }
+                if (model.identity) model.identity.traits = committedTraits.slice();
+            }
+        }
     }
 
     function _onResetForm(container) {
