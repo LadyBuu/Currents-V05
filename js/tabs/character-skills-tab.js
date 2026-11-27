@@ -261,7 +261,7 @@
     }
 
     function _readonlyNote(message) {
-        return '<div class="character-tab-note" style="margin-top:0.75rem;">' +
+        return '<div class="character-tab-note character-skills-note-spaced">' +
             _esc(message) +
         '</div>';
     }
@@ -326,7 +326,7 @@
         if (Array.isArray(p.specs) && p.specs.length > 0) {
             for (var i = 0; i < p.specs.length; i++) {
                 specChips += '<span class="character-tab-btn-small" ' +
-                    'style="cursor:default;">' +
+                    'class="character-skills-static">' +
                     _esc(p.specs[i]) +
                 '</span>';
             }
@@ -342,7 +342,7 @@
                         _esc(p.roleName) +
                     '</span>' +
                     primaryBadge +
-                    '<span style="font-size:0.65rem;color:var(--accent);">' +
+                    '<span class="character-skills-accent-small">' +
                         _esc(p.skillLevel + '%') +
                     '</span>' +
                     '<span class="character-tab-note">' +
@@ -437,7 +437,7 @@
                           '</span>'
                         : '') +
                 '</div>' +
-                '<div style="font-size:0.65rem;color:var(--dim);">' +
+                '<div class="character-skills-muted-small">' +
                     _esc(status) +
                 '</div>' +
             '</div>';
@@ -459,7 +459,7 @@
                         _esc(e.institutionName || e.institutionId || 'Unknown institution') +
                     '</span>' +
                 '</div>' +
-                '<div style="font-size:0.65rem;color:var(--dim);">' +
+                '<div class="character-skills-muted-small">' +
                     _esc(status) +
                 '</div>' +
             '</div>';
@@ -511,7 +511,7 @@
                     '<span class="character-tab-rank-name">' +
                         _esc(p.name) +
                     '</span>' +
-                    '<span style="font-size:0.65rem;color:var(--accent);">' +
+                    '<span class="character-skills-accent-small">' +
                         _esc(p.level + '%') +
                     '</span>' +
                     '<span class="character-tab-note">' +
@@ -519,7 +519,7 @@
                     '</span>' +
                 '</div>' +
                 (lastLine
-                    ? '<div style="font-size:0.6rem;color:var(--dim);">' +
+                    ? '<div class="character-skills-muted-tiny">' +
                         _esc(lastLine) +
                       '</div>'
                     : '') +
@@ -569,7 +569,7 @@
                     '<span class="character-tab-note">' +
                         _esc(a.roleName || '') +
                     '</span>' +
-                    '<span style="font-size:0.65rem;color:var(--accent);">' +
+                    '<span class="character-skills-accent-small">' +
                         _esc(a.skillLevel + '%') +
                     '</span>' +
                     (stage
@@ -577,7 +577,7 @@
                         : '') +
                 '</div>' +
                 (since
-                    ? '<div style="font-size:0.6rem;color:var(--dim);">' +
+                    ? '<div class="character-skills-muted-tiny">' +
                         _esc(since) +
                       '</div>'
                     : '') +
@@ -645,14 +645,14 @@
         if (model.traits.length === 0) {
             html += _empty('No traits recorded.');
         } else {
-            html += '<div style="display:flex;flex-wrap:wrap;gap:0.375rem;">';
+            html += '<div class="character-skills-chip-row">';
             for (var i = 0; i < model.traits.length; i++) {
                 var t = model.traits[i];
                 html += '<span class="character-tab-btn-small" ' +
-                    'style="cursor:default;">' +
+                    'class="character-skills-static">' +
                     _esc(t) +
                     '<button type="button" class="character-tab-btn-small danger" ' +
-                        'style="margin-left:0.375rem;padding:0 0.25rem;" ' +
+                        'class="character-skills-chip-suffix" ' +
                         'data-action="remove-trait" ' +
                         'data-trait-id="' + _esc(t) + '" ' +
                         'aria-label="Remove trait">' +
