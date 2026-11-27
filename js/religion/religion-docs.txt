@@ -1970,3 +1970,38 @@ second conversion. A child with a different existing religion is not silently
 converted by the inheritance adapter. The inheritance year must be a finite
 integer; year zero remains valid.
 
+
+
+RELIGION MANAGER AUDIT AND CSS MIGRATION (2026-11-27)
+
+CSS extraction
+- Extracted the embedded Religion Manager stylesheet into
+  css/religion-manager.css and linked it after css/themes.css and
+  css/common.css. The CSS declarations and order were preserved.
+- Moved the hidden JSON file input's display rule into the extracted
+  stylesheet. No inline style attributes remain in ReligionManager.html.
+
+Static code and styling audit
+- Reviewed Religion domain modules for constants, formatting, validation,
+  state, queries, rules, commands, laws, inheritance, view models, rendering,
+  UI state, modals and bootstrap, plus all five Religion tab modules.
+- The domain is separated into state/query/rule/command and presentation
+  layers; tab modules own their respective view interactions.
+- The reviewed domain and tab modules contain no confirmed source-level
+  defect from this static pass. This is not a runtime correctness claim.
+- Moved 278 literal inline style occurrences from the religion modal and
+  three tab templates into 39 CSS classes in css/religion-manager.css.
+  All four source files now have zero style attributes. Dynamic styles were
+  not encountered in those template attributes.
+- The extracted stylesheet retains existing duplicated topbar declarations
+  and legacy fallback color literals. They were preserved to avoid changing
+  cascade/theme behavior during a mechanical migration; cleanup is separate
+  from extraction.
+
+Runtime verification checklist
+- Open Religion Manager and verify stylesheet loading, themes and responsive
+  layout.
+- Exercise religion, deity, law, sacred-place and follower CRUD; validation,
+  inheritance, conversion/history flows; import/export; persistence/reload.
+- Check modal content, focus/stacking, narrow viewport behavior, and console
+  or network errors. Browser verification remains pending.
