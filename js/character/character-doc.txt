@@ -3,6 +3,20 @@ STILL WATERS — CHARACTER SUBSYSTEM DOCUMENTATION AND LOAD ORDER
 ================================================================================
 
 Scope of this document:
+  - Canonical character, family, children, and mortality subsystem files
+    listed below.
+  - Character Manager presentation and page integration:
+      js/character/character-ui-state.js
+      js/character/character-view-models.js
+      js/character/character-ui-list.js
+      js/character/character-manager-bootstrap.js
+      js/tabs/character-identity-tab.js
+      js/tabs/character-location-tab.js
+      js/tabs/character-family-tab.js
+      js/tabs/character-romance-tab.js
+      js/tabs/character-friendship-tab.js
+      js/tabs/character-skills-tab.js
+      js/tabs/character-overview-tab.js
   - Every file in the character subsystem that was provided:
       js/character/character-state.js
       js/character/character-queries.js
@@ -1051,8 +1065,11 @@ Rationale:
     requires window.getCharacters to be a function, which either
     provider satisfies.
   - OPTIONAL: CultureQueries.getCultureDisplay (skipped when absent),
-    world.js's getCurrentPlace (skipped when absent — location
-    displays render fallback text).
+    world.js's getCurrentPlace (canonical move-history / birthplace
+    resolution), getPlaceById (explicit currentLocationId fallback),
+    and LocationQueries.getPlace / getPlaceSummary (place lookup and
+    display-name fallback). The row/card renderer remains available
+    when these optional location providers are absent.
 
   Order notes:
     - character-ui-list.js MAY be loaded any time after Group A3
@@ -1425,6 +1442,132 @@ PART 5 — KNOWN HAZARDS
      character-statistics.js that returns 0; zero is a legitimate
      result and a fabricated zero would mask a missing education
      domain.
+
+
+================================================================================
+PART 6 — CHARACTER MANAGER PRESENTATION AND EDITING CONTRACTS
+================================================================================
+
+This section documents the Character Manager page layer. These files sit
+above the canonical character subsystem: they render projections, manage
+selection and tabs, and send edits through domain commands. They do not
+own character persistence.
+
+6.1 PAGE-LEVEL LOAD ORDER
+
+CharacterManager.html loads the character presentation layer after the
+character domains and their query/command APIs:
+
+  1. js/character/character-ui-state.js
+  2. js/character/character-view-models.js
+  3. js/tabs/character-identity-tab.js
+  4. js/tabs/character-friendship-tab.js
+  5. js/tabs/character-romance-tab.js
+  6. js/tabs/character-family-tab.js
+  7. js/tabs/character-location-tab.js
+  8. js/tabs/character-skills-tab.js
+  9. js/tabs/character-overview-tab.js
+ 10. js/character/character-manager-bootstrap.js
+
+Tab files self-register with TabManager when loaded. The bootstrap configures
+the character scope, declares the expected tab IDs, wires the sidebar, and
+renders the initial tab. The tab strip itself is page markup; the bootstrap
+synchronises its active state with the visible pane.
+
+The bootstrap requires CharacterUIState, CharacterViewModels, CharacterQueries,
+CharacterUI, TabManager, escapeHtml, and Icons. Individual tab renderers own
+their own additional dependencies and register independently.
+
+6.2 SIDEBAR AND CHARACTER ROW PRESENTATION
+
+character-manager-bootstrap.js owns filtering and selection orchestration.
+character-ui-list.js owns row markup and card markup.
+
+The sidebar filters currently include:
+  - text search;
+  - deceased inclusion plus living/deceased status;
+  - gender;
+  - profession/role;
+  - committed-romance status;
+  - hierarchical location (the deepest selected location is used, including
+    that location and its descendants);
+  - life-stage grouping when LIFE_STAGES data is available.
+
+The list renderer receives options controlling age, location, and culture.
+The Character Manager sidebar displays age, resolved location, and a gender
+icon. It does not display household names/IDs or textual Living/Deceased
+status. Deceased rows retain the deceased styling and a cross icon with an
+accessible Deceased label. Character cards are a separate presentation and
+still display a textual Living/Deceased status.
+
+Gender is rendered as an icon in the sidebar and card. The icon is decorative
+presentation; the underlying gender value remains the canonical character
+field and is still used by filters and domain logic.
+
+The sidebar's disclosure/group state is preserved across list rerenders by
+the list renderer. Row selection is delegated from the list container. The
+selection callback receives a projection, never a mutable canonical entity.
+Do not write to the callback argument.
+
+6.3 LOCATION DISPLAY RESOLUTION
+
+CharacterQueries.getCharacterSummary().location is a stable null placeholder;
+location display is resolved by the presentation layer, not by that field.
+The summary's locationId maps to the explicit currentLocationId field.
+
+character-ui-list.js resolves a display name in this order:
+  1. window.getCurrentPlace(character), or world.getCurrentPlace(character).
+     The current World implementation derives the current place from the
+     latest valid move; when there are no valid moves, it falls back to
+     birthplaceId. It does not use currentLocationId as its primary source.
+  2. If World returns no place, getPlaceById(currentLocationId) is tried.
+  3. If still unresolved, LocationQueries.getPlace(currentLocationId) is
+     tried.
+  4. LocationQueries.getPlaceSummary(resolved ID) supplies a displayName
+     fallback when available. A resolved place's displayName takes priority,
+     followed by the summary displayName, then place.name.
+
+The fallback strings distinguish absence from a dangling reference:
+  - "No location" means no place could be derived and no explicit ID could
+    be resolved.
+  - "Unknown location" means a location reference exists but no display
+    name could be resolved.
+
+World, getPlaceById, and LocationQueries are optional at the UI-list layer.
+Missing optional providers must not prevent the character list from rendering.
+The explicit currentLocationId fallback is important for records whose
+location is stored directly rather than derivable from move history.
+
+6.4 IDENTITY TAB SAVE AND TRAIT SYNCHRONISATION
+
+character-identity-tab.js is the edit surface for identity-owned fields,
+traits, religion assignment, birth/death details, appearance, notes, and
+character rank assignments. Writes go through CharacterCommands or the
+owning domain's command API; the tab must not mutate a query projection.
+
+The bulk Save changes flow applies the trait replacement, religion change,
+character-owned field patch, and eligible death-record correction in a
+defined sequence. Trait writes use CharacterCommands.replaceTraits with the
+complete selected trait set. A failed operation is reported and leaves the
+form dirty for retry; the tab does not treat a failed command as saved.
+
+After a successful save, the tab refreshes and reads the committed trait set
+back through CharacterCommands.getTraits(characterId). It then synchronises
+the rendered trait checkboxes and the form's initial/reset baseline with
+that canonical set. This prevents a stale presentation projection from
+visually reverting the selected traits immediately after a successful save.
+A full page refresh must not be required to display the committed trait set.
+
+6.5 DOCUMENTATION MAINTENANCE RULES
+
+When changing the Character Manager:
+  - update this section when page load order, tabs, filters, or presentation
+    contracts change;
+  - keep character-ui-list.js's location and CSS contract in sync with its
+    emitted markup;
+  - keep identity-tab save semantics in sync with the actual command sequence;
+  - distinguish page presentation from canonical domain ownership;
+  - do not document runtime verification unless it was actually performed.
 
 
 ================================================================================
