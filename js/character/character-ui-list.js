@@ -424,9 +424,13 @@
         html += '<span class="character-row__name">';
         html += _esc(summary.fullName || summary.name || 'Unnamed');
         if (summary.isDeceased) {
-            html += '<span class="character-row__death-marker" aria-label="Deceased">';
-            html += '<span aria-hidden="true">&dagger;</span>';
-            html += '</span>';
+            var deathIcon = window.Icons && window.Icons.CROSS
+                ? window.Icons.CROSS
+                : '<span aria-hidden="true">+</span>';
+            html += '<span class="character-row__death-marker" role="img"'
+                 + ' aria-label="Deceased" title="Deceased">'
+                 + deathIcon
+                 + '</span>';
         }
 
         // Culture badge — gated on options.showCulture BEFORE resolving.
@@ -449,8 +453,6 @@
             if (locationText) details.push(locationText);
         }
 
-        var householdName = _resolveHouseholdName(character, summary);
-        if (householdName) details.push(householdName);
         details.push(_genderIconHtml(summary.gender || character.gender || 'unknown'));
 
         if (details.length > 0) {
@@ -460,13 +462,6 @@
                 html += details[i].indexOf('<span class=\"character-row__gender-icon') === 0 ? details[i] : _esc(details[i]);
             }
             html += '</span>';
-        }
-
-        // Status
-        if (options.showStatus) {
-            html += '<span class="character-row__status">'
-                 + (summary.isDeceased ? 'Deceased' : 'Living')
-                 + '</span>';
         }
 
         html += '</button>';
