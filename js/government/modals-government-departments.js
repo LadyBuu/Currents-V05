@@ -51,7 +51,7 @@
     }
     function _iconSpan(name) {
         var i = _getIcon(name);
-        return i ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;">' + i + '</span>' : '';
+        return i ? '<span class="gov-inline-1">' + i + '</span>' : '';
     }
 
     function _commitAndPersist() {
@@ -99,27 +99,27 @@
         var infoIcon = _iconSpan('CIRCLE_DOT');
 
         var html =
-            '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Department Name *</label>' +
-            '<input type="text" id="newDeptName" placeholder="e.g., Ministry of Education" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="gov-inline-2">' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Department Name *</label>' +
+            '<input type="text" id="newDeptName" placeholder="e.g., Ministry of Education" class="gov-inline-5">' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
-            '<textarea id="newDeptDescription" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);"></textarea>' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Description</label>' +
+            '<textarea id="newDeptDescription" rows="2" class="gov-inline-5"></textarea>' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Jurisdiction Root</label>' +
-            '<select id="newDeptLocation" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Jurisdiction Root</label>' +
+            '<select id="newDeptLocation" class="gov-inline-5">' +
             locationOptions + '</select>' +
-            '<small style="font-size:0.55rem;color:var(--dim);">This department applies to the selected location and all of its sub-locations.</small>' +
+            '<small class="gov-inline-6">This department applies to the selected location and all of its sub-locations.</small>' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Parent Department</label>' +
-            '<select id="newDeptParent" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Parent Department</label>' +
+            '<select id="newDeptParent" class="gov-inline-5">' +
             deptOptions + '</select>' +
             '</div>' +
-            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            '<div class="gov-inline-8">' +
             infoIcon + ' Departments can be organized hierarchically. Child departments report to parent departments.' +
             '</div>' +
             '</div>';
@@ -174,27 +174,27 @@
         var infoIcon = _iconSpan('CIRCLE_DOT');
 
         var html =
-            '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Department Name *</label>' +
-            '<input type="text" id="editDeptName" value="' + _attr(dept.name) + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="gov-inline-2">' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Department Name *</label>' +
+            '<input type="text" id="editDeptName" value="' + _attr(dept.name) + '" class="gov-inline-5">' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
-            '<textarea id="editDeptDescription" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' + _escapeHtml(dept.description) + '</textarea>' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Description</label>' +
+            '<textarea id="editDeptDescription" rows="2" class="gov-inline-5">' + _escapeHtml(dept.description) + '</textarea>' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Jurisdiction Root</label>' +
-            '<select id="editDeptLocation" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Jurisdiction Root</label>' +
+            '<select id="editDeptLocation" class="gov-inline-5">' +
             locationOptions + '</select>' +
-            '<small style="font-size:0.55rem;color:var(--dim);">This department applies to the selected location and all of its sub-locations.</small>' +
+            '<small class="gov-inline-6">This department applies to the selected location and all of its sub-locations.</small>' +
             '</div>' +
-            '<div class="form-group" style="margin-bottom:12px;">' +
-            '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Parent Department</label>' +
-            '<select id="editDeptParent" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<div class="form-group" class="gov-inline-3">' +
+            '<label class="gov-inline-4">Parent Department</label>' +
+            '<select id="editDeptParent" class="gov-inline-5">' +
             deptOptions + '</select>' +
             '</div>' +
-            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            '<div class="gov-inline-8">' +
             infoIcon + ' Changing the parent department will move this department in the hierarchy.' +
             '</div>' +
             '</div>';
@@ -269,79 +269,79 @@
 
         var positionsHtml;
         if (vm.positions.length === 0) {
-            positionsHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">No positions</div>';
+            positionsHtml = '<div class="gov-inline-40">No positions</div>';
         } else {
-            positionsHtml = '<div style="display:flex;flex-direction:column;gap:4px;">';
+            positionsHtml = '<div class="gov-inline-41">';
             for (var i = 0; i < vm.positions.length; i++) {
                 var p = vm.positions[i];
                 positionsHtml +=
                     '<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg2);border-radius:4px;font-size:0.55rem;border-left:3px solid ' + (p.isRoleBound ? 'var(--accent)' : 'var(--border)') + ';">' +
                     '<span>' + _escapeHtml(p.name) +
-                    (p.isRoleBound ? ' <span style="color:var(--accent);">(Role: ' + _escapeHtml(p.requiredRoleLabel || '') + ')</span>' : '') +
+                    (p.isRoleBound ? ' <span class="gov-inline-42">(Role: ' + _escapeHtml(p.requiredRoleLabel || '') + ')</span>' : '') +
                     '</span>' +
-                    '<span style="color:var(--dim);">' + p.activeAssignmentCount + ' assigned · Priority: ' + p.priority + '</span>' +
+                    '<span class="gov-inline-27">' + p.activeAssignmentCount + ' assigned · Priority: ' + p.priority + '</span>' +
                     '</div>';
             }
             if (vm.positionsOverflow > 0) {
-                positionsHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;">... and ' + vm.positionsOverflow + ' more</div>';
+                positionsHtml += '<div class="gov-inline-43">... and ' + vm.positionsOverflow + ' more</div>';
             }
             positionsHtml += '</div>';
         }
 
         var assignmentsHtml;
         if (vm.assignments.length === 0) {
-            assignmentsHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">No assignments</div>';
+            assignmentsHtml = '<div class="gov-inline-40">No assignments</div>';
         } else {
-            assignmentsHtml = '<div style="display:flex;flex-direction:column;gap:4px;">';
+            assignmentsHtml = '<div class="gov-inline-41">';
             for (var j = 0; j < vm.assignments.length; j++) {
                 var a = vm.assignments[j];
                 assignmentsHtml +=
                     '<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg2);border-radius:4px;font-size:0.55rem;border-left:3px solid ' + (a.isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
                     '<span>' + _escapeHtml(a.characterName) +
                     (a.title ? ' (' + _escapeHtml(a.title) + ')' : '') +
-                    (a.roleLabel ? ' <span style="color:var(--accent);">(Role: ' + _escapeHtml(a.roleLabel) + ')</span>' : '') +
+                    (a.roleLabel ? ' <span class="gov-inline-42">(Role: ' + _escapeHtml(a.roleLabel) + ')</span>' : '') +
                     '</span>' +
                     '<span style="color:' + (a.isActive ? 'var(--success)' : 'var(--dim)') + ';">' + a.startYear + ' - ' + a.endLabel + '</span>' +
                     '</div>';
             }
             if (vm.assignmentsOverflow > 0) {
-                assignmentsHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;">... and ' + vm.assignmentsOverflow + ' more</div>';
+                assignmentsHtml += '<div class="gov-inline-43">... and ' + vm.assignmentsOverflow + ' more</div>';
             }
             assignmentsHtml += '</div>';
         }
 
         var html =
-            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-            '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">' +
+            '<div class="gov-inline-44">' +
+            '<div class="gov-inline-45">' +
             '<div>' +
-            '<div style="font-size:0.9rem;font-weight:bold;">' + _escapeHtml(vm.name) + '</div>' +
-            '<div style="font-size:0.6rem;color:var(--dim);">' +
+            '<div class="gov-inline-46">' + _escapeHtml(vm.name) + '</div>' +
+            '<div class="gov-inline-47">' +
             'Jurisdiction: ' + _escapeHtml(vm.locationLabel) +
             ' · Parent: ' + _escapeHtml(vm.parentLabel) +
             '</div>' +
             '</div>' +
-            '<div style="font-size:0.55rem;color:var(--accent);text-align:right;">' +
+            '<div class="gov-inline-48">' +
             '<div>' + vm.stats.positionCount + ' positions (' + vm.stats.rolePositionCount + ' with role)</div>' +
             '<div>' + vm.stats.activeAssignmentCount + ' active · ' + vm.stats.assignmentCount + ' total</div>' +
             '</div>' +
             '</div>' +
-            (vm.description ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(vm.description) + '</div>' : '') +
+            (vm.description ? '<div class="gov-inline-49">' + _escapeHtml(vm.description) + '</div>' : '') +
             '</div>' +
-            '<div style="margin-bottom:12px;">' +
-            '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:6px;">Positions</div>' +
+            '<div class="gov-inline-3">' +
+            '<div class="gov-inline-50">Positions</div>' +
             positionsHtml +
             '</div>' +
-            '<div style="margin-bottom:12px;">' +
-            '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:6px;">Assignments</div>' +
+            '<div class="gov-inline-3">' +
+            '<div class="gov-inline-50">Assignments</div>' +
             assignmentsHtml +
             '</div>' +
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;border-top:1px solid var(--border);padding-top:12px;">' +
-            '<button type="button" id="deptDetailsEditBtn" class="btn small" style="padding:4px 12px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Edit</button>' +
-            '<button type="button" id="deptDetailsAddPosBtn" class="btn small" style="padding:4px 12px;font-size:0.55rem;background:var(--accent);border:none;color:white;border-radius:4px;cursor:pointer;">Add Position</button>' +
-            '<button type="button" id="deptDetailsDeleteBtn" class="btn small danger" style="padding:4px 12px;font-size:0.55rem;background:#8a3020;border:none;color:white;border-radius:4px;cursor:pointer;">Delete</button>' +
-            '<button type="button" id="deptDetailsCloseBtn" class="btn small" style="padding:4px 12px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Close</button>' +
+            '<div class="gov-inline-51">' +
+            '<button type="button" id="deptDetailsEditBtn" class="btn small" class="gov-inline-52">Edit</button>' +
+            '<button type="button" id="deptDetailsAddPosBtn" class="btn small" class="gov-inline-53">Add Position</button>' +
+            '<button type="button" id="deptDetailsDeleteBtn" class="btn small danger" class="gov-inline-54">Delete</button>' +
+            '<button type="button" id="deptDetailsCloseBtn" class="btn small" class="gov-inline-15">Close</button>' +
             '</div>' +
-            '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);margin-top:8px;">' +
+            '<div class="gov-inline-55">' +
             infoIcon + ' Department details' +
             '</div>';
 
