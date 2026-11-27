@@ -350,14 +350,14 @@
             for (var i = 0; i < vm.assignments.length; i++) {
                 var a = vm.assignments[i];
                 assignmentHtml +=
-                    '<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg2);border-radius:4px;font-size:0.55rem;border-left:3px solid ' + (a.isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
+                    '<div class="gov-history-row ' + (a.isActive ? 'gov-border-success' : 'gov-border-muted') + '">' +
                     '<div>' +
                     '<span>' + _escapeHtml(a.characterName) + '</span>' +
                     (a.title ? ' <span class="gov-inline-20">(' + _escapeHtml(a.title) + ')</span>' : '') +
                     (a.roleLabel ? ' <span class="gov-inline-79">Role: ' + _escapeHtml(a.roleLabel) + '</span>' : '') +
                     (a.skillLevel != null ? ' <span class="gov-inline-80">(Skill: ' + a.skillLevel + ')</span>' : '') +
                     '</div>' +
-                    '<span style="color:' + (a.isActive ? 'var(--success)' : 'var(--dim)') + ';font-size:0.5rem;">' + a.startYear + ' - ' + a.endLabel + '</span>' +
+                    '<span class="gov-status-text gov-status-small ' + (a.isActive ? 'gov-status-active' : 'gov-status-inactive') + '">' + a.startYear + ' - ' + a.endLabel + '</span>' +
                     '</div>';
             }
             if (vm.assignmentsOverflow > 0) {
@@ -367,7 +367,7 @@
         }
 
         var html =
-            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;border-left:3px solid ' + (vm.requiredRoleLabel !== 'None' ? 'var(--accent)' : 'var(--border)') + ';">' +
+            '<div class="gov-position-summary ' + (vm.requiredRoleLabel !== 'None' ? 'gov-border-accent' : 'gov-border-neutral') + '">' +
             '<div class="gov-inline-45">' +
             '<div>' +
             '<div class="gov-inline-46">' + _escapeHtml(vm.name) + '</div>' +
