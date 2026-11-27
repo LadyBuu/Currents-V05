@@ -554,7 +554,7 @@
         var chips = _skillChipsFor(entry);
         var chipsHtml = '';
         if (chips && chips.length > 0) {
-            chipsHtml = '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">';
+            chipsHtml = '<div class="edu-student-chip-row">';
             var shown = Math.min(chips.length, MAX_SKILL_CHIPS);
             for (var i = 0; i < shown; i++) {
                 var c = chips[i];
@@ -565,7 +565,7 @@
                 '</span>';
             }
             if (chips.length > shown) {
-                chipsHtml += '<span style="font-size:0.5rem;color:var(--dim);">' +
+                chipsHtml += '<span class="edu-history-tiny-muted">' +
                     '+' + (chips.length - shown) + ' more' +
                 '</span>';
             }
