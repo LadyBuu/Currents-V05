@@ -137,3 +137,7 @@ A true exhaustive audit requires executable tests with representative populated 
 ## Follow-up transaction audit
 
 The cross-domain transaction caller audit, including all 16 production call sites, the post-commit notification fixes, and remaining runtime-test limitations, is documented in [Cross-domain transaction audit](cross-domain-transaction-audit.md).
+
+## Follow-up CSS and visual consistency audit
+
+The presentation-layer review, including theme loading, duplicated manager shell rules, JavaScript-owned styling, generated class names, and the recommended standardisation sequence, is documented in [CSS and visual consistency audit](css-styling-audit.md).
