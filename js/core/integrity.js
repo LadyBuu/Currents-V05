@@ -936,6 +936,29 @@
         return broken;
     }
 
+
+    function repairBrokenCrimeReferences() {
+        _requireDependencies();
+        var data = window.masterData && window.masterData.data;
+        if (!data) throw new Error('integrity.js: master data is unavailable');
+        var broken = findBrokenCrimeReferences();
+        var repairs = 0;
+        broken.forEach(function(item) {
+            var record = item.domain === 'crime' ? data.crimes[item.index] : data.vendettas[item.index];
+            if (!record) return;
+            var field = item.issue.replace(/^Missing /, '');
+            if (item.domain === 'vendetta' && field.indexOf('death ') === 0) {
+                var death = Array.isArray(record.deaths) ? record.deaths[item.deathIndex] : null;
+                field = field.slice('death '.length);
+                if (death && death[field] === item.refId) { death[field] = null; repairs++; }
+            } else if (record[field] === item.refId) {
+                record[field] = null;
+                repairs++;
+            }
+        });
+        return repairs;
+    }
+
     // =========================================================================
     // 6. COMPREHENSIVE AUDIT — PURE
     // =========================================================================
@@ -1021,7 +1044,8 @@
             brokenHouseholdMembers: repairBrokenHouseholdMembers(),
             brokenRankAssignments: repairBrokenRankAssignments(),
             brokenRoleAssignments: repairBrokenRoleAssignments(),
-            brokenApprenticeships: apprenticeshipResult.repairs
+            brokenApprenticeships: apprenticeshipResult.repairs,
+            brokenCrimeReferences: repairBrokenCrimeReferences()
         };
 
         var totalRepairs = 0;
@@ -1066,6 +1090,7 @@
     window.repairBrokenRankAssignments = repairBrokenRankAssignments;
     window.repairBrokenRoleAssignments = repairBrokenRoleAssignments;
     window.repairBrokenApprenticeships = repairBrokenApprenticeships;
+    window.repairBrokenCrimeReferences = repairBrokenCrimeReferences;
 
     // Comprehensive
     window.auditDataIntegrity = auditDataIntegrity;
